@@ -1,6 +1,6 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 12:47（**⏸️ Sir 处理外事，暂停等"继续"信号**。已完工：W + α.1-7 + β.0.1-3（13 commits / 4 tags / 49 testcase OK）。**Sir 12:43 实测又暴露 7 个新 BUG**（详「实测发现的新 BUG」段）→ 决策：开 **Phase 1 救火 5 修（F1-F5）→ Phase 2 push → Phase 3 β.0.5 异步评分 → Phase 4 β.0.6 瘦身 → Phase 5 全架构审计 → Phase 6 全测 + tag**。当前停在 F1 进行中（声波打印异步化），代码定位到 jarvis_worker.py:490/505。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
+**更新时间**：2026-05-16 14:45（Phase 1 救火 + Phase 2 push 完工 + Phase 1.5 NameError 留尾批量修。**已完工 17 commits / 6 tags / 51 testcase OK**。Sir 14:30 又反馈 2 个 BUG → B8 OfferHelp 未出声 + B9 归来感知没出现 → 已修 + commit `a5ebe8d` + tag `v0.20.4-nameerror-guards`（push 卡网络）。下一步进入 **Phase 4 β.0.6 瘦身 → Phase 5 全架构审计 → Phase 6 全测 + tag**。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
 
 ---
 
@@ -101,17 +101,19 @@
 
 > **B1-B7 是 Phase 1 救火直接对应**（F1-F5 修这些）。其它老 BUG 留给 Phase 4 (β.0.6 瘦身) / Phase 5 (架构审计) 一起治本。
 
-### 🆕 Sir 12:43 实测暴露的新 BUG（jarvis_20260516_123813.log）
+### 🆕 Sir 12:43 + 14:30 实测暴露的新 BUG（jarvis_20260516_123813.log）
 
-| ID | 优先级 | BUG | log 证据 | 处理路线 |
+| ID | 优先级 | BUG | log 证据 | 修复 |
 |---|---|---|---|---|
-| **B1** | **P0** | **时间硬编码偏 AM**：Sir 说"两点"，Jarvis 总默认凌晨 02:00。trigger 直接写到 `2026-05-17 02:00:00`，完全错过 Sir 真实意图（下午 14:00 起床 / 12:43 跟妈妈说要睡觉 → 居然解读成第二天凌晨睡）| log:100 `Note that you intend to wake at 2:00 AM` / log:215 `Task scheduled: '睡觉', trigger: 2026-05-17 02:00:00` | **F2** |
-| **B2** | **P0** | **Memory Correction 把"两点起床"重写为"两点睡觉"**：性质完全改了，等于把已存的 reminder 数据吞掉 | log:217 `🔧 [Memory Correction] '两点起床' → '两点睡觉'` | **F3** |
-| **B3** | **P0** | **Help Refusal 误触发**：Sir 自我打断（"不对不对不对，不用不用跟我说，**我要跟你说**"）被识别成拒绝 Jarvis 帮助 → NudgeGate 全通道硬冻结 300s | log:91-93 `🚫 [Help Refusal] 用户拒绝帮助 (#1, strong=False)` `🧊 [NudgeGate HardFreeze] 全通道硬冻结 300s` | **F4** |
-| **B4** | P1 | prompt 装配 1274ms → **3074ms**（β.0.3 双层注入 + 新探测路径让装配翻 2.4x）| log:177 `[Asm Diag] _assemble_prompt 总耗时 3074ms` | Phase 4 β.0.6 瘦身后自然回落 |
-| **B5** | P1 | TTFT 暴涨：第二轮 7.9s，第三轮 26.7s → **Full pipeline 78s** | log:121, 264, 272 | 网络抖动 + B7 google 全挂连锁 |
-| **B6** | **P0** | **声波打印每行 30000+ 字节**：30+ 个 `🎙️ [接收物理声波]` 一行刷出来 → PowerShell 渲染慢 → 主线程 `sys.stdout.write` 阻塞 → 异步录入又录进一段。Sir 反映的"打印卡顿 + 录进了多余的话" | log:88, 145, 200-205, 219-223 每行 ~30K bytes | **F1（致命）** |
-| **B7** | P1 | google_1 永久剔除策略**没持久化**：α.2 改在内存里，重启 / cooldown 恢复后仍可能 PROJECT_DENIED 重新刷屏 | log:282 `google_1 标记为不健康` 仍出现 | **F5** |
+| **B1** | P0 | 时间硬编码偏 AM：Sir 中午说"两点起床" → 凌晨 02:00 | log:100/215 | ✅ **F2** sanitize_trigger_time + prompt 5a 收紧 |
+| **B2** | P0 | Memory Correction 把"两点起床"→"两点睡觉" 性质完全变 | log:217 | ✅ **F3** detect_semantic_category + Correction Guard |
+| **B3** | P0 | Help Refusal 误触发（Sir 自我打断"不对不对，我我..." 被判拒绝）| log:91-93 | ✅ **F4** 自我打断白名单 10 条 pattern |
+| **B4** | P1 | prompt 装配 1274ms → 3074ms（β.0.3 双层注入翻 2.4x）| log:177 | ⏳ Phase 4 β.0.6 瘦身后自然回落 |
+| **B5** | P1 | TTFT 暴涨：第三轮 26.7s → Full pipeline 78s | log:121/264/272 | ⏳ 网络抖动 + B7 连锁，瘦身后改善 |
+| **B6** | P0 | 声波打印 30K bytes 单行 → PowerShell 阻塞 → 麦克风录乱 | log:88/145/200-205 | ✅ **F1** 100ms 节流 + 段尾换行 |
+| **B7** | P1 | google_1 永久剔除策略没持久化（重启后又试又挂）| log:282 | ✅ **F5** memory_pool/key_router_state.json + reset 接口 |
+| **B8** | P0 | OfferHelp 未出声：`NameError("name 'JARVIS_CORE_PERSONA' is not defined")` | log:324 | ✅ **F6** chat_bypass.py 函数体内延迟 import |
+| **B9** | P0 | 归来感知没出现（Sir 睡 1+ 小时回来）：`win32api` 没 import → idle_ms 永 0 | （静默吞，无显式 log）| ✅ **F7** return_sentinel + smart_nudge + commitment_watcher 全修 |
 
 ### 已知老 BUG（治本路径推迟到 β.0.6 瘦身 / Phase 5 全审计）
 
@@ -140,21 +142,26 @@
 
 ### Phase 1 — 救火现修（~1.5h，Phase 2 push 前必清）
 
-| # | Marker | 主题 | 关键产物 | 状态 |
-|---|---|---|---|---|
-| F1 | **P0+20-β.1.1** | 声波打印异步化 / 行内合并（治 B6 致命卡顿）| `jarvis_worker.py:490+505` 的 `sys.stdout.write` 直写改：① 节流到 100ms 一次 `\r` 刷新；② 走 _BgLogBuffer / TraceContext 的"终端 only" 路径或独立 throttle；③ 单行 bars 截断到 50 字节内 | 🔄 in_progress / Sir 暂停 |
-| F2 | **P0+20-β.1.2** | 时间默认推断改用上下文（治 B1 凌晨2点）| Gatekeeper / Memory Correction 解析"两点"等时间词时：① 看当前 hour 推断 AM/PM（12-23 默认下午）；② 用户上下文（"起床" 偏 AM / "睡觉" 偏当夜 22-02 / "下午" 强制 PM）；③ 拒绝盲填 trigger，含糊时反问 | ⏳ |
-| F3 | **P0+20-β.1.3** | Memory Correction 性质替换守卫（治 B2 起床→睡觉重写）| Memory Correction 内部加守卫：① 检测语义类别（睡眠/工作/吃饭/提醒）；② 若 old_val 和 new_val 类别不同 → 拒绝替换，改"创建新记忆"；③ 必要时反问 Sir 确认 | ⏳ |
-| F4 | **P0+20-β.1.4** | Help Refusal 自我打断白名单（治 B3 误触发）| `_detect_help_refusal` 加 pre-filter：① 检测"自我打断"模式（"不对不对" + 后续 "我要 X" / "我我" 重复词）→ 视作 ASR 口吃修正而非拒绝；② 加单测覆盖"自我打断"反例 | ⏳ |
-| F5 | **P0+20-β.1.5** | google_1 永久剔除持久化（治 B7）| KeyRouter 永久剔除状态写到 `memory_pool/key_router_state.json` / 启动时载入；rotate key 后 Sir 主动 reset | ⏳ |
-| F.final | **P0+20-β.1.final** | F 整轮验收 | 全测 49+ OK + 真机一轮（Sir 实测 4 个场景） + commit + tag `v0.20.3-firefighting` | ⏳ |
+**已完工 / commit 71e2e39 / tag v0.20.3-firefighting / commit a5ebe8d / tag v0.20.4-nameerror-guards**
+
+| # | Marker | 主题 | 状态 |
+|---|---|---|---|
+| F1 | P0+20-β.1.1 | 声波打印 100ms 节流 + 段尾换行（治 B6）| ✅ |
+| F2 | P0+20-β.1.2 | sanitize_trigger_time + prompt 5a 收紧（治 B1）| ✅ |
+| F3 | P0+20-β.1.3 | detect_semantic_category + Correction Guard（治 B2）| ✅ |
+| F4 | P0+20-β.1.4 | 自我打断白名单 10 pattern（治 B3）| ✅ |
+| F5 | P0+20-β.1.5 | KeyRouter 持久化 + reset 接口（治 B7）| ✅ |
+| F6 | P0+20-β.1.6 | chat_bypass.py 延迟 import JARVIS_CORE_PERSONA（治 B8）| ✅ |
+| F7 | P0+20-β.1.7 | return_sentinel + smart_nudge + commitment_watcher win32api try-import（治 B9）| ✅ |
+| Tests | — | 51/51 OK，新增 38 testcase（firefighting 26 + nameerror_guards 12）| ✅ |
 
 ### Phase 2 — push 到 GitHub
 
 | # | 动作 | 状态 |
 |---|---|---|
-| P2.1 | `git push origin main`（推 13+ commits 含 F1-F5）| ⏳ |
-| P2.2 | `git push origin --tags`（推 4 个 tag）| ⏳ |
+| P2.1 | 首批 14 commits push | ✅ 13:18 完成 |
+| P2.2 | 5 个 tag push | ✅ 13:18 完成 |
+| P2.3 | B8/B9 commit + v0.20.4 tag push | ⏳ 网络挂等重试 |
 
 ### Phase 3 — β.0.5 Gemini-3-Flash 异步评分链（~2h）
 

@@ -1193,7 +1193,6 @@ expects an instant reply from your recent memory, not a tool round-trip.
 {_fr_working}
 
 [SYSTEM CLOCK]: {current_time}
-[BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -1356,7 +1355,6 @@ User: {user_input}
 {ledger_str}
 
 [SYSTEM CLOCK]: {current_time}
-[BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -1371,9 +1369,7 @@ User: {user_input}
 {correction_context}
 {style_adjustment}
 {content_pref}
-[BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
 [SYSTEM CLOCK]: {current_time}
-[SEARCH DIRECTIVE]: For questions about current events, recent news, real-time data, or anything that requires up-to-date information, you MUST use Google Search. Do NOT rely on your training data for time-sensitive queries.
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -1536,8 +1532,6 @@ Windows OS is in Chinese. Use Chinese folder names in tool parameters.
 Path landmarks:
 {landmarks_str}
 
-[IMAGE CONTEXT]: Real-time screenshot attached. Use as ultimate truth.
-
 {tier_routing}
 
 [Tier 2 Tool Library]:
@@ -1547,11 +1541,8 @@ Path landmarks:
 --- Long-Term Memory ---
 {ltm_context}
 
-[MEMORY CALLBACK]: Reference relevant memories naturally. Use sparingly.
-
 {commitment_context}
 [SYSTEM CLOCK]: {current_time}
-[SEARCH DIRECTIVE]: For questions about current events, recent news, real-time data, or anything that requires up-to-date information, you MUST use Google Search. Do NOT rely on your training data for time-sensitive queries.
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
