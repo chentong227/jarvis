@@ -427,7 +427,12 @@ class _BgLogBuffer:
 
     @classmethod
     def log(cls, message: str, stream: str = "stderr"):
-        """记录一条背景日志。message 不要自带前后换行，函数会负责。"""
+        """记录一条背景日志。message 不要自带前后换行，函数会负责。
+        
+        [P0+20-α.7 / 2026-05-16] 双路径分流（终端 = 主体；日志 = prefix+主体）：
+        - 终端：走 _TeeStream._orig 直接写原始 stderr/stdout，绕过 Tee 双写，避免 trace_id prefix 污染终端
+        - 日志：直接 put 到 _TEE_QUEUE，带 TraceContext prefix（grep 友好）
+        """
         if not message:
             return
         line = message.rstrip("\r\n")
@@ -439,53 +444,74 @@ class _BgLogBuffer:
             cls._emit_locked(stream, line)
 
     @classmethod
-    def _emit_locked(cls, stream: str, line: str):
-        f = sys.stderr if stream == "stderr" else sys.stdout
+    def _write_to_terminal_only(cls, stream: str, payload: str):
+        """[P0+20-α.7] 仅写终端（绕过 _TeeStream 双写到日志）。"""
+        f_wrapped = sys.stderr if stream == "stderr" else sys.stdout
+        # _TeeStream 实例有 _orig 字段指向真实终端；若 stderr 还没被 wrap 直接用 f_wrapped
+        f_orig = getattr(f_wrapped, '_orig', f_wrapped)
         try:
-            f.write("\n" + line + "\n")
-            f.flush()
+            f_orig.write(payload)
+            try:
+                f_orig.flush()
+            except Exception:
+                pass
         except UnicodeEncodeError:
             # [轴 1.6 / 2026-05-15] GBK 终端写不出 emoji 时降级到 ASCII fallback
-            # 之前的 except Exception: pass 会静默丢整条 log；
-            # 现在改成：尝试 ASCII 替换写入，让信息至少能被看到。
             try:
-                fallback = line.encode("ascii", errors="replace").decode("ascii")
-                f.write("\n" + fallback + "\n")
-                f.flush()
+                fallback = payload.encode("ascii", errors="replace").decode("ascii")
+                f_orig.write(fallback)
+                f_orig.flush()
             except Exception:
                 pass
         except Exception:
             pass
 
     @classmethod
+    def _write_to_logfile_only(cls, line: str):
+        """[P0+20-α.7] 仅写日志文件（带 TraceContext prefix），异步 queue 不阻塞主线程。"""
+        try:
+            prefix = TraceContext.get_log_prefix()
+        except Exception:
+            prefix = ""
+        # _RUNTIME_LOG_HANDLE 在 _init_runtime_tee_log 后才有值
+        global _RUNTIME_LOG_HANDLE
+        fh = _RUNTIME_LOG_HANDLE
+        if fh is None or fh.closed:
+            return
+        file_line = f"\n{prefix} {line}\n" if prefix else f"\n{line}\n"
+        try:
+            log_data = strip_ansi_codes(file_line)
+        except Exception:
+            log_data = file_line
+        try:
+            _TEE_QUEUE.put_nowait((fh, log_data))
+        except _queue_for_tee.Full:
+            # 队列满：同步写盘保数据完整（少量发生不会影响主线程）
+            try:
+                fh.write(log_data)
+            except Exception:
+                pass
+
+    @classmethod
+    def _emit_locked(cls, stream: str, line: str):
+        # [合约] UnicodeEncodeError → ascii / errors='replace' fallback —— 由 _write_to_terminal_only
+        # 内部接住。终端：仅消息主体（无 trace_id prefix），保留对话框外的可读性。
+        cls._write_to_terminal_only(stream, "\n" + line + "\n")
+        # 日志文件：消息主体 + trace_id prefix（一行可 grep 全链路）
+        cls._write_to_logfile_only(line)
+
+    @classmethod
     def _flush_locked(cls):
+        # [合约] UnicodeEncodeError → ascii / errors='replace' fallback —— 由 _write_to_terminal_only 接住。
         if not cls._buffer:
             return
         try:
-            try:
-                sys.stderr.write("\n──── [Background] ────\n")
-            except UnicodeEncodeError:
-                sys.stderr.write("\n---- [Background] ----\n")
+            # 对话框结束后打分隔标记 —— 仅终端，不进日志（日志已经有时间戳/prefix 不需要这个）
+            cls._write_to_terminal_only("stderr", "\n──── [Background] ────\n")
             for stream, line in cls._buffer:
-                f = sys.stderr if stream == "stderr" else sys.stdout
-                try:
-                    f.write(line + "\n")
-                    f.flush()
-                except UnicodeEncodeError:
-                    # [轴 1.6] GBK 终端降级到 ASCII fallback，不丢消息
-                    try:
-                        fallback = line.encode("ascii", errors="replace").decode("ascii")
-                        f.write(fallback + "\n")
-                        f.flush()
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            try:
-                sys.stderr.write("──────────────────────\n")
-            except UnicodeEncodeError:
-                sys.stderr.write("----------------------\n")
-            sys.stderr.flush()
+                cls._write_to_terminal_only(stream, line + "\n")
+                cls._write_to_logfile_only(line)
+            cls._write_to_terminal_only("stderr", "──────────────────────\n")
         finally:
             cls._buffer.clear()
 
@@ -588,11 +614,10 @@ class TraceContext:
 def bg_log(message: str, stream: str = "stderr"):
     """便捷入口：背景线程要打字时用这个，自动避开对话框。
     
-    [P0+20-W.2 / 2026-05-16] 自动注入 trace_id 前缀（若 TraceContext 已初始化）。
+    [P0+20-α.7 / 2026-05-16] trace_id 注入位置改到 _BgLogBuffer 内部：
+    - 终端：仅消息主体（不污染显示）
+    - 日志文件：[sess_xxx] [turn_yyy] message （grep 友好）
     """
-    prefix = TraceContext.get_log_prefix()
-    if prefix:
-        message = f"{prefix} {message}"
     _BgLogBuffer.log(message, stream=stream)
 
 
