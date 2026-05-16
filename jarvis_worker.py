@@ -645,6 +645,13 @@ class VoiceListenThread(QThread):
                         stream.read(frames_left, exception_on_overflow=False) # 抽干脏水
                     continue
                     
+                # 🩹 [P0+20-β.2.2 / 2026-05-16] 滞后双阈值 VAD（治 Sir 21:43 反馈 ASR 不触发）
+                # 根因：Sir 后台 Premiere 视频导出让 volume 在 100-200 抖动 →
+                # 单一阈值 180 让某些帧进 if-high 分支刷新 silence_timer →
+                # silence_timer 永远不超时 → ASR 永远不触发。
+                # 修：保持 ENTRY=180 不漏 Sir 真说话，加 EXIT=100 让背景音落到"中间区"，
+                # 中间区帧不刷新 silence_timer，让累积正常超时触发 ASR。
+                SILENCE_THRESHOLD_EXIT = 100  # 真安静阈值（< 100 视为安静）
                 if volume > VOLUME_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
@@ -687,6 +694,13 @@ class VoiceListenThread(QThread):
 
                     silence_timer = time.time() 
                     audio_frames.append(data)
+
+                # 🩹 [P0+20-β.2.2 / 2026-05-16] 中间区：100 < volume <= 180
+                # 视为背景噪音 / 说话尾音，audio 仍然录入但 silence_timer 不刷新
+                # 让 silence_timeout 能正常累积到达
+                elif is_speaking and volume > SILENCE_THRESHOLD_EXIT:
+                    audio_frames.append(data)
+                    # 注意：不刷新 silence_timer，不打格子（避免误以为 Sir 在说话）
 
                 elif is_speaking:
                     audio_frames.append(data)
