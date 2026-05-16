@@ -119,6 +119,132 @@ from jarvis_utils import (  # noqa: F401
     register_jarvis_tts, is_recent_jarvis_echo, clear_jarvis_tts_ring,
 )
 
+
+# 🩹 [P0+20-β.1.2 / 2026-05-16] Sanity check：上游 LLM 给的 trigger_time_str 容易把
+# "两点起床" 当 02:00（凌晨）。规则：动词决定时段 + 当前小时兜底。
+def sanitize_trigger_time(trigger_time_str: str, intent: str, user_text: str = ""):
+    """对 Gatekeeper LLM 给的 trigger_time_str 做后处理矫正。
+
+    返回：(corrected_str, was_corrected_bool, reason_str)
+    - corrected_str: "YYYY-MM-DD HH:MM:SS" 或原值
+    - was_corrected_bool: 是否做了矫正（用于 bg_log）
+    - reason_str: 矫正原因（debug）
+
+    规则：
+    1. 起床/wake → 默认 AM (4-11)。若 LLM 给 14:00 + 没有"下午/PM" → 强制改 AM。
+    2. 下午/afternoon/PM → 强制 12-23。若 LLM 给凌晨 → 强制 +12。
+    3. 凌晨/early morning/AM → 强制 0-6。
+    4. 睡觉/sleep + 当前白天 + LLM 给小时落在 4-21 → 推到下一个晚上窗口。
+    """
+    import time as _t
+    import re as _re
+    if not trigger_time_str or len(trigger_time_str) < 16:
+        return trigger_time_str, False, ""
+    try:
+        ts = _t.strptime(trigger_time_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        try:
+            ts = _t.strptime(trigger_time_str + ":00", "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return trigger_time_str, False, "parse_failed"
+
+    intent_l = (intent or "").lower()
+    user_l = (user_text or "").lower()
+    combined = intent_l + " | " + user_l
+    now = _t.localtime()
+
+    has_wake = bool(_re.search(r'(起床|醒|wake\s*up|get\s*up|醒来|起来|wake)', combined))
+    has_sleep = bool(_re.search(r'(睡觉|睡|sleep|bed|rest|休息|躺下|上床)', combined))
+    has_pm_marker = bool(_re.search(r'(下午|afternoon|p\.?m\.?|傍晚|晚上(?!好)|tonight|evening)', combined))
+    has_am_marker = bool(_re.search(r'(凌晨|early\s*morning|midnight|a\.?m\.?|早上|清晨|大早)', combined))
+    has_tomorrow = bool(_re.search(r'(明天|tomorrow|next\s*day|next\s*morning|tmrw)', combined))
+    has_today_pm = bool(_re.search(r'(今天下午|今下午|this\s*afternoon|today\s*pm)', combined))
+
+    target_hour = ts.tm_hour
+    target_min = ts.tm_min
+    new_hour = target_hour
+    correction_reason = ""
+    add_day = False  # 是否换到下一天
+
+    if has_pm_marker and target_hour < 12:
+        new_hour = target_hour + 12
+        correction_reason = "pm_marker_force"
+    elif has_am_marker and target_hour >= 12:
+        new_hour = target_hour - 12
+        if new_hour < 0:
+            new_hour = 0
+        correction_reason = "am_marker_force"
+    elif has_wake and not has_pm_marker and target_hour >= 12 and target_hour <= 18:
+        new_hour = target_hour - 12
+        correction_reason = "wake_verb_force_am"
+    elif (has_wake and not has_pm_marker and not has_am_marker and not has_tomorrow
+          and target_hour <= 4 and 6 <= now.tm_hour <= 18):
+        new_hour = target_hour + 12
+        correction_reason = "daytime_wake_force_today_pm"
+    elif (has_sleep and not has_am_marker and not has_today_pm
+          and 6 <= now.tm_hour <= 21 and 3 <= target_hour <= 11):
+        new_hour = target_hour + 12
+        correction_reason = "sleep_verb_force_pm_or_night"
+    elif (has_sleep and not has_today_pm and not has_am_marker
+          and 6 <= now.tm_hour <= 21 and 12 <= target_hour <= 18):
+        new_hour = target_hour - 12
+        correction_reason = "sleep_verb_force_next_morning"
+
+    if new_hour == target_hour:
+        return trigger_time_str, False, ""
+
+    try:
+        corrected_struct = (now.tm_year, now.tm_mon, now.tm_mday,
+                            new_hour, target_min, 0,
+                            now.tm_wday, now.tm_yday, now.tm_isdst)
+        corrected_ts = _t.mktime(corrected_struct)
+        if has_wake and corrected_ts < _t.time() - 3600:
+            corrected_ts += 86400
+        elif has_sleep and corrected_ts < _t.time() - 1800:
+            corrected_ts += 86400
+        elif corrected_ts < _t.time() - 3600:
+            corrected_ts += 86400
+        corrected_str = _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(corrected_ts))
+        return corrected_str, True, correction_reason
+    except Exception:
+        return trigger_time_str, False, "mktime_failed"
+
+
+# 🩹 [P0+20-β.1.3 / 2026-05-16] 语义类别探测：用于 Memory Correction 守卫。
+# 同类（睡眠 ↔ 睡眠）允许替换；不同类（起床 vs 睡觉 / 工作 vs 吃饭）应拒绝替换 → 当
+# 作"新记忆"独立保存而不是覆盖。
+_SEMANTIC_CATEGORIES = {
+    'wake':   [r'起床', r'醒', r'wake', r'get\s*up'],
+    'sleep':  [r'睡觉', r'睡了?', r'休息', r'躺下', r'sleep', r'\bbed\b', r'\brest\b', r'nap'],
+    'eat':    [r'吃[饭东午晚早]', r'吃午', r'吃晚', r'吃早', r'早餐', r'午餐', r'晚餐', r'宵夜',
+               r'lunch', r'dinner', r'breakfast', r'吃药', r'喝水', r'\beat\b', r'\bmeal\b'],
+    'work':   [r'工作', r'加班', r'开会', r'meeting', r'写代码', r'编程', r'\bwork\b', r'\bcode\b'],
+    'study':  [r'学习', r'做题', r'刷题', r'复习', r'预习', r'study', r'review'],
+    'sport':  [r'锻炼', r'健身', r'跑步', r'运动', r'拉伸', r'exercise', r'workout'],
+    'video':  [r'剪辑', r'剪视频', r'录视频', r'做视频'],
+}
+
+
+def detect_semantic_category(text: str) -> str:
+    """返回文本所属语义类别。无明显类别时返回 'misc'。"""
+    import re as _re
+    if not text:
+        return 'misc'
+    t = text.lower()
+    matched = []
+    for cat, patterns in _SEMANTIC_CATEGORIES.items():
+        for p in patterns:
+            if _re.search(p, t):
+                matched.append(cat)
+                break
+    if not matched:
+        return 'misc'
+    # 如果同时匹配 wake 和 sleep（极少），优先 sleep（场景：睡前定起床闹钟）
+    if 'wake' in matched and 'sleep' in matched:
+        return 'wake'  # 这种 case 默认走 wake，因为"起床闹钟"语义更强
+    return matched[0]
+
+
 class VoiceListenThread(QThread):
     text_ready = pyqtSignal(str)
     interrupt_signal = pyqtSignal()
@@ -467,6 +593,16 @@ class VoiceListenThread(QThread):
         silence_timer = time.time()
         start_record_time = 0.0 
 
+        # 🩹 [P0+20-β.1.1 / 2026-05-16] 声波打印节流（治 B6 致命卡顿）
+        # 原症状：每帧（64ms）都 sys.stdout.write 进度条 → PowerShell 看不懂 \r
+        # → 把所有 ~50 字节进度条横向叠成 30K bytes 单行 → 终端阻塞 → 麦克风
+        # 录入再叠加上一段说的话。
+        # 修法：① 100ms 内最多刷一次；② 单段进度条结束（is_speaking 落到 False）
+        # 再统一换行收尾；③ 异常完全吞掉，绝不影响 ASR 主路径。
+        WAVE_PRINT_INTERVAL = 0.10  # 100ms
+        last_wave_print_at = 0.0
+        wave_in_progress = False  # 当前是否在打印一段声波（决定收尾换行）
+
         while True:
             try:
                 data = stream.read(1024, exception_on_overflow=False)
@@ -487,8 +623,15 @@ class VoiceListenThread(QThread):
                         audio_frames = list(pre_roll_buffer) 
                         
                         if self.in_active_conversation:
-                            sys.stdout.write("\n🎙️[接收物理声波] ")
-                            sys.stdout.flush()
+                            try:
+                                # 🩹 β.1.1：起始用 \r 而不是 \n，避免新行+\r 在 PowerShell
+                                # 里堆积视错觉
+                                sys.stdout.write("\r🎙️ [接收物理声波] ")
+                                sys.stdout.flush()
+                                wave_in_progress = True
+                                last_wave_print_at = time.time()
+                            except Exception:
+                                pass
                             # [R7-β5] 第一帧拾到声波 → 屏幕显示 "Listening…"，让 Sir 立刻
                             # 知道 Jarvis 听到了。ASR 完成后由 'user' 频道替换为正式转录。
                             try:
@@ -501,9 +644,16 @@ class VoiceListenThread(QThread):
                         # 👇 Bug E 修复：不要在每个高于阈值的声波帧都顶起 last_interaction_time，
                         # 否则环境噪音（风扇/键盘/音乐）会让焦点模式永远续命，30 秒到不了。
                         # last_interaction_time 现在只在 ASR 真正成功转录出有意义内容时才更新（见下方）。
-                        bars = "█" * min(int(volume / 100), 30)
-                        sys.stdout.write(f"\r🎙️ [接收物理声波] {bars} ".ljust(50))
-                        sys.stdout.flush()
+                        # 🩹 β.1.1：节流到 100ms 一次刷新（每帧 64ms → 平均 1-2 帧刷一次）
+                        now_t = time.time()
+                        if now_t - last_wave_print_at >= WAVE_PRINT_INTERVAL:
+                            try:
+                                bars = "█" * min(int(volume / 100), 30)
+                                sys.stdout.write(f"\r🎙️ [接收物理声波] {bars} ".ljust(50))
+                                sys.stdout.flush()
+                                last_wave_print_at = now_t
+                            except Exception:
+                                pass
 
                     silence_timer = time.time() 
                     audio_frames.append(data)
@@ -528,6 +678,15 @@ class VoiceListenThread(QThread):
                     
                     if is_silence_timeout or is_max_time_reached:
                         is_speaking = False
+                        # 🩹 [P0+20-β.1.1 / 2026-05-16] 收尾换行：保证一段声波结束后
+                        # 后续 [Pipeline]/[Tier]/[Human] 等输出不和进度条粘连。
+                        if wave_in_progress:
+                            try:
+                                sys.stdout.write("\n")
+                                sys.stdout.flush()
+                            except Exception:
+                                pass
+                            wave_in_progress = False
                         
                         if self.in_active_conversation and self.DEBUG_ASR:
                             sys.stdout.write("\r🧠[声波截断] 正在进行神经网络转译...".ljust(50) + "\n")
@@ -1385,6 +1544,10 @@ class JarvisWorkerThread(QThread):
         - v3：新增 _STRONG_REFUSAL_PATTERNS 强拒绝词典，命中即 5 分钟硬冻结，
           且硬冻结连 Conductor 的 is_urgent=True 也绕不过。
         - 通用否定（"不需要" / "no thanks"）即便没有近期 offer_help 也会触发 90s 短冷冻。
+        - [P0+20-β.1.4 / 2026-05-16] 加自我打断白名单（治 B3）：
+          Sir 12:43 实测 "跟我说说啊，不对不对不对，不用不用跟我说，我我要跟你说，
+          我我两点起床" 被误识别成"拒绝帮助"→ NudgeGate 全通道硬冻结 300s。
+          其实 Sir 在自我修正（"不对不对" + "我要跟你说"），不是拒绝 Jarvis。
         """
         try:
             cmd_lower = (cmd or "").lower().strip()
@@ -1394,6 +1557,34 @@ class JarvisWorkerThread(QThread):
             is_refusal = is_strong_refusal or any(p in cmd_lower for p in self._GENERIC_REFUSAL_PATTERNS)
             if not is_refusal:
                 return
+
+            # 🩹 [P0+20-β.1.4 / 2026-05-16] 自我打断 pre-filter：仅对非强拒绝生效。
+            # 强拒绝（"shut up" / "leave me alone" / "不要再提"）即便有口吃修正也按拒绝处理。
+            if not is_strong_refusal:
+                self_interruption_patterns = [
+                    r'不对不对',
+                    r'不是不是',
+                    r'不不不',
+                    r'(?:no\s+){2,}',
+                    r'我我[^\s,，。.]',
+                    r'(我要|我想|我得|我会|我得).{0,12}(跟你|和你|给你|对你|跟我自己).{0,3}说',
+                    r'(?:wait|hold|hang)\s+on',
+                    r'let\s+me\s+(say|tell|explain|finish)',
+                    r'(等[一下下]|等等|等我说)',
+                    r'(?:um|uh|er|呃|嗯).{0,6}我',
+                ]
+                import re as _re_si
+                for pat in self_interruption_patterns:
+                    if _re_si.search(pat, cmd_lower):
+                        try:
+                            from jarvis_utils import bg_log as _si_bg
+                            _si_bg(
+                                f"🩹 [Help Refusal/SelfInterrupt] 自我打断白名单跳过："
+                                f"'{cmd_lower[:60]}' (matched={pat})"
+                            )
+                        except Exception:
+                            pass
+                        return
 
             stm = self.jarvis.short_term_memory or []
             # [v3] 扩大扫描：最近 15 条 + 30 分钟内的 nudge 痕迹（智能轻推/Smart Nudge/Conductor）
@@ -2278,11 +2469,20 @@ Rules:
 4. [CRITICAL] 'is_future_task': MUST be false by default! Only set to true if the user uses EXPLICIT imperative scheduling language such as: "remind me at...", "set an alarm for...", "schedule...", "at X o'clock remind me...", "wake me up at...". Statements about future plans (e.g. "I will go tomorrow", "I want to learn driving") are NOT future tasks. Questions about future events are NOT future tasks. When in doubt, set to false.
 5. 'trigger_time_str': If is_future_task is true, calculate the EXACT target time in 'YYYY-MM-DD HH:MM:00' format based on Current System Time. Otherwise leave empty.
 5a. [TIME-OF-DAY CONTEXT — CRITICAL] When the user says an ambiguous small number (e.g. "两点" / "two o'clock" / "三点" / "five"):
-    - If Current System Time hour < 6 (early morning), default to the SAME early morning today (e.g. at 01:24, "两点睡觉" means 02:00 of TODAY, NOT 14:00).
+    [STEP 1 — Action verb takes precedence over hour-of-day default]:
+    - "起床/醒/wake up/get up/醒来/起来" + small num → ALWAYS interpret as AM (e.g. "两点起床" = 02:00 if night, 14:00 ONLY if user explicitly said "下午两点"). Default: tomorrow morning small_num:00.
+    - "睡觉/睡/sleep/bed/rest" + small num → ALWAYS interpret as the next sleep window. If now is daytime (6-21), "两点睡觉" usually means 02:00 of next morning (or 14:00 only if user explicitly said "下午"/"PM"). If now is late night (22-05), it means the imminent 02:00.
+    - "吃饭/午餐/lunch" + small num → typically 12-13 (lunch) or 18-20 (dinner) — pick by current hour.
+    - "下午/afternoon/PM" → FORCE PM range (12-23).
+    - "凌晨/early morning/midnight/AM" → FORCE early-morning range (0-6).
+    [STEP 2 — If no action verb, use current-hour fallback]:
+    - If Current System Time hour < 6 (early morning), default to SAME early morning today.
     - If Current System Time hour 6-11 (morning), default to the afternoon of TODAY (small num + 12).
     - If Current System Time hour 12-23 (afternoon/evening), default to the evening of TODAY (small num + 12), unless explicitly stated as AM.
+    [STEP 3]:
     - If the computed time is already in the past (< now - 1h), advance by 24h (next day).
-    NEVER blindly map small numbers to 12-23 hour range — always cross-check with Current System Time.
+    NEVER blindly map small numbers to 12-23 hour range — always cross-check with Current System Time AND action verb.
+    EXAMPLE: at 12:43 PM, user says "我两点起床" → trigger_time_str = "<tomorrow_date> 02:00:00" (NOT today 14:00, NOT today 02:00 already-past). At 12:43 PM, user says "我两点睡觉" → trigger_time_str = "<tomorrow_date> 02:00:00" (NOT today 14:00, sleep verb forces next-night).
 6. 'needs_ltm': True IF the user asks about past events, uses vague pronouns, or requests past info.
 7. 'cancel_old_reminder': If the user explicitly asks to CANCEL a previous reminder, extract the OLD intent here. Otherwise leave empty.
 8. [DATABASE ALIGNMENT (CRITICAL)]: The 'search_query' MUST ALWAYS be translated into highly descriptive CHINESE KEYWORDS.
@@ -2428,6 +2628,25 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                     trigger_time_str = gate_data.get("trigger_time_str", "")
                                     trigger_timestamp = 0.0
                                     if gate_data.get("is_future_task") and trigger_time_str:
+                                        try:
+                                            corrected_str, was_corrected, correction_reason = sanitize_trigger_time(
+                                                trigger_time_str,
+                                                gate_data.get("clean_intent", ""),
+                                                cmd,
+                                            )
+                                            if was_corrected:
+                                                trigger_time_str = corrected_str
+                                                gate_data["trigger_time_str"] = corrected_str
+                                                try:
+                                                    from jarvis_utils import bg_log as _stz_bg
+                                                    _stz_bg(
+                                                        f"🛠️ [TimeSanitize] '{gate_data.get('clean_intent','')[:40]}' "
+                                                        f"trigger 修正 → {corrected_str} (reason={correction_reason})"
+                                                    )
+                                                except Exception:
+                                                    pass
+                                        except Exception:
+                                            pass
                                         try:
                                             time_struct = time.strptime(trigger_time_str, "%Y-%m-%d %H:%M:%S")
                                             trigger_timestamp = time.mktime(time_struct)
@@ -2756,20 +2975,57 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                 except Exception as e:
                                                     result['gate_result_text'] = f"Memory deletion FAILED: {str(e)[:80]}."
                                         else:
-                                            try:
-                                                from jarvis_utils import bg_log
-                                                bg_log(f"🔧 [Memory Correction] '{old_val}' → '{new_val}'")
-                                            except Exception:
-                                                print(f"║ 🔧 [Memory Correction] '{old_val}' → '{new_val}'")
-                                            try:
-                                                queries = [q for q in [search_hint, old_val, cmd] if q and len(q) >= 2]
-                                                ltm_results = []
-                                                for q in queries:
-                                                    ltm_results = self.jarvis.hippocampus.search_memory(
-                                                        self.jarvis.gemini_key, q, top_k=5
+                                            # 🩹 [P0+20-β.1.3 / 2026-05-16] 性质替换守卫（治 B2）：
+                                            # Sir 12:43 实测：原存"两点起床"，Sir 又说"我要睡觉"，LLM 把它
+                                            # 当作"correction" old=两点起床 / new=两点睡觉 → 把起床闹钟覆盖
+                                            # 成了睡觉计划。性质完全不同。
+                                            #
+                                            # 修法：检测 old_val 和 new_val 的语义类别，不同 → 拒绝替换，
+                                            # 转为新记忆独立保存。同类（如 "8 点起床" → "9 点起床"）放行。
+                                            old_cat = detect_semantic_category(old_val)
+                                            new_cat = detect_semantic_category(new_val)
+                                            category_conflict = (
+                                                old_cat != 'misc' and new_cat != 'misc' and old_cat != new_cat
+                                            )
+                                            if category_conflict:
+                                                try:
+                                                    from jarvis_utils import bg_log as _cat_bg
+                                                    _cat_bg(
+                                                        f"🛡️ [Memory Correction Guard] 性质冲突拒绝替换："
+                                                        f"old='{old_val}' ({old_cat}) → new='{new_val}' ({new_cat})。"
+                                                        f"转为新记忆独立保存。"
                                                     )
-                                                    if ltm_results:
-                                                        break
+                                                except Exception:
+                                                    pass
+                                                result['gate_result_text'] = (
+                                                    f"Memory correction REFUSED: '{old_val}' is a {old_cat} entry, "
+                                                    f"but '{new_val}' is a {new_cat} entry — different category. "
+                                                    f"Saved '{new_val}' as a NEW memory instead of overwriting."
+                                                )
+                                                # 直接进入"未匹配走新记忆"路径（updated=False）
+                                                updated = False
+                                                ltm_results = []
+                                                # 跳到下方 if not updated 的兜底分支
+                                                pass
+                                            else:
+                                                try:
+                                                    from jarvis_utils import bg_log
+                                                    bg_log(f"🔧 [Memory Correction] '{old_val}' → '{new_val}'")
+                                                except Exception:
+                                                    print(f"║ 🔧 [Memory Correction] '{old_val}' → '{new_val}'")
+                                            try:
+                                                if category_conflict:
+                                                    queries = []
+                                                    ltm_results = []
+                                                else:
+                                                    queries = [q for q in [search_hint, old_val, cmd] if q and len(q) >= 2]
+                                                    ltm_results = []
+                                                    for q in queries:
+                                                        ltm_results = self.jarvis.hippocampus.search_memory(
+                                                            self.jarvis.gemini_key, q, top_k=5
+                                                        )
+                                                        if ltm_results:
+                                                            break
                                                 updated = False
                                                 for mem in (ltm_results or []):
                                                     mem_intent = mem.get('intent', '').lower()

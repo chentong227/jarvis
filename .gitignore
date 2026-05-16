@@ -42,6 +42,11 @@ memory_pool/*.db-shm
 memory_pool/*.db-wal
 # skill_registry.jsonl is a runtime artifact
 memory_pool/*.jsonl
+# [P0+20-β.0.1 / 2026-05-16] directive 计数器（fired/rejected/helped）：runtime 状态
+memory_pool/directive_registry.json
+memory_pool/directive_review.json
+# [P0+20-β.1.5 / 2026-05-16] KeyRouter 永久剔除持久化：runtime 状态
+memory_pool/key_router_state.json
 jarvis_config/screenshots/
 jarvis_config/user_status_history/
 jarvis_config/user_status_ledger.json

@@ -101,6 +101,20 @@ class KeyRouter:
         self._openrouter_alert_date = ''
         self._openrouter_call_count_today = 0
         self._daily_reset_day = time.strftime('%Y-%m-%d')
+
+        # 🩹 [P0+20-β.1.5 / 2026-05-16] 永久剔除持久化（治 B7）：
+        # 旧版 α.2 只在内存里标 permanently_dead → 进程重启后又开始尝试 google_1，
+        # 第一次 PROJECT_DENIED 又触发"标记不健康 + cooldown 5min"，每次启动都浪费一轮请求。
+        # 新版：启动时从 memory_pool/key_router_state.json 载入；触发永久剔除时立即写盘。
+        # 提供 reset_permanent_death(label) 让 Sir rotate key 后主动清除。
+        try:
+            self._load_permanent_death_state()
+        except Exception as _e:
+            try:
+                from jarvis_utils import bg_log as _kr_bg
+                _kr_bg(f"⚠️ [KeyRouter] 永久剔除状态载入失败（首次运行正常）: {_e}")
+            except Exception:
+                pass
     
     def _init_key(self, key: str, label: str, provider: str, max_concurrent: int):
         self._active_calls[key] = 0
@@ -259,6 +273,11 @@ class KeyRouter:
                         bg_log(msg)
                     except Exception:
                         print(msg)
+                # 🩹 [P0+20-β.1.5 / 2026-05-16] 立即写盘（治 B7）
+                try:
+                    self._save_permanent_death_state()
+                except Exception:
+                    pass
 
         if is_billing_error or is_permission_error or status['error_count'] >= 3:
             status['healthy'] = False
@@ -301,6 +320,104 @@ class KeyRouter:
         if not key or key not in self._key_status:
             return False
         return self._key_status[key].get('permanently_dead', False)
+
+    # ============================================================
+    # 🩹 [P0+20-β.1.5 / 2026-05-16] 永久剔除持久化
+    # ============================================================
+    _STATE_FILE_PATH = 'memory_pool/key_router_state.json'
+
+    def _load_permanent_death_state(self):
+        """启动时从 disk 载入永久死亡 key list，恢复 _key_status 标记。"""
+        import os as _os
+        import json as _json
+        if not _os.path.exists(self._STATE_FILE_PATH):
+            return
+        try:
+            with open(self._STATE_FILE_PATH, 'r', encoding='utf-8') as f:
+                payload = _json.load(f) or {}
+        except Exception:
+            return
+        dead_dict = payload.get('permanently_dead') or {}
+        if not isinstance(dead_dict, dict) or not dead_dict:
+            return
+        restored = []
+        for label, info in dead_dict.items():
+            if not isinstance(label, str) or not isinstance(info, dict):
+                continue
+            key = self._resolve_key(label)
+            if not key or key not in self._key_status:
+                continue
+            status = self._key_status[key]
+            status['permanently_dead'] = True
+            status['permanent_death_count'] = max(int(info.get('count', 3)), 3)
+            status['permanent_death_reason'] = str(info.get('reason', ''))[:200]
+            status['permanent_death_announced'] = True
+            status['healthy'] = False
+            restored.append(label)
+        if restored:
+            try:
+                from jarvis_utils import bg_log as _kr_bg
+                _kr_bg(
+                    f"⛔ [KeyRouter PERMANENT/Restored] 从 disk 恢复永久剔除 keys: {restored}。"
+                    f" rotate key + 调 reset_permanent_death() 可清除。"
+                )
+            except Exception:
+                pass
+
+    def _save_permanent_death_state(self):
+        """把当前永久死亡 key list 写到 disk（atomic write）。"""
+        import os as _os
+        import json as _json
+        try:
+            _os.makedirs(_os.path.dirname(self._STATE_FILE_PATH), exist_ok=True)
+        except Exception:
+            pass
+        dead_dict = {}
+        for key, status in self._key_status.items():
+            if status.get('permanently_dead', False):
+                dead_dict[status['label']] = {
+                    'reason': status.get('permanent_death_reason', ''),
+                    'count': status.get('permanent_death_count', 3),
+                    'since_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                }
+        payload = {'permanently_dead': dead_dict}
+        try:
+            tmp_path = self._STATE_FILE_PATH + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                _json.dump(payload, f, ensure_ascii=False, indent=2)
+            _os.replace(tmp_path, self._STATE_FILE_PATH)
+        except Exception as _e:
+            try:
+                from jarvis_utils import bg_log as _kr_bg
+                _kr_bg(f"⚠️ [KeyRouter] 永久剔除状态写盘失败: {_e}")
+            except Exception:
+                pass
+
+    def reset_permanent_death(self, label: str) -> bool:
+        """Sir rotate key 后主动调用清除某 label 的永久死亡标记。
+
+        返回 True 表示成功清除并重写 disk。
+        """
+        key = self._resolve_key(label)
+        if not key or key not in self._key_status:
+            return False
+        with self._lock:
+            status = self._key_status[key]
+            if not status.get('permanently_dead', False):
+                return False
+            status['permanently_dead'] = False
+            status['permanent_death_count'] = 0
+            status['permanent_death_reason'] = ''
+            status['permanent_death_announced'] = False
+            status['healthy'] = True
+            status['error_count'] = 0
+        self._save_permanent_death_state()
+        try:
+            from jarvis_utils import bg_log as _kr_bg
+            _kr_bg(f"✅ [KeyRouter] {label} 永久剔除标记已清除（Sir rotate 后调用）。")
+        except Exception:
+            pass
+        return True
     
     def is_openrouter_active(self) -> bool:
         return self._openrouter_call_count_today > 0

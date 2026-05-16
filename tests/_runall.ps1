@@ -93,7 +93,8 @@ $tests = @(
     "_test_r7_beta_seamless_dialog",
     "_test_r7_oneshot_and_screenshot",
     "_test_v5_sleep_intent",
-    "_test_p0_plus_20_b01_directive_registry"
+    "_test_p0_plus_20_b01_directive_registry",
+    "_test_p0_plus_20_b1_firefighting"
 )
 
 foreach ($t in $tests) {
