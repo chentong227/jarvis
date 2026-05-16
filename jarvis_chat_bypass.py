@@ -493,6 +493,38 @@ class ChatBypass:
         except Exception:
             pass
 
+        # 🩹 [P0+20-β.1.14 / 2026-05-16] B12 修：拦截孤立单词 done-claim（治割裂感）。
+        # Sir 15:58 实测：LLM 在 FAST_CALL 后习惯性输出孤立"Done"或"OK"（1-2 词），
+        # CosyVoice 克隆短句 prosody 无上下文 → 严重失真 → 主对话框里 "Understood, Sir.
+        # Done Done, Sir - already completed" 中间那个"Done"听感断裂。
+        # 修法：1 词的 done-claim 类抢答词不送 TTS（字幕仍走，让 Sir 看见，但不刺耳）。
+        try:
+            if text:
+                import re as _re_orphan
+                # 剥所有标点/空白后还原成单词集合
+                _toks = _re_orphan.findall(r"[a-zA-Z]+|['\u4e00-\u9fa5]+", text)
+                if len(_toks) <= 1:
+                    _normalized = (_toks[0].lower() if _toks else "")
+                    _ORPHAN_DONE_WORDS = {
+                        'done', 'ok', 'okay', 'okie', 'okey', 'sure', 'fine',
+                        'set', 'fixed', 'adjusted', 'opened', 'closed', 'completed',
+                        'understood', 'noted', 'acknowledged', 'right', 'yep', 'yeah',
+                        # 中文同款
+                        '好', '好的', '是', '是的', '行', '行了', '嗯', '可以', '完成', '完毕',
+                    }
+                    if _normalized in _ORPHAN_DONE_WORDS:
+                        try:
+                            from jarvis_utils import bg_log as _orphan_bg
+                            _orphan_bg(
+                                f"🔇 [Audio Guard / Orphan Done] 拦截孤立 done-claim TTS: '{text[:30]}' "
+                                f"(LLM 在 FAST_CALL 后习惯性抢答，CosyVoice 短句失真避免)"
+                            )
+                        except Exception:
+                            pass
+                        return
+        except Exception:
+            pass
+
         # 🛡️ Bug K 防御性去重：如果最近 2 秒内已经把"完全相同的短句"丢进过 audio_queue，
         # 直接吞掉。这是兜底 —— 即便上层逻辑出现 splitter + end-flush 双发，TTS 也不会念两遍。
         # 只针对短句（<= 40 字符），避免长段落正常变化文本被误吞。
@@ -2328,6 +2360,22 @@ Spoken English:"""
                             if ctrl_cmd in ("subtitle_on", "subtitle_off", "orb_on", "orb_off"):
                                 self.subtitle_queue.put(("control", ctrl_cmd))
                                 _tool_results.append(f"✅ ui_control.{ctrl_cmd}")
+                                # 🩹 [P0+20-β.1.13 / 2026-05-16] B11 修：ui_control 也走 Fast Path
+                                # Sir 15:58 实测："关闭你的UI" iter1 成功 → iter2 LLM 又重复 FAST_CALL →
+                                # 熔断 + wrap-up 罐头音 + 3 次 first token 浪费。修法：单步 ui_control
+                                # 成功后直接 break，让 wrap-up synthesis 用 single_step_fast_path 路径
+                                # 出干脆的 "Done, Sir."（既不抢答也不浪费 iter）。
+                                _ui_lower = user_input.strip().lower()
+                                _chain_hints = (' and then ', ' then ', ' after that ', ';', '然后', '再', '接着', '另外', '顺便')
+                                _has_chain_hint = any(h in user_input for h in _chain_hints) or \
+                                                  any(h in _ui_lower for h in _chain_hints)
+                                if not _has_chain_hint and len(user_input) <= 50:
+                                    print(f"\n║ 🚀 [Fast Path] ui_control.{ctrl_cmd} 单步成功，跳过大模型二轮总结")
+                                    _circuit_broken_reason = "single_step_fast_path"
+                                    if '_stream_key_name' in dir() and _stream_key_name:
+                                        self.key_router.release(_stream_key_name)
+                                        _stream_key_name = None
+                                    break
                             else:
                                 _tool_results.append(f"❌ ui_control: 未知指令 {ctrl_cmd}")
                         else:
@@ -2489,6 +2537,29 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 and (not _stripped_full or (_all_tools_failed and _has_done_claim))
             )
 
+            # 🩹 [P0+20-β.1.13 / 2026-05-16] B10/B12 修：wrap-up audio 默认抑制策略。
+            # Sir 反馈"罐头音割裂感严重" + 15:58 实测 jarvis_20260516_154335.log:435/443/449：
+            # LLM 流式输出的自然句子 + wrap-up 补的短罐头句 prosody 完全不同 → 听感断裂。
+            # CosyVoice 短句（"Done, Sir." 2 词）prosody 抖动是次因，**两段音频拼接断裂**是主因。
+            #
+            # 策略：精准区分场景
+            # - 工具真成功（_any_tool_ok=True）→ 默认抑制 wrap-up audio（视觉/字幕足够，无需播音）
+            # - duplicate_call + LLM 已 done-claim → 抑制（B10 原修，避免重复）
+            # - 真失败（_all_tools_failed / no tool）→ 保留 audio + 用自然长句（CosyVoice 友好）
+            _suppress_wrap_audio = bool(
+                _circuit_broken_reason and (
+                    # 旧 B10 case：duplicate_call + LLM 抢答 done
+                    (_circuit_broken_reason.startswith('duplicate_call:')
+                     and _any_tool_ok and _stripped_full and _has_done_claim)
+                    # B12 扩展：单步设备指令成功，"Done, Sir."短句和 LLM 自然输出拼起来割裂
+                    or _circuit_broken_reason == 'single_step_fast_path'
+                    # B12 扩展：max_iterations 但工具至少有一次成功 → 视觉/字幕足够
+                    or (_circuit_broken_reason == 'max_iterations' and _any_tool_ok)
+                    # B12 扩展：duplicate_call + 工具成功（LLM 没抢答也抑制，因为字幕已表态）
+                    or (_circuit_broken_reason.startswith('duplicate_call:') and _any_tool_ok)
+                )
+            )
+
             if _need_synthesis:
                 last_ok = next((r for r in reversed(_tool_results) if r.startswith("✅")), None)
                 last_bad = next((r for r in reversed(_tool_results) if r.startswith(("❌", "🛡️"))), None)
@@ -2586,12 +2657,20 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     _ws_bg(f"🩹 [Wrap-up Synthesis] 工具链熔断({_circuit_broken_reason})后本地合成收尾: {en}")
                 except Exception:
                     pass
-                try:
-                    self._put_audio(en)
-                    self.subtitle_queue.put(("en", en))
-                    self.subtitle_queue.put(("zh", zh))
-                except Exception:
-                    pass
+                # 🩹 [P0+20-β.1.13 / 2026-05-16] B10 修：只在不抑制时才 _put_audio + subtitle
+                if not _suppress_wrap_audio:
+                    try:
+                        self._put_audio(en)
+                        self.subtitle_queue.put(("en", en))
+                        self.subtitle_queue.put(("zh", zh))
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        from jarvis_utils import bg_log as _ws_bg
+                        _ws_bg(f"🔇 [Wrap-up Audio Suppressed] 已抑制（LLM 已自己说过 done），避免罐头音重复")
+                    except Exception:
+                        pass
 
             # [P0+18-a.15 / 2026-05-15] 修 BUG #10: Tool Results 整合进主对话框（╟─── 分隔），
             # 不再开独立 ╔..╚ 框（嵌套混乱）。让 Sir 一眼看清"说话→Jarvis 回答→行动→Jarvis 回答"。
@@ -2746,6 +2825,21 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             self.jarvis.correction_loop.on_jarvis_response(final_reply)
         if hasattr(self, 'jarvis') and hasattr(self.jarvis, 'content_tracker'):
             self.jarvis.content_tracker.record_interaction(clean_user_input, final_reply)
+        # 🎯 [P0+20-β.0.5 / 2026-05-16] L2 directive 异步评分 (Gemini-3-Flash via OpenRouter)
+        # 把本轮 fired 的 directive ids + reply + user_input 喂给 evaluator，背景评分。
+        # 主路径不阻塞；失败/超时静默丢弃；rate limit 命中跳过本批。
+        try:
+            evaluator = getattr(self.jarvis, 'directive_evaluator', None)
+            if evaluator is not None:
+                fired_ids = list(getattr(self.jarvis, '_l2_last_fired_ids', []) or [])
+                if fired_ids and final_reply and clean_user_input:
+                    evaluator.evaluate_async(
+                        fired_directive_ids=fired_ids,
+                        user_input=clean_user_input,
+                        jarvis_reply=final_reply,
+                    )
+        except Exception:
+            pass
         _t_total = time.time() - _t0
         try:
             from jarvis_utils import bg_log

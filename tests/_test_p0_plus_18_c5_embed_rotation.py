@@ -58,12 +58,32 @@ class TestKeyRouterPermissionErrorMarksUnhealthy(unittest.TestCase):
 
     def setUp(self):
         # 直接构造一个 KeyRouter 实例
+        # 🩹 [P0+20-β.1.5 / 2026-05-16] β.1.5 KeyRouter 永久剔除持久化生效后
+        # 必须 patch _STATE_FILE_PATH 到 tmp，避免被 memory_pool/key_router_state.json
+        # 残留污染（health_check / 真机跑过的 PROJECT_DENIED 会留下 unhealthy 状态）
+        import tempfile
+        import os as _os
         from jarvis_nerve import KeyRouter
+        self._tmpdir = tempfile.mkdtemp(prefix='kr_c5_')
+        self._tmpstate = _os.path.join(self._tmpdir, 'key_router_state.json')
+        self._orig_path = KeyRouter._STATE_FILE_PATH
+        KeyRouter._STATE_FILE_PATH = self._tmpstate
         self.kr = KeyRouter(
             main_brain_key='openrouter_main_key',
             google_keys=['gkey1', 'gkey2', 'gkey3'],
             openrouter_keys=['okey1', 'okey2', 'okey3'],
         )
+
+    def tearDown(self):
+        import os as _os
+        from jarvis_nerve import KeyRouter
+        KeyRouter._STATE_FILE_PATH = self._orig_path
+        try:
+            if _os.path.exists(self._tmpstate):
+                _os.remove(self._tmpstate)
+            _os.rmdir(self._tmpdir)
+        except Exception:
+            pass
 
     def _is_healthy(self, label: str) -> bool:
         key = self.kr._resolve_key(label)

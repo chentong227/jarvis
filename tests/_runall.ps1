@@ -96,7 +96,8 @@ $tests = @(
     "_test_p0_plus_20_b01_directive_registry",
     "_test_p0_plus_20_b1_firefighting",
     "_test_p0_plus_20_b1_nameerror_guards",
-    "_test_p0_plus_20_b1_future_tense_lie"
+    "_test_p0_plus_20_b1_future_tense_lie",
+    "_test_p0_plus_20_beta05_evaluator"
 )
 
 foreach ($t in $tests) {

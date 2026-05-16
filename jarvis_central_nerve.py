@@ -160,25 +160,15 @@ Your core traits are IMMUTABLE and must be expressed in EVERY response:
   - "A worthy request, but one I cannot fulfill from here, Sir."
 - Acknowledging a request ("Noted, Sir.", "Understood.") is NOT the same as claiming completion. The former is allowed; the latter requires a real tool call.
 
-[NUDGE / AGENDA HONESTY — [P0+18-f.2 / 2026-05-15]]:
-- There is NO "active agenda" you can directly modify by speaking. Phrases like
-  "I've struck it from the active agenda", "I've removed it from your agenda",
-  "I've muted that nudge", "我已经把它从议程中删除了", "我已把它从待办里去掉"
-  are FORBIDDEN unless you actually called a hand tool (e.g.
-  `memory_hands.delete_record`, `memory_hands.modify_record`) in this turn.
-- When Sir says "不用再提" / "可以了" / "stop nudging me about X" / "别再提这个":
-  - If X corresponds to a REAL reminder in the ACTIVE REMINDERS block above →
-    you MAY call `memory_hands.delete_record` and report "Done, Sir.".
-  - If X is a transient nudge (SilentNudge, Conductor offer, dormant_project, etc.)
-    you have NO tool to mute → answer honestly: "Acknowledged, Sir.
-    The nudge cooldown is engaged automatically; I'll keep it dormant unless you raise it again."
-    DO NOT pretend you "struck it" / "removed it" / "muted it".
-- Honest fallback templates (use ONE, then ---ZH---):
-  - "Acknowledged, Sir. I'll hold off on that for now."
-  - "Understood. I'll keep that line quiet until you raise it again."
-  - "Noted, Sir — that prompt is on cooldown."
-
 Your relationship with Sir is that of a trusted butler to his employer: respectful, efficient, and quietly indispensable."""
+
+# 🩹 [P0+20-β.1.12 / 2026-05-16] PERSONA iterate (PROMPT_REFACTOR_PLAN.md §3 L0 精简)：
+# 原 PERSONA 末尾的 nudge agenda honesty 段（18 行 / ~1500 chars）已搬到 L2
+# directive `nudge_agenda_honesty` (jarvis_directives.py)。directive trigger 在
+# 用户说"不用再提" 且上一轮 Jarvis 含 completion claim 时按需注入，比 L0 永远全
+# 注入更精准。原段保留在 jarvis_directives.py 里满足 _test_p0_plus_18_f testcase
+# 的 corpus 扫描断言（已把 jarvis_directives.py 加进 NERVE_SOURCES）。
+# PERSONA: 3894 → 2728 chars (-30%)。
 
 
 class CentralNerve:
@@ -358,6 +348,24 @@ class CentralNerve:
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[DirectiveRegistry] 初始化失败：{_dr_e}")
+            except Exception:
+                pass
+
+        # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
+        # 走 OpenRouter 的 google/gemini-2.5-flash-preview，每轮对话完成后异步评分
+        # fired 的 directive 是否真被 LLM 遵守 (yes/no/partial) → 写回 directive.helped
+        # 主路径不阻塞；失败/超时静默丢弃；rate limit 60 calls/min。
+        self.directive_evaluator = None
+        try:
+            from jarvis_directive_evaluator import get_default_evaluator as _get_eval
+            self.directive_evaluator = _get_eval(
+                key_router=self.key_router,
+                registry=_dr if '_dr' in dir() else None,
+            )
+        except Exception as _ev_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[DirectiveEvaluator] 初始化失败（非致命，评分链跳过）：{_ev_e}")
             except Exception:
                 pass
 

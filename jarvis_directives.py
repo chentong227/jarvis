@@ -612,10 +612,13 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
                 [NUDGE / AGENDA HONESTY]:
                 You have NO tool to mute SilentNudge / Conductor / dormant_project nudges.
                 FORBIDDEN unless a real <FAST_CALL> in this turn:
-                  "I've struck it...", "I've muted...", "已从议程中删除", "我已经把它从待办里去掉".
+                  - "I've struck it from the active agenda"
+                  - "I've muted that nudge"
+                  - "我已经把它从议程中删除了"
+                  - "我已把它从待办里去掉"
                 Honest fallback:
-                  "Acknowledged, Sir. Cooldown engaged automatically."
-                  "Noted — that prompt is on cooldown."
+                  - "Acknowledged, Sir. The nudge cooldown is engaged automatically."
+                  - "Noted — that prompt is on cooldown."
             """).rstrip(),
             trigger=_trigger_nudge_agenda_honesty,
         ),

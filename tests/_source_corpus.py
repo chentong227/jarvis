@@ -101,6 +101,9 @@ NERVE_SOURCES: List[str] = [
     # [P0+19-9 / 2026-05-16] 已抽出：
     'jarvis_worker.py',
     'jarvis_ui.py',
+
+    # [P0+20-β.0.1 / 2026-05-16] L2 directive registry 承载 LLM 行为约束文本：
+    'jarvis_directives.py',
 ]
 
 
