@@ -54,6 +54,21 @@ import sys
 import time
 
 
+# [P0+20-β.2.2 fix / 2026-05-16] PowerShell 控制台中文乱码修复：
+# - Python stdout/stderr reconfigure 到 UTF-8（让 Python 输出 UTF-8 bytes）
+# - chcp 65001 切控制台 code page（让 PowerShell 按 UTF-8 解读 bytes）
+# 二者缺一不可。jarvis_utils.py 启动时已做第 1 步，但 CLI 单独跑不走那条路径。
+if sys.platform == 'win32':
+    try:
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        os.system('chcp 65001 > nul 2>&1')
+    except Exception:
+        pass
+
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from jarvis_relational import (
