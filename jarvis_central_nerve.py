@@ -396,6 +396,32 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [P0+20-β.2.2 / 2026-05-16] RelationalState —— Jarvis 灵魂工程 Layer 2
+        # "我们之间"——inside_jokes / unspoken_protocols / unfinished_business
+        # 由 Sir 用 CLI（scripts/relational_dump.py）录入，注入 prompt 让主脑在自然
+        # 对话里调用，而不是模板硬塞。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §2.2 + §3.3
+        self.relational_state = None
+        try:
+            from jarvis_relational import get_default_store as _get_rel
+            self.relational_state = _get_rel()
+            try:
+                from jarvis_utils import bg_log as _rs_bg
+                _rs_bg(
+                    f"💞 [RelationalState] jokes={len(self.relational_state.list_inside_jokes())} "
+                    f"protocols={len(self.relational_state.list_protocols())} "
+                    f"unfinished={len(self.relational_state.list_unfinished())} "
+                    f"(灵魂工程 Layer 2 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _rs_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[RelationalState] 初始化失败（非致命）：{_rs_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
@@ -774,10 +800,10 @@ class CentralNerve:
             except Exception:
                 pass
 
-        # 🩹 [P0+20-β.2.0+1 / 2026-05-16] 灵魂工程 Layer 0+1 — 拼到 core_persona 末尾
+        # 🩹 [P0+20-β.2.0+1+2 / 2026-05-16] 灵魂工程 Layer 0+1+2 — 拼到 core_persona 末尾
         # 所有 prompt branch (full/light/short/wake/factual/reminder) 都以 {core_persona} 开头，
-        # 把 self_anchor (Layer 0) + soul_block (Layer 1) 拼到 base persona 之后即可一次覆盖
-        # 所有路径，无需改 6 个 template。
+        # 把 self_anchor (Layer 0) + soul_block (Layer 1) + relational_block (Layer 2)
+        # 拼到 base persona 之后即可一次覆盖所有路径，无需改 6 个 template。
         # 详 docs/JARVIS_SOUL_DRIVE.md §4 注入路径。
         _t_soul = time.time()
         _base_persona = self.prompt_cache.get_or_build(
@@ -797,12 +823,23 @@ class CentralNerve:
                 soul_block = self.concerns_ledger.to_prompt_block(top_n=3, max_chars=600)
         except Exception:
             soul_block = ''
-        # 拼接：base PERSONA → Layer 0 → Layer 1
+        # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished）
+        relational_block = ''
+        try:
+            if self.relational_state is not None:
+                relational_block = self.relational_state.to_prompt_block(
+                    top_jokes=3, top_unfinished=2, max_chars=700
+                )
+        except Exception:
+            relational_block = ''
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 2
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
         if soul_block:
             _parts.append(soul_block)
+        if relational_block:
+            _parts.append(relational_block)
         core_persona = '\n\n'.join(_parts)
         self._asm_stage_t['soul_block'] = (time.time() - _t_soul) * 1000
 
