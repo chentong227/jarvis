@@ -1,0 +1,144 @@
+# =============================================================================
+# Jarvis Personal Butler -- .gitignore
+# =============================================================================
+# Order: secrets first -> runtime data -> Python/IDE leftovers
+#
+# Security rule: NEVER commit anything containing real API keys,
+#                personal info, or login credentials.
+#
+# Important: .gitignore does NOT support inline comments. A pattern like
+#   `foo # comment`  will be treated as the literal pattern "foo # comment",
+# which silently fails to match. Therefore every comment is on its own line.
+# =============================================================================
+
+
+# === SECRETS ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets.json
+credentials.json
+
+
+# === jarvis_config sensitive data ===
+# Note: jarvis_config/keys.py is a pure dotenv loader (only imports os.environ),
+# it MUST be committed, otherwise `from jarvis_config.keys import load_keys`
+# fails after a fresh clone.
+# Bilibili login session (~135KB)
+jarvis_config/bilibili_auth.json
+# Sir personal profile (~17KB)
+jarvis_config/sir_profile.json
+jarvis_config/*_auth.json
+jarvis_config/*.token
+# local cache like keys.local.json
+jarvis_config/keys.*.json
+
+
+# === Runtime data ===
+memory_pool/*.db
+memory_pool/*.db-shm
+memory_pool/*.db-wal
+# skill_registry.jsonl is a runtime artifact
+memory_pool/*.jsonl
+jarvis_config/screenshots/
+jarvis_config/user_status_history/
+jarvis_config/user_status_ledger.json
+jarvis_config/jarvis_os_audit.log
+jarvis_config/os_landmarks.json
+
+
+# === Logs ===
+docs/runtime_logs/
+docs/funnel_logs/
+*.log
+
+
+# === Large binary assets (use Git LFS later, currently local) ===
+ffmpeg.exe
+ffprobe.exe
+# CosyVoice / TTS model weights -- single file up to ~850MB, exceeds
+# GitHub's 100MB hard limit and bloats clone time. Users should re-download
+# them via install.bat or from the model hub. config.json / tokenizer.json
+# stay in git as they are tiny and needed at load time.
+*.safetensors
+asset/**/*.safetensors
+# all wav ignored ...
+*.wav
+# ... but keep ONLY the root-level jarvis_prompt.wav (5s TTS anchor audio).
+# Leading slash anchors to repo root, so memory_pool/jarvis_prompt.wav etc.
+# (which are runtime artifacts) stay ignored.
+!/jarvis_prompt.wav
+*.mp4
+*.mkv
+
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+
+# === Virtualenvs ===
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+
+# === IDE / Editor ===
+.vscode/settings.json
+.vscode/launch.json
+.vscode/.ropeproject
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+
+# === Cursor / Agent temp ===
+.cursor/
+.aider*
+
+
+# === Third-party submodules / heavy deps ===
+# CosyVoice is treated as a submodule, not committed here
+CosyVoice/
+# but keep the placeholder
+!CosyVoice/.gitkeep
+
+
+# === Test artifacts ===
+tests/__pycache__/
+tests/_test_output.txt
+tests/benchmark_result.txt
+tests/stress_output.txt
+tests/stress_test_report.txt
+
+
+# === Temp analysis files ===
+# full pip freeze, local reference only
+requirements.frozen.txt
+# temp DB inspection script
+_db_inspect.py
+# P0+18-a.5 placeholder
+test_dummy.txt
+
+
+# === OS temp ===
+nul
+*.tmp

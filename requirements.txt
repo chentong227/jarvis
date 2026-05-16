@@ -1,0 +1,46 @@
+# =============================================================================
+# Jarvis Personal Butler — Runtime Dependencies
+# =============================================================================
+# 锁版本来源：本机 venv `pip freeze` (Python 3.9.13, 2026-05-15)
+# 设计原则：只列「源码直接 import」的包，让 pip 自己解决 transitive。
+# 改版本前请先看 docs/NERVE_SPLIT_PLAN.md §P0+19-deps 章节。
+# =============================================================================
+
+# === LLM / 网络 API ===
+openai==2.29.0                # l1_right_brain.py / l3_left_brain.py / l5_reflection_brain.py
+google-genai==1.47.0          # jarvis_hippocampus.py / jarvis_utils.py (genai client)
+httpx==0.28.1                 # jarvis_utils.py (HTTP 客户端 + retry)
+python-dotenv==1.2.1          # 从 .env 加载 API keys
+
+# === 音频 / TTS / ASR ===
+# torch / torchaudio / torchvision 是 CUDA 12.1 版本！见 scripts/install.ps1
+# 这里只声明，install 脚本会用 --extra-index-url 装 +cu121 build
+torch==2.3.1
+torchaudio==2.3.1
+funasr==1.3.1                 # ASR — jarvis_nerve.py 顶部 import
+soundfile==0.12.1             # jarvis_nerve.py / vocal_cord
+PyAudio==0.2.14               # jarvis_vocal_cord.py 声卡
+numpy==1.26.4                 # 全局；CosyVoice 兼容必须 <2.0
+
+# === Windows 系统 / GUI ===
+pywin32==311                  # win32gui / win32api / win32con
+comtypes==1.4.15              # COM 接口（pycaw 依赖）
+pycaw==20251023               # 音量控制
+psutil==7.2.2                 # 进程/系统监控
+
+# === PyQt5 / OpenGL UI ===
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.17.1
+PyOpenGL==3.1.10              # 呼吸灯 OpenGL 渲染
+
+# === 图像 / 截图 ===
+Pillow==10.4.0                # PIL ImageGrab / Image — nerve.py 顶部
+
+# === 文本 / 模糊匹配 ===
+fuzzywuzzy==0.18.0            # jarvis_nerve.py / jarvis_hippocampus.py / jarvis_fuzzy_resolver.py
+python-Levenshtein==0.27.1    # fuzzywuzzy 性能加速
+colorama==0.4.6               # 终端 ANSI 着色 (P0+18-e.4 / P0+18-f.1)
+
+# === 语音识别 ===
+SpeechRecognition==3.14.5     # jarvis_nerve.py 顶部 import sr

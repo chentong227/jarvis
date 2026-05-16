@@ -1,0 +1,80 @@
+# =============================================================================
+# Jarvis Personal Butler — pyproject.toml
+# 标准化项目元信息 + pytest / ruff 配置
+# =============================================================================
+
+[project]
+name = "jarvis-personal-butler"
+version = "0.18.0"  # 与 TODO marker 同步：P0+18-f 完工版本
+description = "Sir's personal J.A.R.V.I.S. — vertical desktop agent (Windows-only)"
+readme = "README.md"
+requires-python = ">=3.9,<3.11"  # 实测 Python 3.9.13；3.11+ 未验证
+license = {text = "Private"}
+authors = [
+    {name = "Sir"}
+]
+
+# 运行时依赖见 requirements.txt（保持单一来源）
+# 这里只放 build/test 必需的元信息
+
+# =============================================================================
+# pytest 配置
+# =============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["_test_*.py", "test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-q",                        # quiet
+    "--tb=short",                # 短回溯
+    "--strict-markers",          # marker 必须注册
+    "-p no:cacheprovider",       # 关 .pytest_cache 避免污染
+]
+markers = [
+    "slow: 慢测试 (> 5s)",
+    "integration: 端到端集成测试",
+    "skip_in_ci: 暂不在 CI 跑（如真机麦克风测试）",
+]
+# 静音 funasr / torch 的 deprecation 警告
+filterwarnings = [
+    "ignore::DeprecationWarning:funasr.*",
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::UserWarning:pkg_resources.*",
+]
+
+# =============================================================================
+# Ruff (lint + format)
+# =============================================================================
+[tool.ruff]
+line-length = 120  # 中文 prompt 行长容忍
+target-version = "py39"
+exclude = [
+    "CosyVoice/",           # third-party submodule
+    "memory_pool/",         # 运行时数据
+    "docs/runtime_logs/",
+    "docs/funnel_logs/",
+    "asset/",
+    "__pycache__/",
+    ".venv/",
+    "requirements.frozen.txt",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+]
+ignore = [
+    "E501",  # line too long — 中文 prompt 必然长
+    "E402",  # module level import not at top — jarvis_vocal_cord 故意如此
+    "F401",  # imported but unused — 兼容垫层会有
+    "F403",  # `from xxx import *` — jarvis_safety 拆分后会用
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -1,0 +1,14 @@
+﻿python : Traceback (most recent call last):
+所在位置 行:1 字符: 1
++ python d:\Jarvis\_stress_test.py "AIzaSyBMcbfx2jVG--kjxi8vf_21kReFhb6 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last) 
+   ::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "d:\Jarvis\_stress_test.py", line 333, in <module>
+    main()
+  File "d:\Jarvis\_stress_test.py", line 300, in main
+    print("\U0001f527 Jarvis 代理压力测试 — 新旧库对比")
+UnicodeEncodeError: 'gbk' codec can't encode character '\U0001f527' in position
+ 0: illegal multibyte sequence
