@@ -25,6 +25,10 @@ B. 主脑记忆基础设施（CentralNerve 直接持有）：
 
 from __future__ import annotations
 
+# [P0+20-α.1 / 2026-05-16] numpy 用于 embedding 向量化与余弦相似度（CorrectionMemory.search + UnifiedMemoryGateway / Anticipator 等 9 处 `np.*`）
+# 拆分时 P0+19-5 漏掉 → 09:23 实测 `[KeyRouter] google_3 标记为不健康 (错误: name 'np' is not defined)` 被 KeyRouter 误归因到 key 上
+import numpy as np
+
 # [P0+19-final fix 4 / 2026-05-16] 一次性补全标准库 + 第三方常用 import（防 NameError 暴露）
 import os  # noqa: F401
 import sys  # noqa: F401
