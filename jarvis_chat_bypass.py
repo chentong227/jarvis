@@ -2202,22 +2202,49 @@ Spoken English:"""
                         # 🛡️ Bug X2 修复：畸形 FAST_CALL（缺 organ/command）不算"真工具调用"
                         # 不计入 _tool_results，让外层 B 守门人仍能仓底检测幻觉
                         if not organ_name or not command:
-                            print(f"║ ⚠️  [Malformed FAST_CALL] organ='{organ_name}' command='{command}' — 视为 LLM 幻觉")
+                            # [P0+20-α.5 / 2026-05-16] 日志降级：print → bg_log
+                            # 解决 jarvis_20260516_105347.log:327 'Malformed FAST_CALL' 直接污染
+                            # 对话框（Sir 在终端看到一长串技术日志夹在 Jarvis 回复之间）。
+                            try:
+                                from jarvis_utils import bg_log as _bg
+                                _bg(f"⚠️ [Malformed FAST_CALL] organ='{organ_name}' command='{command}' — 视为 LLM 幻觉")
+                            except Exception:
+                                pass
                             _consecutive_tool_fail += 1
                             if _consecutive_tool_fail >= _MAX_CONSECUTIVE_FAIL:
-                                print(f"║ 🛑 [Tool Chain] 连续 {_consecutive_tool_fail} 次畸形调用，提前熔断")
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"🛑 [Tool Chain] 连续 {_consecutive_tool_fail} 次畸形调用，提前熔断")
+                                except Exception:
+                                    pass
                                 _circuit_broken_reason = "malformed_calls"
                                 if '_stream_key_name' in dir() and _stream_key_name:
                                     self.key_router.release(_stream_key_name)
                                     _stream_key_name = None
                                 break
+                            # [P0+20-α.5 / 2026-05-16] SYSTEM 反馈强化禁止"假装完成"。
+                            # jarvis_20260516_105347.log:327-337 实测：旧 SYSTEM 反馈说"either (a)
+                            # emit valid FAST_CALL or (b) admit honestly" 但 LLM 选 (c) — 第二轮
+                            # stream 直接撒谎 "I've captured the screen / The Cursor process is
+                            # idle / Done, Sir — already completed on the first call"（14 秒 3
+                            # 段假完成）。修法：在 SYSTEM 反馈里**显式禁止"假装完成 / 编新工具调用"
+                            # 模式**，并示范唯一合法回复形态。
                             chat_history.append(types.Content(role="model", parts=[types.Part(text=spoken_so_far)]))
                             chat_history.append(types.Content(role="user", parts=[types.Part(text=(
-                                f"[SYSTEM] Your last <FAST_CALL> was malformed (missing organ or command field). "
-                                f"Either (a) emit a properly formed FAST_CALL with both 'organ' and 'command' fields and valid params, "
-                                f"or (b) if no tool fits Sir's request, admit honestly: "
-                                f"'I lack the means to do that directly, Sir.' followed by ---ZH--- and Chinese. "
-                                f"Do NOT pretend you completed the action."
+                                f"[SYSTEM HARD CONSTRAINT] Your last <FAST_CALL> was malformed "
+                                f"(missing 'organ' or 'command' field). You have ONE choice for "
+                                f"your next response:\n"
+                                f"- If a real tool can serve Sir's request, emit ONE properly formed "
+                                f"<FAST_CALL> with valid organ + command + params.\n"
+                                f"- Otherwise: respond with EXACTLY this template (no embellishment):\n"
+                                f"    \"I lack the means to do that directly, Sir.\\n---ZH---\\n这件事我目前无法直接处理，先生。\"\n"
+                                f"FORBIDDEN in your next response:\n"
+                                f"- Claiming you 'captured the screen', 'examined the logs', "
+                                f"'checked the process', 'refreshed' anything, or any past-tense "
+                                f"action verb — these are lies if not backed by a successful tool call.\n"
+                                f"- Saying 'Done, Sir' / 'already completed' / 'on the first call' "
+                                f"or any phrase that implies the malformed call somehow succeeded.\n"
+                                f"- Emitting another <FAST_CALL> that you are not certain is well-formed."
                             ))]))
                             if '_stream_key_name' in dir() and _stream_key_name:
                                 self.key_router.release(_stream_key_name)
