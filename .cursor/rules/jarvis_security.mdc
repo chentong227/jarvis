@@ -1,0 +1,53 @@
+---
+description: Jarvis security red lines - API keys, private data, git push safety
+alwaysApply: true
+---
+
+# Jarvis Security Red Lines
+
+## Never Commit
+
+Files already in `.gitignore` (verify with `git status` before commit):
+
+- `.env` (real API keys)
+- `jarvis_config/keys.*.json`
+- `jarvis_config/sir_profile.json` (Sir's personal profile, 17 KB of intimate context)
+- `jarvis_config/bilibili_auth.json`
+- `memory_pool/*.db` / `*.db-shm` / `*.db-wal` (real conversation history)
+- `memory_pool/skill_registry.jsonl` (runtime counters)
+- `docs/runtime_logs/*.log` / `docs/funnel_logs/*.log` (real dialog content)
+
+If `git status` shows any of these in staged/unstaged area → **stop, alert Sir, do NOT commit**.
+
+## API Key Leak Detection
+
+If you encounter in source code:
+
+- `sk-or-v1-...` (OpenRouter format)
+- `AIzaSy...` (Google format)
+
+**Immediate action**: stop editing, message Sir:
+
+> "Sir, I see a hardcoded API key at `<file>:<line>`. This needs to be rotated and moved to `.env`."
+
+Then wait for Sir's instruction. Do NOT auto-rotate, do NOT silently edit.
+
+## Sensitive Data Access
+
+- `sir_profile.json`: read OK (for ProfileCard injection), but NEVER print contents to chat reply
+- `memory_pool/*.db`: read only via `Hippocampus` / `CommitmentWatcher` API, not raw `sqlite3.connect`
+- `jarvis_config/keys.py`: this is the loader, NOT the keys themselves; reading is OK
+
+## Git Push
+
+NEVER:
+
+- `git push --force` to `main`
+- `git push` after `git commit --amend` on already-pushed commits
+- Auto-push without Sir saying "push it"
+
+ALWAYS before `git push origin main`:
+
+1. `tests\_runall.ps1` green
+2. `git log origin/main..HEAD` reviewed (show Sir what's about to ship)
+3. Sir's explicit "OK push" / "上线" / "push 上去"

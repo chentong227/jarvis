@@ -1,10 +1,48 @@
-# [P0+ / 2026-05-15] 全量回归脚本（不含真 GPU 依赖测试）
-# 跑所有 _test_*.py + 三个中心 pytest，输出每个套件的 Ran/Result
+# [P0+ / 2026-05-15 init] [P0+20-W.3 / 2026-05-16 trace_id 化] 全量回归脚本
+# 跑所有 _test_*.py + pytest 套件，聚合统计后写 tests/last_run.json
+# 规范：详 docs/JARVIS_WORKFLOW_PROTOCOL.md §2
+
 $ErrorActionPreference = "Continue"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$lastRunJson = Join-Path $repoRoot "tests\last_run.json"
+
+# ============================================================
+# [P0+20-W.3] 生成 test_run_id + 抓 git 元信息
+# ============================================================
+$tsCompact = Get-Date -Format "yyyyMMdd_HHmmss"
+$rid = -join ((48..57 + 97..102) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
+$testRunId = "test_${tsCompact}_${rid}"
+$startedAt = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+$startedTs = [double](Get-Date -UFormat %s)
+
+try {
+    $gitHead = (git rev-parse --short HEAD 2>$null).Trim()
+    if (-not $gitHead) { $gitHead = "unknown" }
+} catch { $gitHead = "unknown" }
+
+try {
+    $gitBranch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+    if (-not $gitBranch) { $gitBranch = "unknown" }
+} catch { $gitBranch = "unknown" }
+
+$markerContext = $env:JARVIS_TEST_MARKER
+if (-not $markerContext) { $markerContext = "" }
+
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Yellow
+Write-Host "TEST_RUN_ID = $testRunId" -ForegroundColor Yellow
+Write-Host "GIT_HEAD    = $gitHead  ($gitBranch)" -ForegroundColor Yellow
+Write-Host "STARTED_AT  = $startedAt" -ForegroundColor Yellow
+if ($markerContext) {
+    Write-Host "MARKER      = $markerContext" -ForegroundColor Yellow
+}
+Write-Host "============================================================" -ForegroundColor Yellow
+
 $total = 0
 $pass = 0
 $fail = 0
 $results = @()
+$failedSuites = @()
 
 # 全部 unittest 风格的 _test_*.py
 $tests = @(
@@ -65,10 +103,11 @@ foreach ($t in $tests) {
     $tail | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -eq 0) {
         $pass++
-        $results += [PSCustomObject]@{Suite=$t; Result="OK"}
+        $results += [PSCustomObject]@{Suite=$t; Result="OK"; Runner="unittest"}
     } else {
         $fail++
-        $results += [PSCustomObject]@{Suite=$t; Result="FAIL"}
+        $results += [PSCustomObject]@{Suite=$t; Result="FAIL"; Runner="unittest"}
+        $failedSuites += $t
     }
 }
 
@@ -80,14 +119,58 @@ $tail | ForEach-Object { Write-Host $_ }
 $total++
 if ($LASTEXITCODE -eq 0) {
     $pass++
-    $results += [PSCustomObject]@{Suite="test_three_centers"; Result="OK"}
+    $results += [PSCustomObject]@{Suite="test_three_centers"; Result="OK"; Runner="pytest"}
 } else {
     $fail++
-    $results += [PSCustomObject]@{Suite="test_three_centers"; Result="FAIL"}
+    $results += [PSCustomObject]@{Suite="test_three_centers"; Result="FAIL"; Runner="pytest"}
+    $failedSuites += "test_three_centers"
 }
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Yellow
 Write-Host "REGRESSION SUMMARY: $pass / $total OK,   $fail FAIL" -ForegroundColor Yellow
+Write-Host "TEST_RUN_ID = $testRunId" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow
 $results | Format-Table -AutoSize
+
+# ============================================================
+# [P0+20-W.3] 写 tests/last_run.json
+# ============================================================
+$endedAt = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+$endedTs = [double](Get-Date -UFormat %s)
+$durationS = [math]::Round($endedTs - $startedTs, 2)
+
+$report = [ordered]@{
+    test_run_id    = $testRunId
+    git_head       = $gitHead
+    git_branch     = $gitBranch
+    started_at     = $startedAt
+    ended_at       = $endedAt
+    duration_s     = $durationS
+    runner         = "_runall.ps1"
+    marker_context = $markerContext
+    summary        = [ordered]@{
+        total   = $total
+        passed  = $pass
+        failed  = $fail
+        skipped = 0
+        errors  = 0
+    }
+    failed_suites  = $failedSuites
+    suites         = $results | ForEach-Object { [ordered]@{
+        suite  = $_.Suite
+        result = $_.Result
+        runner = $_.Runner
+    } }
+}
+
+try {
+    $reportJson = $report | ConvertTo-Json -Depth 6
+    Set-Content -Path $lastRunJson -Value $reportJson -Encoding UTF8
+    Write-Host "📝 [last_run.json] $lastRunJson  (pass=$pass fail=$fail total=$total dur=${durationS}s)" -ForegroundColor Green
+} catch {
+    Write-Host "❌ [last_run.json] failed to write: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# 失败时退出码非 0，便于 CI / git hook 集成
+if ($fail -gt 0) { exit 1 } else { exit 0 }

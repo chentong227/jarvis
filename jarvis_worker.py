@@ -427,6 +427,12 @@ class VoiceListenThread(QThread):
                 slot.capture_now()
         except Exception:
             pass
+        # 🧬 [P0+20-W.2 / 2026-05-16] 开新对话轮：本轮所有 bg_log 自动带 [turn_xxx] 前缀
+        try:
+            from jarvis_utils import TraceContext
+            TraceContext.new_turn()
+        except Exception:
+            pass
         self.text_ready.emit(cmd)
 
     def run(self):
@@ -3222,6 +3228,14 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                     bg_log(f"⏱️ [Pipeline Timer] Full pipeline: {_t_llm_done - _t_pipeline_start:.1f}s")
                 except Exception:
                     print(f"⏱️ [Pipeline Timer] Full pipeline: {_t_llm_done - _t_pipeline_start:.1f}s", file=sys.stderr)
+
+                # 🧬 [P0+20-W.2 / 2026-05-16] 该轮收尾：清 turn_id（保留 session_id）
+                # 之后的后台 daemon 日志不再带本轮 turn_id 前缀，避免误归因
+                try:
+                    from jarvis_utils import TraceContext
+                    TraceContext.clear_turn()
+                except Exception:
+                    pass
                 
                 if not is_dismissal and jarvis_reply:
                     reply_lower = jarvis_reply.lower()

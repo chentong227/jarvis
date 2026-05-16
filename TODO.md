@@ -1,10 +1,17 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 10:20（**🎉 P0+19 整轮完工沉档** → archive 顶部 / **🚧 P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**。今早 09:23 真机实测暴露 5 个新缺口（np import / google_1 噪音 / Integrity 误报陈述句 / TWO_PARTS 多意图失败 / dormant_project 紧贴 standby）+ Sir 与 Claude 4.7 深度对话敲定 β.0 Prompt 重构方案。详见 `docs/PROMPT_REFACTOR_PLAN.md`。）
+**更新时间**：2026-05-16 11:00（**🎉 P0+19 整轮完工沉档** → archive 顶部 / **🚧 P0+20-W Workflow 规范立起来 + P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**。今早 09:23 + 10:53 真机实测暴露 6 个新缺口（np import / google_1 噪音 / Integrity 误报陈述句 / TWO_PARTS 多意图失败 / dormant_project 紧贴 standby / **future-tense capability lie**）+ 引入 trace_id 体系 + AGENTS.md / .cursor/rules / commit 模板 / last_run.json 跑测报告。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
 
 ---
 
 ## 📕 AGENT QUICKSTART（Cursor Agent 必读 / 约 30 秒）
+
+> **进窗口先读这两个文件，本节是简版指引**：
+> - `AGENTS.md`（仓库根 / 所有 AI Agent 入口章程 / < 250 行）
+> - `docs/JARVIS_WORKFLOW_PROTOCOL.md`（规范唯一源 / trace_id / commit / 测试 / push 时机）
+>
+> 出现冲突以 `PROTOCOL` 为准。`AGENTS.md` 是简版，`PROTOCOL` 是详版。本 TODO 章程段只列触发场景，**不复述规则**。
+
 
 > **唯一目的**：让 Agent 用最少的 token 读取最准确的上下文，避免 Cursor 对话超 52MB（`Append data exceeds maximum size of 52428800 bytes`）锁死。**永远不要把整个 TODO / archive / 日志读进上下文。**
 
@@ -80,27 +87,44 @@
 | **P1** | **α.3**：Integrity Check 1.5B 误报 — 陈述句 `Dreams are rarely a reliable indicator...` 被判 `no_tool_called` | ⏳ 待修 | **P0+20-α.3** + β.0.3 治本 |
 | **P1** | **α.4**：Sir 刚 standby 9s 就触发 `🤫 [SilentNudge/dormant_project]` — NudgeGate cooldown 跟 SilentNudge 触发条件没对齐 | ⏳ 待修 | **P0+20-α.4** |
 | **P1** | **β.0/TWO_PARTS**：Sir 一段话同时回应上文 + 开启下文时 Jarvis 只答一半（`[CONTINUITY RULE]` directive 太弱）| ⏳ 待修 | **P0+20-β.0**（Prompt 重构顺手解决）|
-| **P0/手动** | **α.5**：Sir 必须做 4 件 — rotate 8 keys / 填 `.env` / `git init` / 改 jarvis_nerve.py:234-241 入口读 `load_keys()` | 🔄 Sir 在做 | Sir 手动 |
+| **P1** | **β.0/future-tense lie**（2026-05-16 10:53 实测）：Jarvis 用未来时/条件时编造没有的能力 — "I can take a closer look at the logs" / "I can attempt to refresh the interface"，被 Sir 质问后立刻 backtrack 改口 "I lack the direct means..."。`INTEGRITY ABSOLUTE` 只覆盖完成时短语（"I've X"），未来时/条件时漏网。**根因**：`available_skills_block` 没让 LLM 区分"我能空话 X" vs "我有工具 Y 能做 X"。**治本路径**：β.0 `tool_honesty_directive` + `capability_phrasing` 两条 directive 联动 + SkillRegistry 反查能力 | ⏳ 待修 | **P0+20-β.0**（治本，不挤 α）|
+| **P0/手动** | **α.5**：Sir 必须做 4 件 — rotate 8 keys / 填 `.env` / `git init` / 改 jarvis_nerve.py:233 入口读 `load_keys()` | ✅ 已随 P0+19-deps commit 完成 | — |
 | **中** | **轴 5.2**：CommitmentWatcher 已 P0+18-e.3 持久化到 SQLite，可继续 polish（deadline 排序 / cross-session 反查）| ⏳ 候选扩展 | 路线 B+ 候选 |
 | **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard 上游路径（兜底已 OK） | ⏳ 等真机复现 | P0+18-e.2 上游 Audio Guard 大概率已覆盖 |
 | **低** | **OpenRouter / 网络偶慢**：22:10 之后偶有慢，不一定纯代码问题 | ⏳ 观察 | `[Perf Diag]` 日志辅诊 |
 
 ---
 
-## 🚧 当前迭代（双轨）：P0+20-α 收尾 + P0+20-β.0 Prompt 重构
+## 🚧 当前迭代（三轨）：P0+20-W 规范化 + P0+20-α 收尾 + P0+20-β.0 Prompt 重构
 
-> **节奏**：α 先做（4 个修复 + Sir 手动 4 件，~2h），完工后立刻开 β.0（设计已敲定 → `docs/PROMPT_REFACTOR_PLAN.md` / ~7h / 分 2 session）。
+> **节奏**：W 先做（规范立起来，~2.5h）→ α 后做（4 个修复，~1.5h）→ Sir 验收 → β.0 启动（~7h，分 2 session）。
 
-### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~2h，前置依赖）
+### 🧬 P0+20-W — Workflow 规范化（trace_id / 测试 / commit / Agent 章程）
 
 | # | Marker | 主题 | 关键产物 | 估时 | 状态 |
 |---|---|---|---|---|---|
-| α.1 | **P0+20-α.1** | KeyRouter import 补全 | `jarvis_key_router.py` 顶部 `import numpy as np`；同时批量自检 16 个新文件是否还有遗漏 import | 0.25h | ⏳ |
+| W.1 | **P0+20-W.1** | 规范唯一源 | `docs/JARVIS_WORKFLOW_PROTOCOL.md`（8 节 / trace_id 三层 / 测试规范 / commit 模板 / push 时机 / Agent 行为 / 性能基线 / 安全协议） | 0.75h | ✅ |
+| W.2 | **P0+20-W.2** | TraceContext + bg_log 注入 | `jarvis_utils.py` 加 `TraceContext` 单例 + `bg_log` 自动注入 `[sess_xxx] [turn_xxx]` 前缀；`jarvis_nerve.py:__main__` 启动调 `init_session`；`jarvis_worker.py` text_ready emit 前调 `new_turn`，Full pipeline 后调 `clear_turn` | 0.5h | ✅ |
+| W.3 | **P0+20-W.3** | pytest conftest + runall 升级 | `tests/conftest.py` (session/finish hooks + trace_id fixture) + `tests/_runall.ps1` 加 test_run_id / git_head / 写 `tests/last_run.json` 含完整统计 | 0.5h | ✅ |
+| W.4 | **P0+20-W.4** | AGENTS.md | 仓库根 `AGENTS.md`（11 节 / 所有 AI Agent 自动读 / 极简入口指向 PROTOCOL） | 0.25h | ✅ |
+| W.5 | **P0+20-W.5** | Cursor 硬规则 | `.cursor/rules/jarvis_workflow.mdc`（alwaysApply）+ `jarvis_python_style.mdc`（globs=jarvis_*.py）+ `jarvis_security.mdc`（alwaysApply）3 个聚焦规则 | 0.25h | ✅ |
+| W.6 | **P0+20-W.6** | TODO 章程段升级 | 顶部 QUICKSTART 改成"读 AGENTS.md + PROTOCOL"指针，不复述规则；α.5 标已随 deps 完成；BUG 表加 future-tense lie | 0.25h | ✅ |
+| W.7 | **P0+20-W.7** | 全测 + commit + tag | `tests\_runall.ps1` 全绿；commit W 整轮；`git tag v0.20.0-workflow` | 0.25h | ⏳ |
+
+### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~1.5h）
+
+### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~1.5h）
+
+> **范围保守**：α.3 Integrity 闸门只解决"陈述/共情/解释/referential 句"误报，**不**扩到"future-tense 撒谎"（那是 β.0 的范围，治本需要 SkillRegistry 反查能力 + Directive Registry 的 tool_honesty + capability_phrasing 联动）。
+
+| # | Marker | 主题 | 关键产物 | 估时 | 状态 |
+|---|---|---|---|---|---|
+| α.1 | **P0+20-α.1** | numpy import 补全 | `jarvis_memory_core.py:30` 加 `import numpy as np`（拆分时漏的 9 处 `np.*` 调用）；commit `dea1eb5`；待跑测验收 | 0.25h | 🔄 已 commit / 待跑测 |
 | α.2 | **P0+20-α.2** | KeyRouter 永久剔除 | 加"3 次 PROJECT_DENIED 永久不轮转"开关 + bg_log 一次性提示 Sir 而不是每轮刷 | 0.25h | ⏳ |
-| α.3 | **P0+20-α.3** | Integrity 闸门 | `detect_action_claim` 加 `is_action_claim` pre-filter（陈述/共情/解释/referential 不进 1.5B），调用量降 70% + 误报降 50% | 0.5h | ⏳ |
+| α.3 | **P0+20-α.3** | Integrity 闸门 | `detect_action_claim` 加 `is_action_claim` pre-filter（陈述/共情/解释/referential 不进 1.5B），调用量降 70% + 误报降 50%。**不扩到 future-tense** | 0.5h | ⏳ |
 | α.4 | **P0+20-α.4** | dormant_project 静默期 | SmartNudgeSentinel：standby < 60s 内禁触发 SilentNudge；NudgeGate 与 SilentNudge 触发条件对齐 | 0.25h | ⏳ |
-| α.5 | **P0+20-α.5** | Sir 手动 4 件 | rotate 8 keys / `Copy-Item .env.example .env` + 填 keys / `git init` + 首 commit / 改 jarvis_nerve.py:234-241 用 `load_keys()` | 0.5h | 🔄 Sir 在做 |
-| α.final | **P0+20-α.final** | α 整轮验收 | 真机一轮 + 1098+ testcase 全绿 + 日志噪音清零 | 0.25h | ⏳ |
+| α.5 | ~~**P0+20-α.5**~~ | ~~Sir 手动 4 件~~ | rotate 8 keys / `.env` / `git init` / `load_keys()` 入口替换 — 已随 `P0+19-deps` 完成 | — | ✅ |
+| α.final | **P0+20-α.final** | α 整轮验收 | 1098+ testcase 全绿 + 日志噪音清零 + commit + `git tag v0.20.1-cleanup` + 汇报 Sir 实测 | 0.25h | ⏳ |
 
 ### 🧠 P0+20-β.0 — Prompt 重构 + Directive Registry（~7h，完整 design doc 在 `docs/PROMPT_REFACTOR_PLAN.md`）
 
@@ -147,8 +171,9 @@
 - ✅ **路线 A.7**：P0+18-e — 待办链路收口 + 上游 Audio Guard + CW 持久化 + 终端色彩化
 - ✅ **路线 A.8**：P0+18-f — 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报
 - ✅ **路线 A.9**：P0+19 — Nerve 拆分（17479→324 / -98.1%）+ 依赖锁定
+- 🔄 **路线 A.9.5 当前轨 0**：**P0+20-W** — Workflow 规范化（trace_id / AGENTS.md / .cursor/rules / last_run.json / commit 模板）
 - 🔄 **路线 A.10 当前轨 1**：**P0+20-α** — 拆分收尾 + 4 缺口修复（np / google_1 噪音 / Integrity 闸门 / dormant 静默期）
-- 🔄 **路线 A.11 当前轨 2**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分）
+- 🔄 **路线 A.11 当前轨 2**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分 + TWO_PARTS / future-tense lie 治本）
 - ⏳ **路线 B 候选**：让 PromiseExecutor 真跑长任务 — 选 3 个高价值场景（每日 9:00 驾照科一 3 题 / 起床播报 / 番茄钟）
 - ⏳ **路线 B+ 候选**：AgendaLedger + DailyBriefing + WeeklyDigest + SkillsAtAGlance（让 Jarvis 从 reactive 变 goal-driven）
 - ⏳ **路线 C 候选**：R8 轴 4 — OCR / 后台测试 / 全局热键
@@ -162,6 +187,9 @@
 - **上一轮 P0+19**（roll/deps/0-9/6.a-f/final / 2026-05-16 00:30-02:45 / 17 sub-step / Nerve 17479→324 / 16 新文件 / 1098 testcase）：`docs/TODO_ARCHIVE.md` 顶部「P0+19 完工段」
 - **更上一轮 P0+18-f**（f.1-f.4 / 2026-05-15 22:00-22:50 / 4 BUG / 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报）：`docs/TODO_ARCHIVE.md`「P0+18-f 完工段」
 - **更早 P0+18-e / P0+18-d / P0+18-c / P0+18-b / R8 轴3 / R7 等**：`docs/TODO_ARCHIVE.md` 后续段（按归档目录 grep）
+- **规范唯一源**：`docs/JARVIS_WORKFLOW_PROTOCOL.md`（trace_id / 测试 / commit / push / Agent 行为 / 安全 / 性能基线）
+- **入口章程**：`AGENTS.md`（所有 AI Agent 自动读 / 极简版 / 指向 PROTOCOL）
+- **Cursor 硬规则**：`.cursor/rules/jarvis_workflow.mdc` + `jarvis_python_style.mdc` + `jarvis_security.mdc`
 - **当前迭代 design doc**：`docs/PROMPT_REFACTOR_PLAN.md`（P0+20-β.0 完整设计 / 11 节 / 9 风险预案）
 - **上轮 design doc**：`docs/NERVE_SPLIT_PLAN.md`（P0+19 完整设计，保留作历史参考）
 

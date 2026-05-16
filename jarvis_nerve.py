@@ -232,8 +232,16 @@ from jarvis_ui import SubtitleOverlay, BreathingLightUI
 # 🔑 [P0+19-deps / 2026-05-16] API key loader —— 只从 .env 读，绝不硬编码
 from jarvis_config.keys import load_keys
 
+# 🧬 [P0+20-W.2 / 2026-05-16] TraceContext — 进程级 session_id（日志可追溯起点）
+from jarvis_utils import TraceContext
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+
+    # 🧬 [P0+20-W.2 / 2026-05-16] 启动序列第一步：开 session
+    # 之后所有 bg_log 自动带 [sess_xxx] 前缀，grep 一个 session_id 拿一次启动的全链路
+    _session_id = TraceContext.init_session()
+    print(f"🧬 [TraceContext] session 开启: {_session_id}")
 
     keys = load_keys()
 

@@ -1,0 +1,58 @@
+---
+description: Jarvis Python coding style and import conventions
+globs: jarvis_*.py
+alwaysApply: false
+---
+
+# Jarvis Python Style
+
+## Imports
+
+Every new `jarvis_*.py` file MUST have at the top (after docstring):
+
+```python
+from __future__ import annotations
+
+# [P0+X / 2026-XX-XX] one-line import audit comment if needed
+import os  # noqa: F401
+import sys  # noqa: F401
+import io  # noqa: F401
+import re  # noqa: F401
+import time  # noqa: F401
+import json  # noqa: F401
+import threading  # noqa: F401
+import collections  # noqa: F401
+# ... actual used imports without noqa
+import numpy as np  # if any np.* in file
+```
+
+This safety net catches "name 'np' is not defined" / "name 'json' is not defined" NameErrors that P0+19 split exposed in production.
+
+## Markers in Comments
+
+Every meaningful change in source MUST be tagged:
+
+```python
+# [P0+20-α.3 / 2026-05-16] Integrity Check pre-filter for declarative sentences
+def is_action_claim(text: str) -> bool:
+    ...
+```
+
+Marker = `[<commit-marker> / <ISO date>]`. Grep-friendly for archeology.
+
+## Logging
+
+- Background threads / sentinels / daemons → `bg_log(...)` (auto trace_id prefix)
+- One-off startup print → `print(...)` is OK (won't pollute dialog box)
+- NEVER `logging.info(...)` (project doesn't use stdlib logging)
+
+## Forbidden Anti-patterns
+
+- `from jarvis_nerve import *` — breaks split forwarding shim
+- `time.sleep(0.01)` busy-loop in main thread — use `QTimer` or `threading.Timer`
+- Raw `sqlite3.connect("memory_pool/...")` from new code — go through `Hippocampus` / `CommitmentWatcher` etc.
+- `print(...)` inside Sir's dialog box rendering path — use the dialog box API directly
+
+## Type Hints
+
+Encouraged but not enforced (some pre-split code lacks them). For NEW code in new files: yes, type-hint at least public methods.

@@ -490,8 +490,109 @@ class _BgLogBuffer:
             cls._buffer.clear()
 
 
+# ============================================================
+# 🧬 [P0+20-W.2 / 2026-05-16] TraceContext — 全局 trace_id 体系
+# ------------------------------------------------------------
+# 三层 ID（详见 docs/JARVIS_WORKFLOW_PROTOCOL.md §1）:
+#   - session_id：单次进程启动唯一，sess_YYYYMMDD_HHMMSS_<PID>
+#   - turn_id：单轮对话唯一，turn_YYYYMMDD_HHMMSS_<4hex>
+#   - marker：工程级 (P0+X-Y / R7-α 等)，直接写在代码注释 + commit message
+#
+# 自动注入：bg_log 输出时若 session_id 已 init → 自动加 "[sess_xxx]"
+# 或 "[sess_xxx] [turn_yyy]" 前缀。grep 一个 turn_id 拿全链路。
+#
+# 测试兼容：未初始化时 get_log_prefix() 返回 ""，bg_log 行为与历史等价。
+# ============================================================
+
+class TraceContext:
+    """全局 Trace 上下文（线程安全）。
+    
+    入口约定：
+      - jarvis_nerve.py:__main__ 启动时调 init_session()
+      - VoiceListenThread.text_ready 触发时调 new_turn()
+      - ChatBypass.stream_chat 完成（Full pipeline 后）调 clear_turn()
+    
+    [P0+20-W.2 / 2026-05-16] 详 docs/JARVIS_WORKFLOW_PROTOCOL.md §1
+    """
+    _lock = threading.Lock()
+    _session_id: str = ""
+    _turn_id: str = ""
+    _enabled: bool = True
+
+    @classmethod
+    def init_session(cls, pid: int = None) -> str:
+        """启动 Jarvis 进程时调一次。返回新生成的 session_id。"""
+        import os as _os
+        pid = pid or _os.getpid()
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        with cls._lock:
+            cls._session_id = f"sess_{ts}_{pid}"
+        return cls._session_id
+
+    @classmethod
+    def new_turn(cls) -> str:
+        """开新对话轮（每次 ASR 出 text_ready 时调）。返回新 turn_id。"""
+        import secrets as _secrets
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        rid = _secrets.token_hex(2)
+        with cls._lock:
+            cls._turn_id = f"turn_{ts}_{rid}"
+        return cls._turn_id
+
+    @classmethod
+    def clear_turn(cls):
+        """对话轮结束（Pipeline Timer Full pipeline 后）调。"""
+        with cls._lock:
+            cls._turn_id = ""
+
+    @classmethod
+    def get_session_id(cls) -> str:
+        with cls._lock:
+            return cls._session_id
+
+    @classmethod
+    def get_turn_id(cls) -> str:
+        with cls._lock:
+            return cls._turn_id
+
+    @classmethod
+    def get_log_prefix(cls) -> str:
+        """返回日志前缀：'[session_id] [turn_id]' 或 '[session_id]' 或 ''
+        
+        未初始化时返回 ''，保证测试场景下 bg_log 输出与历史完全等价。
+        """
+        if not cls._enabled:
+            return ""
+        with cls._lock:
+            sid = cls._session_id
+            tid = cls._turn_id
+        if not sid:
+            return ""
+        parts = [f"[{sid}]"]
+        if tid:
+            parts.append(f"[{tid}]")
+        return " ".join(parts)
+
+    @classmethod
+    def disable_log_prefix(cls):
+        """测试 / 临时关闭注入。"""
+        with cls._lock:
+            cls._enabled = False
+
+    @classmethod
+    def enable_log_prefix(cls):
+        with cls._lock:
+            cls._enabled = True
+
+
 def bg_log(message: str, stream: str = "stderr"):
-    """便捷入口：背景线程要打字时用这个，自动避开对话框。"""
+    """便捷入口：背景线程要打字时用这个，自动避开对话框。
+    
+    [P0+20-W.2 / 2026-05-16] 自动注入 trace_id 前缀（若 TraceContext 已初始化）。
+    """
+    prefix = TraceContext.get_log_prefix()
+    if prefix:
+        message = f"{prefix} {message}"
     _BgLogBuffer.log(message, stream=stream)
 
 

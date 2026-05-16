@@ -1,0 +1,52 @@
+---
+description: Jarvis project core workflow - trace_id system, commit template, test discipline. Read AGENTS.md + docs/JARVIS_WORKFLOW_PROTOCOL.md for full spec.
+alwaysApply: true
+---
+
+# Jarvis Workflow Rules
+
+You are working in Sir's **J.A.R.V.I.S. personal AI butler** project. Read `AGENTS.md` first.
+
+## Reading Order (first 30s)
+
+1. `AGENTS.md` (always full read, < 250 lines)
+2. `TODO.md` (always full read, < 300 lines)
+3. `docs/JARVIS_WORKFLOW_PROTOCOL.md` (Grep on demand, NOT full read)
+4. Current iteration design doc (e.g. `docs/PROMPT_REFACTOR_PLAN.md`)
+5. `docs/runtime_logs/latest.txt` (1-line path to latest log)
+
+**Forbidden first reads**: `jarvis_chat_bypass.py` (3003 lines), `jarvis_central_nerve.py` (2089 lines), `docs/TODO_ARCHIVE.md` (1842 lines), any `docs/runtime_logs/jarvis_*.log` full.
+
+## Trace ID
+
+- `session_id` set in `jarvis_nerve.py:__main__` via `TraceContext.init_session()`
+- `turn_id` set in `jarvis_worker.py` before `self.text_ready.emit(cmd)`
+- `bg_log(...)` auto-injects prefix. Prefer `bg_log` over `print` for runtime.
+
+## Commit Template (mandatory)
+
+PowerShell — multiple `-m`, NOT heredoc:
+
+```powershell
+git commit `
+  -m "<type>(<marker>): <subject>" `
+  -m "<body: cause / change / impact>" `
+  -m "testcase: <pass>/<total> pass (run_id=<id>)" `
+  -m "trace-ref: <log basename>"
+```
+
+`type`: feat / fix / refactor / perf / docs / test / chore / revert. `marker`: P0+X-Y.Z / R7-α / 轴3-L0.
+
+## Test Discipline
+
+- `tests\_runall.ps1` before every commit. Must be green.
+- New bug fix → add regression testcase.
+- `tests/last_run.json` auto-written by runall; check it before push.
+
+## Never
+
+- `git push --force` to main without explicit Sir consent.
+- `git commit --amend` on already-pushed commits.
+- Commit `.env`, `jarvis_config/keys.*.json`, `jarvis_config/sir_profile.json`, `memory_pool/*.db`, `docs/runtime_logs/*`.
+- Rewrite `JARVIS_CORE_PERSONA` without explicit Sir consent.
+- Auto `git push` — wait for Sir.
