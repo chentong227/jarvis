@@ -139,11 +139,18 @@ class HumorMemory:
             return
         self._profile_last_load = now
         try:
-            profile_file = os.path.join("jarvis_config", "sir_profile.json")
-            if os.path.exists(profile_file):
-                with open(profile_file, "r", encoding="utf-8") as f:
-                    profile = json.load(f)
-                jokes = profile.get("our_inside_jokes", [])
+            # [P0+20-β.2.4.3 / 2026-05-16] 切走老数据源 sir_profile.our_inside_jokes
+            # → 读 Layer 2 RelationalState 单源。详 docs/JARVIS_SOUL_DRIVE.md
+            # 方案 A 老路径退役第 3 步（前置：跑 scripts/migrate_profile_to_relational.py
+            # 把现有 our_inside_jokes 一次性迁过去）
+            jokes = []
+            try:
+                from jarvis_relational import get_default_store
+                store = get_default_store()
+                jokes = [j.phrase for j in store.list_inside_jokes()]
+            except Exception:
+                jokes = []
+            if jokes:
                 new_keywords = {}
                 for joke in jokes:
                     joke_lower = joke.lower()
@@ -170,6 +177,10 @@ class HumorMemory:
                     if "hide" in joke_lower or "data wall" in joke_lower or "barrier" in joke_lower or "遮挡" in joke_lower:
                         new_keywords["hide_and_seek"] = True
                 self._profile_joke_keywords = new_keywords
+            else:
+                # relational_state 暂无 jokes（迁移未跑 / 真空）— 清空匹配，
+                # 不退回读 sir_profile（方案 A 单源）
+                self._profile_joke_keywords = {}
         except:
             pass
 

@@ -66,10 +66,11 @@ class SoulRouter:
         self._build_index(sir_profile)
 
     def _build_index(self, profile: dict):
+        # [P0+20-β.2.4.3 / 2026-05-16] 老路径退役第 3 步：删 inside_jokes / milestones
+        # 两个 chapter（Layer 2 RelationalState 单源接管）。projects/progression 仍读
+        # sir_profile（Sir 画像范畴）。详 docs/JARVIS_SOUL_DRIVE.md
         chapters_def = {
             "projects": " ".join(profile.get("active_projects", [])),
-            "inside_jokes": " ".join(profile.get("our_inside_jokes", [])),
-            "milestones": " ".join(profile.get("significant_milestones", [])),
             "progression": " ".join(
                 s.get("skill", "") for s in profile.get("skill_progression", [])
             ),
@@ -681,10 +682,11 @@ class ProfileCard:
         return result
     
     def _build_likes_boundaries(self) -> dict:
+        # [P0+20-β.2.4.3 / 2026-05-16] inside_jokes_count 字段已废弃（Layer 2 单源），
+        # 不再读 our_inside_jokes。仍保留 boundaries（Sir 画像范畴）。
         profile = self._load_profile()
         return {
             'boundaries': profile.get('conversational_boundaries', '')[:200],
-            'inside_jokes_count': len(profile.get('our_inside_jokes', [])),
         }
     
     def _build_active_projects(self) -> list:

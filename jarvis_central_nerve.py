@@ -919,10 +919,9 @@ class CentralNerve:
                     sir_profile = _json.load(f)
             except: pass
 
-        jokes_list = sir_profile.get("our_inside_jokes", [])
-        jokes_str = "\n".join([f"  - {j}" for j in jokes_list[-5:]]) if jokes_list else "  (none yet)"
-        milestones = sir_profile.get("significant_milestones", [])
-        milestones_str = "\n".join([f"  - {m}" for m in milestones[-5:]]) if milestones else "  (none yet)"
+        # [P0+20-β.2.4.3 / 2026-05-16] 老路径退役第 3 步：删 jokes_str / milestones_str
+        # 生成（Layer 2 RelationalState 单源接管）。projects/progression 仍由 sir_profile
+        # 提供（Sir 画像范畴）。详 docs/JARVIS_SOUL_DRIVE.md
         projects = sir_profile.get("active_projects", [])
         projects_str = ", ".join(projects[-5:]) if projects else "(none)"
         progression = sir_profile.get("skill_progression", [])
@@ -978,13 +977,11 @@ class CentralNerve:
 
         soul_chapters_str = ""
         if soul_tags:
+            # [P0+20-β.2.4.3 / 2026-05-16] 老路径退役：删 inside_jokes / milestones
+            # 两 branch（Layer 2 BETWEEN US 块单源注入）。详 docs/JARVIS_SOUL_DRIVE.md
             chapter_blocks = []
             if "projects" in soul_tags:
                 chapter_blocks.append(f"Active Projects: {projects_str}")
-            if "inside_jokes" in soul_tags:
-                chapter_blocks.append(f"Inside Jokes:\n{jokes_str}")
-            if "milestones" in soul_tags:
-                chapter_blocks.append(f"Significant Milestones:\n{milestones_str}")
             if "progression" in soul_tags:
                 chapter_blocks.append(f"Skill Progression:\n{progression_str}")
             if chapter_blocks:
