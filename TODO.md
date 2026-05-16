@@ -1,6 +1,20 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 15:35（**P0+20-β.1 全轮完工 / tag `v0.21.0-prompt-refactor-full`**。21 commits / 7 tags / 52 testcase OK / 8 体检 OK / 死代码 -962 行 / 13 L2 directive / B1-B9 9 BUG 全修 + Phase 5 架构审计报告归档 `docs/ARCHITECTURE_AUDIT_2026_05_16.md`。**剩 Phase 3（β.0.5 Gemini-3-Flash 异步评分链）等 Sir 真机实测后再启动**。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/ARCHITECTURE_AUDIT_2026_05_16.md`。）
+**更新时间**：2026-05-16 21:45（**🌱 P0+20-β.2 灵魂工程 Layer 0+1 完工 / tag `v0.23.0-soul-foundation`**。
+
+**今天累计**：30+ commits / 8 tags / 55 testcase OK / β.0 prompt 重构全收尾 + β.1 救火 13 修 + β.2 灵魂工程启动。
+
+**β.2 灵魂工程进度（核心 — 与 INTEGRITY ABSOLUTE 并列的项目第二基本原则）**：
+- ✅ Layer 0 SelfAnchor（"我是谁"的认知锚点）— `jarvis_self_anchor.py` / 295 行
+- ✅ Layer 1 ConcernsLedger（"我关心什么" + 5 种子 + decay daemon）— `jarvis_concerns.py` / 401 行
+- ⏳ Layer 2 RelationalState（"我们之间" — 笑点 / 默契 / unfinished_business）— **下次 session 第一件事**
+- ⏳ Layer 3 Attention（注意力分配 helper）
+- ⏳ Layer 4 Reflectors（每 7d 自反思 propose 新 concerns + Sir review）
+- ⏳ Layer 5 Evaluator v2（升级评 alignment with self_model）
+
+**核心 design doc**：`docs/JARVIS_SOUL_DRIVE.md`（290 行 / 5 Layer 完整架构 + 实施计划 + 验收标准）。
+
+下个 session Agent 进窗口先读：`AGENTS.md` → `TODO.md`（本文件）→ `docs/JARVIS_SOUL_DRIVE.md`，然后从 Layer 2 RelationalState 接着做。）
 
 ---
 
