@@ -99,7 +99,9 @@ $tests = @(
     "_test_p0_plus_20_b1_future_tense_lie",
     "_test_p0_plus_20_beta05_evaluator",
     "_test_p0_plus_20_b115_reminder_read",
-    "_test_p0_plus_20_beta2_soul_anchor"
+    "_test_p0_plus_20_beta2_soul_anchor",
+    "_test_p0_plus_20_beta2_soul_relational",
+    "_test_p0_plus_20_beta2_migrate"
 )
 
 foreach ($t in $tests) {
