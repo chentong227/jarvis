@@ -1,6 +1,6 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 11:00（**🎉 P0+19 整轮完工沉档** → archive 顶部 / **🚧 P0+20-W Workflow 规范立起来 + P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**。今早 09:23 + 10:53 真机实测暴露 6 个新缺口（np import / google_1 噪音 / Integrity 误报陈述句 / TWO_PARTS 多意图失败 / dormant_project 紧贴 standby / **future-tense capability lie**）+ 引入 trace_id 体系 + AGENTS.md / .cursor/rules / commit 模板 / last_run.json 跑测报告。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
+**更新时间**：2026-05-16 11:47（**🎉 P0+20-W Workflow 规范立起来 ✅ + 🎉 P0+20-α 6 缺口全部修复 ✅ / 等 Sir 验收后启动 P0+20-β.0 Prompt 重构**。本日 commit 链：`f3c42fa docs` → `dea1eb5 α.1 numpy` → `7dcada7 W workflow` → `2a65cc7 α.2 KeyRouter perm` → `a8cd656 α.3 Integrity` → `1764aea α.4 dormant silence` → `8802757 α.5 malformed FAST_CALL` → `1efab47 α.6 print→bg_log`。Tag：`v0.20.0-workflow` + `v0.20.1-cleanup`。**48 / 48 testcase OK / 219.83s**，run_id `test_20260516_114313_65e8`。本地 8 个 commit 已提交，**未 push** — 等 Sir 实测验收。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
 
 ---
 
@@ -88,6 +88,8 @@
 | **P1** | **α.4**：Sir 刚 standby 9s 就触发 `🤫 [SilentNudge/dormant_project]` — NudgeGate cooldown 跟 SilentNudge 触发条件没对齐 | ⏳ 待修 | **P0+20-α.4** |
 | **P1** | **β.0/TWO_PARTS**：Sir 一段话同时回应上文 + 开启下文时 Jarvis 只答一半（`[CONTINUITY RULE]` directive 太弱）| ⏳ 待修 | **P0+20-β.0**（Prompt 重构顺手解决）|
 | **P1** | **β.0/future-tense lie**（2026-05-16 10:53 实测）：Jarvis 用未来时/条件时编造没有的能力 — "I can take a closer look at the logs" / "I can attempt to refresh the interface"，被 Sir 质问后立刻 backtrack 改口 "I lack the direct means..."。`INTEGRITY ABSOLUTE` 只覆盖完成时短语（"I've X"），未来时/条件时漏网。**根因**：`available_skills_block` 没让 LLM 区分"我能空话 X" vs "我有工具 Y 能做 X"。**治本路径**：β.0 `tool_honesty_directive` + `capability_phrasing` 两条 directive 联动 + SkillRegistry 反查能力 | ⏳ 待修 | **P0+20-β.0**（治本，不挤 α）|
+| **P1** | **β.0/asr_video_leak**（2026-05-16 11:12 实测 jarvis_20260516_105347.log:322）：Sir 边用边看视频，视频音（"六长老调取皇妙一门…"武侠题材）在 `active_conversation` 期间无 wake word 直接被录入 → Jarvis 误以为是 Sir 说话开始响应。`active_conversation` 设计是"避免每次都喊唤醒"，但缺速度音 VAD / speaker diarization 兜底。**根因**：active 期间所有声音 → 直接进 ASR → 误判为对 Jarvis 说话。**治本路径**：β 期或路线 D — VAD/嗓音指纹（声纹）/ 短时间未对话则自动降级回需要唤醒 | ⏳ 待修 | **β.0 / 路线 D 候选** |
+| **P0** | **β.0/false_tool_chain_after_malformed**（同 log:324-337 / 14 秒 3 段对话）：第一段正确识别 ASR 幻觉 → 但同轮中后段又编 `FAST_CALL`（`Malformed FAST_CALL organ='None' command='None'`）→ "I've captured the screen / examine the logs / Done, Sir" 一气呵成 3 段假完成。**双重根因**：① 主脑流式输出"前后段语义脱节"（开头识别幻觉，后段被其它 directive 触发编工具）；② Malformed FAST_CALL 后**没强制断流**，LLM 又编 2 段 false claim。**治本路径**：β.0 `tool_honesty` + `capability_phrasing` directive + α.5 收手补丁 | ⏳ 待修 | **β.0 治本 + α.5 收手** |
 | **P0/手动** | **α.5**：Sir 必须做 4 件 — rotate 8 keys / 填 `.env` / `git init` / 改 jarvis_nerve.py:233 入口读 `load_keys()` | ✅ 已随 P0+19-deps commit 完成 | — |
 | **中** | **轴 5.2**：CommitmentWatcher 已 P0+18-e.3 持久化到 SQLite，可继续 polish（deadline 排序 / cross-session 反查）| ⏳ 候选扩展 | 路线 B+ 候选 |
 | **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard 上游路径（兜底已 OK） | ⏳ 等真机复现 | P0+18-e.2 上游 Audio Guard 大概率已覆盖 |
@@ -119,12 +121,14 @@
 
 | # | Marker | 主题 | 关键产物 | 估时 | 状态 |
 |---|---|---|---|---|---|
-| α.1 | **P0+20-α.1** | numpy import 补全 | `jarvis_memory_core.py:30` 加 `import numpy as np`（拆分时漏的 9 处 `np.*` 调用）；commit `dea1eb5`；待跑测验收 | 0.25h | 🔄 已 commit / 待跑测 |
-| α.2 | **P0+20-α.2** | KeyRouter 永久剔除 | 加"3 次 PROJECT_DENIED 永久不轮转"开关 + bg_log 一次性提示 Sir 而不是每轮刷 | 0.25h | ⏳ |
-| α.3 | **P0+20-α.3** | Integrity 闸门 | `detect_action_claim` 加 `is_action_claim` pre-filter（陈述/共情/解释/referential 不进 1.5B），调用量降 70% + 误报降 50%。**不扩到 future-tense** | 0.5h | ⏳ |
-| α.4 | **P0+20-α.4** | dormant_project 静默期 | SmartNudgeSentinel：standby < 60s 内禁触发 SilentNudge；NudgeGate 与 SilentNudge 触发条件对齐 | 0.25h | ⏳ |
-| α.5 | ~~**P0+20-α.5**~~ | ~~Sir 手动 4 件~~ | rotate 8 keys / `.env` / `git init` / `load_keys()` 入口替换 — 已随 `P0+19-deps` 完成 | — | ✅ |
-| α.final | **P0+20-α.final** | α 整轮验收 | 1098+ testcase 全绿 + 日志噪音清零 + commit + `git tag v0.20.1-cleanup` + 汇报 Sir 实测 | 0.25h | ⏳ |
+| α.1 | **P0+20-α.1** | numpy import 补全 | `jarvis_memory_core.py:30` 加 `import numpy as np`（拆分时漏的 9 处 `np.*` 调用）→ 解决 google_3 PROJECT_DENIED 误归因刷屏 | 0.25h | ✅ `dea1eb5` 2026-05-16 |
+| α.2 | **P0+20-α.2** | KeyRouter 永久剔除 + Hippocampus 节流 | 3 次 PROJECT_DENIED → `permanently_dead=True` 不再 `_auto_recover`，一次性醒目提示 `⛔ [KeyRouter PERMANENT]` + 剩余健康 key 数；Hippocampus 跳过日志加 60s 节流（per-key），永久死亡完全静默 | 0.25h | ✅ `2a65cc7` 2026-05-16 |
+| α.3 | **P0+20-α.3** | Integrity 闸门治标治本 | 新增第 0.55 层 declarative/empathic/explanatory pre-filter (`Dreams are X` / `It is likely X` / `Unless X` / `Often X` / 中文同款)；第 1 层 `have been` / `has been` 收紧到主语必须是 Jarvis 自己。**不扩到 future-tense 撒谎**（β.0 治本）| 0.5h | ✅ `a8cd656` 2026-05-16 |
+| α.4 | **P0+20-α.4** | dormant_project 静默期 | `JarvisState.seconds_since_conv_off()` 新公共方法；SmartNudge 主循环 0 ≤ secs_off < 60s 跳过本 tick。解决 standby 9s 后 SilentNudge 触发的"骚扰" | 0.25h | ✅ `1764aea` 2026-05-16 |
+| α.5 | **P0+20-α.5** ✨ | Malformed FAST_CALL 收手 | Malformed warning `print → bg_log`（不污染对话框）；SYSTEM HARD CONSTRAINT 反馈消息禁止 "captured/examined/checked/refreshed" + "Done, Sir/already completed" 一气呵成假完成，给唯一合法 fallback template | 0.25h | ✅ `8802757` 2026-05-16 |
+| α.6 | **P0+20-α.6** ✨ | print → bg_log 治理（轻量版） | 39 处 daemon 异常 print 降级到 bg_log（chat_bypass 8 + central_nerve 12 + worker 8 + vocal_cord 5 + enhanced 6）。**保留**：对话框结尾错误（Local/Cloud/FAST_CALL Failed）、启动 banner、Mount/麦克风启动失败。深度版（全量 print review）留路线候选 | 0.5h | ✅ `1efab47` 2026-05-16 |
+| α.7 | ~~**P0+20-α.7**~~ | ~~Sir 手动 4 件~~ | rotate 8 keys / `.env` / `git init` / `load_keys()` 入口替换 — 已随 `P0+19-deps` 完成 | — | ✅ |
+| α.final | **P0+20-α.final** | α 整轮验收 | 48/48 testcase 全绿（test_run_id=`test_20260516_114313_65e8`，dur=219.83s，git_head=`1efab47`）；tag `v0.20.1-cleanup`；本地 commit 已就绪，**未 push**，等 Sir 真机实测后再决定 | 0.25h | ✅ 2026-05-16 |
 
 ### 🧠 P0+20-β.0 — Prompt 重构 + Directive Registry（~7h，完整 design doc 在 `docs/PROMPT_REFACTOR_PLAN.md`）
 
@@ -171,9 +175,9 @@
 - ✅ **路线 A.7**：P0+18-e — 待办链路收口 + 上游 Audio Guard + CW 持久化 + 终端色彩化
 - ✅ **路线 A.8**：P0+18-f — 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报
 - ✅ **路线 A.9**：P0+19 — Nerve 拆分（17479→324 / -98.1%）+ 依赖锁定
-- 🔄 **路线 A.9.5 当前轨 0**：**P0+20-W** — Workflow 规范化（trace_id / AGENTS.md / .cursor/rules / last_run.json / commit 模板）
-- 🔄 **路线 A.10 当前轨 1**：**P0+20-α** — 拆分收尾 + 4 缺口修复（np / google_1 噪音 / Integrity 闸门 / dormant 静默期）
-- 🔄 **路线 A.11 当前轨 2**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分 + TWO_PARTS / future-tense lie 治本）
+- ✅ **路线 A.9.5**：P0+20-W — Workflow 规范化（trace_id / AGENTS.md / .cursor/rules / last_run.json / commit 模板）`v0.20.0-workflow`
+- ✅ **路线 A.10**：P0+20-α — 拆分收尾 + 6 缺口修复（α.1-α.6 全 ✅）`v0.20.1-cleanup`
+- 🔄 **路线 A.11 当前轨**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分 + TWO_PARTS / future-tense lie / asr_video_leak / false_tool_chain 全部一起治本）。等 Sir 验收 α 后启动 β.0.1
 - ⏳ **路线 B 候选**：让 PromiseExecutor 真跑长任务 — 选 3 个高价值场景（每日 9:00 驾照科一 3 题 / 起床播报 / 番茄钟）
 - ⏳ **路线 B+ 候选**：AgendaLedger + DailyBriefing + WeeklyDigest + SkillsAtAGlance（让 Jarvis 从 reactive 变 goal-driven）
 - ⏳ **路线 C 候选**：R8 轴 4 — OCR / 后台测试 / 全局热键
