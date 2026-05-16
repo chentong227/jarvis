@@ -2364,6 +2364,23 @@ class JarvisState:
         with self._lock:
             return self._last_conv_change[1]
 
+    def seconds_since_conv_off(self) -> float:
+        """[P0+20-α.4 / 2026-05-16] 距上次 active_conversation→False 的秒数。
+        
+        语义：用于 SmartNudge 等后台模块"刚 standby 不要立即骚扰"的静默窗口判断。
+        返回值：
+        - 若当前正处于 active_conv=True → 返回 -1.0（不在 standby）
+        - 若当前 active_conv=False → 返回 now - last_off_ts
+        - 若从未变更过（启动后未发生过对话）→ 返回 -1.0
+        """
+        with self._lock:
+            value, reason, ts = self._last_conv_change
+            if self._active_conv:
+                return -1.0
+            if ts <= 0:
+                return -1.0
+            return max(0.0, time.time() - ts)
+
     def snapshot(self) -> dict:
         """供测试 / 调试：返回当前三态 + 最后一次原因。"""
         with self._lock:

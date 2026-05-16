@@ -174,6 +174,21 @@ class SmartNudgeSentinel(threading.Thread):
                     time.sleep(10)
                     continue
 
+                # [P0+20-α.4 / 2026-05-16] standby 静默窗口（60s）：
+                # 解决 jarvis_20260516_092307.log 中 standby 9s 后就触发 dormant_project 的问题。
+                # 原因：对话结束后 active_conversation→False，但 SmartNudge 主循环立即继续 tick，
+                #       下一轮就把 dormant_project 排进候选。Sir 刚说完话还没反应过来就被骚扰。
+                # 修法：从 JarvisState 拿 seconds_since_conv_off()，< 60s 整体跳过本 tick。
+                try:
+                    state = getattr(self.worker.jarvis, 'state', None) if hasattr(self.worker, 'jarvis') else None
+                    if state is not None:
+                        secs_off = state.seconds_since_conv_off()
+                        if 0 <= secs_off < 60.0:
+                            time.sleep(5)
+                            continue
+                except Exception:
+                    pass
+
                 if self.gate and self.gate.is_sleep_mode():
                     idle_ms = 0
                     try:
