@@ -1,12 +1,85 @@
 import os
 import re
 import subprocess
+import difflib
 from jarvis_blood import Action, ExecutionResult
 
 MANIFEST = {
     "name": "text_hands",
     "description": "文本/文件操作工具。读取/写入/追加/搜索/统计/格式化。纯本地。",
 }
+
+
+def _suggest_similar_paths(path: str, max_suggestions: int = 3) -> list:
+    """[P0+20-β.2.5 hotfix / 2026-05-17] 文件不存在时，扫同目录下"名字相似"的候选项。
+
+    Sir 23:58 实测 BUG：LLM 把 TODO.md 听成 'to do.txt' → text_hands.read 失败
+    只返回纯文本 "文件不存在"，LLM 没足够信息向 Sir 反问。
+    修法：失败时附 fuzzy 匹配建议，让 LLM 能反问 Sir 'Did you mean TODO.md?'。
+
+    实现：difflib.get_close_matches 大小写不敏感 + 紧凑形式匹配
+    ('to do.txt' → 'TODO.md' / 'todo.md')。
+    """
+    try:
+        dir_path = os.path.dirname(path) or '.'
+        target_name = os.path.basename(path).lower()
+        if not target_name or not os.path.isdir(dir_path):
+            return []
+        try:
+            entries = os.listdir(dir_path)
+        except Exception:
+            return []
+        all_files = []
+        for f in entries:
+            try:
+                if os.path.isfile(os.path.join(dir_path, f)):
+                    all_files.append(f)
+            except Exception:
+                continue
+        if not all_files:
+            return []
+
+        # 策略 1：difflib 相似度
+        names_lower = [f.lower() for f in all_files]
+        matches = list(difflib.get_close_matches(
+            target_name, names_lower, n=max_suggestions, cutoff=0.4
+        ))
+        # 策略 2：紧凑匹配（"to do.txt" → "TODO.md" / "todo.md"）
+        target_compact = re.sub(r'[\s_\-]+', '', target_name)
+        target_stem = os.path.splitext(target_compact)[0]
+        if target_stem and len(target_stem) >= 3:
+            for f in all_files:
+                f_compact = re.sub(r'[\s_\-]+', '', f.lower())
+                f_stem = os.path.splitext(f_compact)[0]
+                if f_stem and target_stem == f_stem:
+                    if f.lower() not in matches:
+                        matches.insert(0, f.lower())  # exact stem match 排前
+                elif f_stem and target_stem in f_stem:
+                    if f.lower() not in matches:
+                        matches.append(f.lower())
+
+        # 映射回原大小写文件名
+        out = []
+        seen = set()
+        for m in matches:
+            for f in all_files:
+                if f.lower() == m and f not in seen:
+                    out.append(os.path.join(dir_path, f))
+                    seen.add(f)
+                    break
+        return out[:max_suggestions]
+    except Exception:
+        return []
+
+
+def _file_not_found_msg(path: str) -> str:
+    """[β.2.5 hotfix] 统一格式：'文件不存在: <path>。Did you mean: <s1>, <s2>?'
+    让 LLM 看到这条 tool result 后能反问 Sir 'Did you mean TODO.md?' 而不是沉默。"""
+    msg = f"文件不存在: {path}"
+    sug = _suggest_similar_paths(path)
+    if sug:
+        msg += f"。Did you mean: {', '.join(sug)} ?"
+    return msg
 
 
 class Hands:
@@ -35,7 +108,7 @@ class Hands:
                 lines = params.get("lines", 50)
                 offset = params.get("offset", 0)
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()
@@ -81,7 +154,7 @@ class Hands:
                 path = params.get("path", "")
                 pattern = params.get("pattern", "")
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         lines = f.readlines()
@@ -101,7 +174,7 @@ class Hands:
             elif cmd == "count_lines":
                 path = params.get("path", "")
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 count = 0
                 try:
                     with open(path, "r", encoding="utf-8") as f:
@@ -119,7 +192,7 @@ class Hands:
                 path = params.get("path", "")
                 n = params.get("lines", 20)
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         lines = f.readlines()
@@ -136,7 +209,7 @@ class Hands:
                 path = params.get("path", "")
                 n = params.get("lines", 20)
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         lines = f.readlines()
@@ -154,7 +227,7 @@ class Hands:
                 old = params.get("old", "")
                 new = params.get("new", "")
                 if not path or not os.path.exists(path):
-                    return ExecutionResult(success=False, msg=f"文件不存在: {path}")
+                    return ExecutionResult(success=False, msg=_file_not_found_msg(path))
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()

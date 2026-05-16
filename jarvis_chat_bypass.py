@@ -2573,7 +2573,19 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             _need_synthesis = bool(
                 _circuit_broken_reason
                 and _tool_results
-                and (not _stripped_full or (_all_tools_failed and _has_done_claim))
+                and (
+                    not _stripped_full
+                    or (_all_tools_failed and _has_done_claim)
+                    # 🩹 [P0+20-β.2.5 hotfix / 2026-05-17] Sir 23:58 实测 BUG：
+                    # text_hands.read 找不到 to do.txt → tool 失败 → LLM 只说了
+                    # "Reading the file now, Sir." 启动语 → 没说"打开失败" → 熔断后
+                    # 沉默退场 → Sir 不知道发生了什么。
+                    # 修法：工具全失败 + 熔断 reason 是失败类（consecutive_failures /
+                    # malformed_calls）→ 强制合成"打开失败"兜底（即便 LLM 输出了启动语）。
+                    or (_circuit_broken_reason in (
+                            'consecutive_failures', 'malformed_calls'
+                        ) and _all_tools_failed)
+                )
             )
 
             # 🩹 [P0+20-β.1.13 / 2026-05-16] B10/B12 修：wrap-up audio 默认抑制策略。

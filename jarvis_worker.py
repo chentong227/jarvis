@@ -328,17 +328,36 @@ class VoiceListenThread(QThread):
     # 这样避免一个无心词把整个会话击碎。
     @staticmethod
     def _phrase_at_head(needle: str, haystack_lower: str, head_chars: int = 6) -> bool:
-        """关键词是否出现在 haystack 前 head_chars 字符内，且对英文使用词边界。"""
+        """关键词是否出现在 haystack 前 head_chars 字符内，且对英文使用词边界。
+
+        [P0+20-β.2.5 hotfix / 2026-05-17] \\b 在 Python re 默认含汉字 word char，
+        所以 '是stand' 之间不算 boundary → 用显式 ASCII lookbehind/lookahead 替代。
+        """
         if not needle or not haystack_lower:
             return False
         prefix = haystack_lower[:head_chars]
         if any('\u4e00' <= c <= '\u9fa5' for c in needle):
             return needle in prefix
-        # 英文：词边界 + 起始位置在 head_chars 内
-        m = re.search(r'\b' + re.escape(needle) + r'\b', haystack_lower)
+        # 英文：ASCII 词边界 + 起始位置在 head_chars 内
+        m = re.search(r'(?<![a-zA-Z])' + re.escape(needle) + r'(?![a-zA-Z])',
+                      haystack_lower)
         if not m:
             return False
         return m.start() <= head_chars
+
+    @staticmethod
+    def _phrase_at_tail(needle: str, haystack_lower: str, tail_chars: int = 14) -> bool:
+        """[P0+20-β.2.5 hotfix / 2026-05-17] 关键词是否在 haystack **末尾** tail_chars
+        字符内。Sir 23:58 实测 BUG：'不是不是我说错了，是 stand down' 这种纠正/补救式
+        输入 sw 在尾部不在首部，原 _phrase_at_head 路径不触发 → stand down 没退出焦点。
+        英文用显式 ASCII boundary（\\b 默认含汉字 → '是stand' 之间不算 boundary）。"""
+        if not needle or not haystack_lower:
+            return False
+        suffix = haystack_lower[-max(tail_chars, len(needle) + 4):]
+        if any('\u4e00' <= c <= '\u9fa5' for c in needle):
+            return needle in suffix
+        m = re.search(r'(?<![a-zA-Z])' + re.escape(needle) + r'(?![a-zA-Z])', suffix)
+        return m is not None
 
     def detect_stop_command(self, clean_text: str) -> bool:
         """是否是强制停止指令。被 ASR 主循环调用。"""
@@ -360,6 +379,14 @@ class VoiceListenThread(QThread):
         for sw in self.SOFT_STOP_WORDS:
             if len(s_clean) <= 4 and self._phrase_at_head(sw.lower(), s, head_chars=4):
                 return True
+        # 4. [P0+20-β.2.5 hotfix / 2026-05-17] 硬停止词出现在句末（最后 max(len(sw)+6, 14)
+        # 字符内）→ 也触发。修 Sir 23:58 实测 BUG："不是不是我说错了，是 stand down" 这种
+        # 纠正模式：句首是否定词「不是」，真正意图在句末。短句 (≤ 26 字符) 强制句末检测；
+        # 长句仍跳过避免误炸"I want to talk about stand down protocols"这类话题讨论。
+        if len(s_clean) <= 26:
+            for sw in self.STRICT_STOP_WORDS:
+                if self._phrase_at_tail(sw.lower(), s, tail_chars=max(len(sw) + 6, 14)):
+                    return True
         return False
 
     def detect_dismiss_command(self, clean_text: str) -> bool:
