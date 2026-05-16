@@ -2828,15 +2828,22 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         # 🎯 [P0+20-β.0.5 / 2026-05-16] L2 directive 异步评分 (Gemini-3-Flash via OpenRouter)
         # 把本轮 fired 的 directive ids + reply + user_input 喂给 evaluator，背景评分。
         # 主路径不阻塞；失败/超时静默丢弃；rate limit 命中跳过本批。
+        # 🩹 [P0+20-β.1.18 / 2026-05-16] 治 Sir 18:30 实测 BUG：
+        # bilingual_directive helped=0 但实际 Sir 看到回复有中文 → 因为 final_reply 已被
+        # split("---ZH---")[0] 剥掉中文部分 → 评分 LLM 看到纯英文当然判 "Missing Chinese"。
+        # 修法：传给 evaluator 用 full_text（完整 reply，含 ---ZH--- 中文部分），
+        # 让评分 LLM 能正确判断 bilingual_directive 是否被遵守。
         try:
             evaluator = getattr(self.jarvis, 'directive_evaluator', None)
             if evaluator is not None:
                 fired_ids = list(getattr(self.jarvis, '_l2_last_fired_ids', []) or [])
-                if fired_ids and final_reply and clean_user_input:
+                # 优先用 full_text（含 ---ZH--- + 中文），fallback 到 final_reply
+                _eval_reply = full_text if (full_text and full_text.strip()) else final_reply
+                if fired_ids and _eval_reply and clean_user_input:
                     evaluator.evaluate_async(
                         fired_directive_ids=fired_ids,
                         user_input=clean_user_input,
-                        jarvis_reply=final_reply,
+                        jarvis_reply=_eval_reply,
                     )
         except Exception:
             pass
