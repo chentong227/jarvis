@@ -19,13 +19,13 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from jarvis_relational import (
-    InsideJoke, UnspokenProtocol, UnfinishedBusiness,
+    InsideJoke, UnspokenProtocol, UnfinishedBusiness, SharedHistoryThread,
     RelationalStateStore,
     get_default_store, reset_default_store_for_test,
-    make_joke_id, make_protocol_id, make_ub_id,
+    make_joke_id, make_protocol_id, make_ub_id, make_thread_id,
     STATE_ACTIVE, STATE_ARCHIVED,
     UB_OPEN, UB_PAUSED, UB_DONE,
-    DEFAULT_TTL_DAYS, DEFAULT_UB_TTL_DAYS,
+    DEFAULT_TTL_DAYS, DEFAULT_UB_TTL_DAYS, DEFAULT_THREAD_TTL_DAYS,
 )
 
 
@@ -226,7 +226,7 @@ class TestPersistence(unittest.TestCase):
     def test_load_missing_file_returns_zeros(self):
         s = RelationalStateStore(persist_path=self.tmp.name)
         result = s.load()
-        self.assertEqual(result, {'jokes': 0, 'protocols': 0, 'ub': 0})
+        self.assertEqual(result, {'jokes': 0, 'protocols': 0, 'ub': 0, 'threads': 0})
 
 
 # ============================================================
@@ -353,7 +353,109 @@ class TestDecay(unittest.TestCase):
 
 
 # ============================================================
-# F. ID 生成辅助
+# F. SharedHistoryThread (β.2.4.1 新增)
+# ============================================================
+class TestSharedHistoryThreadDataclass(unittest.TestCase):
+
+    def test_defaults(self):
+        t = SharedHistoryThread(id='t1', title='Built Jarvis')
+        self.assertEqual(t.state, STATE_ACTIVE)
+        self.assertEqual(t.highlights, [])
+        self.assertEqual(t.ttl_days, DEFAULT_THREAD_TTL_DAYS)
+        self.assertEqual(t.source, 'sir_added')
+
+    def test_add_highlight_caps_at_20(self):
+        t = SharedHistoryThread(id='t1', title='X')
+        for i in range(25):
+            t.add_highlight(f'event {i}')
+        self.assertEqual(len(t.highlights), 20)
+        self.assertEqual(t.highlights[-1]['what'], 'event 24')
+
+    def test_is_expired_default_false(self):
+        t = SharedHistoryThread(id='t1', title='X')
+        self.assertFalse(t.is_expired())
+
+    def test_is_expired_true_when_old(self):
+        t = SharedHistoryThread(id='t1', title='X', ttl_days=1)
+        t.last_milestone_at = time.time() - 2 * 86400
+        self.assertTrue(t.is_expired())
+
+
+class TestSharedHistoryThreadStore(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(
+            suffix='.json', delete=False, mode='w', encoding='utf-8'
+        )
+        self.tmp.close()
+        os.unlink(self.tmp.name)
+        self.store = RelationalStateStore(persist_path=self.tmp.name)
+
+    def tearDown(self):
+        if os.path.exists(self.tmp.name):
+            os.unlink(self.tmp.name)
+
+    def test_add_get_list_thread(self):
+        t = SharedHistoryThread(id='t1', title='Built Jarvis')
+        self.assertTrue(self.store.add_thread(t))
+        self.assertIs(self.store.get_thread('t1'), t)
+        self.assertEqual(len(self.store.list_threads()), 1)
+        self.assertFalse(self.store.add_thread(t))
+
+    def test_record_highlight_persists(self):
+        t = SharedHistoryThread(id='t1', title='X')
+        self.store.add_thread(t)
+        self.assertTrue(self.store.record_thread_highlight(
+            't1', 'P0+19 nerve split done'
+        ))
+        self.assertEqual(len(t.highlights), 1)
+        self.assertIn('P0+19', t.highlights[0]['what'])
+
+    def test_archive_thread(self):
+        self.store.add_thread(SharedHistoryThread(id='t1', title='X'))
+        self.assertTrue(self.store.archive_thread('t1'))
+        self.assertEqual(self.store.get_thread('t1').state, STATE_ARCHIVED)
+        self.assertEqual(len(self.store.list_threads()), 0)
+        self.assertEqual(len(self.store.list_threads(include_archived=True)), 1)
+
+    def test_persist_load_roundtrip_with_thread(self):
+        s1 = self.store
+        s1.add_thread(SharedHistoryThread(
+            id='t1', title='Built Jarvis', detail='from 2025'
+        ))
+        s1.record_thread_highlight('t1', 'wake word OK')
+        self.assertTrue(s1.persist())
+
+        s2 = RelationalStateStore(persist_path=self.tmp.name)
+        result = s2.load()
+        self.assertEqual(result['threads'], 1)
+        t = s2.get_thread('t1')
+        self.assertEqual(t.title, 'Built Jarvis')
+        self.assertEqual(len(t.highlights), 1)
+
+    def test_threads_appear_in_prompt_block(self):
+        self.store.add_thread(SharedHistoryThread(
+            id='t1', title='Built Jarvis system'
+        ))
+        self.store.record_thread_highlight('t1', 'P0+20 soul layer 2 done')
+        block = self.store.to_prompt_block()
+        self.assertIn('SHARED HISTORY THREADS', block)
+        self.assertIn('Built Jarvis', block)
+        self.assertIn('soul layer 2', block)
+
+    def test_decay_archives_expired_thread(self):
+        old = SharedHistoryThread(id='old', title='X', ttl_days=1)
+        old.last_milestone_at = time.time() - 5 * 86400
+        self.store.add_thread(old)
+        self.store.add_thread(SharedHistoryThread(id='new', title='Y'))
+        stats = self.store.apply_decay()
+        self.assertEqual(stats['threads_archived'], 1)
+        self.assertEqual(self.store.get_thread('old').state, STATE_ARCHIVED)
+        self.assertEqual(self.store.get_thread('new').state, STATE_ACTIVE)
+
+
+# ============================================================
+# G. ID 生成辅助
 # ============================================================
 class TestIdHelpers(unittest.TestCase):
 
@@ -373,6 +475,13 @@ class TestIdHelpers(unittest.TestCase):
         self.assertTrue(make_joke_id('hello').startswith('joke_'))
         self.assertTrue(make_protocol_id('rule').startswith('proto_'))
         self.assertTrue(make_ub_id('topic').startswith('ub_'))
+        self.assertTrue(make_thread_id('Built Jarvis').startswith('thread_'))
+
+    def test_thread_id_deterministic(self):
+        self.assertEqual(
+            make_thread_id('Built Jarvis'),
+            make_thread_id('Built Jarvis')
+        )
 
     def test_joke_id_safe_for_filenames(self):
         jid = make_joke_id('becoming... overbearing!@#$')
@@ -455,6 +564,19 @@ class TestRelationalCLI(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn('BETWEEN US', r.stdout)
         self.assertIn('phrase one', r.stdout)
+
+    def test_cli_add_thread_writes_persist(self):
+        r = self._run(
+            '--add-thread', '--title', 'Built Jarvis personal butler system',
+            '--detail', 'multi-year project'
+        )
+        self.assertEqual(r.returncode, 0, f"stderr: {r.stderr}")
+        self.assertTrue(os.path.exists(self.tmp.name))
+        s = RelationalStateStore(persist_path=self.tmp.name)
+        s.load()
+        threads = s.list_threads()
+        self.assertEqual(len(threads), 1)
+        self.assertIn('Jarvis', threads[0].title)
 
 
 if __name__ == '__main__':

@@ -59,6 +59,7 @@ UB_DONE = 'done'
 # 默认参数
 DEFAULT_TTL_DAYS = 90              # inside jokes / protocols 90d 没用过 → archived
 DEFAULT_UB_TTL_DAYS = 60           # unfinished_business 60d 没动 → archived
+DEFAULT_THREAD_TTL_DAYS = 365      # shared_history_threads 1y 没碰才过期（长期叙事）
 PROMPT_BLOCK_DEFAULT_MAX = 700     # 注入 prompt 的 Layer 2 块上限
 INSIDE_JOKES_RECENT_COOLDOWN_S = 1800.0  # 30min 内用过的 joke 注入时降排序
 
@@ -155,6 +156,63 @@ class UnspokenProtocol:
 
 
 @dataclass
+class SharedHistoryThread:
+    """[β.2.4.1 / 2026-05-16] 我们一起经历的关键叙事线（接管 sir_profile.significant_milestones）。
+
+    例：
+        "Built and deployed J.A.R.V.I.S." — 这是一条 thread
+        highlights: [
+            "2025-08: 初版 wake word 跑通",
+            "2026-05: P0+19 拆分 17479 → 324 行",
+            "2026-05: P0+20-β.2 灵魂工程 Layer 0+1 完工",
+        ]
+
+    设计原则：
+    - title 短描述（≤ 100 字）
+    - highlights 是叙事点列表（最多 20 条，按时序）
+    - ttl_days = 365（thread 是长期叙事，不像 inside_joke 那么易逝）
+    - 接管 sir_profile.significant_milestones：从 string list 升级为
+      含 thread_id / title / highlights / timestamps 的 structured 数据
+    """
+    id: str
+    title: str
+    state: str = STATE_ACTIVE
+    detail: str = ''
+
+    # 时间
+    started_at: float = field(default_factory=time.time)
+    last_milestone_at: float = field(default_factory=time.time)
+    created_at: float = field(default_factory=time.time)
+
+    # 内容
+    highlights: List[dict] = field(default_factory=list)  # [{'when', 'when_iso', 'what'}]
+
+    # 来源
+    source: str = 'sir_added'       # sir_added / migrated_from_profile / auto_detected
+    source_marker: str = ''
+
+    # 配置
+    ttl_days: int = DEFAULT_THREAD_TTL_DAYS
+
+    def add_highlight(self, what: str) -> None:
+        now = time.time()
+        self.highlights.append({
+            'when': now,
+            'when_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+            'what': what[:200],
+        })
+        if len(self.highlights) > 20:
+            self.highlights = self.highlights[-20:]
+        self.last_milestone_at = now
+
+    def is_expired(self) -> bool:
+        return (time.time() - self.last_milestone_at) > self.ttl_days * 86400
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class UnfinishedBusiness:
     """未竟之事。
 
@@ -215,6 +273,7 @@ class RelationalStateStore:
         self.inside_jokes: dict[str, InsideJoke] = {}
         self.unspoken_protocols: dict[str, UnspokenProtocol] = {}
         self.unfinished_business: dict[str, UnfinishedBusiness] = {}
+        self.shared_history_threads: dict[str, SharedHistoryThread] = {}
         self._lock = threading.Lock()
         self._dirty = False
 
@@ -362,12 +421,58 @@ class RelationalStateStore:
             return True
 
     # ---------------------------------------------------------
+    # Shared History Threads
+    # ---------------------------------------------------------
+
+    def add_thread(self, thread: SharedHistoryThread) -> bool:
+        with self._lock:
+            if thread.id in self.shared_history_threads:
+                return False
+            self.shared_history_threads[thread.id] = thread
+            self._dirty = True
+            return True
+
+    def get_thread(self, tid: str) -> Optional[SharedHistoryThread]:
+        return self.shared_history_threads.get(tid)
+
+    def list_threads(self, include_archived: bool = False) -> List[SharedHistoryThread]:
+        out = []
+        for t in self.shared_history_threads.values():
+            if not include_archived and t.state != STATE_ACTIVE:
+                continue
+            out.append(t)
+        return out
+
+    def record_thread_highlight(self, tid: str, what: str) -> bool:
+        with self._lock:
+            t = self.shared_history_threads.get(tid)
+            if t is None:
+                return False
+            t.add_highlight(what)
+            self._dirty = True
+            return True
+
+    def archive_thread(self, tid: str) -> bool:
+        with self._lock:
+            t = self.shared_history_threads.get(tid)
+            if t is None:
+                return False
+            t.state = STATE_ARCHIVED
+            self._dirty = True
+            return True
+
+    # ---------------------------------------------------------
     # Decay / Cleanup
     # ---------------------------------------------------------
 
     def apply_decay(self) -> dict:
         """过期项 → archived/done。返回统计。"""
-        stats = {'jokes_archived': 0, 'protocols_archived': 0, 'ub_archived': 0}
+        stats = {
+            'jokes_archived': 0,
+            'protocols_archived': 0,
+            'ub_archived': 0,
+            'threads_archived': 0,
+        }
         with self._lock:
             for j in self.inside_jokes.values():
                 if j.state == STATE_ACTIVE and j.is_expired():
@@ -383,6 +488,11 @@ class RelationalStateStore:
                 if u.state != UB_OPEN and u.is_expired():
                     u.state = UB_DONE
                     stats['ub_archived'] += 1
+                    self._dirty = True
+            for t in self.shared_history_threads.values():
+                if t.state == STATE_ACTIVE and t.is_expired():
+                    t.state = STATE_ARCHIVED
+                    stats['threads_archived'] += 1
                     self._dirty = True
         return stats
 
@@ -402,10 +512,13 @@ class RelationalStateStore:
                 'unfinished_business': {
                     uid: u.to_dict() for uid, u in self.unfinished_business.items()
                 },
+                'shared_history_threads': {
+                    tid: t.to_dict() for tid, t in self.shared_history_threads.items()
+                },
                 '_meta': {
                     'persisted_at': time.time(),
                     'persisted_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
-                    'schema_version': 1,
+                    'schema_version': 2,  # β.2.4.1: 加入 shared_history_threads
                 },
             }
             self._dirty = False
@@ -420,8 +533,8 @@ class RelationalStateStore:
             return False
 
     def load(self) -> dict:
-        """从 disk 恢复。返回 {'jokes': N, 'protocols': N, 'ub': N}。"""
-        result = {'jokes': 0, 'protocols': 0, 'ub': 0}
+        """从 disk 恢复。返回 {'jokes': N, 'protocols': N, 'ub': N, 'threads': N}。"""
+        result = {'jokes': 0, 'protocols': 0, 'ub': 0, 'threads': 0}
         if not os.path.exists(self.persist_path):
             return result
         try:
@@ -492,6 +605,26 @@ class RelationalStateStore:
                 except Exception:
                     continue
 
+            for tid, d in (snapshot.get('shared_history_threads') or {}).items():
+                try:
+                    t = SharedHistoryThread(
+                        id=d.get('id', tid),
+                        title=d.get('title', '')[:120],
+                        state=d.get('state', STATE_ACTIVE),
+                        detail=d.get('detail', '')[:300],
+                        started_at=float(d.get('started_at', time.time())),
+                        last_milestone_at=float(d.get('last_milestone_at', time.time())),
+                        created_at=float(d.get('created_at', time.time())),
+                        highlights=list(d.get('highlights') or []),
+                        source=d.get('source', 'sir_added'),
+                        source_marker=d.get('source_marker', ''),
+                        ttl_days=int(d.get('ttl_days', DEFAULT_THREAD_TTL_DAYS)),
+                    )
+                    self.shared_history_threads[t.id] = t
+                    result['threads'] += 1
+                except Exception:
+                    continue
+
         return result
 
     # ---------------------------------------------------------
@@ -535,7 +668,15 @@ class RelationalStateStore:
         opens.sort(key=_score)
         return opens[:top_n]
 
+    def _rank_threads(self, top_n: int) -> List[SharedHistoryThread]:
+        """按 last_milestone_at 倒序（最近活跃的叙事线排前）。"""
+        active = [t for t in self.shared_history_threads.values()
+                  if t.state == STATE_ACTIVE]
+        active.sort(key=lambda t: -t.last_milestone_at)
+        return active[:top_n]
+
     def to_prompt_block(self, top_jokes: int = 3, top_unfinished: int = 2,
+                        top_threads: int = 2,
                         max_chars: int = PROMPT_BLOCK_DEFAULT_MAX) -> str:
         """构造注入 prompt 的 [BETWEEN US] 块。
 
@@ -544,17 +685,22 @@ class RelationalStateStore:
         === BETWEEN US — OUR RELATIONAL CONTEXT ===
         [OUR INSIDE JOKES]
           - phrase | tone | birth: ...
-          - phrase | tone | birth: ...
         [OUR UNSPOKEN PROTOCOLS]
           - rule (refed N times)
         [UNFINISHED BUSINESS WE BOTH KNOW]
           - topic — last touched <human time> ago
+        [SHARED HISTORY THREADS — narrative lines we've built together]
+          - "title" — latest: <highlight>
+
+        [β.2.4.1 / 2026-05-16] 新增 [SHARED HISTORY THREADS] 段（接管原来
+        sir_profile.significant_milestones 注入 chapter_blocks 的路径）。
         """
         jokes = self._rank_inside_jokes(top_jokes)
         protocols = self.list_protocols()
         unfinished = self._rank_unfinished(top_unfinished)
+        threads = self._rank_threads(top_threads)
 
-        if not jokes and not protocols and not unfinished:
+        if not jokes and not protocols and not unfinished and not threads:
             return ''
 
         lines: List[str] = ["=== BETWEEN US — OUR RELATIONAL CONTEXT ==="]
@@ -593,6 +739,19 @@ class RelationalStateStore:
                 overdue_tag = " [OVERDUE]" if u.is_overdue() else ""
                 lines.append(f"  - {u.topic[:80]} — last touched {age_str}{overdue_tag}"[:200])
 
+        if threads:
+            lines.append("[SHARED HISTORY THREADS — narrative lines we've built together]")
+            now = time.time()
+            for t in threads:
+                seg = f"  - \"{t.title[:60]}\""
+                if t.highlights:
+                    last_h = t.highlights[-1].get('what', '')[:60]
+                    seg += f" — latest: {last_h}"
+                age_days = (now - t.last_milestone_at) / 86400
+                if age_days > 7:
+                    seg += f" ({int(age_days)}d ago)"
+                lines.append(seg[:200])
+
         out = "\n".join(lines)
         if len(out) > max_chars:
             _suffix = "\n…[truncated]"
@@ -608,12 +767,13 @@ class RelationalStateStore:
         jokes = self.list_inside_jokes(include_archived=show_archived)
         protos = self.list_protocols(include_archived=show_archived)
         ubs = self.list_unfinished(include_done=show_archived)
+        threads = self.list_threads(include_archived=show_archived)
 
         lines = []
         lines.append("=" * 100)
         lines.append(
             f"[RelationalState] jokes={len(jokes)} protocols={len(protos)} "
-            f"unfinished={len(ubs)} (path={self.persist_path})"
+            f"unfinished={len(ubs)} threads={len(threads)} (path={self.persist_path})"
         )
         lines.append("=" * 100)
 
@@ -655,6 +815,24 @@ class RelationalStateStore:
                     f"  - {u.id} [{u.state}] — {u.topic[:60]} "
                     f"(last touched {age_days:.1f}d ago){overdue}"
                 )
+        else:
+            lines.append("  (none)")
+
+        # Shared History Threads
+        lines.append("")
+        lines.append("[SHARED HISTORY THREADS]")
+        if threads:
+            now = time.time()
+            for t in sorted(threads, key=lambda x: -x.last_milestone_at):
+                age_days = (now - t.last_milestone_at) / 86400
+                hl_n = len(t.highlights)
+                lines.append(
+                    f"  - {t.id} [{t.state}] — \"{t.title[:50]}\" "
+                    f"({hl_n} highlights, latest {age_days:.1f}d ago)"
+                )
+                if t.highlights:
+                    last = t.highlights[-1]
+                    lines.append(f"    last: {last.get('what', '')[:80]}")
         else:
             lines.append("  (none)")
 
@@ -711,3 +889,12 @@ def make_ub_id(topic: str) -> str:
     slug = _re.sub(r'[^a-z0-9]+', '_', topic.lower())[:24].strip('_') or 'topic'
     h = hashlib.md5(topic.encode('utf-8', errors='ignore')).hexdigest()[:6]
     return f"ub_{slug}_{h}"
+
+
+def make_thread_id(title: str) -> str:
+    """从 title 生成短可读 id：thread_<slug>_<6hex>。"""
+    import hashlib
+    import re as _re
+    slug = _re.sub(r'[^a-z0-9]+', '_', title.lower())[:24].strip('_') or 'thread'
+    h = hashlib.md5(title.encode('utf-8', errors='ignore')).hexdigest()[:6]
+    return f"thread_{slug}_{h}"

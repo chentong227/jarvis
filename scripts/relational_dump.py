@@ -76,9 +76,11 @@ from jarvis_relational import (
     InsideJoke,
     UnspokenProtocol,
     UnfinishedBusiness,
+    SharedHistoryThread,
     make_joke_id,
     make_protocol_id,
     make_ub_id,
+    make_thread_id,
     STATE_ACTIVE,
     STATE_ARCHIVED,
     UB_OPEN,
@@ -208,8 +210,53 @@ def _add_unfinished(args) -> int:
     return 0
 
 
+def _add_thread(args) -> int:
+    if not args.title:
+        print("[ERROR] --title 必填")
+        return 2
+    s = _load_store(args.persist_path)
+    thread = SharedHistoryThread(
+        id=args.id or make_thread_id(args.title),
+        title=args.title[:120],
+        detail=(args.detail or '')[:300],
+        source='sir_added',
+        source_marker=args.marker or f"sir_cli_{time.strftime('%Y%m%d_%H%M%S')}",
+    )
+    ok = s.add_thread(thread)
+    if not ok:
+        print(f"[SKIP] thread '{thread.id}' 已存在，未覆盖")
+        return 1
+    s._dirty = True
+    persisted = s.persist()
+    print(f"[OK] 已录入 shared_history_thread")
+    print(f"  id        : {thread.id}")
+    print(f"  title     : {thread.title!r}")
+    print(f"  detail    : {thread.detail or '-'}")
+    print(f"  persisted : {persisted} (path={s.persist_path})")
+    return 0
+
+
+def _add_highlight(args) -> int:
+    if not args.thread_id:
+        print("[ERROR] --thread-id 必填")
+        return 2
+    if not args.what:
+        print("[ERROR] --what 必填")
+        return 2
+    s = _load_store(args.persist_path)
+    if s.get_thread(args.thread_id) is None:
+        print(f"[ERROR] thread '{args.thread_id}' 不存在")
+        return 2
+    ok = s.record_thread_highlight(args.thread_id, args.what[:200])
+    persisted = s.persist()
+    print(f"[OK] thread '{args.thread_id}' 加入 highlight (ok={ok})")
+    print(f"  what      : {args.what[:80]!r}")
+    print(f"  persisted : {persisted}")
+    return 0
+
+
 def _archive_any(args) -> int:
-    """归档：自动判断是 joke / protocol / ub。"""
+    """归档：自动判断是 joke / protocol / ub / thread。"""
     s = _load_store(args.persist_path)
     target = args.archive
     did = False
@@ -223,6 +270,9 @@ def _archive_any(args) -> int:
     elif s.get_unfinished(target) is not None:
         did = s.mark_unfinished_done(target)
         kind = 'unfinished_business → done'
+    elif s.get_thread(target) is not None:
+        did = s.archive_thread(target)
+        kind = 'shared_history_thread'
     else:
         print(f"[ERROR] id '{target}' 不存在于任何一类")
         return 2
@@ -311,11 +361,35 @@ def _print_unfinished(s: RelationalStateStore) -> None:
         print()
 
 
+def _print_threads(s: RelationalStateStore) -> None:
+    threads = s.list_threads()
+    if not threads:
+        print("[SHARED HISTORY THREADS] (empty)")
+        return
+    print(f"[SHARED HISTORY THREADS] {len(threads)} active")
+    print("-" * 80)
+    now = time.time()
+    for t in sorted(threads, key=lambda x: -x.last_milestone_at):
+        age_days = (now - t.last_milestone_at) / 86400
+        print(f"  id        : {t.id}")
+        print(f"  title     : {t.title!r}")
+        if t.detail:
+            print(f"  detail    : {t.detail}")
+        print(f"  highlights: {len(t.highlights)}")
+        for h in t.highlights[-3:]:
+            print(f"    - {h.get('when_iso', '')}: {h.get('what', '')[:100]}")
+        print(f"  last touched: {age_days:.1f}d ago")
+        print()
+
+
 def _print_json(s: RelationalStateStore) -> None:
     snapshot = {
         'inside_jokes': {jid: j.to_dict() for jid, j in s.inside_jokes.items()},
         'unspoken_protocols': {pid: p.to_dict() for pid, p in s.unspoken_protocols.items()},
         'unfinished_business': {uid: u.to_dict() for uid, u in s.unfinished_business.items()},
+        'shared_history_threads': {
+            tid: t.to_dict() for tid, t in s.shared_history_threads.items()
+        },
     }
     print(json.dumps(snapshot, ensure_ascii=False, indent=2))
 
@@ -359,6 +433,8 @@ def main():
     parser.add_argument('--list-jokes', action='store_true', help='只列 inside jokes')
     parser.add_argument('--list-protocols', action='store_true', help='只列 protocols')
     parser.add_argument('--list-unfinished', action='store_true', help='只列 unfinished business')
+    parser.add_argument('--list-threads', action='store_true',
+                        help='只列 shared history threads')
     parser.add_argument('--json', action='store_true', help='机读 JSON')
     parser.add_argument('--show-prompt', action='store_true',
                         help='打印将注入 prompt 的 [BETWEEN US] 块')
@@ -374,8 +450,17 @@ def main():
 
     parser.add_argument('--add-unfinished', action='store_true', help='录入新 unfinished_business')
     parser.add_argument('--topic', help='unfinished_business 主题')
-    parser.add_argument('--detail', help='unfinished_business 详情')
+    parser.add_argument('--detail', help='unfinished_business 详情（也用于 thread.detail）')
     parser.add_argument('--next-touch-due', help='下次提及截止（"YYYY-MM-DD HH:MM"）')
+
+    parser.add_argument('--add-thread', action='store_true',
+                        help='录入新 shared_history_thread（接管原 sir_profile.significant_milestones）')
+    parser.add_argument('--title', help='thread 标题')
+
+    parser.add_argument('--add-highlight', action='store_true',
+                        help='给某 thread 加一条 highlight')
+    parser.add_argument('--thread-id', help='目标 thread id（配合 --add-highlight）')
+    parser.add_argument('--what', help='highlight 内容（配合 --add-highlight）')
 
     parser.add_argument('--id', help='可选：手工指定 id（不指定则从 phrase/rule/topic 自动派生）')
     parser.add_argument('--marker', help='可选：source_marker（默认 sir_cli_YYYYMMDD_HHMMSS）')
@@ -396,6 +481,10 @@ def main():
         return _add_protocol(args)
     if args.add_unfinished:
         return _add_unfinished(args)
+    if args.add_thread:
+        return _add_thread(args)
+    if args.add_highlight:
+        return _add_highlight(args)
     if args.archive:
         return _archive_any(args)
     if args.done:
@@ -424,6 +513,9 @@ def main():
         return 0
     if args.list_unfinished:
         _print_unfinished(s)
+        return 0
+    if args.list_threads:
+        _print_threads(s)
         return 0
 
     _print_table(s)
