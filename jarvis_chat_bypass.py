@@ -772,12 +772,20 @@ Spoken English:"""
                         if audio_bytes:
                             self.wave_queue.put(audio_bytes)
                         else:
-                            print(f"⚠️ [RenderWorker] 首次渲染失败，重试中: {sentence[:60]}")
+                            try:
+                                from jarvis_utils import bg_log as _bg
+                                _bg(f"⚠️ [RenderWorker] 首次渲染失败，重试中: {sentence[:60]}")
+                            except Exception:
+                                pass
                             audio_bytes = self.vocal.render_only(sentence, retry=1)
                             if audio_bytes:
                                 self.wave_queue.put(audio_bytes)
                             else:
-                                print(f"❌ [RenderWorker] 重试仍失败，使用静默占位: {sentence[:60]}")
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"❌ [RenderWorker] 重试仍失败，使用静默占位: {sentence[:60]}")
+                                except Exception:
+                                    pass
                                 import numpy as np
                                 self.wave_queue.put(np.zeros(int(0.1 * 22050), dtype=np.int16).tobytes())
                     finally:
@@ -786,7 +794,11 @@ Spoken English:"""
                         self._render_in_progress = False
                 self.audio_queue.task_done()
             except Exception as e:
-                print(f"❌ [RenderWorker] 线程异常: {e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"❌ [RenderWorker] 线程异常: {e}")
+                except Exception:
+                    pass
                 try:
                     import numpy as np
                     self.wave_queue.put(np.zeros(int(0.1 * 22050), dtype=np.int16).tobytes())
@@ -834,7 +846,11 @@ Spoken English:"""
                         self.state_callback("IDLE")
                 self.wave_queue.task_done()
             except Exception as e:
-                print(f"❌ [PlaybackWorker] 线程异常: {e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"❌ [PlaybackWorker] 线程异常: {e}")
+                except Exception:
+                    pass
                 try:
                     self.state_callback("IDLE")
                 except:
@@ -2171,7 +2187,11 @@ Spoken English:"""
                     try:
                         call_data = _json_mod.loads(fast_call_json)
                     except Exception as _je:
-                        print(f"║ ⚠️  [FAST_CALL JSON 解析失败] {str(_je)[:80]} — 视为 LLM 幻觉，请求重发或诚实拒绝")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"⚠️ [FAST_CALL JSON 解析失败] {str(_je)[:80]} — 视为 LLM 幻觉，请求重发或诚实拒绝")
+                        except Exception:
+                            pass
                         _consecutive_tool_fail += 1
                         if _consecutive_tool_fail >= _MAX_CONSECUTIVE_FAIL:
                             print(f"║ 🛑 [Tool Chain] 连续 {_consecutive_tool_fail} 次 JSON 畸形，提前熔断")
@@ -2395,7 +2415,11 @@ Spoken English:"""
                     
                     # 🛡️ Bug X3 修复：连续失败熔断
                     if _consecutive_tool_fail >= _MAX_CONSECUTIVE_FAIL:
-                        print(f"║ 🛑 [Tool Chain] 连续 {_consecutive_tool_fail} 次工具失败，提前熔断（防止 LLM 空转 + key 耗尽）")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"🛑 [Tool Chain] 连续 {_consecutive_tool_fail} 次工具失败，提前熔断（防止 LLM 空转 + key 耗尽）")
+                        except Exception:
+                            pass
                         _circuit_broken_reason = "consecutive_failures"
                         if '_stream_key_name' in dir() and _stream_key_name:
                             self.key_router.release(_stream_key_name)
@@ -3059,13 +3083,21 @@ Type: {nudge_type}
                 except Exception as _nudge_e:
                     if _nudge_attempt < 2:
                         delay = 1.5 * (2 ** _nudge_attempt)
-                        print(f"\n⚠️[Nudge] API error: {type(_nudge_e).__name__}, retrying in {delay:.1f}s...")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"⚠️[Nudge] API error: {type(_nudge_e).__name__}, retrying in {delay:.1f}s...")
+                        except Exception:
+                            pass
                         if _nudge_key_name:
                             self.key_router.report_error(_nudge_key_name, str(_nudge_e))
                             self.key_router.release(_nudge_key_name)
                         time.sleep(delay)
                     else:
-                        print(f"\n⚠️[Nudge] API error (3 retries exhausted): {_nudge_e}")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"⚠️[Nudge] API error (3 retries exhausted): {_nudge_e}")
+                        except Exception:
+                            pass
                         print("╚" + "═"*63 + "\n")
                         return ""
                 finally:
@@ -3171,7 +3203,11 @@ Type: {nudge_type}
             return final_reply
 
         except Exception as e:
-            print(f"⚠️[Nudge Error]: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️[Nudge Error]: {e}")
+            except Exception:
+                pass
             print("╚" + "═"*63 + "\n")
             if '_nudge_key_name' in dir():
                 self.key_router.release(_nudge_key_name)

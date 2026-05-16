@@ -825,7 +825,11 @@ class JarvisWorkerThread(QThread):
                 print(f"[PromiseExecutor wire] ✅ fast_call+say 已注入 + daemon 已启动")
             except Exception as _e:
                 import traceback as _tb
-                print(f"[PromiseExecutor wire] 失败：{_e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"[PromiseExecutor wire] 失败：{_e}")
+                except Exception:
+                    pass
                 _tb.print_exc()
         else:
             print(f"[PromiseExecutor wire] 跳过：self.jarvis.promise_executor 为 None")
@@ -1982,7 +1986,11 @@ class JarvisWorkerThread(QThread):
                                     pass
                                 bg_log(f"🤫 [SilentNudge/{nudge_type}] {_silent_text[:80]}")
                             except Exception as _e:
-                                print(f"⚠️ [Silent Nudge Error]: {_e}")
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"⚠️ [Silent Nudge Error]: {_e}")
+                                except Exception:
+                                    pass
                             continue  # 不进入 voice 分支
 
                         # [R7-α/NudgeChannel] VISUAL_PULSE 档：完全不字幕不出声，
@@ -2015,7 +2023,11 @@ class JarvisWorkerThread(QThread):
                                     self.chat_bypass.subtitle_queue.put(("visual_pulse", nudge_type))
                                 bg_log(f"💡 [VisualPulse/{nudge_type}] (no voice / no subtitle)")
                             except Exception as _e:
-                                print(f"⚠️ [Visual Pulse Error]: {_e}")
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"⚠️ [Visual Pulse Error]: {_e}")
+                                except Exception:
+                                    pass
                             continue
 
                         # [R7-α/NudgeChannel] VOICE 档：保持原行为
@@ -2135,7 +2147,11 @@ class JarvisWorkerThread(QThread):
 
                         self.state_changed.emit("IDLE")
                     except Exception as e:
-                        print(f"⚠️ [Nudge Error]: {e}")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"⚠️ [Nudge Error]: {e}")
+                        except Exception:
+                            pass
                         self.state_changed.emit("IDLE")
                     
                     if nudge_type == "return_greeting" and hasattr(self, 'return_sentinel') and self.return_sentinel:
@@ -2652,7 +2668,11 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                 else:
                                                     result['gate_result_text'] = f"Memory deletion: No matching records found for '{delete_hint}'. Nothing was deleted."
                                         except Exception as e:
-                                            print(f" └─ ❌ [Memory Deletion Failed]: {e}")
+                                            try:
+                                                from jarvis_utils import bg_log as _bg
+                                                _bg(f"└─ ❌ [Memory Deletion Failed]: {e}")
+                                            except Exception:
+                                                pass
                                             result['gate_result_text'] = f"Memory deletion FAILED: {str(e)[:80]}. The memory may still exist."
 
                                 elif isinstance(correction, dict) and correction.get("has_correction"):
@@ -2916,7 +2936,11 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                 except Exception as _e_cw:
                                                     print(f" └─ ⚠️ [Commitment Sync Failed]: {_e_cw}")
                                             except Exception as e:
-                                                print(f" └─ ❌ [Memory Correction Failed]: {e}")
+                                                try:
+                                                    from jarvis_utils import bg_log as _bg
+                                                    _bg(f"└─ ❌ [Memory Correction Failed]: {e}")
+                                                except Exception:
+                                                    pass
                                                 result['gate_result_text'] = f"Memory correction FAILED: {str(e)[:80]}. Please ask Sir to repeat."
                                 
                                 import re as re_gate
@@ -3016,7 +3040,11 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             result['system_alert_text'] = "\n[SYSTEM ALERT]: The memory and scheduling module just timed out due to network turbulence. YOU DID NOT RECORD THE REMINDER OR MEMORY. IF Sir requested a reminder or task, you MUST elegantly apologize, mention a slight network fluctuation, and ask Sir to repeat. IF it's just casual chat, reply normally."
                         except Exception as e:
                             error_type = type(e).__name__
-                            print(f"⚠️ [Gatekeeper Error]: {error_type} {e}")
+                            try:
+                                from jarvis_utils import bg_log as _bg
+                                _bg(f"⚠️ [Gatekeeper Error]: {error_type} {e}")
+                            except Exception:
+                                pass
                             if _gate_key_name is not None:
                                 self.jarvis.key_router.report_error(_gate_key_name, str(e))
                                 self.jarvis.key_router.release(_gate_key_name)
@@ -3044,7 +3072,11 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                 ltm_context += f"[{time_str}] {env_tag} -> Intent: {r['intent']} | Result: {r['summary']} \n"
                     except Exception as e:
                         if self.DEBUG_LTM:
-                            print(f"⚠️ [Fast LTM] Retrieval error: {e}")
+                            try:
+                                from jarvis_utils import bg_log as _bg
+                                _bg(f"⚠️ [Fast LTM] Retrieval error: {e}")
+                            except Exception:
+                                pass
                 
                 self.jarvis._hot_reload_organs() 
                 

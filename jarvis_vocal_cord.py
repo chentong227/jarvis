@@ -159,7 +159,11 @@ class VocalCord:
                     all_audio.append(audio_data)
                     break
                 except Exception as e:
-                    print(f"⚠️ [渲染失败] attempt {attempt+1}/{retry+1}: {e}")
+                    try:
+                        from jarvis_utils import bg_log as _bg
+                        _bg(f"⚠️ [渲染失败] attempt {attempt+1}/{retry+1}: {e}")
+                    except Exception:
+                        pass
                     if attempt < retry:
                         import gc
                         gc.collect()
@@ -167,7 +171,11 @@ class VocalCord:
                             torch.cuda.empty_cache()
                         time.sleep(0.3)
                     else:
-                        print(f"❌ [渲染彻底失败] 已重试{retry}次，放弃: {sentence[:80]}")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"❌ [渲染彻底失败] 已重试{retry}次，放弃: {sentence[:80]}")
+                        except Exception:
+                            pass
             self._render_count += 1
             if self._render_count >= 10:
                 self._render_count = 0
@@ -200,14 +208,22 @@ class VocalCord:
         try:
             self.stream.write(audio_bytes)
         except Exception as e:
-            print(f"⚠️ [播放失败] 声卡流异常: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [播放失败] 声卡流异常: {e}")
+            except Exception:
+                pass
             self._recover_stream()
             if self.stream:
                 try:
                     self.stream.write(audio_bytes)
                     print("✅ [声卡恢复] 音频流已重新建立，重播成功")
                 except Exception as e2:
-                    print(f"❌ [声卡恢复] 重播仍然失败: {e2}")
+                    try:
+                        from jarvis_utils import bg_log as _bg
+                        _bg(f"❌ [声卡恢复] 重播仍然失败: {e2}")
+                    except Exception:
+                        pass
 
     def _recover_stream(self):
         try:
@@ -223,7 +239,11 @@ class VocalCord:
                 output=True
             )
         except Exception as e:
-            print(f"❌ [声卡重建失败]: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"❌ [声卡重建失败]: {e}")
+            except Exception:
+                pass
             self.stream = None
 
     # 为了兼容你其他旧代码的调用逻辑，保留 say 函数

@@ -182,7 +182,11 @@ class CorrectionLoop:
             conn.close()
             print(f"   📝 [CorrectionLoop] Correction case recorded (confidence: {data.get('confidence', 1.0):.0%})")
         except Exception as e:
-            print(f"   ⚠️ [CorrectionLoop] Storage error: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"   ⚠️ [CorrectionLoop] Storage error: {e}")
+            except Exception:
+                pass
 
     def _store_style_feedback(self, direction: str, context: str):
         try:
@@ -584,7 +588,11 @@ class Anticipator(threading.Thread):
             try:
                 self._tick()
             except Exception as e:
-                print(f"⚠️ [Anticipator] Scan error: {e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"⚠️ [Anticipator] Scan error: {e}")
+                except Exception:
+                    pass
             time.sleep(self._scan_interval)
 
     def _tick(self):
@@ -663,7 +671,11 @@ class Anticipator(threading.Thread):
                 if self._habit_patterns.get(f"{time.strftime('%A')}_{int(time.strftime('%H'))}", {}).get('count', 0) <= 5:
                     print(f"🔮 [Anticipator] Preloaded {category} related memories ({len(results)} items)")
         except Exception as e:
-            print(f"⚠️ [Anticipator] Preload error: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [Anticipator] Preload error: {e}")
+            except Exception:
+                pass
 
     def _llm_pattern_reflect(self):
         try:
@@ -1011,7 +1023,11 @@ class ProactiveShield(threading.Thread):
             try:
                 self._scan()
             except Exception as e:
-                print(f"[ProactiveShield] scan error: {e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"[ProactiveShield] scan error: {e}")
+                except Exception:
+                    pass
             time.sleep(10)
 
     def _scan(self):
@@ -1072,7 +1088,11 @@ class ProactiveShield(threading.Thread):
                     if is_near_switch:
                         print(f"🛡️ [Shield watching] alt-tab switches={switches}/5min (threshold {switch_threshold})")
                     if is_near_error:
-                        print(f"🛡️ [Shield watching] error window for {error_duration_min:.1f}min (threshold 5min)")
+                        try:
+                            from jarvis_utils import bg_log as _bg
+                            _bg(f"🛡️ [Shield watching] error window for {error_duration_min:.1f}min (threshold 5min)")
+                        except Exception:
+                            pass
 
             if frustration_detected:
                 self._send_shield_nudge(frustration_type, switches, error_titles)
@@ -1117,7 +1137,11 @@ class ProactiveCompanion(threading.Thread):
             try:
                 self._tick()
             except Exception as e:
-                print(f"⚠️ [ProactiveCompanion] Scan error: {e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"⚠️ [ProactiveCompanion] Scan error: {e}")
+                except Exception:
+                    pass
             time.sleep(60)
 
     def _tick(self):

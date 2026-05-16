@@ -295,7 +295,11 @@ class CentralNerve:
             self.working_feed = None
             self._clipboard_watcher = None
             self._ps_history_watcher = None
-            print(f"[WorkingMemoryFeed] 初始化失败：{_e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[WorkingMemoryFeed] 初始化失败：{_e}")
+            except Exception:
+                pass
 
         # [R7-α/PlanLedger] 任务计划账本：5 态状态机 + JSON 持久化
         # α4 阶段只做雏形：能创建、能查询、能持久化、能 publish。
@@ -313,8 +317,12 @@ class CentralNerve:
         except Exception as _e:
             self.plan_ledger = None
             import traceback as _tb
-            print(f"[PlanLedger] 初始化失败：{_e}")
-            _tb.print_exc()
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[PlanLedger] 初始化失败：{_e}")
+                _bg(_tb.format_exc())
+            except Exception:
+                pass
 
         # [轴3-L0.3 / 2026-05-15 P0+18-a.1] 启动时 bootstrap SkillRegistry
         # 不调这个 → registry 永远空 → AVAILABLE SKILLS prompt 块空 →
@@ -333,8 +341,12 @@ class CentralNerve:
             # bootstrap 内部已经 print 了 ♻️ [SkillRegistry] bootstrap 完工 log，这里不重复
         except Exception as _e:
             import traceback as _tb
-            print(f"[SkillRegistry/bootstrap] 初始化失败：{_e}")
-            _tb.print_exc()
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SkillRegistry/bootstrap] 初始化失败：{_e}")
+                _bg(_tb.format_exc())
+            except Exception:
+                pass
 
         # [轴3-L3.2 + L3.3 / 2026-05-15] PromiseExecutor — 后台步骤执行器
         # daemon 每 1s 扫 ledger，跑 STATE_RUNNING plan 的 next pending step。
@@ -361,7 +373,11 @@ class CentralNerve:
             except Exception as _e:
                 self.promise_executor = None
                 import traceback as _tb
-                print(f"[PromiseExecutor] 初始化失败：{_e}")
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"[PromiseExecutor] 初始化失败：{_e}")
+                except Exception:
+                    pass
                 _tb.print_exc()
         else:
             print(f"[PromiseExecutor] 跳过创建：plan_ledger 为 None")
@@ -394,7 +410,11 @@ class CentralNerve:
             )
         except Exception as _e:
             self.session_digest = None
-            print(f"[SessionDigest] 初始化失败：{_e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SessionDigest] 初始化失败：{_e}")
+            except Exception:
+                pass
 
         # [R7-β4] AntiCommonPhraseTracker + VerbosityPreferenceTracker
         # - phrase_tracker：每条 Jarvis 回复 record，prompt 注入 [AVOID PHRASES]
@@ -1668,7 +1688,11 @@ User: {new_cmd}
                 print(f" └─ ☕ [Casual Chat] 任务不受影响，继续执行...")
                 
         except Exception as e:
-            print(f" └─ ⚠️ Third-layer engine error: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"└─ ⚠️ Third-layer engine error: {e}")
+            except Exception:
+                pass
 
     def _set_state(self, state: str):
         if self.state_callback:
@@ -1763,7 +1787,11 @@ User: {new_cmd}
                     else: self.hands = self.hand_registry[req_hands]()
                     self.left_brain.inject_capabilities(self.hands.get_instruction_dict())
                 except KeyError as e:
-                    print(f"❌[Mount Failed] Organ not ready: {e}")
+                    try:
+                        from jarvis_utils import bg_log as _bg
+                        _bg(f"❌[Mount Failed] Organ not ready: {e}")
+                    except Exception:
+                        pass
                     break
 
                 loop_count = 0
@@ -1927,7 +1955,11 @@ User: {new_cmd}
                                 pass
                             except Exception as e:
                                 if "listening timed out" not in str(e):
-                                    print(f"⚠️[Audio Nerve Error]: {e}")
+                                    try:
+                                        from jarvis_utils import bg_log as _bg
+                                        _bg(f"⚠️[Audio Nerve Error]: {e}")
+                                    except Exception:
+                                        pass
                                 time.sleep(1)
                                 
                             if not user_reply:
@@ -1982,7 +2014,11 @@ User: {new_cmd}
                         
                         if not result.success: 
                             consecutive_failures += 1
-                            print(" 🛑 [Combo Fuse] 动作失败，终止组合，重新观察环境...")
+                            try:
+                                from jarvis_utils import bg_log as _bg
+                                _bg("🛑 [Combo Fuse] 动作失败，终止组合，重新观察环境...")
+                            except Exception:
+                                pass
                             break 
                         else: 
                             consecutive_failures = 0
@@ -2152,17 +2188,29 @@ User: {new_cmd}
             if hasattr(self, 'soul_archivist') and self.soul_archivist:
                 self.soul_archivist.force_archive()
         except Exception as e:
-            print(f"[CentralNerve] Soul 归档失败: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[CentralNerve] Soul 归档失败: {e}")
+            except Exception:
+                pass
         try:
             if hasattr(self, 'reflection_scheduler') and self.reflection_scheduler:
                 self.reflection_scheduler.force_reflect()
         except Exception as e:
-            print(f"[CentralNerve] 反思调度失败: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[CentralNerve] 反思调度失败: {e}")
+            except Exception:
+                pass
         try:
             if hasattr(self, 'hippocampus') and self.hippocampus:
                 self.hippocampus.consolidate()
         except Exception as e:
-            print(f"[CentralNerve] 记忆整合失败: {e}")
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[CentralNerve] 记忆整合失败: {e}")
+            except Exception:
+                pass
         print("[CentralNerve] 休眠前数据归档完成")
 
 # ==========================================
