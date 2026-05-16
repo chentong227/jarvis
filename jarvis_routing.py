@@ -528,53 +528,65 @@ class ProfileCard:
         self._cache_time = now
         return card
     
-    def to_prompt_block(self) -> str:
+    def to_prompt_block(self, max_chars: int = 800) -> str:
+        # 🩹 [P0+20-β.1.20 / 2026-05-16] profile_block 瘦身（PROMPT_REFACTOR_PLAN §3 L1 压缩）：
+        # 原 ~1500 chars 全量注入，每轮 prompt 都背一遍 → 性价比低。
+        # 优化：① 每段 trimming（recent narrative/boundaries/habit/anomaly 各 ≤ 200 chars）
+        #      ② 总长度硬上限 max_chars=800（按重要性顺序截断，identity/now 永远保留）
         card = self.snapshot()
         lines = ["=== SIR PROFILE CARD ==="]
-        
+
+        # 优先级：identity/now > habit/anomaly > preferences/projects > narrative/boundaries
         identity = card.get("identity", {})
         if identity:
-            lines.append(f"[Identity] {identity.get('core_traits', '')}")
-            lines.append(f"[Rhythm] {identity.get('work_rhythm', '')}")
-        
+            lines.append(f"[Identity] {(identity.get('core_traits', '') or '')[:200]}")
+            lines.append(f"[Rhythm] {(identity.get('work_rhythm', '') or '')[:150]}")
+
         state = card.get("current_state", {})
         if state:
-            lines.append(f"[Now] {state.get('activity', '')} | Mood: {state.get('emotional_tone', '')} | Focus: {state.get('focus_level', '')} | Session: {state.get('session_duration', '')}")
-        
+            _now = (
+                f"[Now] {state.get('activity', '')} | Mood: {state.get('emotional_tone', '')} | "
+                f"Focus: {state.get('focus_level', '')} | Session: {state.get('session_duration', '')}"
+            )
+            lines.append(_now[:250])
+
         patterns = card.get("behavioral_patterns", {})
         if patterns:
-            habit_line = patterns.get('current_habit_context', '')
+            habit_line = (patterns.get('current_habit_context', '') or '')[:160]
             if habit_line:
                 lines.append(f"[Habit] {habit_line}")
-            anomaly = patterns.get('anomaly', '')
+            anomaly = (patterns.get('anomaly', '') or '')[:120]
             if anomaly:
                 lines.append(f"[Anomaly] {anomaly}")
-        
+
         prefs = card.get("content_preferences", {})
         if prefs:
             pref_parts = []
             if prefs.get('frequent_media'):
-                pref_parts.append(f"Media: {prefs['frequent_media']}")
+                pref_parts.append(f"Media: {str(prefs['frequent_media'])[:80]}")
             if prefs.get('frequent_tools'):
-                pref_parts.append(f"Tools: {prefs['frequent_tools']}")
+                pref_parts.append(f"Tools: {str(prefs['frequent_tools'])[:80]}")
             if pref_parts:
                 lines.append(f"[Preferences] {' | '.join(pref_parts)}")
-        
+
         projects = card.get("active_projects", [])
         if projects:
-            lines.append(f"[Projects] {', '.join(projects[:5])}")
-        
-        narrative = card.get("recent_narrative", '')
+            lines.append(f"[Projects] {', '.join(str(p)[:40] for p in projects[:5])}")
+
+        narrative = (card.get("recent_narrative", '') or '')[:200]
         if narrative:
             lines.append(f"[Recent] {narrative}")
-        
+
         lb = card.get("likes_and_boundaries", {})
         if lb:
-            boundaries = lb.get('boundaries', '')
+            boundaries = (lb.get('boundaries', '') or '')[:160]
             if boundaries:
                 lines.append(f"[Boundaries] {boundaries}")
-        
-        return '\n'.join(lines)
+
+        out = '\n'.join(lines)
+        if max_chars and len(out) > max_chars:
+            out = out[:max_chars - 12].rstrip() + '\n…[truncated]'
+        return out
     
     def _build_identity(self) -> dict:
         profile = self._load_profile()

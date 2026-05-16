@@ -336,45 +336,50 @@ class SmartNudgeSentinel(threading.Thread):
                     if nudge_type in ("late_night", "suggest_break"):
                         cooldown = self._calc_sleep_nudge_cooldown(nudge_type, cooldown)
 
-                    # 🩹 [P0+20-β.1.17 / 2026-05-16] Sir 18:11 实测：SmartNudge 选好 screen_tease
-                    # 但派发链每一步静默跳过，Sir 看到"已选择"但无声 → "莫名其妙被拦住"。
-                    # 修法：每一步拦截给出 bg_log，让 Sir 一眼看见是 cooldown / daily_limit / type_mute
-                    # 哪一道闸把它挡了。
+                    # 🩹 [P0+20-β.1.17 / 2026-05-16] 拦截可见性日志
+                    # 🩹 [P0+20-β.1.19 / 2026-05-16] throttle：每 nudge_type 每道闸 5min 最多一行
+                    # 治 Sir 18:43 截图刷屏：主循环 5s tick → 每秒一行拦截日志 → 终端被刷屏
+                    if not hasattr(self, '_skip_log_last'):
+                        self._skip_log_last = {}
+                    _SKIP_LOG_INTERVAL = 300.0  # 5min
+
+                    def _maybe_log_skip(_reason_key: str, _msg: str):
+                        _last = self._skip_log_last.get(_reason_key, 0.0)
+                        if now - _last >= _SKIP_LOG_INTERVAL:
+                            self._skip_log_last[_reason_key] = now
+                            try:
+                                from jarvis_utils import bg_log as _smb_log
+                                _smb_log(_msg)
+                            except Exception:
+                                pass
+
                     _last_t = self.last_nudge_time.get(nudge_type, 0)
                     _cd_remaining = cooldown - (now - _last_t)
                     if _cd_remaining > 0:
-                        try:
-                            from jarvis_utils import bg_log as _smb_log
-                            _smb_log(
-                                f"⏸️ [SmartNudge/Skip] {nudge_type} cooldown 未过 "
-                                f"(剩 {int(_cd_remaining)}s / cooldown={int(cooldown)}s)"
-                            )
-                        except Exception:
-                            pass
+                        _maybe_log_skip(
+                            f'cd:{nudge_type}',
+                            f"⏸️ [SmartNudge/Skip] {nudge_type} cooldown 未过 "
+                            f"(剩 {int(_cd_remaining)}s / cooldown={int(cooldown)}s) "
+                            f"[5min throttle]"
+                        )
                     else:
                         daily_limit = self._daily_limits.get(nudge_type, 3)
                         type_count = self._type_counts.get(nudge_type, 0)
                         if type_count >= daily_limit:
-                            try:
-                                from jarvis_utils import bg_log as _smb_log
-                                _smb_log(
-                                    f"⏸️ [SmartNudge/Skip] {nudge_type} 今日已达上限 "
-                                    f"({type_count}/{daily_limit})"
-                                )
-                            except Exception:
-                                pass
+                            _maybe_log_skip(
+                                f'limit:{nudge_type}',
+                                f"⏸️ [SmartNudge/Skip] {nudge_type} 今日已达上限 "
+                                f"({type_count}/{daily_limit}) [5min throttle]"
+                            )
                         else:
                             # 检查 type-mute（Sir 之前说过"别再提 X 类"）
                             _muted_until = self._muted_nudge_types.get(nudge_type, 0.0)
                             if now < _muted_until:
-                                try:
-                                    from jarvis_utils import bg_log as _smb_log
-                                    _smb_log(
-                                        f"🔇 [SmartNudge/Muted] {nudge_type} type-muted "
-                                        f"(剩 {int((_muted_until - now) / 60)}min, Sir 之前拒过)"
-                                    )
-                                except Exception:
-                                    pass
+                                _maybe_log_skip(
+                                    f'mute:{nudge_type}',
+                                    f"🔇 [SmartNudge/Muted] {nudge_type} type-muted "
+                                    f"(剩 {int((_muted_until - now) / 60)}min, Sir 之前拒过) [5min throttle]"
+                                )
                             else:
                                 if nudge_type in ("late_night", "suggest_break"):
                                     self._track_sleep_nudge_dispatch(nudge_type)
