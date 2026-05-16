@@ -421,7 +421,13 @@ class TestRelationalCLI(unittest.TestCase):
     def _run(self, *args, timeout: float = 15.0):
         cmd = [sys.executable, self.script_path,
                '--persist-path', self.tmp.name] + list(args)
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # [β.2.2.1 / 2026-05-16] CLI 输出 UTF-8（reconfigure + chcp 65001），
+        # subprocess.run 父进程默认 GBK 解码 Windows locale → 遇 emdash/中文报
+        # UnicodeDecodeError 让 stdout=None。显式 encoding='utf-8' 修复。
+        return subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=timeout
+        )
 
     def test_cli_add_inside_joke_writes_persist(self):
         r = self._run(
