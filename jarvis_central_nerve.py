@@ -411,6 +411,7 @@ class CentralNerve:
                     f"💞 [RelationalState] jokes={len(self.relational_state.list_inside_jokes())} "
                     f"protocols={len(self.relational_state.list_protocols())} "
                     f"unfinished={len(self.relational_state.list_unfinished())} "
+                    f"threads={len(self.relational_state.list_threads())} "
                     f"(灵魂工程 Layer 2 已激活)"
                 )
             except Exception:
@@ -419,6 +420,30 @@ class CentralNerve:
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[RelationalState] 初始化失败（非致命）：{_rs_e}")
+            except Exception:
+                pass
+
+        # 🩹 [P0+20-β.2.3 / 2026-05-16] Attention Allocation —— Jarvis 灵魂工程 Layer 3
+        # 不是单例 / 没有 store —— 是 helper 函数 build_attention_block()，每次
+        # _assemble_prompt 调用时基于 (concerns_ledger + user_input) 动态构造
+        # [ATTENTION RIGHT NOW] 块（current_focus + long_term_watch）。
+        # PENDING FOLLOWUPS 段已删（Layer 2 BETWEEN US.UNFINISHED BUSINESS 单源接管）。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §2.2（Layer 3）+ §3.4
+        try:
+            from jarvis_attention import build_attention_block  # noqa: F401
+            try:
+                from jarvis_utils import bg_log as _at_bg
+                _at_bg(
+                    "🎯 [Attention] Layer 3 ready "
+                    "(每轮 _assemble_prompt 动态构造 [ATTENTION RIGHT NOW] 块 / "
+                    "灵魂工程 Layer 3 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _at_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[Attention] 初始化失败（非致命）：{_at_e}")
             except Exception:
                 pass
 
@@ -800,10 +825,11 @@ class CentralNerve:
             except Exception:
                 pass
 
-        # 🩹 [P0+20-β.2.0+1+2 / 2026-05-16] 灵魂工程 Layer 0+1+2 — 拼到 core_persona 末尾
+        # 🩹 [P0+20-β.2.0+1+2+3 / 2026-05-16] 灵魂工程 Layer 0+1+2+3 — 拼到 core_persona 末尾
         # 所有 prompt branch (full/light/short/wake/factual/reminder) 都以 {core_persona} 开头，
         # 把 self_anchor (Layer 0) + soul_block (Layer 1) + relational_block (Layer 2)
-        # 拼到 base persona 之后即可一次覆盖所有路径，无需改 6 个 template。
+        # + attention_block (Layer 3 / 基于 user_input 动态构造) 拼到 base persona 之后
+        # 即可一次覆盖所有路径，无需改 6 个 template。
         # 详 docs/JARVIS_SOUL_DRIVE.md §4 注入路径。
         _t_soul = time.time()
         _base_persona = self.prompt_cache.get_or_build(
@@ -823,16 +849,31 @@ class CentralNerve:
                 soul_block = self.concerns_ledger.to_prompt_block(top_n=3, max_chars=600)
         except Exception:
             soul_block = ''
-        # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished）
+        # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished / threads）
         relational_block = ''
         try:
             if self.relational_state is not None:
                 relational_block = self.relational_state.to_prompt_block(
-                    top_jokes=3, top_unfinished=2, max_chars=700
+                    top_jokes=3, top_unfinished=2, top_threads=2, max_chars=700
                 )
         except Exception:
             relational_block = ''
-        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 2
+        # Layer 3: Attention Allocation（基于 user_input 动态构造，不缓存）
+        # current_focus + long_term_watch。PENDING FOLLOWUPS 段已删（Layer 2 单源接管）。
+        attention_block = ''
+        try:
+            from jarvis_attention import build_attention_block as _build_attn
+            attention_block = _build_attn(
+                concerns_ledger=self.concerns_ledger,
+                relational_state=self.relational_state,
+                user_input=user_input or '',
+                stm=getattr(self, 'short_term_memory', None) or [],
+                top_concerns=3,
+                max_chars=500,
+            )
+        except Exception:
+            attention_block = ''
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 2 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
@@ -840,8 +881,62 @@ class CentralNerve:
             _parts.append(soul_block)
         if relational_block:
             _parts.append(relational_block)
+        if attention_block:
+            _parts.append(attention_block)
         core_persona = '\n\n'.join(_parts)
         self._asm_stage_t['soul_block'] = (time.time() - _t_soul) * 1000
+
+        # 🩹 [P0+20-β.2.3.1 / 2026-05-16] 灵魂工程注入诊断 log（Sir 22:48 提的要求）
+        # 每轮 _assemble_prompt 装配后输出一行，让 Sir grep "[SOUL inject]" 就能看到：
+        # - 每层各自注入的字符数（0 = 该层无内容跳过）
+        # - 四层注入字符总和
+        # - 被注入的 inside_jokes / top concerns / unfinished_business / threads 的 id 列表
+        # 容错：任何 store/ledger 拿不到都不影响主路径（picked_* 兜底空 list）
+        _picked_jokes: list = []
+        _picked_unfinished: list = []
+        _picked_protocols: list = []
+        _picked_threads: list = []
+        _picked_concerns: list = []
+        try:
+            if self.relational_state is not None:
+                _picked_jokes = [
+                    j.id for j in self.relational_state._rank_inside_jokes(3)
+                ]
+                _picked_unfinished = [
+                    u.id for u in self.relational_state._rank_unfinished(2)
+                ]
+                _picked_protocols = [
+                    p.id for p in self.relational_state.list_protocols()[:3]
+                ]
+                _picked_threads = [
+                    t.id for t in self.relational_state._rank_threads(2)
+                ]
+        except Exception:
+            pass
+        try:
+            if self.concerns_ledger is not None:
+                _ac = sorted(
+                    self.concerns_ledger.list_active(),
+                    key=lambda c: -getattr(c, 'severity', 0.0),
+                )
+                _picked_concerns = [c.id for c in _ac[:3]]
+        except Exception:
+            pass
+        try:
+            from jarvis_utils import bg_log as _bg_soul
+            _L0c = len(self_anchor_block)
+            _L1c = len(soul_block)
+            _L2c = len(relational_block)
+            _L3c = len(attention_block)
+            _total_soul = _L0c + _L1c + _L2c + _L3c
+            _bg_soul(
+                f"🪞 [SOUL inject] L0={_L0c}c L1={_L1c}c L2={_L2c}c L3={_L3c}c "
+                f"total={_total_soul}c | jokes={_picked_jokes} "
+                f"concerns={_picked_concerns} unf={_picked_unfinished} "
+                f"proto={_picked_protocols} threads={_picked_threads}"
+            )
+        except Exception:
+            pass
 
         # 🩹 [P0+20-β.1.15 / 2026-05-16] how_to_respond 瘦身（PROMPT_REFACTOR_PLAN §3 L0 精简）：
         # 原 3673 chars 含两大段：

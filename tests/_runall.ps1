@@ -101,6 +101,7 @@ $tests = @(
     "_test_p0_plus_20_b115_reminder_read",
     "_test_p0_plus_20_beta2_soul_anchor",
     "_test_p0_plus_20_beta2_soul_relational",
+    "_test_p0_plus_20_beta2_soul_attention",
     "_test_p0_plus_20_beta2_migrate",
     "_test_p0_plus_20_beta2_oldpath_decom",
     "_test_p0_plus_20_beta2_worker_jarvis_resolve"
