@@ -58,6 +58,21 @@ from jarvis_sensors import (  # noqa: F401
 )
 from jarvis_sentinels import NudgeGate  # noqa: F401
 
+# 🩹 [P0+20-β.1.7 / 2026-05-16] P0+19-6.c 拆分留尾：win32api 没 import →
+# line 146 / 530 NameError → 外层 try/except 静默吞 → idle_ms 永 0 → was_afk 永 False
+# → 永远不触发 _on_return → "归来感知" 完全失效。Sir 14:30 实测 1+ 小时回归未问候即此因。
+# import 失败时显式赋 None，line 146 检测 None 直接走 "无 idle 信号" 兜底（防御纵深）
+try:
+    import win32api  # noqa: F401
+    import win32gui  # noqa: F401
+    import win32con  # noqa: F401
+    _WIN32_OK = True
+except Exception:
+    win32api = None  # type: ignore
+    win32gui = None  # type: ignore
+    win32con = None  # type: ignore
+    _WIN32_OK = False
+
 # [P0+19-final fix / 2026-05-16] 补全跨模块依赖（拆分后实例化时才暴露的缺失）
 try:
     from jarvis_key_router import KeyRouter  # noqa: F401
@@ -138,14 +153,39 @@ class ReturnSentinel(threading.Thread):
 
     def run(self):
         time.sleep(20)
+        # 🩹 [P0+20-β.1.7 / 2026-05-16] 启动自检：让 Sir 一眼看到 idle detect 在工作
+        try:
+            from jarvis_utils import bg_log as _rs_bg
+            if _WIN32_OK and win32api is not None:
+                _probe_idle = win32api.GetTickCount() - win32api.GetLastInputInfo()
+                _rs_bg(f"[ReturnSentinel/Health] win32api OK, idle_probe={_probe_idle}ms")
+            else:
+                _rs_bg("⚠️ [ReturnSentinel/Health] win32api 不可用，归来感知将走兜底（无 idle 信号）")
+        except Exception:
+            pass
         print("[ReturnSentinel] 回归检测 + 动态唤醒引擎就绪...")
+        _diag_last_log = 0.0  # 5min 一次诊断日志
         while True:
             try:
                 idle_ms = 0
-                try:
-                    idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
-                except:
-                    pass
+                if win32api is not None:
+                    try:
+                        idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
+                    except Exception:
+                        pass
+
+                # 5min 一次诊断日志（让 Sir 能 grep 看 idle 真值变化曲线）
+                _now_t = time.time()
+                if _now_t - _diag_last_log > 300.0:
+                    _diag_last_log = _now_t
+                    try:
+                        from jarvis_utils import bg_log as _diag_bg
+                        _diag_bg(
+                            f"[ReturnSentinel/Diag] idle_ms={idle_ms} was_afk={self.was_afk} "
+                            f"streak={self._active_streak_seconds}s first_today={self.first_active_today}"
+                        )
+                    except Exception:
+                        pass
 
                 current_day = time.strftime("%Y-%m-%d")
                 if current_day != self.last_active_day:

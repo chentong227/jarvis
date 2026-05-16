@@ -46,6 +46,18 @@ import sqlite3  # noqa: F401
 from dataclasses import dataclass, field  # noqa: F401
 from typing import List, Dict, Any, Optional  # noqa: F401
 
+# 🩹 [P0+20-β.1.7 / 2026-05-16] P0+19-6.e 拆分留尾：win32api 没 import →
+# line 195/208 NameError → 主 while-True 循环 idle_ms 永 0 → 睡眠/凌晨深度休眠
+# /idle_ms > 30000 等分支全失真。修法：try-import 容错（开发机无 pywin32 仍可跑测）。
+try:
+    import win32api  # noqa: F401
+    import win32gui  # noqa: F401
+    import win32con  # noqa: F401
+except Exception:
+    win32api = None  # type: ignore
+    win32gui = None  # type: ignore
+    win32con = None  # type: ignore
+
 # 跨文件依赖（上游已拆完）
 from jarvis_env_probe import PhysicalEnvironmentProbe  # noqa: F401
 # [P0+19-final fix 2]

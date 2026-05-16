@@ -674,8 +674,16 @@ class ChatBypass:
                         with open(profile_file, "r", encoding="utf-8") as _f:
                             sir_profile_str = _f.read()
                     except: pass
-                
-                prompt = f"""{JARVIS_CORE_PERSONA}
+
+                # 🩹 [P0+20-β.1.6 / 2026-05-16] 治 Sir 14:30 实测 BUG（OfferHelp 未出声）：
+                # P0+19-7 拆分时漏 import → 主路径 NameError → Nudge 走 fallback 静默。
+                # 函数内延迟 import 避免循环依赖（central_nerve 反向依赖 chat_bypass）。
+                try:
+                    from jarvis_central_nerve import JARVIS_CORE_PERSONA as _JCP
+                except Exception:
+                    _JCP = ""
+
+                prompt = f"""{_JCP}
 
 [BACKGROUND ON SIR]:
 {sir_profile_str}
@@ -2812,7 +2820,13 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             if supplement:
                 emotion_directive = supplement
 
-        public_layers = f"""{JARVIS_CORE_PERSONA}
+        # 🩹 [P0+20-β.1.6 / 2026-05-16] 同 _translate_worker 修法
+        try:
+            from jarvis_central_nerve import JARVIS_CORE_PERSONA as _JCP
+        except Exception:
+            _JCP = ""
+
+        public_layers = f"""{_JCP}
 
 {profile_block}
 

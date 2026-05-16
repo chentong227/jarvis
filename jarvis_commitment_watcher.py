@@ -46,6 +46,17 @@ import sqlite3  # noqa: F401
 from dataclasses import dataclass, field  # noqa: F401
 from typing import List, Dict, Any, Optional  # noqa: F401
 
+# 🩹 [P0+20-β.1.7 / 2026-05-16] P0+19-6.d 拆分留尾：win32api 没 import →
+# line 607 NameError → 承诺过期+grace 分支静默丢失。修法：try-import 容错。
+try:
+    import win32api  # noqa: F401
+    import win32gui  # noqa: F401
+    import win32con  # noqa: F401
+except Exception:
+    win32api = None  # type: ignore
+    win32gui = None  # type: ignore
+    win32con = None  # type: ignore
+
 # 跨文件依赖（上游已拆完）
 from jarvis_env_probe import PhysicalEnvironmentProbe  # noqa: F401
 # [P0+19-final fix 2]
