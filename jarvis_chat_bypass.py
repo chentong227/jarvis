@@ -2898,6 +2898,36 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     )
         except Exception:
             pass
+
+        # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 ConcernsReflector
+        # 每轮对话末尾启发式扫 keyword → 给相关 concerns 加 signal。
+        # 纯启发式，~50us，不走 LLM。fire-and-forget thread 即可，但本身就快。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §6 (Layer 4)
+        try:
+            cr = getattr(self.jarvis, 'concerns_reflector', None)
+            if cr is not None and (clean_user_input or final_reply):
+                _turn_id_now = ''
+                try:
+                    from jarvis_utils import TraceContext
+                    _turn_id_now = TraceContext.get_turn_id() or ''
+                except Exception:
+                    pass
+                # 用 daemon thread fire-and-forget，避免任何意外阻塞主路径
+                try:
+                    import threading as _th
+                    _th.Thread(
+                        target=cr.reflect_turn,
+                        kwargs={
+                            'user_input': clean_user_input or '',
+                            'jarvis_reply': final_reply or '',
+                            'turn_id': _turn_id_now,
+                        },
+                        daemon=True, name='ConcernsReflectorTurn'
+                    ).start()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         _t_total = time.time() - _t0
         try:
             from jarvis_utils import bg_log

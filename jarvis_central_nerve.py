@@ -447,6 +447,59 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 — Reflector daemons
+        # (1) ConcernsReflector：每轮对话末尾启发式 keyword → record_signal
+        # (2) WeeklyReflector：daemon 7d LLM 反思 → propose 新 concerns 进 review
+        # 详 docs/JARVIS_SOUL_DRIVE.md §6
+        self.concerns_reflector = None
+        self.weekly_reflector = None
+        try:
+            from jarvis_soul_reflector import (
+                get_default_concerns_reflector,
+                get_default_weekly_reflector,
+            )
+            if self.concerns_ledger is not None:
+                self.concerns_reflector = get_default_concerns_reflector(
+                    concerns_ledger=self.concerns_ledger,
+                )
+                # WeeklyReflector daemon
+                def _stm_provider():
+                    return list(getattr(self, 'short_term_memory', []) or [])
+
+                def _profile_provider():
+                    try:
+                        import json as _j
+                        _path = os.path.join('jarvis_config', 'sir_profile.json')
+                        if os.path.exists(_path):
+                            with open(_path, 'r', encoding='utf-8') as f:
+                                return _j.load(f) or {}
+                    except Exception:
+                        pass
+                    return {}
+
+                self.weekly_reflector = get_default_weekly_reflector(
+                    concerns_ledger=self.concerns_ledger,
+                    key_router=self.key_router,
+                    stm_provider=_stm_provider,
+                    profile_provider=_profile_provider,
+                )
+                if self.weekly_reflector is not None and not self.weekly_reflector.is_alive():
+                    self.weekly_reflector.start()
+                try:
+                    from jarvis_utils import bg_log as _r_bg
+                    _r_bg(
+                        "🌙 [Reflectors] ConcernsReflector + WeeklyReflector ready "
+                        "(灵魂工程 Layer 4 已激活)"
+                    )
+                except Exception:
+                    pass
+        except Exception as _r_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[Reflectors] 初始化失败（非致命）：{_r_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)

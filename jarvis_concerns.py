@@ -143,6 +143,13 @@ class ConcernsLedger:
             self._dirty = True
             return True
 
+    def propose(self, concern: Concern) -> bool:
+        """[P0+20-β.2.5 / 2026-05-17] WeeklyReflector 等自动来源 propose 新 concern。
+        强制 state=STATE_REVIEW，等 Sir 拍板。返回是否新增。
+        防 LLM 自作主张污染 Jarvis 的关心列表。详 docs/JARVIS_SOUL_DRIVE.md §5.2"""
+        concern.state = STATE_REVIEW
+        return self.register(concern)
+
     def update(self, concern: Concern) -> bool:
         """覆盖更新（按 id）。不存在返回 False。"""
         with self._lock:
