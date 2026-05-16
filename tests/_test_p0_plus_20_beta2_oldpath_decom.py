@@ -157,5 +157,42 @@ class TestMemoryCoreReadsRelational(unittest.TestCase):
         self.assertEqual(engine._profile_joke_keywords, {})
 
 
+class TestSoulArchivistRedirection(unittest.TestCase):
+    """β.2.4.4：SoulArchivistSentinel 不再 dump jokes/milestones 到 sir_profile，
+    改 propose 到 relational_state.review 队列。"""
+
+    def test_sentinel_prompt_uses_proposed_keys(self):
+        """静态检查：sentinel 的 LLM prompt 含 proposed_inside_jokes /
+        proposed_shared_history_threads 字符串，且明确告诉 LLM 不再输出
+        our_inside_jokes / significant_milestones。"""
+        sentinels_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'jarvis_sentinels.py'
+        )
+        with open(sentinels_path, encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('proposed_inside_jokes', content)
+        self.assertIn('proposed_shared_history_threads', content)
+        # prompt 中应明确 deprecate 老字段
+        self.assertIn('deprecated', content)
+
+    def test_sentinel_redirects_to_relational_propose(self):
+        """静态检查：sentinel 在解析 JSON 后调 store.propose_inside_joke /
+        store.propose_thread + store.write_review_queue。"""
+        sentinels_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'jarvis_sentinels.py'
+        )
+        with open(sentinels_path, encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('propose_inside_joke', content)
+        self.assertIn('propose_thread', content)
+        self.assertIn('write_review_queue', content)
+        # 同时不再写 our_inside_jokes / significant_milestones 到 profile
+        # （检查 pop 这两个 key 防止 LLM 输出老格式时被透传）
+        self.assertIn("new_profile.pop('our_inside_jokes'", content)
+        self.assertIn("new_profile.pop('significant_milestones'", content)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

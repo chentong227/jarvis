@@ -15,6 +15,7 @@ import time
 import tempfile
 import subprocess
 import unittest
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,7 +24,7 @@ from jarvis_relational import (
     RelationalStateStore,
     get_default_store, reset_default_store_for_test,
     make_joke_id, make_protocol_id, make_ub_id, make_thread_id,
-    STATE_ACTIVE, STATE_ARCHIVED,
+    STATE_ACTIVE, STATE_ARCHIVED, STATE_REVIEW,
     UB_OPEN, UB_PAUSED, UB_DONE,
     DEFAULT_TTL_DAYS, DEFAULT_UB_TTL_DAYS, DEFAULT_THREAD_TTL_DAYS,
 )
@@ -508,7 +509,97 @@ class TestSingleton(unittest.TestCase):
 
 
 # ============================================================
-# H. CLI smoke test（scripts/relational_dump.py）
+# H. Review Queue (β.2.4.4): SoulArchivistSentinel propose 流程
+# ============================================================
+class TestReviewQueue(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_persist = tempfile.NamedTemporaryFile(
+            suffix='.json', delete=False, mode='w', encoding='utf-8'
+        )
+        self.tmp_persist.close()
+        os.unlink(self.tmp_persist.name)
+        self.tmp_review = tempfile.NamedTemporaryFile(
+            suffix='.json', delete=False, mode='w', encoding='utf-8'
+        )
+        self.tmp_review.close()
+        os.unlink(self.tmp_review.name)
+        self.store = RelationalStateStore(
+            persist_path=self.tmp_persist.name,
+            review_path=self.tmp_review.name,
+        )
+
+    def tearDown(self):
+        for p in (self.tmp_persist.name, self.tmp_review.name):
+            if os.path.exists(p):
+                os.unlink(p)
+
+    def test_propose_inside_joke_state_is_review(self):
+        joke = InsideJoke(id='j1', phrase='auto proposed phrase')
+        self.assertTrue(self.store.propose_inside_joke(joke))
+        self.assertEqual(self.store.get_inside_joke('j1').state, STATE_REVIEW)
+
+    def test_propose_inside_joke_not_in_default_list(self):
+        joke = InsideJoke(id='j1', phrase='auto proposed')
+        self.store.propose_inside_joke(joke)
+        self.assertEqual(len(self.store.list_inside_jokes()), 0)
+        self.assertEqual(len(self.store.list_inside_jokes_review()), 1)
+
+    def test_propose_inside_joke_not_in_prompt_block(self):
+        """Review 状态的 joke 不应被 to_prompt_block 注入。"""
+        joke = InsideJoke(id='j1', phrase='unreviewed proposed phrase')
+        self.store.propose_inside_joke(joke)
+        # 没有 active 条目 → block 为空
+        self.assertEqual(self.store.to_prompt_block(), '')
+
+    def test_propose_thread_state_is_review(self):
+        t = SharedHistoryThread(id='t1', title='auto proposed thread')
+        self.assertTrue(self.store.propose_thread(t))
+        self.assertEqual(self.store.get_thread('t1').state, STATE_REVIEW)
+        self.assertEqual(len(self.store.list_threads()), 0)
+        self.assertEqual(len(self.store.list_threads_review()), 1)
+
+    def test_activate_from_review_changes_state(self):
+        self.store.propose_inside_joke(InsideJoke(id='j1', phrase='x'))
+        kind = self.store.activate_from_review('j1')
+        self.assertEqual(kind, 'joke')
+        self.assertEqual(self.store.get_inside_joke('j1').state, STATE_ACTIVE)
+        self.assertEqual(len(self.store.list_inside_jokes_review()), 0)
+
+    def test_reject_from_review_archives(self):
+        self.store.propose_inside_joke(InsideJoke(id='j1', phrase='x'))
+        kind = self.store.reject_from_review('j1')
+        self.assertEqual(kind, 'joke')
+        self.assertEqual(self.store.get_inside_joke('j1').state, STATE_ARCHIVED)
+
+    def test_activate_thread_from_review(self):
+        self.store.propose_thread(SharedHistoryThread(id='t1', title='X'))
+        kind = self.store.activate_from_review('t1')
+        self.assertEqual(kind, 'thread')
+        self.assertEqual(self.store.get_thread('t1').state, STATE_ACTIVE)
+
+    def test_activate_unknown_id_returns_empty(self):
+        kind = self.store.activate_from_review('nonexistent')
+        self.assertEqual(kind, '')
+
+    def test_activate_already_active_returns_empty(self):
+        """只能 activate review 状态的，已 active 的不会被影响。"""
+        self.store.add_inside_joke(InsideJoke(id='j1', phrase='x', state=STATE_ACTIVE))
+        kind = self.store.activate_from_review('j1')
+        self.assertEqual(kind, '')
+
+    def test_write_review_queue_creates_file(self):
+        self.store.propose_inside_joke(InsideJoke(id='j1', phrase='x'))
+        self.assertTrue(self.store.write_review_queue())
+        self.assertTrue(os.path.exists(self.tmp_review.name))
+        with open(self.tmp_review.name, encoding='utf-8') as f:
+            data = json.load(f)
+        self.assertEqual(len(data['inside_jokes']), 1)
+        self.assertEqual(data['inside_jokes'][0]['id'], 'j1')
+
+
+# ============================================================
+# I. CLI smoke test（scripts/relational_dump.py）
 # ============================================================
 class TestRelationalCLI(unittest.TestCase):
 

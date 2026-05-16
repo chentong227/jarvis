@@ -552,15 +552,21 @@ class SoulArchivistSentinel(threading.Thread):
                 work_category = PhysicalEnvironmentProbe.current_work_category
                 work_duration = PhysicalEnvironmentProbe.work_duration_minutes
                 
+                # [P0+20-β.2.4.4 / 2026-05-16] 老路径退役第 4 步：
+                # 不再写 our_inside_jokes / significant_milestones 到 sir_profile。
+                # 改成输出 proposed_inside_jokes / proposed_shared_history_threads，
+                # 由本类提取后调 relational_state.propose_* 走 Sir review queue。
+                # 详 docs/JARVIS_SOUL_DRIVE.md
                 prompt = f"""[ROLE]
 You are the Subconscious Archivist of J.A.R.V.I.S. Your purpose is to understand Sir by analyzing recent conversation logs and updating his profile with factual, natural-language observations.
 
 [CRITICAL RULES]
-1. PRESERVATION OVER COMPRESSION: Do NOT delete existing traits, milestones, or jokes unless they are factually contradicted. Your job is to APPEND and REFINE.
+1. PRESERVATION OVER COMPRESSION: Do NOT delete existing traits unless they are factually contradicted. Your job is to APPEND and REFINE.
 2. USE NATURAL, HUMAN LANGUAGE: Describe Sir as a normal person. NEVER use pretentious jargon like "geek", "nerve system", "architectural surge", "zero-delay", "biological efficiency", "codifying", "surge", or any similar technical metaphors to describe a human being.
 3. BE FACTUAL, NOT DRAMATIC: Sir is a software developer who codes, watches racing, edits videos, and is learning to drive. Describe these activities plainly. Do not romanticize them.
 4. DO NOT INVENT TRAITS: Only record what is actually observed in the logs. Do not extrapolate a "persona" from limited data.
 5. DO NOT CREATE SELF-FULFILLING PROPHECIES: Never write entries that predict how Sir will react to the system. Do not write "Sir questions the system's naming" or similar meta-commentary.
+6. SEPARATE Sir's identity (long-lasting traits) from OUR RELATIONAL state (jokes / shared history). Inside jokes and milestones are now PROPOSED for Sir's review — they will NOT auto-activate.
 
 [TEMPORAL CONTEXT]
 Current Time: {current_hour_str} on {current_weekday}
@@ -568,21 +574,23 @@ Physical State: {physical_state}
 Work Category: {work_category} (Session: {work_duration} min)
 Real-time Ledger: {ledger_snapshot}
 
-[OBSERVATION DIRECTIVES]
-1. Boundaries & Philosophy: Did Sir express new preferences or dislikes? APPEND them in plain language.
-2. Inside Jokes: Did a genuinely amusing interaction occur? APPEND it to `our_inside_jokes` (max 20). Describe the joke factually — what happened and why it was funny.
-3. Milestones: Did Sir mention a significant life event or achievement? Add to `significant_milestones`.
-4. Idiosyncrasies: Any new observable habits? Describe them neutrally.
-5. Active Projects & Skills: What is Sir working on or learning? Update `active_projects` and `skill_domains`.
-6. Work Rhythms: Based on temporal patterns, update `work_rhythms` with observed schedules (e.g., "Night owl: most active between 10 PM and 3 AM").
-7. Skill Progression: If Sir has been consistently working on something across sessions, APPEND to `skill_progression` as: {{"skill": "skill name", "first_observed": "approximate date", "confidence": "low/medium/high"}}.
+[OBSERVATION DIRECTIVES — Sir's identity (auto-saved)]
+1. Boundaries & Philosophy: Did Sir express new preferences or dislikes? APPEND to `conversational_boundaries` / `core_philosophy` in plain language.
+2. Idiosyncrasies: Any new observable habits? Describe them neutrally in `idiosyncrasies`.
+3. Active Projects & Skills: What is Sir working on or learning? Update `active_projects` and `skill_domains`.
+4. Work Rhythms: Based on temporal patterns, update `work_rhythms` with observed schedules (e.g., "Night owl: most active between 10 PM and 3 AM").
+5. Skill Progression: If Sir has been consistently working on something across sessions, APPEND to `skill_progression` as: {{"skill": "skill name", "first_observed": "approximate date", "confidence": "low/medium/high"}}.
+
+[PROPOSAL DIRECTIVES — Our relational state (REVIEW queue, NOT auto-active)]
+6. Proposed Inside Jokes: Did a genuinely amusing interaction occur? Output entries in `proposed_inside_jokes` (at most 3 per cycle). Each entry: {{"phrase": "<short callback phrase, <80 chars>", "birth_context": "<one-sentence why funny>", "tone": "<wry/dry/playful/etc>"}}.
+7. Proposed Shared History Threads: Did Sir mention a significant life event or achievement? Output in `proposed_shared_history_threads`. Each entry: {{"title": "<short title>", "highlight": "<one-sentence latest detail>"}}.
 
 [INPUT]
 Old Soul Ledger: {json.dumps(current_profile, ensure_ascii=False)}
 Recent Raw Logs: {recent_chats}
 
 [OUTPUT]
-Output ONLY the updated JSON. ALL values MUST be in English. NO markdown, NO explanations."""
+Output ONLY the updated JSON. The JSON MUST include Sir's identity fields plus the two PROPOSAL arrays (empty arrays if nothing to propose). Do NOT include `our_inside_jokes` or `significant_milestones` keys — those are deprecated. ALL values MUST be in English. NO markdown, NO explanations."""
                 
                 _key, _key_name, _provider = self.key_router.get_key(KeyRouter.CALLER_SENTINEL, 'flash_lite',
                                                        allow_openrouter_fallback=False)
@@ -600,12 +608,73 @@ Output ONLY the updated JSON. ALL values MUST be in English. NO markdown, NO exp
                 match = re.search(r'\{.*\}', res.text.strip(), re.DOTALL)
                 if match:
                     new_profile = json.loads(match.group(0))
+
+                    # [P0+20-β.2.4.4 / 2026-05-16] 老路径退役：
+                    # ① 提取 LLM 输出的 proposed_inside_jokes / proposed_shared_history_threads
+                    #    走 relational_state.propose_*（不直接 active，等 Sir review）
+                    # ② 强制从 new_profile 删 our_inside_jokes / significant_milestones
+                    #    （兼容 LLM 旧习惯还输出这两字段的情况）
+                    proposed_jokes = new_profile.pop('proposed_inside_jokes', []) or []
+                    proposed_threads = new_profile.pop('proposed_shared_history_threads', []) or []
+                    new_profile.pop('our_inside_jokes', None)
+                    new_profile.pop('significant_milestones', None)
+                    n_joke_proposed = 0
+                    n_thread_proposed = 0
+                    try:
+                        from jarvis_relational import (
+                            get_default_store, InsideJoke, SharedHistoryThread,
+                            make_joke_id, make_thread_id,
+                        )
+                        store = get_default_store()
+                        for entry in proposed_jokes[:5]:
+                            if not isinstance(entry, dict):
+                                continue
+                            phrase = str(entry.get('phrase') or '').strip()
+                            if not phrase:
+                                continue
+                            jid = make_joke_id(phrase)
+                            joke = InsideJoke(
+                                id=jid,
+                                phrase=phrase[:120],
+                                birth_context=str(entry.get('birth_context') or '')[:300],
+                                tone=str(entry.get('tone') or '')[:60],
+                                source='auto_proposed',
+                                source_marker='P0+20-β.2.4.4',
+                            )
+                            if store.propose_inside_joke(joke):
+                                n_joke_proposed += 1
+                        for entry in proposed_threads[:5]:
+                            if not isinstance(entry, dict):
+                                continue
+                            title = str(entry.get('title') or '').strip()
+                            if not title:
+                                continue
+                            tid = make_thread_id(title)
+                            thread = SharedHistoryThread(
+                                id=tid,
+                                title=title[:120],
+                                source='auto_proposed',
+                                source_marker='P0+20-β.2.4.4',
+                            )
+                            highlight = str(entry.get('highlight') or '').strip()
+                            if highlight:
+                                thread.add_highlight(highlight)
+                            if store.propose_thread(thread):
+                                n_thread_proposed += 1
+                        if n_joke_proposed or n_thread_proposed:
+                            store._dirty = True
+                            store.persist()
+                            store.write_review_queue()
+                    except Exception:
+                        pass
+
+                    # Sir 画像字段写入 sir_profile（identity 单向）
                     self._save_profile(new_profile)
-                    
+
                     self.last_update_time = time.time()
                     self.last_update_hour = time.localtime(self.last_update_time).tm_hour
                     self.last_processed_chats = recent_chats
-                    
+
                     try:
                         self.jarvis.profile_card._cache_time = 0
                         self.jarvis.profile_card.apply_correction(
@@ -617,11 +686,19 @@ Output ONLY the updated JSON. ALL values MUST be in English. NO markdown, NO exp
                         )
                     except Exception:
                         pass
-                    
+
                     # [P0+18-c.7 / 2026-05-15] 系统状态打印改 bg_log，不漏到对话框
+                    # [P0+20-β.2.4.4] 报 proposed 数量让 Sir 知道 review 队列状态
                     try:
                         from jarvis_utils import bg_log as _sa_bg_log
-                        _sa_bg_log("📚 [SoulArchivist] Sir的资料已更新，沉淀了新的洞察。")
+                        if n_joke_proposed or n_thread_proposed:
+                            _sa_bg_log(
+                                f"📚 [SoulArchivist] Sir的资料已更新；提名 "
+                                f"{n_joke_proposed} jokes + {n_thread_proposed} threads "
+                                f"进 review 队列（用 scripts/relational_dump.py --review 看）"
+                            )
+                        else:
+                            _sa_bg_log("📚 [SoulArchivist] Sir的资料已更新，沉淀了新的洞察。")
                     except Exception:
                         pass
             except Exception as e:

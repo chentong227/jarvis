@@ -50,6 +50,9 @@ from typing import Any, List, Optional
 # ============================================================
 STATE_ACTIVE = 'active'
 STATE_ARCHIVED = 'archived'
+STATE_REVIEW = 'review'           # [β.2.4.4 / 2026-05-16] SoulArchivistSentinel
+                                  # 自动 propose 的条目进 review 等 Sir 拍板，
+                                  # 不直接 active（防止 LLM 自作主张污染关系状态）
 
 # UnfinishedBusiness 状态
 UB_OPEN = 'open'
@@ -267,9 +270,12 @@ class RelationalStateStore:
     """
 
     DEFAULT_PERSIST_PATH = os.path.join('memory_pool', 'relational_state.json')
+    DEFAULT_REVIEW_PATH = os.path.join('memory_pool', 'relational_review.json')
 
-    def __init__(self, persist_path: Optional[str] = None):
+    def __init__(self, persist_path: Optional[str] = None,
+                 review_path: Optional[str] = None):
         self.persist_path = persist_path or self.DEFAULT_PERSIST_PATH
+        self.review_path = review_path or self.DEFAULT_REVIEW_PATH
         self.inside_jokes: dict[str, InsideJoke] = {}
         self.unspoken_protocols: dict[str, UnspokenProtocol] = {}
         self.unfinished_business: dict[str, UnfinishedBusiness] = {}
@@ -460,6 +466,84 @@ class RelationalStateStore:
             t.state = STATE_ARCHIVED
             self._dirty = True
             return True
+
+    # ---------------------------------------------------------
+    # Review Queue（β.2.4.4：SoulArchivistSentinel 自动 propose 不直接 active）
+    # ---------------------------------------------------------
+
+    def propose_inside_joke(self, joke: InsideJoke) -> bool:
+        """SoulArchivistSentinel 等自动来源 propose 新 inside_joke。
+        强制 state=STATE_REVIEW，等 Sir 拍板。返回是否新增。"""
+        joke.state = STATE_REVIEW
+        return self.add_inside_joke(joke)
+
+    def propose_thread(self, thread: SharedHistoryThread) -> bool:
+        """自动来源 propose 新 shared_history_thread。强制 state=STATE_REVIEW。"""
+        thread.state = STATE_REVIEW
+        return self.add_thread(thread)
+
+    def list_inside_jokes_review(self) -> List[InsideJoke]:
+        return [j for j in self.inside_jokes.values() if j.state == STATE_REVIEW]
+
+    def list_threads_review(self) -> List[SharedHistoryThread]:
+        return [t for t in self.shared_history_threads.values()
+                if t.state == STATE_REVIEW]
+
+    def activate_from_review(self, item_id: str) -> str:
+        """把 review 状态的条目转 active。返回 kind ('joke' / 'thread' / '') 或 ''。"""
+        with self._lock:
+            if item_id in self.inside_jokes:
+                j = self.inside_jokes[item_id]
+                if j.state == STATE_REVIEW:
+                    j.state = STATE_ACTIVE
+                    self._dirty = True
+                    return 'joke'
+            if item_id in self.shared_history_threads:
+                t = self.shared_history_threads[item_id]
+                if t.state == STATE_REVIEW:
+                    t.state = STATE_ACTIVE
+                    self._dirty = True
+                    return 'thread'
+        return ''
+
+    def reject_from_review(self, item_id: str) -> str:
+        """把 review 状态的条目转 archived（Sir 拒绝）。"""
+        with self._lock:
+            if item_id in self.inside_jokes:
+                j = self.inside_jokes[item_id]
+                if j.state == STATE_REVIEW:
+                    j.state = STATE_ARCHIVED
+                    self._dirty = True
+                    return 'joke'
+            if item_id in self.shared_history_threads:
+                t = self.shared_history_threads[item_id]
+                if t.state == STATE_REVIEW:
+                    t.state = STATE_ARCHIVED
+                    self._dirty = True
+                    return 'thread'
+        return ''
+
+    def write_review_queue(self) -> bool:
+        """把所有 review 状态的条目 dump 到独立 review JSON，方便 Sir 看。"""
+        snapshot = {
+            'inside_jokes': [j.to_dict() for j in self.list_inside_jokes_review()],
+            'shared_history_threads': [
+                t.to_dict() for t in self.list_threads_review()
+            ],
+            '_meta': {
+                'persisted_at': time.time(),
+                'persisted_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
+            },
+        }
+        try:
+            os.makedirs(os.path.dirname(self.review_path), exist_ok=True)
+            tmp = self.review_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.review_path)
+            return True
+        except Exception:
+            return False
 
     # ---------------------------------------------------------
     # Decay / Cleanup

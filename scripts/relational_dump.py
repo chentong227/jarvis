@@ -83,6 +83,7 @@ from jarvis_relational import (
     make_thread_id,
     STATE_ACTIVE,
     STATE_ARCHIVED,
+    STATE_REVIEW,
     UB_OPEN,
     UB_PAUSED,
     UB_DONE,
@@ -412,8 +413,66 @@ def _force_decay(s: RelationalStateStore) -> None:
     persisted = s.persist()
     print(f"[DECAY] jokes_archived={stats['jokes_archived']} "
           f"protocols_archived={stats['protocols_archived']} "
-          f"ub_archived={stats['ub_archived']}")
+          f"ub_archived={stats['ub_archived']} "
+          f"threads_archived={stats['threads_archived']}")
     print(f"[DECAY] persist: {'写盘' if persisted else '无变更'}")
+
+
+def _print_review(s: RelationalStateStore) -> None:
+    """[β.2.4.4] 列出 SoulArchivistSentinel 自动 propose 的待审条目。"""
+    joke_q = s.list_inside_jokes_review()
+    thread_q = s.list_threads_review()
+    if not joke_q and not thread_q:
+        print("[REVIEW QUEUE] 空（没有待审 proposed_inside_jokes / proposed_shared_history_threads）")
+        print("  Tip: SoulArchivistSentinel 每小时 LLM 反思一次后会写入这里")
+        return
+    print("=" * 80)
+    print(f"[REVIEW QUEUE] {len(joke_q)} jokes + {len(thread_q)} threads 等 Sir 拍板")
+    print("=" * 80)
+    if joke_q:
+        print()
+        print("[JOKES — 待审]")
+        for j in joke_q:
+            print(f"  id           : {j.id}")
+            print(f"  phrase       : {j.phrase!r}")
+            print(f"  tone         : {j.tone or '-'}")
+            print(f"  birth_context: {j.birth_context or '-'}")
+            print(f"  source       : {j.source} ({j.source_marker})")
+            print()
+    if thread_q:
+        print("[THREADS — 待审]")
+        for t in thread_q:
+            print(f"  id        : {t.id}")
+            print(f"  title     : {t.title!r}")
+            if t.highlights:
+                print(f"  latest    : {t.highlights[-1].get('what', '')[:100]}")
+            print(f"  source    : {t.source} ({t.source_marker})")
+            print()
+    print("Sir 操作：")
+    print("  python scripts/relational_dump.py --activate <id>   # 通过")
+    print("  python scripts/relational_dump.py --reject   <id>   # 拒绝")
+
+
+def _activate_review(s: RelationalStateStore, item_id: str) -> int:
+    kind = s.activate_from_review(item_id)
+    if not kind:
+        print(f"[ERROR] '{item_id}' 不在 review 队列 / 不存在")
+        return 2
+    s.persist()
+    s.write_review_queue()
+    print(f"[OK] {kind} '{item_id}' → ACTIVE")
+    return 0
+
+
+def _reject_review(s: RelationalStateStore, item_id: str) -> int:
+    kind = s.reject_from_review(item_id)
+    if not kind:
+        print(f"[ERROR] '{item_id}' 不在 review 队列 / 不存在")
+        return 2
+    s.persist()
+    s.write_review_queue()
+    print(f"[OK] {kind} '{item_id}' → ARCHIVED (rejected)")
+    return 0
 
 
 # ============================================================
@@ -473,6 +532,14 @@ def main():
     parser.add_argument('--resume', metavar='UB_ID', help='UB 恢复')
     parser.add_argument('--decay', action='store_true', help='强制触发一次 apply_decay')
 
+    # Review queue (β.2.4.4): SoulArchivistSentinel 自动 propose 的条目等 Sir 拍板
+    parser.add_argument('--review', action='store_true',
+                        help='列出待 Sir 审的 jokes / threads（自动 propose 队列）')
+    parser.add_argument('--activate', metavar='ID',
+                        help='把 review 状态的条目转 active（Sir 通过）')
+    parser.add_argument('--reject', metavar='ID',
+                        help='把 review 状态的条目转 archived（Sir 拒绝）')
+
     args = parser.parse_args()
 
     if args.add_inside_joke:
@@ -496,6 +563,13 @@ def main():
 
     s = _load_store(args.persist_path)
 
+    if args.activate:
+        return _activate_review(s, args.activate)
+    if args.reject:
+        return _reject_review(s, args.reject)
+    if args.review:
+        _print_review(s)
+        return 0
     if args.decay:
         _force_decay(s)
         return 0
