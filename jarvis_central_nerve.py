@@ -348,6 +348,19 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # [P0+20-β.0.1 / 2026-05-16] DirectiveRegistry —— L2 条件 directive 注册 + 衰减 daemon
+        # 启动后自动 bootstrap 12 条 directive + load 持久化计数 + start_decay_worker（60s tick）
+        try:
+            from jarvis_directives import get_default_registry as _get_dr
+            _dr = _get_dr()
+            _dr.start_decay_worker(interval_s=60.0)
+        except Exception as _dr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[DirectiveRegistry] 初始化失败：{_dr_e}")
+            except Exception:
+                pass
+
         # [轴3-L3.2 + L3.3 / 2026-05-15] PromiseExecutor — 后台步骤执行器
         # daemon 每 1s 扫 ledger，跑 STATE_RUNNING plan 的 next pending step。
         # 注入三回调：
@@ -621,6 +634,73 @@ class CentralNerve:
         _t_asm_start = time.time()
         current_time = time.strftime('%Y-%m-%d %H:%M:%S %A')
         current_hour = int(time.strftime('%H'))
+
+        # [P0+20-β.0.2 / 2026-05-16] L2 Directive Registry dry-run
+        # 不真切注入，只采 fired 信号 + bg_log 暴露"新机制本应注入哪些 directive"。
+        # β.0.3 会切真注入并删除内联 directive；β.0.2 阶段只验证 trigger 命中率。
+        try:
+            from jarvis_directives import DirectiveContext, get_default_registry
+            from jarvis_utils import bg_log as _bg_l2
+            _l2_registry = get_default_registry()
+            _last_jarvis_reply = ""
+            try:
+                if self.short_term_memory:
+                    _last_jarvis_reply = self.short_term_memory[-1].get('jarvis', '') or ""
+            except Exception:
+                pass
+            _last_tool_results: list = []
+            try:
+                cb = getattr(self, 'chat_bypass', None)
+                if cb is not None:
+                    _last_tool_results = list(getattr(cb, '_last_tool_results', []) or [])
+            except Exception:
+                pass
+            _has_active_plan = False
+            try:
+                pl = getattr(self, 'plan_ledger', None)
+                if pl is not None:
+                    _block = pl.to_prompt_block(max_chars=200) or ""
+                    _has_active_plan = bool(_block.strip())
+            except Exception:
+                pass
+            _has_screenshot = False
+            try:
+                _has_screenshot = bool(prompt_tier in ('TOOL_REQUEST', 'DEEP_QUERY', 'CRITICAL'))
+            except Exception:
+                pass
+            _wf_nonempty = False
+            try:
+                wf = getattr(self, 'working_feed', None)
+                if wf is not None:
+                    _wf_nonempty = bool(wf.to_prompt_block(max_chars=200, within_seconds=1800.0).strip())
+            except Exception:
+                pass
+            _l2_ctx = DirectiveContext(
+                user_input=user_input or "",
+                last_jarvis_reply=_last_jarvis_reply,
+                stm=list(self.short_term_memory[-6:]) if self.short_term_memory else [],
+                tier=str(prompt_tier or 'DEEP_QUERY'),
+                ledger_data=ledger_data,
+                soul_tags=list(soul_tags or []),
+                current_hour=current_hour,
+                has_active_plan=_has_active_plan,
+                has_screenshot=_has_screenshot,
+                working_feed_nonempty=_wf_nonempty,
+                last_tool_results=_last_tool_results,
+            )
+            _l2_fired = _l2_registry.collect(_l2_ctx)
+            _l2_ids = [d.id for d in _l2_fired]
+            _l2_registry.record_fire(_l2_ids)
+            try:
+                _bg_l2(f"🧭 [L2 dry-run] tier={_l2_ctx.tier} fired={_l2_ids} (count={len(_l2_ids)})")
+            except Exception:
+                pass
+        except Exception as _l2_err:
+            try:
+                from jarvis_utils import bg_log as _bg_l2_err
+                _bg_l2_err(f"⚠️ [L2 dry-run] error: {type(_l2_err).__name__}: {str(_l2_err)[:80]}")
+            except Exception:
+                pass
 
         core_persona = self.prompt_cache.get_or_build(
             'core_persona', lambda: JARVIS_CORE_PERSONA, ttl=86400.0
