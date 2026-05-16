@@ -691,14 +691,28 @@ class CentralNerve:
             _l2_fired = _l2_registry.collect(_l2_ctx)
             _l2_ids = [d.id for d in _l2_fired]
             _l2_registry.record_fire(_l2_ids)
+            # [P0+20-β.0.3 / 2026-05-16] 真切注入：把 L2 directive text 拼接为一个待注入的字符串块
+            # 注：保守路线 — 不删旧 inline directive、不改 PERSONA；β.0.3 暂态是"双层注入"
+            # 后续轮次（β.1.X）观察 fired/rejected 信号收敛后再做"瘦身"删旧 inline + 改 PERSONA
+            _l2_block = ""
+            if _l2_fired:
+                _parts = ["=== [L2 DIRECTIVES — conditionally injected this turn] ==="]
+                for _d in _l2_fired:
+                    _parts.append(_d.text)
+                _l2_block = "\n\n".join(_parts)
+            # 存到 self 让下游使用（_assemble_prompt 末尾会拼到 prompt 末尾）
+            self._l2_injected_block = _l2_block
+            self._l2_last_fired_ids = list(_l2_ids)
             try:
-                _bg_l2(f"🧭 [L2 dry-run] tier={_l2_ctx.tier} fired={_l2_ids} (count={len(_l2_ids)})")
+                _bg_l2(f"🧭 [L2 inject] tier={_l2_ctx.tier} fired={_l2_ids} (count={len(_l2_ids)} / chars={len(_l2_block)})")
             except Exception:
                 pass
         except Exception as _l2_err:
+            self._l2_injected_block = ""
+            self._l2_last_fired_ids = []
             try:
                 from jarvis_utils import bg_log as _bg_l2_err
-                _bg_l2_err(f"⚠️ [L2 dry-run] error: {type(_l2_err).__name__}: {str(_l2_err)[:80]}")
+                _bg_l2_err(f"⚠️ [L2 inject] error: {type(_l2_err).__name__}: {str(_l2_err)[:80]}")
             except Exception:
                 pass
 
@@ -1180,6 +1194,8 @@ expects an instant reply from your recent memory, not a tool round-trip.
 
 [SYSTEM CLOCK]: {current_time}
 [BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
+{getattr(self, '_l2_injected_block', '')}
+
 User: {user_input}
 {system_alert_text}
 """
@@ -1204,6 +1220,8 @@ Sir just called your name. Reply in UNDER 6 WORDS.
 {short_stm}
 
 [SYSTEM CLOCK]: {current_time}
+{getattr(self, '_l2_injected_block', '')}
+
 User: {user_input}
 {system_alert_text}
 """
@@ -1339,6 +1357,8 @@ User: {user_input}
 
 [SYSTEM CLOCK]: {current_time}
 [BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
+{getattr(self, '_l2_injected_block', '')}
+
 User: {user_input}
 {system_alert_text}
 """
@@ -1354,6 +1374,8 @@ User: {user_input}
 [BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END.
 [SYSTEM CLOCK]: {current_time}
 [SEARCH DIRECTIVE]: For questions about current events, recent news, real-time data, or anything that requires up-to-date information, you MUST use Google Search. Do NOT rely on your training data for time-sensitive queries.
+{getattr(self, '_l2_injected_block', '')}
+
 User: {user_input}
 {system_alert_text}
 """
@@ -1530,6 +1552,8 @@ Path landmarks:
 {commitment_context}
 [SYSTEM CLOCK]: {current_time}
 [SEARCH DIRECTIVE]: For questions about current events, recent news, real-time data, or anything that requires up-to-date information, you MUST use Google Search. Do NOT rely on your training data for time-sensitive queries.
+{getattr(self, '_l2_injected_block', '')}
+
 User: {user_input}
 {system_alert_text}
 """
