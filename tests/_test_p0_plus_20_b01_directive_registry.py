@@ -6,7 +6,7 @@
 - DirectiveRegistry register / collect / record_fire / record_rejection / record_helped
 - apply_decay 3 条规则（dormant / review / priority_drop）
 - persist / load JSON round-trip
-- bootstrap_default_registry 12 条 directive 全部命中条件正确
+- bootstrap_default_registry 13 条 directive 全部命中条件正确（含 P0+20-β.1.11 future_tense_capability_check）
 - get_default_registry 单例 + reset_default_registry_for_test
 - dump_human ASCII 表渲染
 
@@ -330,7 +330,7 @@ class TestBootstrapDefault(unittest.TestCase):
 
     def test_bootstrap_loads_12_directives(self):
         n = bootstrap_default_registry(self.r)
-        self.assertEqual(n, 12)
+        self.assertEqual(n, 13)  # P0+20-β.1.11 加 future_tense_capability_check 后变 13
         # 必含的几条关键 directive
         for did in ('nudge_agenda_honesty', 'continuity_two_parts', 'tool_honesty_directive',
                     'bilingual_directive', 'fuzzy_candidates_policy', 'correction_writepath_no_tool'):
@@ -441,8 +441,8 @@ class TestDefaultRegistrySingleton(unittest.TestCase):
 
     def test_singleton_is_bootstrapped(self):
         r = get_default_registry()
-        # 12 条 directive 都注册了
-        self.assertEqual(len(r.directives), 12)
+        # P0+20-β.1.11：13 条 directive 都注册了（含 future_tense_capability_check）
+        self.assertEqual(len(r.directives), 13)
 
 
 if __name__ == '__main__':

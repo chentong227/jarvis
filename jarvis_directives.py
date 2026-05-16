@@ -512,6 +512,38 @@ def _last_tool_results_contain_fail(results: list) -> bool:
 # 12 条 Directive Bootstrap
 # ============================================================
 
+# 🩹 [P0+20-β.1.11 / 2026-05-16] future-tense capability lie pattern
+# Sir 痛点：Jarvis 答 "I can take a closer look" / "I'll see what I can do" /
+# "Let me look into that" 然后下一轮根本没 follow-up（没工具就别承诺）。
+# α.3 注释明示"这块未修"，β.1.11 新增 directive 治本。
+_FUTURE_LIE_PATTERNS_EN = re.compile(
+    r"(\bi\s+can\s+(take\s+a\s+(closer|deeper|better)\s+look|investigate|"
+    r"look\s+into|find\s+out|check\s+on|explore|dig\s+into|review|examine)|"
+    r"\bi'?ll\s+(take\s+a\s+(closer|deeper|better)\s+look|investigate|"
+    r"see\s+what\s+i\s+can|look\s+into|check\s+on|find\s+out|get\s+back\s+to\s+you|"
+    r"keep\s+an?\s+eye\s+on)|"
+    r"\blet\s+me\s+(look\s+into|check\s+on|investigate|see\s+what|dig\s+into))",
+    re.IGNORECASE,
+)
+_FUTURE_LIE_PATTERNS_ZH = re.compile(
+    r"(我(会|能|可以|去|要|得|来)[再去]?(深入|仔细|进一步)?(看看|查查|了解|研究|探索|追踪|关注|看一下|查一下|了解一下|研究一下)"
+    r"|让我(再|去)?(深入|仔细)?(看|查|了解|研究|探索|看看|查查)(一下|看|看看|查查)?"
+    r"|稍后(再|为您)?(回复|跟进|确认|看一下|查一下)"
+    r"|再为(您|你)(看|查|跟进|确认|了解))"
+)
+
+
+def _last_reply_has_future_capability_lie(text: str) -> bool:
+    if not text or len(text) < 5:
+        return False
+    return bool(_FUTURE_LIE_PATTERNS_EN.search(text) or _FUTURE_LIE_PATTERNS_ZH.search(text))
+
+
+def _trigger_future_tense_capability_check(ctx: DirectiveContext) -> bool:
+    """如果上一轮 Jarvis 给了 "I can/will look into" 这种空头承诺 → 注入"诚实兜底" directive。"""
+    return _last_reply_has_future_capability_lie(ctx.last_jarvis_reply)
+
+
 def _trigger_nudge_agenda_honesty(ctx: DirectiveContext) -> bool:
     return _last_reply_has_completion_claim(ctx.last_jarvis_reply) and _user_input_is_refusal(ctx.user_input)
 
@@ -761,6 +793,30 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
                 The Gatekeeper handles storage, scheduling, and correction automatically.
             """).rstrip(),
             trigger=_trigger_correction_writepath,
+        ),
+        # 13. FUTURE-TENSE CAPABILITY LIE — P0+20-β.1.11 治本
+        # Sir 痛点：上一轮答 "I can take a closer look" / "I'll see what I can do"
+        # 但下一轮根本没 follow-up。整 directive 在"上一轮有空头承诺"时触发，
+        # 提示 LLM 兑现承诺或当场撤回。
+        Directive(
+            id='future_tense_capability_check',
+            source_marker='P0+20-β.1.11',
+            priority=9,
+            ttl_days=60,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [FUTURE-TENSE CAPABILITY CHECK]:
+                Last turn you committed to a future action ("I can take a closer look",
+                "I'll see what I can do", "let me look into that", "我会去看一下" 等).
+                In THIS turn you MUST do ONE of:
+                  (a) Actually do it via FAST_CALL if a tool exists. Then report concretely.
+                  (b) If no tool exists, withdraw plainly: "On reflection, Sir, I don't
+                      actually have the means to look into that from here. I can guide
+                      you through it instead." / "其实我没有工具能直接看这个，先生。可以
+                      指导您操作。"
+                FORBIDDEN: another vague future-tense promise without follow-through.
+            """).rstrip(),
+            trigger=_trigger_future_tense_capability_check,
         ),
     ]
 
