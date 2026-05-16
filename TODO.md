@@ -1,6 +1,6 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 11:47（**🎉 P0+20-W Workflow 规范立起来 ✅ + 🎉 P0+20-α 6 缺口全部修复 ✅ / 等 Sir 验收后启动 P0+20-β.0 Prompt 重构**。本日 commit 链：`f3c42fa docs` → `dea1eb5 α.1 numpy` → `7dcada7 W workflow` → `2a65cc7 α.2 KeyRouter perm` → `a8cd656 α.3 Integrity` → `1764aea α.4 dormant silence` → `8802757 α.5 malformed FAST_CALL` → `1efab47 α.6 print→bg_log`。Tag：`v0.20.0-workflow` + `v0.20.1-cleanup`。**48 / 48 testcase OK / 219.83s**，run_id `test_20260516_114313_65e8`。本地 8 个 commit 已提交，**未 push** — 等 Sir 实测验收。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
+**更新时间**：2026-05-16 12:47（**⏸️ Sir 处理外事，暂停等"继续"信号**。已完工：W + α.1-7 + β.0.1-3（13 commits / 4 tags / 49 testcase OK）。**Sir 12:43 实测又暴露 7 个新 BUG**（详「实测发现的新 BUG」段）→ 决策：开 **Phase 1 救火 5 修（F1-F5）→ Phase 2 push → Phase 3 β.0.5 异步评分 → Phase 4 β.0.6 瘦身 → Phase 5 全架构审计 → Phase 6 全测 + tag**。当前停在 F1 进行中（声波打印异步化），代码定位到 jarvis_worker.py:490/505。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
 
 ---
 
@@ -56,7 +56,26 @@
 
 ---
 
-## 📌 上轮完工速览（P0+19 / 2026-05-16 00:30-02:45）
+## 📌 上轮完工速览（P0+20-W + α + β.0.1-3 / 2026-05-16 10:20-12:30）
+
+> **本日工作量超 P0+19 整轮**：W 规范化 + α 6 修 + β.0.1-3 三阶段 + α.7 trace 双路修复。13 个 commit / 4 个 tag / 49 testcase 持续全绿。
+> 完整 commit 链 + tag 见下方「📦 归档指针」。
+
+- **W**（trace_id 体系 + AGENTS + cursor rules + tests/conftest.py + last_run.json + commit 模板）`v0.20.0-workflow`
+- **α.1**（jarvis_memory_core 漏 numpy 修）`dea1eb5`
+- **α.2**（KeyRouter 永久剔除 + Hippocampus 跳过日志节流）`2a65cc7`
+- **α.3**（Integrity declarative pre-filter + have-been 主语收紧）`a8cd656`
+- **α.4**（SmartNudge standby 60s 静默窗口）`1764aea`
+- **α.5**（malformed FAST_CALL 强 SYSTEM 反馈 + 收手）`8802757`
+- **α.6**（39 处 daemon print→bg_log）`1efab47`
+- **α.7**（trace_id 双路分流：终端只主体 / 日志带 prefix）`v0.20.2-trace-stream-fix`
+- **β.0.1**（jarvis_directives.py Registry + 12 directive bootstrap + 35 testcase）`2f29162`
+- **β.0.2**（_assemble_prompt dry-run + DecayWorker autostart）`04bebde`
+- **β.0.3**（L2 directive 真切注入 / 双层注入暂态）`v0.21.0-prompt-refactor-phase1`
+
+---
+
+## 📌 旧上轮 P0+19（2026-05-16 00:30-02:45）
 
 > 详细 17 sub-step 看板 + 调研事实 + 改动文件清单 + 测试统计 → `docs/TODO_ARCHIVE.md` 顶部「P0+19 完工段」。
 > 完整 design doc → `docs/NERVE_SPLIT_PLAN.md`（保留作历史参考）。
@@ -78,28 +97,91 @@
 
 ---
 
-## 🐛 已知未尽 BUG / 今早 09:23 实测暴露的新缺口
+## 🐛 已知未尽 BUG / 12:43 实测暴露的 7 个新缺口（重点）
 
-| 优先级 | BUG | 状态 | 处理路线 |
-|---|---|---|---|
-| **P0** | **α.1**：`[KeyRouter] google_3 标记为不健康 (错误: name 'np' is not defined)` — P0+19 拆分时 `jarvis_key_router.py` 漏 `import numpy as np` | ⏳ 待修 | **P0+20-α.1** |
-| **P1** | **α.2**：每轮对话刷 5+ 行 `♻️ google_1 跳过` 噪音 — google_1 PROJECT_DENIED 但 KeyRouter 没永久剔除 | ⏳ 待修 | **P0+20-α.2** |
-| **P1** | **α.3**：Integrity Check 1.5B 误报 — 陈述句 `Dreams are rarely a reliable indicator...` 被判 `no_tool_called` | ⏳ 待修 | **P0+20-α.3** + β.0.3 治本 |
-| **P1** | **α.4**：Sir 刚 standby 9s 就触发 `🤫 [SilentNudge/dormant_project]` — NudgeGate cooldown 跟 SilentNudge 触发条件没对齐 | ⏳ 待修 | **P0+20-α.4** |
-| **P1** | **β.0/TWO_PARTS**：Sir 一段话同时回应上文 + 开启下文时 Jarvis 只答一半（`[CONTINUITY RULE]` directive 太弱）| ⏳ 待修 | **P0+20-β.0**（Prompt 重构顺手解决）|
-| **P1** | **β.0/future-tense lie**（2026-05-16 10:53 实测）：Jarvis 用未来时/条件时编造没有的能力 — "I can take a closer look at the logs" / "I can attempt to refresh the interface"，被 Sir 质问后立刻 backtrack 改口 "I lack the direct means..."。`INTEGRITY ABSOLUTE` 只覆盖完成时短语（"I've X"），未来时/条件时漏网。**根因**：`available_skills_block` 没让 LLM 区分"我能空话 X" vs "我有工具 Y 能做 X"。**治本路径**：β.0 `tool_honesty_directive` + `capability_phrasing` 两条 directive 联动 + SkillRegistry 反查能力 | ⏳ 待修 | **P0+20-β.0**（治本，不挤 α）|
-| **P1** | **β.0/asr_video_leak**（2026-05-16 11:12 实测 jarvis_20260516_105347.log:322）：Sir 边用边看视频，视频音（"六长老调取皇妙一门…"武侠题材）在 `active_conversation` 期间无 wake word 直接被录入 → Jarvis 误以为是 Sir 说话开始响应。`active_conversation` 设计是"避免每次都喊唤醒"，但缺速度音 VAD / speaker diarization 兜底。**根因**：active 期间所有声音 → 直接进 ASR → 误判为对 Jarvis 说话。**治本路径**：β 期或路线 D — VAD/嗓音指纹（声纹）/ 短时间未对话则自动降级回需要唤醒 | ⏳ 待修 | **β.0 / 路线 D 候选** |
-| **P0** | **β.0/false_tool_chain_after_malformed**（同 log:324-337 / 14 秒 3 段对话）：第一段正确识别 ASR 幻觉 → 但同轮中后段又编 `FAST_CALL`（`Malformed FAST_CALL organ='None' command='None'`）→ "I've captured the screen / examine the logs / Done, Sir" 一气呵成 3 段假完成。**双重根因**：① 主脑流式输出"前后段语义脱节"（开头识别幻觉，后段被其它 directive 触发编工具）；② Malformed FAST_CALL 后**没强制断流**，LLM 又编 2 段 false claim。**治本路径**：β.0 `tool_honesty` + `capability_phrasing` directive + α.5 收手补丁 | ⏳ 待修 | **β.0 治本 + α.5 收手** |
-| **P0/手动** | **α.5**：Sir 必须做 4 件 — rotate 8 keys / 填 `.env` / `git init` / 改 jarvis_nerve.py:233 入口读 `load_keys()` | ✅ 已随 P0+19-deps commit 完成 | — |
-| **中** | **轴 5.2**：CommitmentWatcher 已 P0+18-e.3 持久化到 SQLite，可继续 polish（deadline 排序 / cross-session 反查）| ⏳ 候选扩展 | 路线 B+ 候选 |
-| **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard 上游路径（兜底已 OK） | ⏳ 等真机复现 | P0+18-e.2 上游 Audio Guard 大概率已覆盖 |
-| **低** | **OpenRouter / 网络偶慢**：22:10 之后偶有慢，不一定纯代码问题 | ⏳ 观察 | `[Perf Diag]` 日志辅诊 |
+> **B1-B7 是 Phase 1 救火直接对应**（F1-F5 修这些）。其它老 BUG 留给 Phase 4 (β.0.6 瘦身) / Phase 5 (架构审计) 一起治本。
+
+### 🆕 Sir 12:43 实测暴露的新 BUG（jarvis_20260516_123813.log）
+
+| ID | 优先级 | BUG | log 证据 | 处理路线 |
+|---|---|---|---|---|
+| **B1** | **P0** | **时间硬编码偏 AM**：Sir 说"两点"，Jarvis 总默认凌晨 02:00。trigger 直接写到 `2026-05-17 02:00:00`，完全错过 Sir 真实意图（下午 14:00 起床 / 12:43 跟妈妈说要睡觉 → 居然解读成第二天凌晨睡）| log:100 `Note that you intend to wake at 2:00 AM` / log:215 `Task scheduled: '睡觉', trigger: 2026-05-17 02:00:00` | **F2** |
+| **B2** | **P0** | **Memory Correction 把"两点起床"重写为"两点睡觉"**：性质完全改了，等于把已存的 reminder 数据吞掉 | log:217 `🔧 [Memory Correction] '两点起床' → '两点睡觉'` | **F3** |
+| **B3** | **P0** | **Help Refusal 误触发**：Sir 自我打断（"不对不对不对，不用不用跟我说，**我要跟你说**"）被识别成拒绝 Jarvis 帮助 → NudgeGate 全通道硬冻结 300s | log:91-93 `🚫 [Help Refusal] 用户拒绝帮助 (#1, strong=False)` `🧊 [NudgeGate HardFreeze] 全通道硬冻结 300s` | **F4** |
+| **B4** | P1 | prompt 装配 1274ms → **3074ms**（β.0.3 双层注入 + 新探测路径让装配翻 2.4x）| log:177 `[Asm Diag] _assemble_prompt 总耗时 3074ms` | Phase 4 β.0.6 瘦身后自然回落 |
+| **B5** | P1 | TTFT 暴涨：第二轮 7.9s，第三轮 26.7s → **Full pipeline 78s** | log:121, 264, 272 | 网络抖动 + B7 google 全挂连锁 |
+| **B6** | **P0** | **声波打印每行 30000+ 字节**：30+ 个 `🎙️ [接收物理声波]` 一行刷出来 → PowerShell 渲染慢 → 主线程 `sys.stdout.write` 阻塞 → 异步录入又录进一段。Sir 反映的"打印卡顿 + 录进了多余的话" | log:88, 145, 200-205, 219-223 每行 ~30K bytes | **F1（致命）** |
+| **B7** | P1 | google_1 永久剔除策略**没持久化**：α.2 改在内存里，重启 / cooldown 恢复后仍可能 PROJECT_DENIED 重新刷屏 | log:282 `google_1 标记为不健康` 仍出现 | **F5** |
+
+### 已知老 BUG（治本路径推迟到 β.0.6 瘦身 / Phase 5 全审计）
+
+| 优先级 | BUG | 处理路线 |
+|---|---|---|
+| **P1** | **β.0/TWO_PARTS**：Sir 一段话同时回应上文+开启下文，Jarvis 只答一半 | β.0.3 directive `continuity_two_parts` 已注入，待真机验证收敛 |
+| **P1** | **β.0/future-tense lie**：Jarvis 用未来时编造没有的能力（"I can take a closer look..."）| β.0.6 瘦身 + SkillRegistry capability 反查 |
+| **P1** | **β.0/asr_video_leak**：active_conversation 期间视频音被录入 | Phase 5 候选 / 路线 D（VAD / speaker diarization）|
+| **P0** | **β.0/false_tool_chain_after_malformed**：第一段判幻觉对了，同轮后段又编 FAST_CALL 假完成 | α.5 已收手 + β.0.6 directive 联动 |
+| **中** | **轴 5.2**：CommitmentWatcher 可继续 polish（deadline 排序 / cross-session 反查） | 路线 B+ 候选 |
+| **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard 上游路径 | 等真机复现 |
+| **低** | **OpenRouter / 网络偶慢** | `[Perf Diag]` 日志辅诊 |
 
 ---
 
-## 🚧 当前迭代（三轨）：P0+20-W 规范化 + P0+20-α 收尾 + P0+20-β.0 Prompt 重构
+## 🚧 当前迭代：P0+20-β.0 完整重构（6 Phase / ~8-10h / **进行中 / F1 卡在 Sir 暂停**）
 
-> **节奏**：W 先做（规范立起来，~2.5h）→ α 后做（4 个修复，~1.5h）→ Sir 验收 → β.0 启动（~7h，分 2 session）。
+> **总目标（Sir 12:45 拍板）**：
+> 1. 修日志暴露的 7 个 BUG（B1-B7）
+> 2. push 当前已完工 13 个 commit
+> 3. β.0.5 异步评分链接入
+> 4. β.0.6 PERSONA iterate（人设不变 / 删旧 inline / prompt 30K→18K）
+> 5. 全架构测试 + BUG / 死代码 / 偶尔失效模块完整修复
+>
+> **当前位置**：⏸️ Phase 1 / F1 进行中暂停（Sir 处理外事）。代码已定位 `jarvis_worker.py:490/505` 声波 print。Sir "继续" 后从 F1 接着干。
+
+### Phase 1 — 救火现修（~1.5h，Phase 2 push 前必清）
+
+| # | Marker | 主题 | 关键产物 | 状态 |
+|---|---|---|---|---|
+| F1 | **P0+20-β.1.1** | 声波打印异步化 / 行内合并（治 B6 致命卡顿）| `jarvis_worker.py:490+505` 的 `sys.stdout.write` 直写改：① 节流到 100ms 一次 `\r` 刷新；② 走 _BgLogBuffer / TraceContext 的"终端 only" 路径或独立 throttle；③ 单行 bars 截断到 50 字节内 | 🔄 in_progress / Sir 暂停 |
+| F2 | **P0+20-β.1.2** | 时间默认推断改用上下文（治 B1 凌晨2点）| Gatekeeper / Memory Correction 解析"两点"等时间词时：① 看当前 hour 推断 AM/PM（12-23 默认下午）；② 用户上下文（"起床" 偏 AM / "睡觉" 偏当夜 22-02 / "下午" 强制 PM）；③ 拒绝盲填 trigger，含糊时反问 | ⏳ |
+| F3 | **P0+20-β.1.3** | Memory Correction 性质替换守卫（治 B2 起床→睡觉重写）| Memory Correction 内部加守卫：① 检测语义类别（睡眠/工作/吃饭/提醒）；② 若 old_val 和 new_val 类别不同 → 拒绝替换，改"创建新记忆"；③ 必要时反问 Sir 确认 | ⏳ |
+| F4 | **P0+20-β.1.4** | Help Refusal 自我打断白名单（治 B3 误触发）| `_detect_help_refusal` 加 pre-filter：① 检测"自我打断"模式（"不对不对" + 后续 "我要 X" / "我我" 重复词）→ 视作 ASR 口吃修正而非拒绝；② 加单测覆盖"自我打断"反例 | ⏳ |
+| F5 | **P0+20-β.1.5** | google_1 永久剔除持久化（治 B7）| KeyRouter 永久剔除状态写到 `memory_pool/key_router_state.json` / 启动时载入；rotate key 后 Sir 主动 reset | ⏳ |
+| F.final | **P0+20-β.1.final** | F 整轮验收 | 全测 49+ OK + 真机一轮（Sir 实测 4 个场景） + commit + tag `v0.20.3-firefighting` | ⏳ |
+
+### Phase 2 — push 到 GitHub
+
+| # | 动作 | 状态 |
+|---|---|---|
+| P2.1 | `git push origin main`（推 13+ commits 含 F1-F5）| ⏳ |
+| P2.2 | `git push origin --tags`（推 4 个 tag）| ⏳ |
+
+### Phase 3 — β.0.5 Gemini-3-Flash 异步评分链（~2h）
+
+新文件 `jarvis_directive_evaluator.py` + `safe_openrouter_call` 集成 + post-turn 异步评分回写 `directive.helped`。详 `docs/PROMPT_REFACTOR_PLAN.md` §7。
+
+### Phase 4 — β.0.6 PERSONA iterate + 瘦身（~2h）
+
+- 核对 L2 12 条 directive 已覆盖所有旧 inline（NUDGE / BILINGUAL / SMART_ROUTING / TOOL_USE / MEMORY WRITE / SEARCH / IMAGE / SYSTEM_ENV）
+- 删除 `_assemble_prompt` 里 5 处 inline directive；保留 PERSONA 主体
+- 实测 prompt size 30K → 18K 目标
+- 装配耗时 3074ms → < 400ms 目标
+- TTFT 实测回到 3s 以下
+
+### Phase 5 — 全架构审计（~2h）
+
+输出 `docs/ARCHITECTURE_AUDIT_2026_05_16.md`，含：
+- **死代码扫描**：enhanced.py 9 类（PromptCache / CorrectionLoop / UnifiedMemoryGateway / TaskWorkerPool / Anticipator / ContextRouter / ProfileCard / ContentPreferenceTracker / SoulRouter）+ 全文 grep 未被引用的私有方法
+- **偶尔失效模块**：PromiseExecutor 是否真跑过长任务 / SkillRegistry 130 skill 是否真被调过 / ScreenshotSentinel 频率 / SoulArchivist 归档命中率
+- **未跑通的老 BUG**：d.5 中文 Audio Guard / TWO_PARTS 实测命中率 / future-tense lie / asr_video_leak
+- 出修复优先级 + 工时估算
+
+### Phase 6 — 全测 + tag
+
+- `tests\_runall.ps1` 49+ testcase 持续全绿
+- 新增回归 testcase 覆盖 B1-B7
+- 真机一轮 Sir 验收
+- tag `v0.21.0-prompt-refactor-full`
 
 ### 🧬 P0+20-W — Workflow 规范化（trace_id / 测试 / commit / Agent 章程）
 
@@ -113,11 +195,10 @@
 | W.6 | **P0+20-W.6** | TODO 章程段升级 | 顶部 QUICKSTART 改成"读 AGENTS.md + PROTOCOL"指针，不复述规则；α.5 标已随 deps 完成；BUG 表加 future-tense lie | 0.25h | ✅ |
 | W.7 | **P0+20-W.7** | 全测 + commit + tag | `tests\_runall.ps1` 全绿；commit W 整轮；`git tag v0.20.0-workflow` | 0.25h | ⏳ |
 
-### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~1.5h）
+### ✅ P0+20-α — 拆分收尾 + 6 修（已完工 / 保留作历史参考）
 
-### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~1.5h）
-
-> **范围保守**：α.3 Integrity 闸门只解决"陈述/共情/解释/referential 句"误报，**不**扩到"future-tense 撒谎"（那是 β.0 的范围，治本需要 SkillRegistry 反查能力 + Directive Registry 的 tool_honesty + capability_phrasing 联动）。
+> **保留位置原因**：Sir 切回旧 Agent 窗口能立刻看到 α 系列做了啥；commit `dea1eb5` ~ `1efab47`，tag `v0.20.1-cleanup`。
+> **范围保守**：α.3 Integrity 闸门只解决"陈述/共情/解释/referential 句"误报，**不**扩到"future-tense 撒谎"（那是 β.0 的范围）。
 
 | # | Marker | 主题 | 关键产物 | 估时 | 状态 |
 |---|---|---|---|---|---|
@@ -130,9 +211,10 @@
 | α.7 | ~~**P0+20-α.7**~~ | ~~Sir 手动 4 件~~ | rotate 8 keys / `.env` / `git init` / `load_keys()` 入口替换 — 已随 `P0+19-deps` 完成 | — | ✅ |
 | α.final | **P0+20-α.final** | α 整轮验收 | 48/48 testcase 全绿（test_run_id=`test_20260516_114313_65e8`，dur=219.83s，git_head=`1efab47`）；tag `v0.20.1-cleanup`；本地 commit 已就绪，**未 push**，等 Sir 真机实测后再决定 | 0.25h | ✅ 2026-05-16 |
 
-### 🧠 P0+20-β.0 — Prompt 重构 + Directive Registry（~7h，完整 design doc 在 `docs/PROMPT_REFACTOR_PLAN.md`）
+### 🧠 P0+20-β.0 — Prompt 重构 + Directive Registry（部分完成 / β.0.4-6 推到 Phase 3-6，完整 design doc 在 `docs/PROMPT_REFACTOR_PLAN.md`）
 
 > **核心目标**：prompt 30K → 18K (-40%) / `_assemble_prompt` 1274ms → < 400ms / TTFT 3.0s → 2.3-2.5s / TWO_PARTS 多意图 0/N → N/N / Integrity 误报 -50%。
+> **当前进度**：β.0.1 ✅ + β.0.2 ✅ + β.0.3 ✅（双层注入）/ β.0.4 (decay daemon 已随 β.0.1 一起) / **β.0.5 (Gemini-Flash 评分) → 上面 Phase 3** / **β.0.6 (瘦身) → 上面 Phase 4**。
 >
 > **架构**：四层 L0 (Immutable Core) / L1 (Session Context) / L2 (**Directive Registry**) / L3 (Task Frame)。L2 用 **`google/gemini-3-flash-preview`** 异步评分采"helped"信号 + 行为信号采"fired/rejected" + 自动衰减（30d ttl）+ Sir review 队列。
 >
@@ -175,9 +257,11 @@
 - ✅ **路线 A.7**：P0+18-e — 待办链路收口 + 上游 Audio Guard + CW 持久化 + 终端色彩化
 - ✅ **路线 A.8**：P0+18-f — 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报
 - ✅ **路线 A.9**：P0+19 — Nerve 拆分（17479→324 / -98.1%）+ 依赖锁定
-- ✅ **路线 A.9.5**：P0+20-W — Workflow 规范化（trace_id / AGENTS.md / .cursor/rules / last_run.json / commit 模板）`v0.20.0-workflow`
-- ✅ **路线 A.10**：P0+20-α — 拆分收尾 + 6 缺口修复（α.1-α.6 全 ✅）`v0.20.1-cleanup`
-- 🔄 **路线 A.11 当前轨**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分 + TWO_PARTS / future-tense lie / asr_video_leak / false_tool_chain 全部一起治本）。等 Sir 验收 α 后启动 β.0.1
+- ✅ **路线 A.9.5**：P0+20-W — Workflow 规范化 `v0.20.0-workflow`
+- ✅ **路线 A.10**：P0+20-α — 拆分收尾 + 6 缺口（α.1-α.6）`v0.20.1-cleanup`
+- ✅ **路线 A.10.5**：P0+20-α.7 — trace_id 双路分流 `v0.20.2-trace-stream-fix`
+- ✅ **路线 A.11.1**：P0+20-β.0.1-3 — Registry + dry-run + 双层注入 `v0.21.0-prompt-refactor-phase1`
+- 🔄 **路线 A.11.2 当前轨**：**Phase 1-6 完整重构** — 救火 5 修 + push + Gemini 评分 + 瘦身 + 全审计 + 全测（详「当前迭代」段，~8-10h）
 - ⏳ **路线 B 候选**：让 PromiseExecutor 真跑长任务 — 选 3 个高价值场景（每日 9:00 驾照科一 3 题 / 起床播报 / 番茄钟）
 - ⏳ **路线 B+ 候选**：AgendaLedger + DailyBriefing + WeeklyDigest + SkillsAtAGlance（让 Jarvis 从 reactive 变 goal-driven）
 - ⏳ **路线 C 候选**：R8 轴 4 — OCR / 后台测试 / 全局热键
