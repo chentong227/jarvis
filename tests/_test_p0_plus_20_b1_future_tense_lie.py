@@ -119,10 +119,11 @@ class TestRegistryHasNewDirective(unittest.TestCase):
     """bootstrap 后必须有 13 条 directive，新增的在内"""
 
     def test_bootstrap_count_is_13(self):
+        # β.1.15 加 reminder_read_truth_source 后变 14
         reg = DirectiveRegistry(persist_path=os.path.join('memory_pool', '_test_count.json'))
         n = bootstrap_default_registry(reg)
         try:
-            self.assertEqual(n, 13)
+            self.assertEqual(n, 14)
             self.assertIn('future_tense_capability_check', reg.directives)
             d = reg.directives['future_tense_capability_check']
             self.assertEqual(d.priority, 9)

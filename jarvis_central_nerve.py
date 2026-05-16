@@ -352,9 +352,9 @@ class CentralNerve:
                 pass
 
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
-        # 走 OpenRouter 的 google/gemini-2.5-flash-preview，每轮对话完成后异步评分
-        # fired 的 directive 是否真被 LLM 遵守 (yes/no/partial) → 写回 directive.helped
-        # 主路径不阻塞；失败/超时静默丢弃；rate limit 60 calls/min。
+        # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
+        # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
+        # → 写回 directive.helped。主路径不阻塞；失败/超时静默丢弃；rate limit 60 calls/min。
         self.directive_evaluator = None
         try:
             from jarvis_directive_evaluator import get_default_evaluator as _get_eval
@@ -728,6 +728,14 @@ class CentralNerve:
             'core_persona', lambda: JARVIS_CORE_PERSONA, ttl=86400.0
         )
 
+        # 🩹 [P0+20-β.1.15 / 2026-05-16] how_to_respond 瘦身（PROMPT_REFACTOR_PLAN §3 L0 精简）：
+        # 原 3673 chars 含两大段：
+        #   段 1（通用 directives，~1500 chars）— 保留：风格 / STM 反应 / Scene tags / SHORT INPUT
+        #         / Bilingual / ASR / Desktop / butler 边界
+        #   段 2（SMART ROUTING / TOOL USE / MEMORY WRITE / REMINDER READ，~2100 chars）— 已搬 L2:
+        #         smart_routing_working_feed / correction_writepath_no_tool / fuzzy_candidates_policy
+        #         / reminder_read_truth_source (β.1.15 新增 #14)
+        # 目标：3673 → ~1100 chars (-70%)
         how_to_respond = self.prompt_cache.get_or_build(
             'how_to_respond', lambda: """=== HOW TO RESPOND ===
 - Default: direct, concise, professional.
@@ -738,34 +746,12 @@ class CentralNerve:
   * If it resembles a mis-spoken wake word (sounds like "Jarvis"): acknowledge briefly. "Yes, Sir." Then wait.
   * Otherwise: respond to what was said. If unclear, ask briefly.
   * NEVER fabricate a connection to old STM to fill silence.
-- Bilingual: Speak English ONLY. Append ---ZH--- Chinese translation at the VERY END of EVERY response. This is MANDATORY — never skip it, even when using tools.
+- Bilingual: Speak English ONLY. Append ---ZH--- Chinese translation at the VERY END of EVERY response. MANDATORY — never skip it, even when using tools.
 - ASR errors: deduce true meaning from context. Ignore transcription typos.
 - Desktop PC: no battery/power/charge concepts. Never reference these.
 - You are a butler, not an autonomous agent. NEVER propose code changes unless asked.
-- NEVER discuss your own architecture, codebase, or implementation details unless Sir explicitly asks. You are a butler, not a system diagnostic tool.
-
-[SMART ROUTING — read these BEFORE deciding to call any tool]:
-- If Sir asks about CLIPBOARD CONTENTS and `WORKING MEMORY` block above shows a recent `clipboard_copy` entry → quote it directly. DO NOT call any clipboard tool.
-- If Sir asks about RECENT TERMINAL COMMANDS and `WORKING MEMORY` shows `terminal_cmd` entries → answer from those. DO NOT call any terminal tool.
-- If Sir asks about RECENT WINDOW / SAVED FILE history and `WORKING MEMORY` has it → answer directly.
-- If Sir references "刚才/just now/the thing I just" → almost always the answer is already in `WORKING MEMORY` or STM. Search context first.
-- A failed tool call is a worse user experience than admitting "I don't see that in my memory, Sir." If unsure, say so — do not guess command names.
-
-- TOOL USE: You have FAST_CALL tools. Use them when Sir clearly commands a NEW action that affects external state (open / set / play / launch). For queries about Sir's RECENT activity, prefer context blocks. If his intent is ambiguous or hedged, ask for confirmation first — one short question, then wait. Default to conversation when uncertain.
-- MEMORY/REMINDER/CORRECTION (WRITE — set / save / correct / 设置 / 记住 / 纠正):
-  When Sir asks you to remember something, set a reminder, schedule a task, OR correct a previous statement — do NOT call any tool. Instead:
-  Step 1: Speak a brief acknowledgment (e.g. "Let me note that down, Sir." or "Got it, I'll correct that."). One sentence.
-  Step 2: Output ---ZH--- and translate the acknowledgment.
-  Step 3: Output <AWAIT_GATEKEEPER> and STOP. The Gatekeeper will handle memory storage, reminder scheduling, AND memory correction automatically.
-  Step 4: After receiving the Gatekeeper result, respond naturally based on success/failure. If it was a correction, confirm the change was made.
-
-- REMINDER/TODO LIST (READ — what reminders / todos / 代办事项 / 待办 / 提醒 / what's on my plate):
-  When Sir asks WHAT his current reminders / todos / commitments are (NOT setting a new one) —
-  the answer is in the ACTIVE REMINDERS / COMMITMENTS block above. Quote those items VERBATIM
-  with their time labels. If the block says "(none — your reminders database is currently empty)",
-  say so honestly: "Your reminders queue is clear, Sir. Nothing scheduled." DO NOT manufacture
-  items from STM, the conversation, or active "projects" — those are not reminders. 承诺必行：
-  reminders 数据库是唯一真实来源；编造 = 撒谎 = 重伤信任。""",
+- NEVER discuss your own architecture, codebase, or implementation details unless Sir explicitly asks.
+- Tool / memory / reminder behavior rules → see L2 directives injected below as needed.""",
             ttl=86400.0
         )
 

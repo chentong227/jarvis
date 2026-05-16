@@ -489,6 +489,43 @@ def _user_input_refs_recent(text: str) -> bool:
     return bool(text and _RECENT_REF_PATTERNS.search(text))
 
 
+# 🩹 [P0+20-β.1.15 / 2026-05-16] #14 directive reminder_read_truth_source 配套
+_REMINDER_READ_PATTERNS = re.compile(
+    r"(代办事项|待办|提醒(我)?(吗|什么)?|todo\s*list|to-?do|reminders?\b|"
+    r"what\s+(is|are|'s|s)\s+on\s+my\s+(plate|list|schedule|agenda)|"
+    r"what'?s\s+on\s+my\s+(plate|list|schedule|agenda)|"
+    r"我.{0,4}(有|要做)什么|今天.{0,4}(要做|安排|有什么)|安排.{0,4}什么|事项)",
+    re.IGNORECASE,
+)
+# 排除：写入意图（避免和 correction_writepath_no_tool 冲突）
+# 仅当"明天/今晚/X 点 + 动作动词"连用才算写入；单独 today/tomorrow 是查询时间限定词
+_REMINDER_WRITE_KW = re.compile(
+    r"(记住|记一下|帮我.{0,4}记|提醒我.{0,4}(在|要|去|做)|set\s+a\s+reminder|schedule\s+(a|me|something)|"
+    r"明天.{0,8}(去|做|看|读|写|跑|开|关|学|练|交|发|寄|买|吃)|"
+    r"今晚.{0,8}(去|做|看|读|写|跑|开|关|学|练|交|发|寄|买|吃)|"
+    r"\d{1,2}\s*点.{0,8}(去|做|起床|睡觉|吃|喝|开会|出门)|"
+    r"\d{1,2}:\d{2}.{0,8}(remind|wake|sleep|eat|leave|start|begin|set))",
+    re.IGNORECASE,
+)
+
+
+def _user_input_is_reminder_read(text: str) -> bool:
+    """Sir 问 '代办事项 / 提醒 / todos' 等查询，不是设置新提醒。"""
+    if not text:
+        return False
+    if not _REMINDER_READ_PATTERNS.search(text):
+        return False
+    # 含写入关键词 → 走 correction_writepath_no_tool 而不是这条
+    if _REMINDER_WRITE_KW.search(text):
+        return False
+    return True
+
+
+def _trigger_reminder_read(ctx: DirectiveContext) -> bool:
+    """L2 trigger wrapper：从 ctx.user_input 调 _user_input_is_reminder_read。"""
+    return _user_input_is_reminder_read(ctx.user_input)
+
+
 _PATH_FILE_PATTERNS = re.compile(
     r"([A-Z]:\\|/[a-zA-Z0-9]+|文件|路径|目录|folder|directory|path)",
     re.IGNORECASE,
@@ -771,11 +808,17 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
             ttl_days=60,
             tier_whitelist=['SHORT_CHAT', 'FACTUAL_RECALL'],
             text=_tw.dedent("""\
-                [SMART ROUTING]:
-                Sir is referring to something he just did ("just now", "刚才"). The
-                answer is most likely in WORKING MEMORY block above. Quote it directly.
-                Do NOT call a clipboard / terminal / window tool unless WORKING MEMORY
-                clearly does not have it.
+                [SMART ROUTING — read these BEFORE deciding to call any tool]:
+                Sir is referring to something he just did ("just now", "刚才", "the thing
+                I just"). The answer is most likely in WORKING MEMORY block above. Rules:
+                - If Sir asks about CLIPBOARD CONTENTS and WORKING MEMORY shows a recent
+                  `clipboard_copy` entry → quote it directly. DO NOT call any clipboard tool.
+                - If Sir asks about RECENT TERMINAL COMMANDS and WORKING MEMORY shows
+                  `terminal_cmd` entries → answer from those. DO NOT call any terminal tool.
+                - If Sir asks about RECENT WINDOW / SAVED FILE history and WORKING MEMORY
+                  has it → answer directly.
+                - A failed tool call is a worse user experience than admitting "I don't
+                  see that in my memory, Sir." If unsure, say so — do not guess command names.
             """).rstrip(),
             trigger=_trigger_smart_routing_working_feed,
         ),
@@ -796,6 +839,29 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
                 The Gatekeeper handles storage, scheduling, and correction automatically.
             """).rstrip(),
             trigger=_trigger_correction_writepath,
+        ),
+        # 14. REMINDER READ TRUTH SOURCE — P0+20-β.1.15 治本（搬自旧 how_to_respond 段 2）
+        # Sir 问"代办事项 / todo / what's on my plate" 时，主脑容易从 STM / projects 编造，
+        # 而不是查 ACTIVE REMINDERS / COMMITMENTS block。承诺必行 = 编造 = 撒谎 = 重伤信任。
+        Directive(
+            id='reminder_read_truth_source',
+            source_marker='P0+20-β.1.15',
+            priority=9,
+            ttl_days=60,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [REMINDER / TODO READ — truth source]:
+                Sir is asking what his current reminders / todos / commitments are
+                (NOT setting a new one). The answer is in the ACTIVE REMINDERS /
+                COMMITMENTS block above. Rules:
+                - Quote those items VERBATIM with their time labels.
+                - If the block says "(none — your reminders database is currently empty)",
+                  say so honestly: "Your reminders queue is clear, Sir. Nothing scheduled."
+                - DO NOT manufacture items from STM, the conversation, or active "projects"
+                  — those are NOT reminders.
+                承诺必行：reminders 数据库是唯一真实来源；编造 = 撒谎 = 重伤信任。
+            """).rstrip(),
+            trigger=_trigger_reminder_read,
         ),
         # 13. FUTURE-TENSE CAPABILITY LIE — P0+20-β.1.11 治本
         # Sir 痛点：上一轮答 "I can take a closer look" / "I'll see what I can do"

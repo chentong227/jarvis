@@ -336,16 +336,52 @@ class SmartNudgeSentinel(threading.Thread):
                     if nudge_type in ("late_night", "suggest_break"):
                         cooldown = self._calc_sleep_nudge_cooldown(nudge_type, cooldown)
 
-                    if now - self.last_nudge_time.get(nudge_type, 0) >= cooldown:
+                    # 🩹 [P0+20-β.1.17 / 2026-05-16] Sir 18:11 实测：SmartNudge 选好 screen_tease
+                    # 但派发链每一步静默跳过，Sir 看到"已选择"但无声 → "莫名其妙被拦住"。
+                    # 修法：每一步拦截给出 bg_log，让 Sir 一眼看见是 cooldown / daily_limit / type_mute
+                    # 哪一道闸把它挡了。
+                    _last_t = self.last_nudge_time.get(nudge_type, 0)
+                    _cd_remaining = cooldown - (now - _last_t)
+                    if _cd_remaining > 0:
+                        try:
+                            from jarvis_utils import bg_log as _smb_log
+                            _smb_log(
+                                f"⏸️ [SmartNudge/Skip] {nudge_type} cooldown 未过 "
+                                f"(剩 {int(_cd_remaining)}s / cooldown={int(cooldown)}s)"
+                            )
+                        except Exception:
+                            pass
+                    else:
                         daily_limit = self._daily_limits.get(nudge_type, 3)
                         type_count = self._type_counts.get(nudge_type, 0)
-                        if type_count < daily_limit:
-                            if nudge_type in ("late_night", "suggest_break"):
-                                self._track_sleep_nudge_dispatch(nudge_type)
-                            self._dispatch_nudge(nudge_type, nudge_context)
-                            self.last_nudge_time[nudge_type] = now
-                            self._type_counts[nudge_type] = type_count + 1
-                            self.daily_nudge_count += 1
+                        if type_count >= daily_limit:
+                            try:
+                                from jarvis_utils import bg_log as _smb_log
+                                _smb_log(
+                                    f"⏸️ [SmartNudge/Skip] {nudge_type} 今日已达上限 "
+                                    f"({type_count}/{daily_limit})"
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            # 检查 type-mute（Sir 之前说过"别再提 X 类"）
+                            _muted_until = self._muted_nudge_types.get(nudge_type, 0.0)
+                            if now < _muted_until:
+                                try:
+                                    from jarvis_utils import bg_log as _smb_log
+                                    _smb_log(
+                                        f"🔇 [SmartNudge/Muted] {nudge_type} type-muted "
+                                        f"(剩 {int((_muted_until - now) / 60)}min, Sir 之前拒过)"
+                                    )
+                                except Exception:
+                                    pass
+                            else:
+                                if nudge_type in ("late_night", "suggest_break"):
+                                    self._track_sleep_nudge_dispatch(nudge_type)
+                                self._dispatch_nudge(nudge_type, nudge_context)
+                                self.last_nudge_time[nudge_type] = now
+                                self._type_counts[nudge_type] = type_count + 1
+                                self.daily_nudge_count += 1
 
             except Exception:
                 pass

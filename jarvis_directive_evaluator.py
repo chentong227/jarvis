@@ -44,8 +44,11 @@ except Exception:
 # ============================================================
 
 EVALUATOR_CONFIG = {
-    'primary_model': 'google/gemini-2.5-flash-preview-09-2025',
-    'fallback_model': 'google/gemini-2.5-flash-lite-preview-09-2025',
+    # 🩹 [P0+20-β.1.16 / 2026-05-16] Sir 反馈：主脑已在用 3-flash-preview（chat_bypass.py:1764），
+    # evaluator 也升级保持一致。Sir 已实测：3-flash 在 OpenRouter 可用。
+    # fallback 走 2.5-flash-lite（之前稳定版本，万一 3-flash 配额满/暂时不可用）。
+    'primary_model': 'google/gemini-3-flash-preview',
+    'fallback_model': 'google/gemini-2.5-flash-lite',
     'temperature': 0.0,
     'max_output_tokens': 80,
     'timeout_s': 6.0,

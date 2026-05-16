@@ -125,13 +125,15 @@ class TestD1HowToRespondDirective(unittest.TestCase):
     """D.1+D.2: HOW TO RESPOND 区里应当有"列代办时照实念 block"的规则"""
 
     def test_how_to_respond_has_read_directive(self):
+        # β.1.15 后：READ directive 从 how_to_respond 段 2 搬到 L2 directive
+        # reminder_read_truth_source (jarvis_directives.py)，corpus 已含 jarvis_directives.py
         src = read_nerve_corpus()
         # 应当含针对"列代办（READ 类）"的 SOP（避免被 WRITE 类 do-NOT-call-any-tool 误外推）
-        # 关键标志：含 "READ" + "reminders" / "代办" 字样
+        # 关键标志：含 READ 字样 + reminders/代办 字样 + 是 directive 形式
         self.assertRegex(
             src,
-            r'REMINDER/TODO\s+LIST\s*\(READ',
-            "HOW TO RESPOND 应区分 READ vs WRITE，READ 分支必须存在"
+            r'(REMINDER/TODO\s+LIST\s*\(READ|REMINDER\s*/\s*TODO\s+READ)',
+            "L2 directive reminder_read_truth_source 应存在（READ 路径 SOP）"
         )
         # 必须禁止编造
         self.assertIn('reminders 数据库是唯一真实来源', src,
