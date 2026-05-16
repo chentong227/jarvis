@@ -559,6 +559,14 @@ class VoiceListenThread(QThread):
             TraceContext.new_turn()
         except Exception:
             pass
+        # 🪞 [P0+20-β.2.0 / 2026-05-16] 通知 SelfAnchor 新 turn 开始（用于 turn_count + last_spoke）
+        try:
+            from jarvis_self_anchor import get_default_self_anchor
+            _anchor = get_default_self_anchor()
+            if _anchor is not None:
+                _anchor.record_turn()
+        except Exception:
+            pass
         self.text_ready.emit(cmd)
 
     def run(self):

@@ -351,6 +351,51 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [P0+20-β.2.0 / 2026-05-16] SelfAnchor —— Jarvis 灵魂工程 Layer 0
+        # Sir 实测发现 Jarvis 不理解"这个终端就是你"的指代关系 → 缺持续的"我"
+        # 注入到 core_persona 末尾让 LLM 每次都看到"我是 J.A.R.V.I.S. 的连续主体"
+        # 详 docs/JARVIS_SOUL_DRIVE.md §2.3
+        self.self_anchor = None
+        try:
+            from jarvis_self_anchor import get_default_self_anchor as _get_anchor
+            self.self_anchor = _get_anchor(central_nerve=self)
+            try:
+                from jarvis_utils import bg_log as _sa_bg
+                _sa_bg(f"🪞 [SelfAnchor] Layer 0 ready (灵魂工程 Layer 0 已激活 — 给主脑'我'的认知锚点)")
+            except Exception:
+                pass
+        except Exception as _sa_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SelfAnchor] 初始化失败（非致命）：{_sa_e}")
+            except Exception:
+                pass
+
+        # 🩹 [P0+20-β.2.1 / 2026-05-16] ConcernsLedger —— Jarvis 灵魂工程 Layer 1
+        # 跨对话持续的"我"。注入到每一次 prompt 装配（不只是 nudge 路径），让主脑无论
+        # 回答什么问题都能"考虑 Sir 的全貌"。
+        # 详 docs/JARVIS_SOUL_DRIVE.md
+        self.concerns_ledger = None
+        try:
+            from jarvis_concerns import get_default_ledger as _get_concerns
+            self.concerns_ledger = _get_concerns()
+            self.concerns_ledger.start_decay_worker(interval_s=86400.0)
+            try:
+                from jarvis_utils import bg_log as _cl_bg
+                _cl_bg(
+                    f"🌱 [ConcernsLedger] active={len(self.concerns_ledger.list_active())} "
+                    f"review={len(self.concerns_ledger.list_review())} "
+                    f"(灵魂工程 Layer 1 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _cl_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ConcernsLedger] 初始化失败（非致命）：{_cl_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
@@ -724,9 +769,37 @@ class CentralNerve:
             except Exception:
                 pass
 
-        core_persona = self.prompt_cache.get_or_build(
+        # 🩹 [P0+20-β.2.0+1 / 2026-05-16] 灵魂工程 Layer 0+1 — 拼到 core_persona 末尾
+        # 所有 prompt branch (full/light/short/wake/factual/reminder) 都以 {core_persona} 开头，
+        # 把 self_anchor (Layer 0) + soul_block (Layer 1) 拼到 base persona 之后即可一次覆盖
+        # 所有路径，无需改 6 个 template。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §4 注入路径。
+        _t_soul = time.time()
+        _base_persona = self.prompt_cache.get_or_build(
             'core_persona', lambda: JARVIS_CORE_PERSONA, ttl=86400.0
         )
+        # Layer 0: Self Identity Anchor（"我是谁"的锚点）
+        self_anchor_block = ''
+        try:
+            if self.self_anchor is not None:
+                self_anchor_block = self.self_anchor.build_block(max_chars=900)
+        except Exception:
+            self_anchor_block = ''
+        # Layer 1: Concerns（"我关心什么"）
+        soul_block = ''
+        try:
+            if self.concerns_ledger is not None:
+                soul_block = self.concerns_ledger.to_prompt_block(top_n=3, max_chars=600)
+        except Exception:
+            soul_block = ''
+        # 拼接：base PERSONA → Layer 0 → Layer 1
+        _parts = [_base_persona]
+        if self_anchor_block:
+            _parts.append(self_anchor_block)
+        if soul_block:
+            _parts.append(soul_block)
+        core_persona = '\n\n'.join(_parts)
+        self._asm_stage_t['soul_block'] = (time.time() - _t_soul) * 1000
 
         # 🩹 [P0+20-β.1.15 / 2026-05-16] how_to_respond 瘦身（PROMPT_REFACTOR_PLAN §3 L0 精简）：
         # 原 3673 chars 含两大段：

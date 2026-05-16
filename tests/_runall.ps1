@@ -98,7 +98,8 @@ $tests = @(
     "_test_p0_plus_20_b1_nameerror_guards",
     "_test_p0_plus_20_b1_future_tense_lie",
     "_test_p0_plus_20_beta05_evaluator",
-    "_test_p0_plus_20_b115_reminder_read"
+    "_test_p0_plus_20_b115_reminder_read",
+    "_test_p0_plus_20_beta2_soul_anchor"
 )
 
 foreach ($t in $tests) {
