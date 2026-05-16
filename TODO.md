@@ -1,6 +1,6 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 14:45（Phase 1 救火 + Phase 2 push 完工 + Phase 1.5 NameError 留尾批量修。**已完工 17 commits / 6 tags / 51 testcase OK**。Sir 14:30 又反馈 2 个 BUG → B8 OfferHelp 未出声 + B9 归来感知没出现 → 已修 + commit `a5ebe8d` + tag `v0.20.4-nameerror-guards`（push 卡网络）。下一步进入 **Phase 4 β.0.6 瘦身 → Phase 5 全架构审计 → Phase 6 全测 + tag**。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/PROMPT_REFACTOR_PLAN.md`。）
+**更新时间**：2026-05-16 15:35（**P0+20-β.1 全轮完工 / tag `v0.21.0-prompt-refactor-full`**。21 commits / 7 tags / 52 testcase OK / 8 体检 OK / 死代码 -962 行 / 13 L2 directive / B1-B9 9 BUG 全修 + Phase 5 架构审计报告归档 `docs/ARCHITECTURE_AUDIT_2026_05_16.md`。**剩 Phase 3（β.0.5 Gemini-3-Flash 异步评分链）等 Sir 真机实测后再启动**。详见 `docs/JARVIS_WORKFLOW_PROTOCOL.md` + `docs/ARCHITECTURE_AUDIT_2026_05_16.md`。）
 
 ---
 
@@ -153,15 +153,19 @@
 | F5 | P0+20-β.1.5 | KeyRouter 持久化 + reset 接口（治 B7）| ✅ |
 | F6 | P0+20-β.1.6 | chat_bypass.py 延迟 import JARVIS_CORE_PERSONA（治 B8）| ✅ |
 | F7 | P0+20-β.1.7 | return_sentinel + smart_nudge + commitment_watcher win32api try-import（治 B9）| ✅ |
-| Tests | — | 51/51 OK，新增 38 testcase（firefighting 26 + nameerror_guards 12）| ✅ |
+| F8 | P0+20-β.1.8 | 删 6 处 inline directive（L2 单一注入路径）| ✅ |
+| F9 | P0+20-β.1.9 | scripts/health_check.py 9 项体检 | ✅ |
+| F10 | P0+20-β.1.10 | jarvis_enhanced.py 删 962 行死代码（1531→569）| ✅ |
+| F11 | P0+20-β.1.11 | future-tense capability lie 治本 + 23 testcase | ✅ |
+| F12 | P0+20-β.1.final | docs/ARCHITECTURE_AUDIT_2026_05_16.md 归档 + tag v0.21.0 | ✅ |
+| Tests | — | 52/52 OK，新增 61 testcase（firefighting 26 + nameerror 12 + future-tense 8 + b01 update 15）| ✅ |
 
 ### Phase 2 — push 到 GitHub
 
 | # | 动作 | 状态 |
 |---|---|---|
-| P2.1 | 首批 14 commits push | ✅ 13:18 完成 |
-| P2.2 | 5 个 tag push | ✅ 13:18 完成 |
-| P2.3 | B8/B9 commit + v0.20.4 tag push | ⏳ 网络挂等重试 |
+| P2.1 | 21 commits push | ✅ |
+| P2.2 | 7 tags push | ✅ |
 
 ### Phase 3 — β.0.5 Gemini-3-Flash 异步评分链（~2h）
 
