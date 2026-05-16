@@ -609,6 +609,28 @@ class VoiceListenThread(QThread):
                 audio_data = np.frombuffer(data, dtype=np.int16)
                 volume = np.abs(audio_data).mean()
 
+                # 🩹 [P0+20-β.1.22 / 2026-05-16] 焦点超时检查提到主循环顶部（治 Sir 20:36 反馈）
+                # 之前 timeout 检查只在 line 922 的"安静声波"路径，环境有持续音量（视频音/音乐）
+                # → volume > VOLUME_THRESHOLD → 走 line 618 分支 → 永远 reach 不到 timeout 检查。
+                # 修法：每次 iter 顶部检查一次（不依赖 is_speaking / volume 分支）。
+                if self.in_active_conversation and not is_speaking:
+                    if time.time() - self.last_interaction_time > ACTIVE_TIMEOUT:
+                        print("\n💤[System Standby] 专注锁超时，返回潜意识状态。")
+                        if self.state is not None:
+                            self.state.set_active_conversation(False, reason='timeout', source='active_timeout_toplevel')
+                        else:
+                            self.in_active_conversation = False
+                        self.last_conversation_end_time = time.time()
+                        self.last_dismissal_reason = 'timeout'
+                        self.awake_signal.emit(False)
+                        set_browser_ducking(False)
+                        try:
+                            if self._subtitle_queue is not None:
+                                self._subtitle_queue.put(("focus", False))
+                                self._subtitle_queue.put(("clear", ""))
+                        except Exception:
+                            pass
+
                 if getattr(self, 'is_jarvis_speaking', False) or time.time() < getattr(self, 'mute_until', 0) or getattr(self, '_suppress_wave', False):
                     frames_left = stream.get_read_available()
                     if frames_left > 0:
@@ -2978,14 +3000,33 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                             # 🩹 [P0+20-β.1.3 / 2026-05-16] 性质替换守卫（治 B2）：
                                             # Sir 12:43 实测：原存"两点起床"，Sir 又说"我要睡觉"，LLM 把它
                                             # 当作"correction" old=两点起床 / new=两点睡觉 → 把起床闹钟覆盖
-                                            # 成了睡觉计划。性质完全不同。
+                                            # 成了睡觉计划。
                                             #
-                                            # 修法：检测 old_val 和 new_val 的语义类别，不同 → 拒绝替换，
-                                            # 转为新记忆独立保存。同类（如 "8 点起床" → "9 点起床"）放行。
+                                            # 🩹 [P0+20-β.1.23 / 2026-05-16] 守卫扩展（治 Sir 20:50 反驳→替换 BUG）：
+                                            # Sir 反问"你真的认为我需要9点睡吗" → Gatekeeper 把它当 correction
+                                            # old="21:00" new="不认同 9点睡觉" → 时间标签被换成否定语句。
+                                            # 新规则：
+                                            #   ① 任一类别非 misc 且 old_cat != new_cat → 拒绝替换（原 β.1.3）
+                                            #   ② new_val 含明显"反驳/否定/反问"词 → 拒绝替换（这是 refusal 不是 correction）
+                                            #   ③ old_val 是纯时间标签 (\d+[:.]?\d* / X 点) + new_val 含语义动词 → 拒绝
                                             old_cat = detect_semantic_category(old_val)
                                             new_cat = detect_semantic_category(new_val)
+                                            import re as _re_guard
+
+                                            _refusal_in_new = bool(_re_guard.search(
+                                                r'(不认同|不同意|不要|不需要|不用|不想|不会|不可能|不行|'
+                                                r'我不|真的吗|你确定|确定吗|凭什么|why\s+would|are\s+you\s+sure|'
+                                                r'no\s+(way|need|i\s+won|i\s+don)|i\s+(don\'?t|won\'?t|cannot))',
+                                                new_val, _re_guard.IGNORECASE
+                                            ))
+                                            _is_time_only = bool(_re_guard.match(
+                                                r'^\s*\d{1,2}[:\.]\d{0,2}\s*$|^\s*\d{1,2}\s*(点|时|am|pm)\s*$',
+                                                old_val, _re_guard.IGNORECASE
+                                            ))
                                             category_conflict = (
-                                                old_cat != 'misc' and new_cat != 'misc' and old_cat != new_cat
+                                                (old_cat != 'misc' and new_cat != 'misc' and old_cat != new_cat)
+                                                or _refusal_in_new
+                                                or (_is_time_only and new_cat != 'misc' and new_cat != 'wake' and new_cat != 'sleep')
                                             )
                                             if category_conflict:
                                                 try:

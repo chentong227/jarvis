@@ -177,6 +177,14 @@ class ChatBypass:
         # 不能 emit IDLE 缩短回声防御窗口。
         self._render_in_progress = False
 
+        # 🩹 [P0+20-β.1.25 / 2026-05-16] Nudge anti-repeat 历史
+        # Sir 反馈："回归问候/催睡固定句式我看了 5-6 遍" — 因为 directive + STM + LLM 一样
+        # 导致 LLM 倾向于复用熟悉句式。修法：每个 nudge_type 维护最近 5 条 reply 开头，
+        # 下次同 type 触发时显式塞进 prompt 说"FORBIDDEN openings — NEVER reuse"。
+        from collections import defaultdict as _defaultdict
+        self._nudge_recent_phrases: dict = _defaultdict(list)
+        self._NUDGE_RECENT_MAX = 5
+
         # [R7-β2 v5/Sir-2026-05-14] Backchannel chime 已删除（与 play_acknowledgment_chime 重复）。
         # [轴 2.4 / 2026-05-15] 启用本地短句 PCM 池作为"思考期反馈"的真正方案：
         #   - 启动时预渲 5 句（"On it.", "One moment.", "Pulling that up.", "Bear with me." 等）
@@ -490,6 +498,37 @@ class ChatBypass:
                 if not text:
                     # 中文全 strip 后什么都没剩 → 直接吞掉，不入队
                     return
+        except Exception:
+            pass
+
+        # 🩹 [P0+20-β.1.24 / 2026-05-16] B13 修：拦截 LLM 漏说工具名（治 Sir 20:47 反馈）。
+        # 实测："may I run process_hands.list_processes for you?" 完整说出工具名 → 人机感极强。
+        # 修法：_put_audio 入口检测 `<organ>.<command>` 模式，替换成自然短语再走 TTS。
+        # 字幕 / STM 仍保留原句（让 Sir 调试时看清 LLM 想说啥），只动 audio 路径。
+        try:
+            if text:
+                import re as _re_tool
+                _TOOL_NAME_RE = _re_tool.compile(
+                    r'\b(process_hands|file_operator(?:_hands)?|txt_writer_hands\w*|system_hands|'
+                    r'memory_hands|fuzzy_resolver|ui_control|hippocampus|'
+                    r'commitment_watcher|return_sentinel|smart_nudge|chat_bypass)'
+                    r'\.\w+', _re_tool.IGNORECASE
+                )
+                if _TOOL_NAME_RE.search(text):
+                    _orig_for_log = text
+                    # 替换工具名为"a quick check"等自然短语
+                    text = _TOOL_NAME_RE.sub('a quick check', text)
+                    # 去掉残留的"may I run a quick check" 中 "run" 多余感（轻 polish）
+                    text = _re_tool.sub(r'\b(run|invoke|execute|trigger)\s+a\s+quick\s+check',
+                                        'a quick check', text, flags=_re_tool.IGNORECASE)
+                    try:
+                        from jarvis_utils import bg_log as _tool_bg
+                        _tool_bg(
+                            f"🔇 [Audio Guard / Tool Name] 拦截工具名漏到 TTS: "
+                            f"'{_orig_for_log[:80]}' → '{text[:80]}'"
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -3034,7 +3073,7 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             ),
             "commitment_check": f"Sir said he would {nudge_context.get('commitment_description', 'rest')} at {nudge_context.get('commitment_time', 'a certain time')}. It is now {nudge_context.get('overdue_minutes', 'some')} minutes past that time and he is still working. Express gentle, dry concern. Reference what he said earlier. Do NOT nag — sound like a friend who noticed, not a parent. One sentence.",
             "dormant_project": f"Sir has some projects that haven't been touched in days: {json.dumps(nudge_context.get('dormant_projects', []), ensure_ascii=False)}. Pick ONE most interesting dormant project and make a brief, casual remark about it. Sound like a friend who noticed, not a project manager. One sentence. Do NOT list all projects — just mention one naturally.",
-            "offer_help": "Sir seems to be stuck on an error or debugging issue. ASK what error he's seeing and whether he needs help. Be specific — reference what's on his screen. Sound like a colleague glancing over, not tech support. One or two sentences. Under 25 words. You ARE allowed to ask a question for this nudge type.\n\nCRITICAL — TONE VARIATION: Vary your tone based on context:\n- Late night (22:00-05:00): Tired but loyal. 'Still at it, Sir?' energy. Dry, understated.\n- Early morning (05:00-09:00): Fresh, brief. 'Starting early?' energy.\n- Afternoon slump (13:00-17:00): Knowing, companionable. 'This time of day' energy.\n- If Sir has been working 2+ hours: Acknowledge the grind. 'That's been stubborn for a while' energy.\n- If error_visible sensor is active: Be specific about troubleshooting. 'That looks familiar' energy.\n- If backspace_ratio is high: Note the frustration. 'Typing and deleting' energy.\n\nCRITICAL — PHRASING VARIETY: NEVER use the same opening twice in a row. Rotate between:\n- Direct offer: 'Need a hand with that?'\n- Observational: 'That error looks persistent.'\n- Casual: 'Want me to take a look?'\n- Dry: 'Shall I earn my keep?'\n- Companionable: 'We've been staring at this a while.'\n- Specific: 'That [specific error type] — want a second pair of eyes?'\n\nCRITICAL — EMOTIONAL PERCEPTION: If Sir seems frustrated (high backspace, rapid window switching), acknowledge it subtly. If Sir seems calm/steady, be more casual. Match his energy — don't be chipper when he's frustrated, don't be gloomy when he's focused.",
+            "offer_help": "Sir seems to be stuck on an error or debugging issue. ASK what error he's seeing and whether he needs help. Be specific — reference what's on his screen. Sound like a colleague glancing over, not tech support. One or two sentences. Under 25 words. You ARE allowed to ask a question for this nudge type.\n\nCRITICAL — NEVER mention internal tool names (process_hands.X, file_operator.Y, fast_call, organ name, snake_case identifier). Speak human language only.\n  BAD:  'may I run process_hands.list_processes?' / 'shall I invoke file_operator.scan?'\n  GOOD: 'Want me to find the CPU hog?' / 'Shall I pull the top processes?' / 'Need a quick scan?'\n\nCRITICAL — TONE VARIATION: Vary your tone based on context:\n- Late night (22:00-05:00): Tired but loyal. 'Still at it, Sir?' energy. Dry, understated.\n- Early morning (05:00-09:00): Fresh, brief. 'Starting early?' energy.\n- Afternoon slump (13:00-17:00): Knowing, companionable. 'This time of day' energy.\n- If Sir has been working 2+ hours: Acknowledge the grind. 'That's been stubborn for a while' energy.\n- If error_visible sensor is active: Be specific about troubleshooting. 'That looks familiar' energy.\n- If backspace_ratio is high: Note the frustration. 'Typing and deleting' energy.\n\nCRITICAL — PHRASING VARIETY: NEVER use the same opening twice in a row. Rotate between:\n- Direct offer: 'Need a hand with that?'\n- Observational: 'That error looks persistent.'\n- Casual: 'Want me to take a look?'\n- Dry: 'Shall I earn my keep?'\n- Companionable: 'We've been staring at this a while.'\n- Specific: 'That [specific error type] — want a second pair of eyes?'\n\nCRITICAL — EMOTIONAL PERCEPTION: If Sir seems frustrated (high backspace, rapid window switching), acknowledge it subtly. If Sir seems calm/steady, be more casual. Match his energy — don't be chipper when he's frustrated, don't be gloomy when he's focused.",
             "suggest_break": suggest_break_directive,
             "context_switch_alert": "Sir is rapidly switching between many different windows and contexts. Make a brief, observational remark about the scattered focus. Not critical — just noticing. One sentence. Under 15 words.",
         }
@@ -3053,6 +3092,21 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
         recent_str = ""
         if recent_topics:
             recent_str = f"\n[RECENT NUDGES — DO NOT REPEAT THESE SENTIMENTS]:\n" + "\n".join([f"  - {t}" for t in recent_topics])
+
+        # 🩹 [P0+20-β.1.25 / 2026-05-16] anti-repeat 注入：禁止复用本类型最近 5 次开头
+        # Sir 反馈"回归问候/催睡固定句式看了 5-6 遍" → directive + STM + LLM 一样 → 句式复用。
+        # 修法：把同 nudge_type 最近 5 条 reply 开头塞进 prompt，显式 FORBIDDEN。
+        forbidden_str = ""
+        try:
+            _recent_phrases = self._nudge_recent_phrases.get(nudge_type, [])
+            if _recent_phrases:
+                forbidden_str = (
+                    f"\n[FORBIDDEN OPENINGS — you said these recently for `{nudge_type}`. "
+                    f"NEVER reuse any of them or their close paraphrases. Find a fresh angle and structure]:\n"
+                    + "\n".join([f"  - {p!r}" for p in _recent_phrases])
+                )
+        except Exception:
+            pass
 
         sensor_hints = ""
         if nudge_type == "offer_help":
@@ -3118,6 +3172,7 @@ You are making a brief, unsolicited remark — NOT starting a conversation.
 Type: {nudge_type}
 {nudge_directive}
 {recent_str}
+{forbidden_str}
 
 [RULES]
 - ONE sentence. Under 15 words.
@@ -3311,7 +3366,20 @@ Type: {nudge_type}
                     self.subtitle_queue.put(("zh", clean_zh))
                     # [P0+18-c.12 / 2026-05-15] 多段 ZH (含 \n\n) 走 _box_newline,每行加 ║ 前缀
                     print("\n" + _box_newline(f"║ 📺  [Subtitle] {clean_zh}"))
-            
+
+            # 🩹 [P0+20-β.1.25 / 2026-05-16] 记录本轮 reply 开头到 anti-repeat 历史
+            # 下次同 nudge_type 触发时塞进 prompt 显式 FORBIDDEN，防固定句式复用
+            try:
+                if final_reply and nudge_type:
+                    _opening = final_reply[:80].strip()
+                    if _opening:
+                        bucket = self._nudge_recent_phrases.setdefault(nudge_type, [])
+                        bucket.append(_opening)
+                        if len(bucket) > self._NUDGE_RECENT_MAX:
+                            self._nudge_recent_phrases[nudge_type] = bucket[-self._NUDGE_RECENT_MAX:]
+            except Exception:
+                pass
+
             print("\n╚" + "═"*63 + "\n")
             if '_nudge_key_name' in dir():
                 self.key_router.release(_nudge_key_name)
