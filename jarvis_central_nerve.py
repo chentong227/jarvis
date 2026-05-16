@@ -813,10 +813,25 @@ class CentralNerve:
         progression = sir_profile.get("skill_progression", [])
         progression_str = "\n".join([f"  - {s.get('skill','?')} (confidence: {s.get('confidence','?')})" for s in progression[-5:]]) if progression else "  (none yet)"
 
+        # 🩹 [P0+20-β.1.21 / 2026-05-16] 分阶段 timing 收集器
+        if not hasattr(self, '_asm_stage_t') or not isinstance(self._asm_stage_t, dict):
+            self._asm_stage_t = {}
+
+        # 🩹 [P0+20-β.1.21 / 2026-05-16] profile_block 本轮缓存（避免 4 次重复构造）
+        _pc_t = time.time()
+        _pc_block_value = self.profile_card.to_prompt_block()
+        self._asm_stage_t['profile_block'] = (time.time() - _pc_t) * 1000
+        # 暴露给本类方法 + 字符串模板（_pc_block_cached 调用方）
+        self._pc_block_cached = lambda: _pc_block_value
+
+        _t_hc = time.time()
         self.habit_clock.update_from_probe()
+        self._asm_stage_t['habit_clock_update'] = (time.time() - _t_hc) * 1000
+
         _t_ctx_start = time.time()
         context_str = self.context_router.assemble(current_hour)
         _t_ctx_done = time.time()
+        self._asm_stage_t['context_router'] = (_t_ctx_done - _t_ctx_start) * 1000
 
         hc_prediction = self.habit_clock.predict_current_state()
         if hc_prediction.get('anomaly_detected'):
@@ -891,18 +906,21 @@ class CentralNerve:
             _t_mem_start = time.time()
             unified_memory = self.memory_gateway.to_prompt_block(user_input, top_k=3)
             _t_mem_done = time.time()
+            self._asm_stage_t['memory_gateway'] = (_t_mem_done - _t_mem_start) * 1000
 
         skill_tree_str = ""
         if hasattr(self, 'skill_tree') and _allow_full and not _skip_heavy:
             _t_skill_start = time.time()
             skill_tree_str = self.skill_tree.get_skill_summary_for_prompt()
             _t_skill_done = time.time()
+            self._asm_stage_t['skill_tree'] = (_t_skill_done - _t_skill_start) * 1000
 
         anticipator_ctx = ""
         if hasattr(self, 'prompt_center') and self.prompt_center and self.prompt_center.anticipator and not _skip_heavy:
             _t_anti_start = time.time()
             anticipator_ctx = self.prompt_center.anticipator.get_preloaded_context()
             _t_anti_done = time.time()
+            self._asm_stage_t['anticipator'] = (_t_anti_done - _t_anti_start) * 1000
 
         commitment_context = ""
         if pending_commitment:
@@ -1026,39 +1044,37 @@ Then proceed with the rest of your response normally.
         except Exception:
             active_reminders_block = ""
 
-        # [轴3-L3.1 / 2026-05-15] PROMISE PROTOCOL —— multi-step 承诺协议
-        # 教主脑用 <PROMISE> 标签声明承诺；stream_chat 末尾会解析 → ledger.draft(awaiting_go)
-        # Sir 说 "go/yes" 才执行；修 Cs3 "I'll look into" 泛化承诺。
+        # 🩹 [P0+20-β.1.21 / 2026-05-16] inline 详细版改"按 L2 fired 信号注入"（之前 always-注入）
+        # 详细版（PROMISE_PROTOCOL_DIRECTIVE ~2000c / TOOL_HONESTY_DIRECTIVE ~1500c /
+        # FUZZY_CANDIDATES_POLICY ~1000c）含 JSON 格式 spec / 工具行为约束等关键细节，
+        # 删了会损失信息。但每轮都注入浪费 ~4500 chars。
+        # 折中：复用 L2 registry 的 fired 信号，只在 trigger 命中时注入详细版（与 L2 简化版叠加）。
+        # 净效果：normal chat 节省 ~4500 chars；need-spec 场景仍有详细 spec。
+        _l2_fired_set = set(getattr(self, '_l2_last_fired_ids', []) or [])
+
         promise_protocol_directive = ""
-        try:
-            from jarvis_skill_registry import PROMISE_PROTOCOL_DIRECTIVE
-            promise_protocol_directive = PROMISE_PROTOCOL_DIRECTIVE
-        except Exception:
-            promise_protocol_directive = ""
+        if 'promise_protocol_directive' in _l2_fired_set:
+            try:
+                from jarvis_skill_registry import PROMISE_PROTOCOL_DIRECTIVE
+                promise_protocol_directive = PROMISE_PROTOCOL_DIRECTIVE
+            except Exception:
+                promise_protocol_directive = ""
 
-        # [P0+18-a.16 / 2026-05-15] TOOL HONESTY —— 承诺必行的硬约束块
-        # 拦"我可以运行 X 来查 Y"型越界许诺（详见 jarvis_skill_registry.CapabilityClaimValidator）
-        # 注入位置：紧跟 AVAILABLE SKILLS 后、PROMISE PROTOCOL 前 — 阅读顺序：
-        #   1. 看到我能做什么 (AVAILABLE SKILLS)
-        #   2. 看到承诺时的诚信约束 (TOOL HONESTY)  ← 本块
-        #   3. 看到多步动作格式 (PROMISE PROTOCOL)
         tool_honesty_directive = ""
-        try:
-            from jarvis_skill_registry import TOOL_HONESTY_DIRECTIVE
-            tool_honesty_directive = TOOL_HONESTY_DIRECTIVE
-        except Exception:
-            tool_honesty_directive = ""
+        if 'tool_honesty_directive' in _l2_fired_set:
+            try:
+                from jarvis_skill_registry import TOOL_HONESTY_DIRECTIVE
+                tool_honesty_directive = TOOL_HONESTY_DIRECTIVE
+            except Exception:
+                tool_honesty_directive = ""
 
-        # [P0+18-b.8 / 2026-05-15] FUZZY CANDIDATES POLICY —— "找不到时不装跑"
-        # 工具返回 fuzzy_candidates 时主脑必须反向问 Sir 确认，禁止硬选 top1 直跑。
-        # 配合 process_hands 的 NotFound fallback（拉真实进程名做 difflib 模糊匹配）。
-        # 与 TOOL HONESTY 同属"承诺必行"系列：那个管 pre-action 许诺，本块管 post-action 结果。
         fuzzy_candidates_policy = ""
-        try:
-            from jarvis_fuzzy_resolver import FUZZY_CANDIDATES_POLICY
-            fuzzy_candidates_policy = FUZZY_CANDIDATES_POLICY
-        except Exception:
-            fuzzy_candidates_policy = ""
+        if 'fuzzy_candidates_policy' in _l2_fired_set:
+            try:
+                from jarvis_fuzzy_resolver import FUZZY_CANDIDATES_POLICY
+                fuzzy_candidates_policy = FUZZY_CANDIDATES_POLICY
+            except Exception:
+                fuzzy_candidates_policy = ""
 
         if mode == "mail":
             # [P0+18-c.2 / 2026-05-15] 修 Sir 主诉 BUG：reminder 触发后反问"要不要设倒计时"
@@ -1341,7 +1357,7 @@ User: {user_input}
 {time_persona}
 
 {context_str}
-{self.profile_card.to_prompt_block()}
+{_pc_block_value}
 {correction_context}
 {style_adjustment}
 
@@ -1359,7 +1375,7 @@ User: {user_input}
             return f"""{core_persona}
 
 {context_str}
-{self.profile_card.to_prompt_block()}
+{_pc_block_value}
 {correction_context}
 {style_adjustment}
 {content_pref}
@@ -1506,7 +1522,7 @@ User: {user_input}
 
 {context_str}
 
-{self.profile_card.to_prompt_block()}
+{_pc_block_value}
 
 {correction_context}
 {style_adjustment}
@@ -1549,7 +1565,7 @@ User: {user_input}
             'how_to_respond': len(how_to_respond),
             'time_persona': len(time_persona),
             'context_str': len(context_str),
-            'profile_block': len(self.profile_card.to_prompt_block()),
+            'profile_block': len(self._pc_block_cached()),
             'correction': len(correction_context),
             'style': len(style_adjustment),
             'content_pref': len(content_pref),
@@ -1571,6 +1587,7 @@ User: {user_input}
         _big.sort(key=lambda x: -x[1])
         _size_report = " | ".join([f"{k}={v}" for k, v in _big[:8]])
         # [P0+18-f.5 / 2026-05-15] 加 prompt 装配总耗时 + queue depth 到后台日志
+        # 🩹 [P0+20-β.1.21 / 2026-05-16] 加分阶段 timing：让 Sir 看清哪一段慢
         _asm_total_ms = int((time.time() - _t_asm_start) * 1000)
         try:
             from jarvis_utils import bg_log
@@ -1580,9 +1597,21 @@ User: {user_input}
             except Exception:
                 _q_depth_asm = -1
             bg_log(f"⏱️ [Prompt Size] 总{len(result)}chars | TOP: {_size_report}")
-            bg_log(f"🔬 [Asm Diag] _assemble_prompt 总耗时 {_asm_total_ms}ms | tee_queue_depth={_q_depth_asm}")
+            # 分阶段 timing（如果有的话）
+            _stage_t = getattr(self, '_asm_stage_t', None)
+            if _stage_t and isinstance(_stage_t, dict):
+                _stages = " | ".join(f"{k}={int(v)}ms" for k, v in sorted(_stage_t.items(), key=lambda x: -x[1])[:6])
+                bg_log(f"🔬 [Asm Diag] 总{_asm_total_ms}ms | TOP stages: {_stages} | tee_queue_depth={_q_depth_asm}")
+            else:
+                bg_log(f"🔬 [Asm Diag] _assemble_prompt 总耗时 {_asm_total_ms}ms | tee_queue_depth={_q_depth_asm}")
         except Exception:
             print(f"⏱️ [Prompt Size] 总{len(result)}chars | TOP: {_size_report}", file=sys.stderr)
+        # 清理本轮 stage 计时
+        try:
+            if hasattr(self, '_asm_stage_t'):
+                self._asm_stage_t = {}
+        except Exception:
+            pass
         return result
 
     def _build_time_persona(self, current_hour: int) -> str:
