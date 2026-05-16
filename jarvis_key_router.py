@@ -107,7 +107,13 @@ class KeyRouter:
         self._max_concurrent[key] = max_concurrent
         self._key_status[key] = {
             'healthy': True, 'error_count': 0, 'last_error': '', 'last_error_time': 0,
-            'label': label, 'provider': provider
+            'label': label, 'provider': provider,
+            # [P0+20-α.2 / 2026-05-16] 永久剔除：连续 3 次 PROJECT_DENIED / 项目级不可恢复错误
+            # → permanently_dead=True，不再 _auto_recover，下次启动还需 rotate key 才能恢复
+            'permanently_dead': False,
+            'permanent_death_count': 0,    # 累计 PROJECT_DENIED 次数（达到 3 触发永久剔除）
+            'permanent_death_reason': '',
+            'permanent_death_announced': False,  # 一次性提示：避免每次 _auto_recover 重复刷屏
         }
     
     def _reset_daily_counters(self):
@@ -229,21 +235,54 @@ class KeyRouter:
             '403', '401', 'unauthorized', 'forbidden',
         ])
 
+        # [P0+20-α.2 / 2026-05-16] 永久死亡判定：项目级错误累计 3 次 → 不再 auto_recover
+        # 解决 jarvis_20260516_092307.log 中 google_1 PROJECT_DENIED 每轮对话刷屏问题：
+        # 旧版每 5min auto_recover 一次，然后下次请求又失败又标 unhealthy → 死循环。
+        # 永久死亡后：① 不再 spawn _auto_recover；② Hippocampus 等下游静默跳过；
+        # ③ Sir 一次性提示（rotate key 后重启才能恢复）。
+        if is_permission_error:
+            status['permanent_death_count'] += 1
+            if status['permanent_death_count'] >= 3 and not status['permanently_dead']:
+                status['permanently_dead'] = True
+                status['permanent_death_reason'] = error_msg[:200]
+                label = status['label']
+                # 一次性提示：醒目格式 + 写日志（不污染对话框）
+                if not status['permanent_death_announced']:
+                    status['permanent_death_announced'] = True
+                    msg = (
+                        f"⛔ [KeyRouter PERMANENT] {label} 已永久剔除（累计 3 次 PROJECT_DENIED / 403）。"
+                        f" 下次启动前请 rotate key (https://aistudio.google.com/apikey) 并填 .env。"
+                        f" 当前剩余健康 key 数 = {sum(1 for s in self._key_status.values() if s.get('healthy', False))}/{len(self._key_status)}。"
+                    )
+                    try:
+                        from jarvis_utils import bg_log
+                        bg_log(msg)
+                    except Exception:
+                        print(msg)
+
         if is_billing_error or is_permission_error or status['error_count'] >= 3:
             status['healthy'] = False
             label = status['label']
-            try:
-                from jarvis_utils import bg_log
-                bg_log(f"[KeyRouter] {label} 标记为不健康 (错误: {error_msg[:80]})")
-            except Exception:
-                print(f"[KeyRouter] {label} 标记为不健康 (错误: {error_msg[:80]})")
-            
-            if status['provider'] == self.PROVIDER_GOOGLE:
+            # [P0+20-α.2 / 2026-05-16] 标 unhealthy 的日志降级：
+            # 永久死亡的不再每次刷"标记为不健康"（已经一次性提示过），减少日志噪音；
+            # 暂时不健康的仍打一行 bg_log（方便 grep 调试）。
+            if not status['permanently_dead']:
+                try:
+                    from jarvis_utils import bg_log
+                    bg_log(f"[KeyRouter] {label} 标记为不健康 (错误: {error_msg[:80]})")
+                except Exception:
+                    pass  # 不再 print 污染对话框
+
+            # 永久死亡的 key 不 spawn _auto_recover（避免死循环）
+            if status['provider'] == self.PROVIDER_GOOGLE and not status['permanently_dead']:
                 threading.Thread(target=self._auto_recover, args=(key,), daemon=True).start()
     
     def _auto_recover(self, key: str):
         time.sleep(self._error_cooldown)
         status = self._key_status[key]
+        # [P0+20-α.2 / 2026-05-16] 永久死亡的 key 不参与恢复（双保险，spawn 时已经 skip 过一次）
+        if status.get('permanently_dead', False):
+            return
         status['healthy'] = True
         status['error_count'] = 0
         label = status['label']
@@ -251,7 +290,17 @@ class KeyRouter:
             from jarvis_utils import bg_log
             bg_log(f"[KeyRouter] {label} 冷却结束，已自动恢复")
         except Exception:
-            print(f"[KeyRouter] {label} 冷却结束，已自动恢复")
+            pass  # 不再 print 污染对话框
+
+    def is_permanently_dead(self, key_or_label) -> bool:
+        """[P0+20-α.2 / 2026-05-16] 下游模块（Hippocampus 等）查询某 key 是否永久死亡。
+        
+        参数可以是 key 字符串本身或 label（'google_1' 等）。
+        """
+        key = self._resolve_key(key_or_label) if not key_or_label.startswith('sk-') and not key_or_label.startswith('AIzaSy') else key_or_label
+        if not key or key not in self._key_status:
+            return False
+        return self._key_status[key].get('permanently_dead', False)
     
     def is_openrouter_active(self) -> bool:
         return self._openrouter_call_count_today > 0

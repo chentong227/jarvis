@@ -461,11 +461,23 @@ class Hippocampus:
             try:
                 _status = self.key_router._key_status.get(_key, {})
                 if not _status.get('healthy', True):
-                    try:
-                        from jarvis_utils import bg_log
-                        bg_log(f"♻️ [Hippocampus/KeyRotate] 跳过 {_key_name}（KeyRouter 标记 unhealthy）")
-                    except Exception:
-                        pass
+                    # [P0+20-α.2 / 2026-05-16] 跳过日志治理：
+                    # ① 永久死亡的 key 完全静默（KeyRouter 已经一次性提示过）
+                    # ② 普通 unhealthy（5min cooldown）的 key 按 label 节流 60s 一次（避免每轮对话刷屏）
+                    if not _status.get('permanently_dead', False):
+                        try:
+                            now_ts = time.time()
+                            _throttle_dict = getattr(self, '_skip_log_throttle', None)
+                            if _throttle_dict is None:
+                                _throttle_dict = {}
+                                self._skip_log_throttle = _throttle_dict
+                            last_ts = _throttle_dict.get(_key_name, 0.0)
+                            if now_ts - last_ts >= 60.0:
+                                _throttle_dict[_key_name] = now_ts
+                                from jarvis_utils import bg_log
+                                bg_log(f"♻️ [Hippocampus/KeyRotate] 跳过 {_key_name}（KeyRouter 标记 unhealthy）")
+                        except Exception:
+                            pass
                     continue
             except Exception:
                 pass
