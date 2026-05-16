@@ -685,6 +685,11 @@ class CentralNerve:
         """
         import json as _json, os as _os
         _t_asm_start = time.time()
+        # 🩹 [P0+20-β.2.0 / 2026-05-16] _asm_stage_t 初始化提前到入口
+        # 治 Sir 21:43 实测 BUG：SOUL 块构造在 line 802 调 _asm_stage_t['soul_block']，
+        # 但旧 init 在 line 890 才做 → AttributeError。
+        if not hasattr(self, '_asm_stage_t') or not isinstance(self._asm_stage_t, dict):
+            self._asm_stage_t = {}
         current_time = time.strftime('%Y-%m-%d %H:%M:%S %A')
         current_hour = int(time.strftime('%H'))
 
