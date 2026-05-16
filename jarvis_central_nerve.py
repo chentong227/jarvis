@@ -447,6 +447,35 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [P0+20-β.2.6 / 2026-05-17] 灵魂工程 Layer 5 — SoulAlignmentEvaluator
+        # 异步评 "Jarvis 本轮回复是否对齐 self_model + relational_state"，把
+        # aligned/missed 信号写回 concerns_ledger 累计。与 DirectiveEvaluator 并行（一个
+        # 评 compliance，一个评 alignment），共享 OpenRouter pool。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §5.3 + §6 (Layer 5)
+        self.soul_evaluator = None
+        try:
+            from jarvis_soul_evaluator import get_default_soul_evaluator
+            self.soul_evaluator = get_default_soul_evaluator(
+                key_router=self.key_router,
+                concerns_ledger=self.concerns_ledger,
+                relational_state=self.relational_state,
+            )
+            try:
+                from jarvis_utils import bg_log as _se_bg
+                _se_bg(
+                    "🪞 [SoulEvaluator] Layer 5 ready "
+                    "(每轮对话末尾异步评 alignment with self_model / "
+                    "灵魂工程 Layer 5 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _se_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SoulEvaluator] 初始化失败（非致命）：{_se_e}")
+            except Exception:
+                pass
+
         # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 — Reflector daemons
         # (1) ConcernsReflector：每轮对话末尾启发式 keyword → record_signal
         # (2) WeeklyReflector：daemon 7d LLM 反思 → propose 新 concerns 进 review

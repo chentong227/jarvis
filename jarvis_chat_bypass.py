@@ -2903,15 +2903,15 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         # 每轮对话末尾启发式扫 keyword → 给相关 concerns 加 signal。
         # 纯启发式，~50us，不走 LLM。fire-and-forget thread 即可，但本身就快。
         # 详 docs/JARVIS_SOUL_DRIVE.md §6 (Layer 4)
+        _turn_id_now = ''
+        try:
+            from jarvis_utils import TraceContext
+            _turn_id_now = TraceContext.get_turn_id() or ''
+        except Exception:
+            pass
         try:
             cr = getattr(self.jarvis, 'concerns_reflector', None)
             if cr is not None and (clean_user_input or final_reply):
-                _turn_id_now = ''
-                try:
-                    from jarvis_utils import TraceContext
-                    _turn_id_now = TraceContext.get_turn_id() or ''
-                except Exception:
-                    pass
                 # 用 daemon thread fire-and-forget，避免任何意外阻塞主路径
                 try:
                     import threading as _th
@@ -2926,6 +2926,24 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     ).start()
                 except Exception:
                     pass
+        except Exception:
+            pass
+
+        # 🩹 [P0+20-β.2.6 / 2026-05-17] 灵魂工程 Layer 5 SoulAlignmentEvaluator
+        # 异步评 Jarvis 本轮回复是否对齐 self_model + relational_state，把信号
+        # 写回 concerns_ledger.record_alignment 累计。LLM 调用走 OpenRouter，
+        # 失败/超时/无 key/rate limit 都 silent + bg_log，不阻塞主路径。
+        # 详 docs/JARVIS_SOUL_DRIVE.md §5.3
+        try:
+            se = getattr(self.jarvis, 'soul_evaluator', None)
+            # 优先用 full_text（含 ---ZH--- + 中文），fallback final_reply
+            _se_reply = full_text if (full_text and full_text.strip()) else final_reply
+            if se is not None and clean_user_input and _se_reply:
+                se.evaluate_async(
+                    user_input=clean_user_input,
+                    jarvis_reply=_se_reply,
+                    turn_id=_turn_id_now,
+                )
         except Exception:
             pass
         _t_total = time.time() - _t0

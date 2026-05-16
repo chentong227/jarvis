@@ -80,6 +80,12 @@ class Concern:
     triggers_proactive: bool = True
     notes_for_self: str = ''        # Jarvis 给自己的便条（"上次 Sir 反驳了，下次温和点"）
 
+    # [P0+20-β.2.6 / 2026-05-17] Layer 5 alignment 统计
+    aligned_count: int = 0          # SoulAlignmentEvaluator 判 aligned 累计
+    missed_count: int = 0           # 同上 missed
+    last_aligned_at: float = 0.0
+    last_missed_at: float = 0.0
+
     def record_signal(self, what: str, severity_delta: float = 0.0,
                       source_turn_id: str = '') -> None:
         """记一条 evidence。recent_signals 最多保 10 条。"""
@@ -193,6 +199,25 @@ class ConcernsLedger:
                 c.last_triggered = time.time()
                 self._dirty = True
 
+    def record_alignment(self, concern_id: str, aligned: bool) -> bool:
+        """[P0+20-β.2.6 / 2026-05-17] Layer 5 SoulAlignmentEvaluator 调。
+        aligned=True → aligned_count++（Jarvis 本轮 honored 这条 concern）
+        aligned=False → missed_count++（Jarvis 本轮 ignored 一条本应 reference 的 concern）
+        统计用于未来 ConcernsReflector 优先级排序 & Sir 监控 alignment health。"""
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False
+            now = time.time()
+            if aligned:
+                c.aligned_count += 1
+                c.last_aligned_at = now
+            else:
+                c.missed_count += 1
+                c.last_missed_at = now
+            self._dirty = True
+            return True
+
     # ---- 状态管理 ----
 
     def activate(self, concern_id: str) -> bool:
@@ -303,6 +328,11 @@ class ConcernsLedger:
                         ttl_days=int(data.get('ttl_days', DEFAULT_TTL_DAYS)),
                         triggers_proactive=bool(data.get('triggers_proactive', True)),
                         notes_for_self=data.get('notes_for_self', ''),
+                        # [β.2.6] Layer 5 alignment 累计字段（旧 JSON 兼容默认 0）
+                        aligned_count=int(data.get('aligned_count', 0)),
+                        missed_count=int(data.get('missed_count', 0)),
+                        last_aligned_at=float(data.get('last_aligned_at', 0.0)),
+                        last_missed_at=float(data.get('last_missed_at', 0.0)),
                     )
                     self.concerns[c.id] = c
                     n += 1
@@ -407,14 +437,17 @@ class ConcernsLedger:
                      f"snoozed={len(snoozed)} archived={len(archived)}")
         lines.append("=" * 100)
         if active:
-            lines.append(f"{'id':32}{'sev':>6}  {'src':<14}{'last_signal':<22}what_i_watch")
+            lines.append(
+                f"{'id':32}{'sev':>6}  {'src':<14}{'aligned/missed':<16}what_i_watch"
+            )
             lines.append("-" * 100)
             for c in sorted(active, key=lambda x: -x.severity):
-                last_sig = ''
-                if c.recent_signals:
-                    last_sig = c.recent_signals[-1].get('when_iso', '')[:19]
-                lines.append(f"{c.id:32}{c.severity:>6.2f}  {c.source:<14}{last_sig:<22}"
-                             f"{c.what_i_watch[:40]}")
+                # [β.2.6] aligned_count / missed_count (Layer 5 累计)
+                ali_miss = f"{c.aligned_count}/{c.missed_count}"
+                lines.append(
+                    f"{c.id:32}{c.severity:>6.2f}  {c.source:<14}"
+                    f"{ali_miss:<16}{c.what_i_watch[:40]}"
+                )
         else:
             lines.append("(no active concerns)")
         if review:
