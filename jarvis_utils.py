@@ -3256,6 +3256,43 @@ One word:"""
         if any(re.search(p, clean) for p in referential_markers_zh):
             return False
 
+        # === 第 0.55 层：declarative / empathic / explanatory pre-filter ===
+        # [P0+20-α.3 / 2026-05-16] Sir 09:25 实测误报 (jarvis_20260516_092307.log)：
+        # reply = "Dreams are rarely a reliable indicator of reality, Sir, especially given
+        # the late hours you've been keeping. It is likely a manifestation of the stress
+        # from your recent technical troubleshooting. Unless the official results have
+        # been posted..." → 被 1.5B 判 `no_tool_called` 误报。
+        #
+        # 根因双重：① 第 1 层 `have been \w+` 误命中 "you've been keeping" / "results
+        #            have been posted"（主语不是 Jarvis 自己却撞上正则）；
+        #          ② 1.5B 看到长句共情 + 解释又过敏判 yes。
+        #
+        # 修法（治本 + 治标）：
+        #   - 第 0.55 层（本处，治标）：识别"开头明显是描述概念 / 共情 / 解释"的句式 → 返回 False
+        #   - 第 1 层（下方，治本）：把 `have been X` / `has been X` 收紧到主语必须是 Jarvis
+        #
+        # 不扩到 future-tense capability lie（"I can take a closer look"），那是 β.0 范围。
+        declarative_openings_en = [
+            r"^(dreams?|it|that|this|those|these|memory|memories|life|things)\s+(is|are|seems?|appears?|tend|tends|may|might|could|would|do|does)\b",
+            r"^(often|usually|typically|generally|frequently|sometimes|rarely|always|never)\b",
+            r"^(unless|until|when|while|whenever|wherever|if|whether)\b",
+            r"^it\s+(is|seems?|appears?|looks?|sounds?|feels?|tends?)\s+(likely|highly|quite|rather|very|extremely|particularly|simply|merely|to)\b",
+            r"^that\s+(seems?|appears?|looks?|sounds?|feels?)\b",
+            r"^a\s+(common|typical|familiar|natural|reasonable|likely)\s+\w+",
+        ]
+        declarative_openings_zh = [
+            r"^梦",
+            r"^(那|这|这些|那些).{0,8}(是|似乎|看起来|可能|或许|往往)",
+            r"^(通常|一般|经常|有时|很少|总是|从不|往往|的确)",
+            r"^(除非|直到|当.*时|如果)",
+        ]
+        opening = clean[:80]
+        opening_lower = clean_lower[:80]
+        if any(re.search(p, opening_lower) for p in declarative_openings_en):
+            return False
+        if any(re.search(p, opening) for p in declarative_openings_zh):
+            return False
+
         # === 第 1 层：含"完成态"语言痕迹才值得送 LLM 判 ===
         # 1.5B 对纯应答/观察/提问会过敏，这一层先把明显不是 claim 的过滤掉
         # 排除认知动词（noted/said/mentioned/told/explained/observed/stated/...），
@@ -3269,8 +3306,11 @@ One word:"""
         claim_patterns = [
             rf"\bi'?\s*ve\s+(?!{_cognitive_verbs})\w+",
             rf"\bi\s+have\s+(?!{_cognitive_verbs})\w+",
-            r"\bhave\s+been\s+\w+",
-            r"\bhas\s+been\s+\w+",
+            # [P0+20-α.3 / 2026-05-16] 收紧 have been / has been —— 必须主语是 Jarvis 自己。
+            # 旧版 `\bhave\s+been\s+\w+` 会撞上 "you've been keeping" / "results have been
+            # posted" 这种第二/三人称完成时，是 09:25 误报根因。
+            rf"\bi\s+have\s+been\s+(?!{_cognitive_verbs})\w+",
+            rf"\bi'?\s*ve\s+been\s+(?!{_cognitive_verbs})\w+",
             r"\bare\s+now\s+(off|on|disabled|enabled|silenced|active|inactive|set|adjusted|updated)\b",
             r"\bis\s+now\s+(off|on|disabled|enabled|silenced|set|open|closed|updated)\b",
             r"\b(silenced|adjusted|opened|closed|updated|copied|saved|deleted|moved|created|modified|configured|enabled|disabled|muted|paused|launched|started|stopped|killed)\b",
