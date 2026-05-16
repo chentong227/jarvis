@@ -631,6 +631,48 @@ def is_conversation_active() -> bool:
 
 
 # ============================================================
+# [P0+20-β.2.4 hotfix / 2026-05-16] resolve_worker_attr helper
+# ------------------------------------------------------------
+# P0+19 nerve split 后 sentinel/watcher 的 worker 参数从 JarvisWorkerThread
+# （持有 .jarvis = central_nerve 包装）改成直接传 central_nerve。但许多
+# callsite 仍写 `self.worker.jarvis.X` + `hasattr(...)` 守卫 → guard 不通 →
+# 整段功能 silently 跳过（伪失效）。
+#
+# 受影响的真 BUG（Sir 23:38 报告）：
+# - commitment_watcher._get_hippo 永远 None → add_commitment_row 从未调用
+#   → SQLite Commitments 表自 P0+18-e.3 起空，commitment 持久化伪失效。
+# - smart_nudge 的 _on_activity_wake / event_bus 投递可能也同样静默跳过。
+# - conductor 的 companion_center 引用 4 处同款。
+#
+# 修复 helper：先尝试 worker.X（拆分后路径），fallback worker.jarvis.X
+# （兼容旧 JarvisWorker 包装层路径），任一找到即返回。
+# ============================================================
+def resolve_worker_attr(worker, attr_name: str):
+    """Resolve worker attribute through both new (direct) and legacy
+    (worker.jarvis.X) paths. Returns None if neither path resolves.
+
+    Use this everywhere we previously wrote `self.worker.jarvis.X` so that
+    the sentinel works regardless of whether the caller passes CentralNerve
+    directly or JarvisWorkerThread (which wraps it as .jarvis).
+    """
+    if worker is None:
+        return None
+    try:
+        v = getattr(worker, attr_name, None)
+        if v is not None:
+            return v
+    except Exception:
+        pass
+    try:
+        j = getattr(worker, 'jarvis', None)
+        if j is None:
+            return None
+        return getattr(j, attr_name, None)
+    except Exception:
+        return None
+
+
+# ============================================================
 # 🔇 TTS 回声指纹环（防 Jarvis 听到自己说话）
 # ------------------------------------------------------------
 # 场景：interrupt_all 用 daemon 调 vocal.say、Smart Nudge 焦点锁后强

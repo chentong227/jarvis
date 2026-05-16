@@ -263,8 +263,10 @@ class Conductor(threading.Thread):
             return
 
         # [R7-β post-test v3] 拒绝期内任何 nudge_type 都跳过（return_greeting 除外）
-        if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, 'companion_center'):
-            cc = self.worker.jarvis.companion_center
+        # [P0+20-β.2.4 hotfix / 2026-05-16] worker.jarvis.X 伪失效守卫修复
+        from jarvis_utils import resolve_worker_attr as _rwa
+        cc = _rwa(self.worker, 'companion_center')
+        if cc is not None:
             if hasattr(cc, 'smart_nudge') and cc.smart_nudge:
                 sn = cc.smart_nudge
                 if time.time() < sn._refused_help_until and nudge_type != 'return_greeting':
@@ -277,8 +279,8 @@ class Conductor(threading.Thread):
                     return
 
         if nudge_type == 'offer_help':
-            if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, 'companion_center'):
-                cc = self.worker.jarvis.companion_center
+            cc = _rwa(self.worker, 'companion_center')
+            if cc is not None:
                 if hasattr(cc, 'smart_nudge') and cc.smart_nudge:
                     sn = cc.smart_nudge
                     _win_title = ""
@@ -410,8 +412,10 @@ class Conductor(threading.Thread):
         # [R7-β post-test v3] _refused_help_until 现在对所有 nudge_type 生效
         # —— Sir 说"不需要你的帮助"之后，Check-in / Suggest Break / Late Night 等
         # 也都不该再蹦出来；只有 return_greeting（AFK 归来）由 NudgeGate.SLEEP_ALLOWED_TYPES 兜底
-        if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, 'companion_center'):
-            cc = self.worker.jarvis.companion_center
+        # [P0+20-β.2.4 hotfix / 2026-05-16] worker.jarvis.X 伪失效守卫修复
+        from jarvis_utils import resolve_worker_attr as _rwa
+        cc = _rwa(self.worker, 'companion_center')
+        if cc is not None:
             if hasattr(cc, 'smart_nudge') and cc.smart_nudge:
                 sn = cc.smart_nudge
                 if time.time() < sn._refused_help_until and nudge_type != 'return_greeting':
@@ -424,8 +428,8 @@ class Conductor(threading.Thread):
                     return
 
         if nudge_type == 'offer_help':
-            if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, 'companion_center'):
-                cc = self.worker.jarvis.companion_center
+            cc = _rwa(self.worker, 'companion_center')
+            if cc is not None:
                 if hasattr(cc, 'smart_nudge') and cc.smart_nudge:
                     sn = cc.smart_nudge
                     _win_title = ""

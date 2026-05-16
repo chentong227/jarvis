@@ -209,8 +209,15 @@ class SmartNudgeSentinel(threading.Thread):
                         pass
                     if idle_ms < 5000:
                         self.gate.deactivate_sleep_mode()
-                        if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, '_on_activity_wake'):
-                            self.worker.jarvis._on_activity_wake()
+                        # [P0+20-β.2.4 hotfix / 2026-05-16] P0+19 split 后 worker
+                        # 直持 _on_activity_wake，原 worker.jarvis 守卫永不通 → 失效。
+                        try:
+                            from jarvis_utils import resolve_worker_attr
+                            _wake = resolve_worker_attr(self.worker, '_on_activity_wake')
+                            if _wake is not None:
+                                _wake()
+                        except Exception:
+                            pass
                         continue
                     time.sleep(30)
                     continue
@@ -603,10 +610,10 @@ Answer ONLY the nudge type name, nothing else."""
 
         # [R6/Bus] 投递到对话事件总线 —— 让 Conductor / 主脑 / 其他中心都能"看见"
         # SmartNudge 刚发了什么，避免主脑下一轮 prompt 不知道刚刚有过 offer_help。
+        # [P0+20-β.2.4 hotfix / 2026-05-16] 同款 worker.jarvis.X 伪失效守卫修复
         try:
-            bus = None
-            if hasattr(self.worker, 'jarvis') and hasattr(self.worker.jarvis, 'event_bus'):
-                bus = self.worker.jarvis.event_bus
+            from jarvis_utils import resolve_worker_attr
+            bus = resolve_worker_attr(self.worker, 'event_bus')
             if bus is not None:
                 _summary = f"{nudge_type}"
                 # 让 LLM 看得见 nudge 类型 + 简短的窗口/类别上下文

@@ -153,15 +153,19 @@ class CommitmentWatcher(threading.Thread):
                 pass
 
     def _get_hippo(self):
-        """安全获取 hippocampus 引用，便于持久化 CRUD。"""
+        """安全获取 hippocampus 引用，便于持久化 CRUD。
+
+        [P0+20-β.2.4 hotfix / 2026-05-16] Sir 23:38 报告 P0 BUG：
+        P0+19 split 后 worker 参数从 JarvisWorkerThread (.jarvis = nerve) 改成
+        直接传 CentralNerve（.hippocampus 直持）。原代码只走 .jarvis.hippocampus
+        路径 → 永远 None → add_commitment_row 从未调 → SQLite Commitments 表
+        自 P0+18-e.3 起一直空（commitment 持久化伪失效）。
+        修法：先 worker.hippocampus 直接拿，回退 worker.jarvis.hippocampus 兼容
+        旧路径。走公共 helper resolve_worker_attr。
+        """
         try:
-            jw = self.worker
-            if jw is None:
-                return None
-            j = getattr(jw, 'jarvis', None)
-            if j is None:
-                return None
-            return getattr(j, 'hippocampus', None)
+            from jarvis_utils import resolve_worker_attr
+            return resolve_worker_attr(self.worker, 'hippocampus')
         except Exception:
             return None
 
