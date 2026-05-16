@@ -1,6 +1,6 @@
 # Jarvis TODO 工作板
 
-**更新时间**：2026-05-16 02:45（**🎉🎉🎉 P0+19 整轮完工 / Nerve 拆分 98.1% 减少** — `jarvis_nerve.py` **17479 → 324 行**，拆出 **16 个独立文件**：jarvis_safety/key_router/llm_reflector/env_probe/sensors/routing/memory_core/sentinels/conductor/return_sentinel/commitment_watcher/smart_nudge/chat_bypass/central_nerve/worker/ui，**1098 testcase 持续全绿** / enhanced.py 循环依赖死 / 朋友分发套件就绪。**剩 Sir 手动 4 件**：1) rotate 8 keys / 2) 填 `.env` / 3) `git init` / 4) 启动 `python jarvis_nerve.py` 实测一轮 → P0+19-final 完全收尾。详见 `docs/NERVE_SPLIT_PLAN.md` + `docs/AGENT_KICKOFF_PROMPT.md`。）
+**更新时间**：2026-05-16 10:20（**🎉 P0+19 整轮完工沉档** → archive 顶部 / **🚧 P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**。今早 09:23 真机实测暴露 5 个新缺口（np import / google_1 噪音 / Integrity 误报陈述句 / TWO_PARTS 多意图失败 / dormant_project 紧贴 standby）+ Sir 与 Claude 4.7 深度对话敲定 β.0 Prompt 重构方案。详见 `docs/PROMPT_REFACTOR_PLAN.md`。）
 
 ---
 
@@ -12,8 +12,10 @@
 
 | 文件 | 用途 | Agent 读取规则 |
 |---|---|---|
-| `TODO.md`（本文件，<300 行） | **当前代办 + 已知 BUG + 章程** | ✅ 每次会话进来先读这个文件（**整个 OK，本文件刻意压在 300 行内**） |
-| `docs/TODO_ARCHIVE.md`（~2200 行） | 已完工的迭代回溯 / 因果链 / 测试统计 | ❌ 不要默认读。**仅当 Sir 明确说"上次/上轮/R7/P0+16/轴3…"等历史关键词** → 用 `Grep` 取那段、不要 `Read` 全文 |
+| `TODO.md`（本文件，<300 行） | **当前代办 + 已知 BUG + 章程** | ✅ 每次会话进来先读这个文件 |
+| `docs/TODO_ARCHIVE.md` | 已完工的迭代回溯 / 因果链 / 测试统计 | ❌ 不要默认读。**仅当 Sir 明确说"上次/上轮/R7/P0+X/轴X…"等历史关键词** → 用 `Grep` 取那段、不要 `Read` 全文 |
+| `docs/PROMPT_REFACTOR_PLAN.md` | **当前迭代 P0+20-β.0 完整 design doc** | ✅ 当 Sir 说"开始 β.0" / "prompt 重构怎么搞" 时 Read |
+| `docs/NERVE_SPLIT_PLAN.md` | 上轮 P0+19 拆分 design doc（已完工，保留作历史参考） | ❌ 不主动读，除非 Sir 提"拆分历史" |
 | `docs/runtime_logs/jarvis_*.log` | 每次启动的完整 stdout/stderr 实时同步 | ❌ 不要 `Read` 全文。**先看 `docs/runtime_logs/latest.txt`（一行，里面是最新日志的绝对路径），再用 `Grep` 取关键段** |
 | `docs/funnel_logs/funnel_*.log` | 智能轻推漏斗的命中/拒绝判定 | 同上，按需 grep |
 
@@ -22,12 +24,12 @@
 | Sir 的话 | Agent 该做的事 |
 |---|---|
 | "上次发生了什么" / "刚才那个 bug" / "前面那段" | (1) `Read docs/runtime_logs/latest.txt` 拿绝对路径；(2) `Grep` 出对应错误/Pipeline/Human 段；(3) 必要时 `Read` 文件**指定行段**（`offset+limit`，**不要全文**） |
-| "上轮/上次/上回那个 BUG 修了没" / "P0+18/a.X 修了没" | (1) 先 `Grep` `TODO.md` 看是否在已知未尽；(2) 再 `Grep` `docs/TODO_ARCHIVE.md` 找最后一次出现的 marker（`a.X / P0+X / 轴X / RX`）+ 状态 |
+| "上轮/上次/上回那个 BUG 修了没" / "P0+X 修了没" | (1) 先 `Grep` `TODO.md` 看是否在已知未尽；(2) 再 `Grep` `docs/TODO_ARCHIVE.md` 找最后一次出现的 marker（`a.X / P0+X / 轴X / RX`）+ 状态 |
 | "重启实测/我刚跑了 N 件事" | (1) 拉最新两份 `jarvis_*.log`；(2) Grep `║ 🗣️\|║ 🤖\|⛔\|❌\|🔁` 抓对话框 + 错误；(3) 报告新 bug 时**抄日志关键行号**，不要复述大段 |
 
 ### 3. 减少 token / 避开 52MB 上限的 5 条硬规
 
-1. **`Read` 大文件加 `offset` + `limit`**：>500 行的文件一次最多读 200 行；jarvis_nerve.py 17000+ 行**永远分段读**。
+1. **`Read` 大文件加 `offset` + `limit`**：>500 行的文件一次最多读 200 行；jarvis_chat_bypass.py 3003 行 / jarvis_central_nerve.py 2089 行**永远分段读**。
 2. **优先 `Grep`**：找"某变量/某 emoji/某错误码"全用 ripgrep（Grep 工具），不要 `Read` 全文 grep。
 3. **TODO 写作上限**：本 `TODO.md` 永远 ≤ 300 行；超出 250 行就把"已完成的迭代"剪到 `docs/TODO_ARCHIVE.md` 顶部。
 4. **回复给 Sir 的内容**：用表格 + 行号引用，不要复制大段代码；最多 1-2 个`startLine:endLine:filepath` 引用块。
@@ -40,129 +42,128 @@
 | 时间轴 | 位置 | 内容粒度 |
 |---|---|---|
 | **当前轮**（进行中） | `TODO.md` 的「当前迭代」段 | 完整任务看板 + 子步骤进度 + 在此处持续更新 |
-| **上一轮**（最近一次完工） | `TODO.md` 的「上轮完工速览」段 | 1 个段落 + 关键 marker 列表（让 Sir 切窗口能快速回忆） |
+| **上一轮**（最近一次完工） | `TODO.md` 的「上轮完工速览」段 | 1 个段落 + 关键 marker 列表 |
 | **上上轮及更早** | `docs/TODO_ARCHIVE.md` 顶部 | 完整因果链 / 测试统计 / 改动清单等所有细节 |
 
-#### 一轮完工时 Agent 必须做的滚动操作
-
-1. **当前轮变上轮**：把「当前迭代」段精简成 1 段「上轮完工速览」（保留：开始/完工时间、修了几个 BUG、marker 列表、绿/红测试数）。
-2. **原上轮 → 沉档**：把原「上轮完工速览」整段连同改前的完整看板**追加到 archive 顶部**（在「归档目录」表下方的「📜 原文」段最前）。
-3. **archive 目录表更新**：在 archive 顶部表里**插入一行**指向新沉档段的行号区间 + 完工时间 + 主题。
-4. **新轮号**：在「当前迭代」段写新一轮的看板（marker 形如 `P0+18-g`, `P0+19`, `轴4-α1` 等连号）。
-5. **完工标识**：每个 BUG 修复 commit / 代码段都带 `[<marker> / 2026-05-XX]` 注释，便于 grep。
-6. **本文件硬上限**：滚动完后整个 `TODO.md` 行数仍要 ≤ 300 行；超出就再压缩"上轮完工速览"段。
+完工时 Agent 必做 6 步：① 当前轮变上轮（精简） ② 原上轮沉档到 archive ③ archive 目录表加行 ④ 写新一轮看板（marker 连号） ⑤ 完工 commit 带 marker 注释 ⑥ 滚动后整个 TODO ≤ 300 行。
 
 ---
 
-## 📌 上轮完工速览（P0+18-f / 2026-05-15 22:00-22:50）
+## 📌 上轮完工速览（P0+19 / 2026-05-16 00:30-02:45）
 
-> 详细 4 项看板 + 因果链 + 改动文件 + 测试统计 → `docs/TODO_ARCHIVE.md` 顶部「P0+18-f 完工段」（约第 43-105 行）。
+> 详细 17 sub-step 看板 + 调研事实 + 改动文件清单 + 测试统计 → `docs/TODO_ARCHIVE.md` 顶部「P0+19 完工段」。
+> 完整 design doc → `docs/NERVE_SPLIT_PLAN.md`（保留作历史参考）。
 
-- **起点**：Sir 22:10-22:14 重启实测 P0+18-e，主诉"几轮对话要 20s+，之前 3s 返回"+ 终端打印延迟高 → 锁定 colorama wrap 撤销 / TeeStream 异步化 / strip_ansi 快速路径三处叠加。
-- **完工**：f.1 ✅（性能崩溃 TTFT 3s 回归）/ f.2 ✅（NUDGE/AGENDA HONESTY directive 加固）/ f.3 ✅（type-specific 12/24h long-term mute）/ f.4 ✅（Integrity referential pre-filter + 1.5B 反例）/ f.5 ✅（[Perf Diag] / [Asm Diag] 日志埋点）
-- **关键 marker**：`P0+18-f.1` `_TEE_QUEUE` / `_tee_worker_loop` / `just_fix_windows_console` / `P0+18-f.2` `[NUDGE / AGENDA HONESTY]` / `P0+18-f.3` `_muted_nudge_types` / `P0+18-f.4` `referential_markers_en` `referential_markers_zh`
-- **测试**：48 / 48 suite OK，28 新 testcase，0 FAIL
+- **起点**：`jarvis_nerve.py` 17479 行已是结构性炸弹 + API key 硬编码 + 无 `requirements.txt`，Claude 4.7 评估后决定 deps 优先 → 拆分 0-9 → final。
+- **完工**：roll ✅ / deps 🔄 70%（剩 Sir 手动 4 件）/ sub-step 0-9 + 6.a/b/c/d/e/f + final 全部 ✅ / **jarvis_nerve.py 17479 → 324 行（-98.1% / 超 design doc < 500 行目标 ✓✓✓）** / 拆出 **16 个独立文件** / **1098 testcase 全绿 13 次连续验证零失败** / enhanced.py 循环依赖死。
+- **关键 marker**：`P0+19-deps` / `P0+19-1` jarvis_safety / `P0+19-2` key_router+llm_reflector+env_probe / `P0+19-3` sensors / `P0+19-4` routing / `P0+19-5` memory_core / `P0+19-6.a-f` sentinels+conductor+return+commitment+smart_nudge+centers / `P0+19-7` chat_bypass(3003) / `P0+19-8` central_nerve(2089) / `P0+19-9` worker+ui / `P0+19-final`
+- **测试**：1098 / 1098 testcase OK，0 FAIL
+- **实际耗时**：~3.5h（vs design doc 估 13h，因为用了 batch extract 脚本 + auto-patch 测试）
 
 ---
 
 ## 🧪 Sir 重启 Jarvis 立刻可验证（≤ 6 条）
 
-1. **TTFT 回到 3s 量级**：随便说一句 → 终端 `[Pipeline Timer] TTFT` 应回到 2-5s（而非 18-27s）。如还慢，去 `latest.txt` grep `[Perf Diag]` 看 connect / wait / queue_depth 哪段瓶颈
-2. **终端打印不再延迟**：声波 🎙️ 不再卡，对话框 ║ 🤖 [Jarvis] 立刻出
-3. **Sir 说"不用再提"**：Jarvis 应回 "Acknowledged, Sir. I'll hold off on that for now." / "Noted — that prompt is on cooldown." — **不再撒谎说 "struck it from the active agenda"**
-4. **dormant_project 当日不复活**：拒绝后 12h 内同款 nudge 不再触发（grep `[SmartNudge/TypeMuted] dormant_project` 验证）
-5. **referential 陈述不再误警告**：主脑解释"我说的是 X"时不再触发 `🚨 [Integrity Check] no_tool_called`
-6. **测试**：`tests\_runall.ps1` 输出 `REGRESSION SUMMARY: 48 / 48 OK, 0 FAIL`
+1. **TTFT 仍 3s 量级**：随便说一句 → 终端 `[Pipeline Timer] TTFT` 应 2-5s。如慢，`latest.txt` grep `[Perf Diag]` 看 connect / wait / queue_depth
+2. **拆分后 import 全通**：`python -c "from jarvis_nerve import KeyRouter, ChatBypass, CentralNerve, JarvisWorkerThread, BreathingLightUI; print('ok')"`
+3. **跑测**：`tests\_runall.ps1` 输出 `REGRESSION SUMMARY: 1098+ / 1098+ OK, 0 FAIL`
+4. **真机一轮**：启动后跑 "现在几点 / 提醒我 8 点 X / 列出代办" 三步流，无 crash 即拆分后基线稳
 
 ---
 
-## 🐛 已知未尽 BUG（按优先级）
+## 🐛 已知未尽 BUG / 今早 09:23 实测暴露的新缺口
 
-> 当前 P0+18-f 已全部修完。剩余只有长期工程项 / 留尾候选。
-
-| 优先级 | BUG | 状态 |
-|---|---|---|
-| **中** | **轴 5.2**：CommitmentWatcher 已 P0+18-e.3 持久化到 SQLite ✅，但仍可扩展（按 deadline 排序检索 / nudge 间隔策略 / cross-session 反查 polish）| ⏳ 候选扩展 |
-| **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard — 上游路径未定位（兜底已 OK）。**P0+18-e.2 上游 Audio Guard 大概率已覆盖** | ⏳ 等下轮真机复现再追 |
-| **低** | **OpenRouter / 网络**：Sir 反映 22:10 之后 OpenRouter 也偶有慢，不一定纯代码问题。已有 `[Perf Diag]` 日志可下轮辅诊 | ⏳ 观察 |
+| 优先级 | BUG | 状态 | 处理路线 |
+|---|---|---|---|
+| **P0** | **α.1**：`[KeyRouter] google_3 标记为不健康 (错误: name 'np' is not defined)` — P0+19 拆分时 `jarvis_key_router.py` 漏 `import numpy as np` | ⏳ 待修 | **P0+20-α.1** |
+| **P1** | **α.2**：每轮对话刷 5+ 行 `♻️ google_1 跳过` 噪音 — google_1 PROJECT_DENIED 但 KeyRouter 没永久剔除 | ⏳ 待修 | **P0+20-α.2** |
+| **P1** | **α.3**：Integrity Check 1.5B 误报 — 陈述句 `Dreams are rarely a reliable indicator...` 被判 `no_tool_called` | ⏳ 待修 | **P0+20-α.3** + β.0.3 治本 |
+| **P1** | **α.4**：Sir 刚 standby 9s 就触发 `🤫 [SilentNudge/dormant_project]` — NudgeGate cooldown 跟 SilentNudge 触发条件没对齐 | ⏳ 待修 | **P0+20-α.4** |
+| **P1** | **β.0/TWO_PARTS**：Sir 一段话同时回应上文 + 开启下文时 Jarvis 只答一半（`[CONTINUITY RULE]` directive 太弱）| ⏳ 待修 | **P0+20-β.0**（Prompt 重构顺手解决）|
+| **P0/手动** | **α.5**：Sir 必须做 4 件 — rotate 8 keys / 填 `.env` / `git init` / 改 jarvis_nerve.py:234-241 入口读 `load_keys()` | 🔄 Sir 在做 | Sir 手动 |
+| **中** | **轴 5.2**：CommitmentWatcher 已 P0+18-e.3 持久化到 SQLite，可继续 polish（deadline 排序 / cross-session 反查）| ⏳ 候选扩展 | 路线 B+ 候选 |
+| **低** | **d.5 留尾**：Memory Correction 中文漏 Audio Guard 上游路径（兜底已 OK） | ⏳ 等真机复现 | P0+18-e.2 上游 Audio Guard 大概率已覆盖 |
+| **低** | **OpenRouter / 网络偶慢**：22:10 之后偶有慢，不一定纯代码问题 | ⏳ 观察 | `[Perf Diag]` 日志辅诊 |
 
 ---
 
-## 🚧 当前迭代：P0+19 — Nerve 拆分 + 依赖锁定（进行中）
+## 🚧 当前迭代（双轨）：P0+20-α 收尾 + P0+20-β.0 Prompt 重构
 
-> **决策**（2026-05-15 23:30 / Claude 4.7 评估对话）：`jarvis_nerve.py` 17479 行已是结构性炸弹 + API key 硬编码 + 无 `requirements.txt` → 必须拆。**deps 优先 → 拆分 0-9 → final**。Key 用 `.env + python-dotenv` 标准方案。
-> **目标**：nerve.py 17479 → **< 500 行**（仅 `__main__` + 转发垫层），其余按职责拆 16 个新文件。
-> **节奏**：每批独立 commit / `pytest tests/` 全绿才走下一批 / 失败 `git reset --hard HEAD~1` 回滚。**预估 ~13h / 分 2-3 个 session**。
-> **🎉 进度（2026-05-16 02:45 / P0+19 整轮完工）**：roll ✅ / deps 🔄 70%（剩 Sir 手动 4 件）/ 0~9 + 6.a/b/c/d/e/f + final 全部 ✅ / **jarvis_nerve.py 17479 → 324 行（98.1% 减少 ✓✓✓ 超 design doc 目标）** / **拆出 16 个独立文件** / **1098 testcase 全绿 13 次连续验证零失败** / **enhanced.py 循环依赖死** / 实际耗时 **3.5h**（远低于 design doc 估 13h，因为用了 batch extract 脚本 + auto-patch 测试）
+> **节奏**：α 先做（4 个修复 + Sir 手动 4 件，~2h），完工后立刻开 β.0（设计已敲定 → `docs/PROMPT_REFACTOR_PLAN.md` / ~7h / 分 2 session）。
 
-### 重构 Sub-Steps（依次执行 / 完成→改 ✅ + 加日期）
+### 🔧 P0+20-α — 拆分收尾 + 实测暴露的 4 缺口（~2h，前置依赖）
 
 | # | Marker | 主题 | 关键产物 | 估时 | 状态 |
 |---|---|---|---|---|---|
-| 0 | **P0+19-roll** | TODO 滚档 | P0+18-f 完工段精简成速览 + 沉档到 archive 顶部 + 归档目录表加行 + `🚧 下一轮规划` 改 `🚧 当前迭代` | 0.25h | ✅ 2026-05-16 00:30 |
-| 1 | **P0+19-deps** | 依赖锁定 + key 脱敏 | `requirements.txt` ✅ + `requirements-dev.txt` ✅ + `pyproject.toml` ✅ + `.env.example` ✅ + `.gitignore` ✅ + `jarvis_config/keys.py` ✅ + `scripts/install.ps1` ✅；**剩 Sir 手动 4 件**（rotate 8 keys / 填 .env / git init / 改 nerve.py:17445 入 keys.py）— 见 `docs/AGENT_KICKOFF_PROMPT.md` | 2.0h | 🔄 70% |
-| 2 | **P0+19-0** | 建源码扫描垫层 | `tests/_source_corpus.py` (`read_nerve_corpus` + `open_nerve_corpus` + `NERVE_SOURCES`) + 改 3 个 `_read('jarvis_nerve.py')` 模式测试 (d/e/f, 共 22 处)；c1/c2/c3 等 27 个 `open(NERVE_PATH)` 模式测试**留到各自符号被拆出时再改**（更精准、减少一次性变更面）| 0.5h | ✅ 2026-05-16 00:50 |
-| 3 | **P0+19-1** | `jarvis_safety.py` | 抽 14 个符号（5 函数 + 9 常量/regex）：`_is_reference_only_hint` / `_is_physical_file_delete_intent` / `_strip_*` / `_is_forming_structural_tag` / `_sentence_is_chinese_lean` / `_box_newline` 等；nerve.py 17479 → **17367 行**（净减 112）；jarvis_safety.py 207 行；1098 testcase 全绿 | 0.5h | ✅ 2026-05-16 01:00 |
-| 4 | **P0+19-2** | 基础设施 3 文件 | `jarvis_key_router.py` (365) + `jarvis_llm_reflector.py` (182) + `jarvis_env_probe.py` (696)；enhanced.py 10 处延迟 import → **1 处顶部 import**（循环依赖消失）；nerve.py 17367 → **16211**（净减 1156 / 累计 -1268）；1098 testcase 全绿 | 0.75h | ✅ 2026-05-16 01:18 |
-| 5 | **P0+19-3** | `jarvis_sensors.py` (992) | `SensorFilter` + `HabitClock` + `CausalChain` + `ProjectTimeline` + `SubconsciousMailbox` + `FunnelLogger` 6 类；nerve.py 16223 → **15280**（净减 943）；改造 1 个测试 `_test_p1_fixes.py` (3 处) → corpus；1098 testcase 全绿 | 0.5h | ✅ 2026-05-16 01:25 |
-| 6 | **P0+19-4** | `jarvis_routing.py` (750) | **范围调整**：`SoulRouter` + `ContextRouter` + `ContentPreferenceTracker` + `ProfileCard` 4 类；nerve.py 15294 → **14584**（净减 710）；3 个 Center (PromptCenter/Guardian/Companion) 引用大量待拆 Sentinel 推迟到 **P0+19-6.f**（sentinel 全拆完后） | 0.75h | ✅ 2026-05-16 01:34 |
-| 7 | **P0+19-5** | `jarvis_memory_core.py` (1145) | 12 类（HumorMemory + PromptLayer/Cache + CorrectionEntry/Memory/Loop + MemoryFragment + UnifiedMemoryGateway + FeedbackTracker + TaskWorkerPool + Anticipator + SleepIntentDetector）；nerve.py 14584 → **13520**（净减 1066）；修 `@dataclass` 装饰器丢失 bug + 加 `from jarvis_blood import FeedbackSignal` 独立 import 兼容；1098 testcase 全绿 | 1.0h | ✅ 2026-05-16 01:50 |
-| 8 | **P0+19-6.a** | `jarvis_sentinels.py` (1397) | 9 普通 sentinel（ChronosTick/Sentinel + SystemSentinel + SoulArchivistSentinel + NudgeGate + UserStatusLedgerSentinel + ScreenshotSentinel + WellnessGuardian + ReflectionScheduler）；nerve.py 13543 → **12221**（净减 1322）；改造 3 测试（c2/c3/offer_guard）→ corpus | 0.5h | ✅ 2026-05-16 01:55 |
-| 9 | **P0+19-6.b** | `jarvis_conductor.py` (754) | Conductor 722 行 / 转发垫层 OK | 0.25h | ✅ 2026-05-16 02:05 |
-| 10 | **P0+19-6.c** | `jarvis_return_sentinel.py` (743) | ReturnSentinel 711 行 | 0.25h | ✅ 2026-05-16 02:05 |
-| 11 | **P0+19-6.d** | `jarvis_commitment_watcher.py` (586) | CommitmentWatcher 554 行 | 0.25h | ✅ 2026-05-16 02:05 |
-| 12 | **P0+19-6.e** | `jarvis_smart_nudge.py` (581) | SmartNudgeSentinel 548 行；4 类一次性切完；**改造 30+ 源码扫描测试用 corpus**（54 处自动 + 多处手工）；nerve.py 12244 → **9713**（净减 2531）；1098 testcase 全绿 | 0.25h | ✅ 2026-05-16 02:05 |
-| 13 | **P0+19-7** | `jarvis_chat_bypass.py` (3090) | ChatBypass 3003 行 + `_C3_ACTION_HAND_COMMANDS`；nerve.py 9731 → **6691**（净减 3040）；改造 c1/axis2_4/axis3_bugs 等 4 个源码扫描测试；1098 testcase 全绿 | 1.0h | ✅ 2026-05-16 02:25 |
-| 14 | **P0+19-8** | `jarvis_central_nerve.py` (2208) | CentralNerve 2089 行 + `JARVIS_CORE_PERSONA` 53 行；nerve.py 6693 → **4553**（净减 2140）；改造 7+ 测试 corpus 化（含 docstring "NUDGE / AGENDA HONESTY" 字符串冲突修复）；1098 testcase 全绿 | 1.0h | ✅ 2026-05-16 02:30 |
-| 15 | **P0+19-9** | `jarvis_worker.py` (3560) + `jarvis_ui.py` (735) | VoiceListenThread + JarvisWorkerThread → worker；SubtitleOverlay + BreathingLightUI → ui；nerve.py 4557 → **401**（净减 4156，**已超 design doc < 500 行目标 ✅**）；改造 _test_p0_plus_16 corpus；1098 testcase 全绿 | 1.25h | ✅ 2026-05-16 02:35 |
-| 16 | **P0+19-6.f** | 三 Center 收尾 | PromptCenter + GuardianCenter + CompanionCenter 109 行 → jarvis_routing.py 末尾；用 `_ensure_centers_deps` 延迟解析跨模块类，无循环依赖；nerve.py 404 → **295**（净减 109） | 0.25h | ✅ 2026-05-16 02:40 |
-| 17 | **P0+19-final** | nerve.py 收尾验收 | nerve.py 加完工 banner，295 → **324 行**（仍 < 500 ✅）；1098 testcase 全绿；`from jarvis_nerve import X` 24+ 测试 0 改动垫层完美；剩 Sir 手动：rotate keys / 填 .env / `git init` / 实测一轮 | 0.5h | ✅ 2026-05-16 02:45 |
+| α.1 | **P0+20-α.1** | KeyRouter import 补全 | `jarvis_key_router.py` 顶部 `import numpy as np`；同时批量自检 16 个新文件是否还有遗漏 import | 0.25h | ⏳ |
+| α.2 | **P0+20-α.2** | KeyRouter 永久剔除 | 加"3 次 PROJECT_DENIED 永久不轮转"开关 + bg_log 一次性提示 Sir 而不是每轮刷 | 0.25h | ⏳ |
+| α.3 | **P0+20-α.3** | Integrity 闸门 | `detect_action_claim` 加 `is_action_claim` pre-filter（陈述/共情/解释/referential 不进 1.5B），调用量降 70% + 误报降 50% | 0.5h | ⏳ |
+| α.4 | **P0+20-α.4** | dormant_project 静默期 | SmartNudgeSentinel：standby < 60s 内禁触发 SilentNudge；NudgeGate 与 SilentNudge 触发条件对齐 | 0.25h | ⏳ |
+| α.5 | **P0+20-α.5** | Sir 手动 4 件 | rotate 8 keys / `Copy-Item .env.example .env` + 填 keys / `git init` + 首 commit / 改 jarvis_nerve.py:234-241 用 `load_keys()` | 0.5h | 🔄 Sir 在做 |
+| α.final | **P0+20-α.final** | α 整轮验收 | 真机一轮 + 1098+ testcase 全绿 + 日志噪音清零 | 0.25h | ⏳ |
+
+### 🧠 P0+20-β.0 — Prompt 重构 + Directive Registry（~7h，完整 design doc 在 `docs/PROMPT_REFACTOR_PLAN.md`）
+
+> **核心目标**：prompt 30K → 18K (-40%) / `_assemble_prompt` 1274ms → < 400ms / TTFT 3.0s → 2.3-2.5s / TWO_PARTS 多意图 0/N → N/N / Integrity 误报 -50%。
+>
+> **架构**：四层 L0 (Immutable Core) / L1 (Session Context) / L2 (**Directive Registry**) / L3 (Task Frame)。L2 用 **`google/gemini-3-flash-preview`** 异步评分采"helped"信号 + 行为信号采"fired/rejected" + 自动衰减（30d ttl）+ Sir review 队列。
+>
+> **L0 走 iterate 路线**：保留现有 PERSONA 主体（butler 身份 + INTEGRITY 4 铁则），只搬迁 NUDGE/BILINGUAL/SMART_ROUTING/TOOL_USE/具体短语黑名单 → L2 Registry。
+
+| # | Marker | 主题 | 关键产物 | 估时 | 状态 |
+|---|---|---|---|---|---|
+| β.0.1 | **P0+20-β.0.1** | Registry + 12 directive bootstrap | `jarvis_directives.py` (~800) + `DirectiveContext` / `Directive` / `DirectiveRegistry` + 12 条 trigger 函数 + JSON 持久化 + 新增 ~30 testcase | 2.0h | ⏳ |
+| β.0.2 | **P0+20-β.0.2** | dry-run + 切低 tier | `_assemble_prompt` 顶部 dry-run 双跑 + bg_log 对比；24h 验证后切 SHORT_CHAT / WAKE_ONLY 用新机制 | 1.5h | ⏳ |
+| β.0.3 | **P0+20-β.0.3** | L0 精简 + 切高 tier | PERSONA 53→25 行（iterate）+ how_to_respond 缩到 1000 chars + 切 DEEP_QUERY / TOOL_REQUEST / CRITICAL + profile_block 1509→800 | 1.0h | ⏳ |
+| β.0.4 | **P0+20-β.0.4** | decay daemon + Sir review | `DirectiveDecayWorker` daemon（60s tick）+ `memory_pool/directive_review.json` + `scripts/registry_dump.py` CLI | 0.5h | ⏳ |
+| β.0.5 | **P0+20-β.0.5** | Gemini-3-Flash 评分异步链 | `jarvis_directive_evaluator.py` + primary=`google/gemini-3-flash-preview` / fallback=lite / 3s timeout / 独立 evaluator key 池 / `gatekeeper_async` 集成 | 1.5h | ⏳ |
+| β.0.6 | **P0+20-β.0.6** | 全测 + 真机 + dashboard | 1098+ testcase 全绿 + Sir 实测 5 次 TWO_PARTS / 5 次陈述句 + `registry.dump_human()` 验收 | 0.5h | ⏳ |
 
 ### 每批通用收尾（每个 sub-step 完成后必做 6 步）
 
-1. 抽出类**完整**搬到新文件（含类前注释 + 历史 marker `[P0+18-x / 2026-...]`）；nerve.py 删原定义
-2. nerve.py 顶部加 `from jarvis_xxx import Y` 转发垫层（保护 20+ 处 `from jarvis_nerve import X` 测试 0 改动）
-3. `tests/_source_corpus.py::NERVE_SOURCES` 列表加新文件名
-4. `python -c "import jarvis_nerve"` 冒烟（5s 内必通）
-5. `pytest tests/` 全绿才能 commit：`git commit -m "[P0+19-X] <主题> — 净减 N 行"`
-6. **失败**：`git reset --hard HEAD~1` + bg_log 原因 + 修方案再试
+1. 抽出/新增代码完整搬到目标文件（含历史 marker `[P0+20-α.X / P0+20-β.0.X / 2026-05-XX]`）
+2. 转发垫层 / API 兼容（不破坏 `from jarvis_X import Y` 老 import）
+3. `python -c "import jarvis_nerve"` 冒烟（5s 内必通）
+4. `pytest tests/` 全绿才能 commit：`git commit -m "[P0+20-X.Y] <主题> — <效果>"`
+5. 失败：`git reset --hard HEAD~1` + bg_log 原因 + 修方案再试
+6. 完工标 ✅ + 加完工日期到本文件对应行
 
-### P0+19-final 验收 Checklist
+### P0+20-β.0 最终验收 Checklist
 
-- [ ] `jarvis_nerve.py` 行数 < 500
-- [ ] `pytest tests/` 全测全绿（基线 48 / 48 suite OK）
-- [ ] `python jarvis_nerve.py` 启动成功 + Sir 实测一轮完整对话（"现在几点 / 明早 8 点提醒 X / 列出代办"）
-- [ ] `requirements.txt` + `.env.example` + `pyproject.toml` 进 git；`.env` + `jarvis_config/keys.py` **不进** git
-- [ ] 旧 8 keys 全部 rotate（不再可用）
-- [ ] `jarvis_enhanced.py` 0 处 `from jarvis_nerve import PhysicalEnvironmentProbe`（循环依赖死）
-
-### 详细参考
-
-- **完整 design doc**：`docs/NERVE_SPLIT_PLAN.md`（含调研 7 事实 / 目录结构 / 每批代码行号 / 风险预案 / 回滚命令 / 测试影响表）
-- **调研依据**：2026-05-15 23:30 Claude 4.7 评估对话（已扫 47 个 class / 20+ 处 import / 6 个源码扫描测试）
+- [ ] `[Prompt Size]` 日志：DEEP_QUERY 总 < 19000 chars
+- [ ] `[Asm Diag]` 日志：assemble 总耗时 < 450ms
+- [ ] `[Pipeline Timer] TTFT`：< 2.6s
+- [ ] `pytest tests/` 1098+ testcase 全绿
+- [ ] **TWO_PARTS 实测**：Sir 故意说复合句 5 次，至少 4 次 Jarvis 答两段
+- [ ] **Integrity 误报**：实测 5 个陈述句 / 共情句，0 次误报
+- [ ] `python scripts/registry_dump.py` 输出符合预期（12 条 active + 0 review）
+- [ ] `[Evaluator]` 异步评分链路 OK，bg_log 能看到 `helped=yes/no/partial`
+- [ ] 拔网线测试：评分链路超时不影响主对话
 
 ---
 
 ## 🔮 路线候选（Sir 选定后开始）
 
-- ✅ **路线 A**：P0+18-b — Runtime Tee 日志系统 + KeyRouter 探针 + a.16 capability honesty
-- ✅ **路线 A.5**：P0+18-c — 12 BUG 真机修复（PROMISE 漏 / Reminder 反问 / Fast Path 误触 / box 破坏 / ZH→TTS 等）
-- ✅ **路线 A.6**：P0+18-d — 主脑 ↔ 待办数据库链路 + multi-op + 反幻觉
 - ✅ **路线 A.7**：P0+18-e — 待办链路收口 + 上游 Audio Guard + CW 持久化 + 终端色彩化
 - ✅ **路线 A.8**：P0+18-f — 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报
-- 🔄 **路线 A.9 进行中**：**P0+19 — Nerve 拆分 + 依赖锁定**（13h / 16 子步 → `docs/NERVE_SPLIT_PLAN.md`）
-- ⏳ **路线 A.10 候选**：P0+18-g — Sir 新一轮 debug 反馈（拆完后接更稳）
-- ⏳ **路线 B**：R8 轴 4 — OCR / 后台测试 / 全局热键（3 天工程量）
-- ⏳ **路线 C**：R9 死代码清扫批次 2（C2-1 ~ C2-6）/ 批次 3
-- ⏳ **轴 5.2 扩展**：CommitmentWatcher 持久化已落地，可继续 polish
+- ✅ **路线 A.9**：P0+19 — Nerve 拆分（17479→324 / -98.1%）+ 依赖锁定
+- 🔄 **路线 A.10 当前轨 1**：**P0+20-α** — 拆分收尾 + 4 缺口修复（np / google_1 噪音 / Integrity 闸门 / dormant 静默期）
+- 🔄 **路线 A.11 当前轨 2**：**P0+20-β.0** — Prompt 重构 + Directive Registry（L0/L1/L2/L3 四层 + Gemini-3-Flash 评分）
+- ⏳ **路线 B 候选**：让 PromiseExecutor 真跑长任务 — 选 3 个高价值场景（每日 9:00 驾照科一 3 题 / 起床播报 / 番茄钟）
+- ⏳ **路线 B+ 候选**：AgendaLedger + DailyBriefing + WeeklyDigest + SkillsAtAGlance（让 Jarvis 从 reactive 变 goal-driven）
+- ⏳ **路线 C 候选**：R8 轴 4 — OCR / 后台测试 / 全局热键
+- ⏳ **路线 D 候选**：R9 死代码清扫批次 2-3 + Qwen3 本地兜底
+- ⏳ **路线 E 候选 / 长期**：跨设备入口（FastAPI + WebSocket）+ 决策透明 UI + 个体演化曲线 + 关系延续证据
 
 ---
 
 ## 📦 归档指针
 
-- **上一轮 P0+18-e**（e.1~e.4 / 2026-05-15 20:30-21:00）：`docs/TODO_ARCHIVE.md` 顶部「P0+18-e 完工段」（约第 38-110 行）
-- **更上一轮 P0+18-d**（d.1~d.7 / 2026-05-15 19:30-20:30 / 7 BUG / 主脑↔DB 链路）：`docs/TODO_ARCHIVE.md`「P0+18-d 完工段」（约第 115-220 行）
-- **更早 P0+18-c / P0+18-b / P0+18-a / R8 轴3 / R7 等**：`docs/TODO_ARCHIVE.md` 后续段（按归档目录 grep）
+- **上一轮 P0+19**（roll/deps/0-9/6.a-f/final / 2026-05-16 00:30-02:45 / 17 sub-step / Nerve 17479→324 / 16 新文件 / 1098 testcase）：`docs/TODO_ARCHIVE.md` 顶部「P0+19 完工段」
+- **更上一轮 P0+18-f**（f.1-f.4 / 2026-05-15 22:00-22:50 / 4 BUG / 性能崩溃修复 + 诚信加固 + 长期 mute + Integrity 误报）：`docs/TODO_ARCHIVE.md`「P0+18-f 完工段」
+- **更早 P0+18-e / P0+18-d / P0+18-c / P0+18-b / R8 轴3 / R7 等**：`docs/TODO_ARCHIVE.md` 后续段（按归档目录 grep）
+- **当前迭代 design doc**：`docs/PROMPT_REFACTOR_PLAN.md`（P0+20-β.0 完整设计 / 11 节 / 9 风险预案）
+- **上轮 design doc**：`docs/NERVE_SPLIT_PLAN.md`（P0+19 完整设计，保留作历史参考）
 
 ---
 

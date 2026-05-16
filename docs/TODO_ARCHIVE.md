@@ -11,7 +11,8 @@
 
 | 段落 marker | 行号区间 | 完工时间 | 主题 |
 |---|---|---|---|
-| `P0+18-f` | ~43-105 | 2026-05-15 22:50 | f.1-f.4 / 4 BUG / Sir 22:10-22:14 实测 / 性能崩溃修复 (TTFT 3s 回归 / colorama wrap 撤销 / TeeStream 异步化 / strip_ansi 快速路径) + NUDGE / AGENDA HONESTY directive + type-specific long-term mute (12/24h) + Integrity referential pre-filter |
+| `P0+19` | ~43-130 | 2026-05-16 02:45 | 17 sub-step / Nerve 拆分 17479→324 (-98.1%) / 16 新文件 / deps 锁定 + key 脱敏 / 1098 testcase 13 次连续验证全绿 / 实际耗时 3.5h (vs 估 13h) — 详 `docs/NERVE_SPLIT_PLAN.md` |
+| `P0+18-f` | ~135-200 | 2026-05-15 22:50 | f.1-f.4 / 4 BUG / Sir 22:10-22:14 实测 / 性能崩溃修复 (TTFT 3s 回归 / colorama wrap 撤销 / TeeStream 异步化 / strip_ansi 快速路径) + NUDGE / AGENDA HONESTY directive + type-specific long-term mute (12/24h) + Integrity referential pre-filter |
 | `P0+18-e` | ~108-180 | 2026-05-15 21:00 | e.1-e.4 / 4 BUG / Sir 20:28-20:32 实测 / Memory Correction 兜底不再降级 REMINDER + 上游 Audio Guard 切句拦中文 + CommitmentWatcher SQLite 持久化 + 终端色彩化分区 (ANSI _ANSI / colorize_terminal_line) |
 | `P0+18-d` | ~115-220 | 2026-05-15 20:30 | d.1-d.7 / 7 BUG / Sir 18:22-18:31 实测 / 主脑 ↔ Reminder/Commitment DB 链路彻底打通 + ACTIVE REMINDERS block 注入 prompt + AFP 信任上游 + Multi-Op Memory Correction + hand 子命令暴露 + 反幻觉 directive |
 | `P0+18-c` | ~150-265 | 2026-05-15 19:00 | c.1-c.14 / 12 BUG / Sir 17:21 真机实测 / PROMISE/ACTIVATE_PLAN 漏到 TTS + Reminder 反问 + Fast Path 误触 + return_greeting 破坏对话框 + ZH→TTS 上游路径 + CommitmentWatcher 双路径一致 + 系统日志全部 bg_log 化 |
@@ -37,7 +38,79 @@
 
 ## 📜 原文（按完工时间倒序）
 
-更新时间：2026-05-16 00:30（**P0+18-f 沉档 / P0+19 启动 — Nerve 拆分 + 依赖锁定**）
+更新时间：2026-05-16 10:20（**P0+19 沉档 / P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**）
+
+---
+
+## 📌 P0+19 完工段（2026-05-16 00:30-02:45）— Nerve 拆分（17479→324, -98.1%）+ 依赖锁定
+
+### 起点：2026-05-15 23:30 Claude 4.7 评估对话
+
+`jarvis_nerve.py` 17479 行 = 结构性炸弹（47 class / 17479 行 / 6 个超 500 行的巨无霸 / 修任何一段都要 grep 半天）。API key 硬编码在文件末尾入口段（`OPENROUTER_KEY = "sk-or-v1-..."` 等 8 处）。无 `requirements.txt` / 无 `pyproject.toml` / 无 `.env.example`，朋友拿到代码没法装。Claude 4.7 评估 + grep（47 class / 20+ import / 6 个源码扫描测试）后决定：**deps 优先 → 拆分 0-9 → final**，扁平方案不引 package（避免 20+ 处测试 `from jarvis_nerve import X` 全红）。
+
+### 17 sub-step 看板（全 ✅）
+
+| # | Marker | 主题 | 关键产物 | 耗时 |
+|---|---|---|---|---|
+| 0 | `P0+19-roll` | TODO 滚档 | P0+18-f 沉档 + archive 目录表加行 + 「下一轮规划」改「当前迭代」 | 0.25h |
+| 1 | `P0+19-deps` | 依赖锁定 + key 脱敏 | `requirements.txt` + `requirements-dev.txt` + `pyproject.toml` + `.env.example` + `.gitignore` + `jarvis_config/keys.py` + `scripts/install.ps1`（剩 Sir 手动 4 件→ P0+20-α.5） | 2.0h |
+| 2 | `P0+19-0` | 建源码扫描垫层 | `tests/_source_corpus.py` (`NERVE_SOURCES` 列表 + `read_nerve_corpus`) + 改 3 个 `_read('jarvis_nerve.py')` 测试 (d/e/f 共 22 处) | 0.5h |
+| 3 | `P0+19-1` | `jarvis_safety.py` | 14 符号（5 函数 + 9 常量）；nerve.py 17479→17367（净-112）；testcase 全绿 | 0.5h |
+| 4 | `P0+19-2` | 基础设施 3 文件 | `jarvis_key_router.py` (365) + `jarvis_llm_reflector.py` (182) + `jarvis_env_probe.py` (696)；enhanced.py 10 处延迟 import → 1 处顶部 import（循环依赖消失）；nerve.py 17367→16211（净-1156）| 0.75h |
+| 5 | `P0+19-3` | `jarvis_sensors.py` (992) | 6 类：SensorFilter + HabitClock + CausalChain + ProjectTimeline + SubconsciousMailbox + FunnelLogger；nerve.py→15280 | 0.5h |
+| 6 | `P0+19-4` | `jarvis_routing.py` (750) | SoulRouter + ContextRouter + ContentPreferenceTracker + ProfileCard 4 类；nerve.py→14584 | 0.75h |
+| 7 | `P0+19-5` | `jarvis_memory_core.py` (1145) | 12 类：HumorMemory + PromptLayer/Cache + CorrectionEntry/Memory/Loop + MemoryFragment + UnifiedMemoryGateway + FeedbackTracker + TaskWorkerPool + Anticipator + SleepIntentDetector；nerve.py→13520；修 `@dataclass` 装饰器丢失 + 加独立 `from jarvis_blood import FeedbackSignal` 兼容 | 1.0h |
+| 8 | `P0+19-6.a` | `jarvis_sentinels.py` (1397) | 9 sentinel：ChronosTick + ChronosSentinel + SystemSentinel + SoulArchivistSentinel + NudgeGate + UserStatusLedgerSentinel + ScreenshotSentinel + WellnessGuardian + ReflectionScheduler；nerve.py→12221；改造 3 测试 | 0.5h |
+| 9 | `P0+19-6.b` | `jarvis_conductor.py` (754) | Conductor 722 行 | 0.25h |
+| 10 | `P0+19-6.c` | `jarvis_return_sentinel.py` (743) | ReturnSentinel 711 行 | 0.25h |
+| 11 | `P0+19-6.d` | `jarvis_commitment_watcher.py` (586) | CommitmentWatcher 554 行 | 0.25h |
+| 12 | `P0+19-6.e` | `jarvis_smart_nudge.py` (581) | SmartNudgeSentinel 548 行；改造 30+ 源码扫描测试 corpus 化（54 处自动 + 多处手工）；nerve.py→9713 | 0.25h |
+| 13 | `P0+19-7` | `jarvis_chat_bypass.py` (3090) | ChatBypass 3003 行 + `_C3_ACTION_HAND_COMMANDS`；nerve.py 9731→6691（净-3040）；改造 c1/axis2_4/axis3_bugs 等 4 测试 | 1.0h |
+| 14 | `P0+19-8` | `jarvis_central_nerve.py` (2208) | CentralNerve 2089 行 + JARVIS_CORE_PERSONA 53 行；nerve.py 6693→4553（净-2140）；改造 7+ 测试 corpus 化 + docstring NUDGE 字符串冲突修复 | 1.0h |
+| 15 | `P0+19-9` | `jarvis_worker.py` (3560) + `jarvis_ui.py` (735) | VoiceListenThread + JarvisWorkerThread → worker；SubtitleOverlay + BreathingLightUI → ui；nerve.py 4557→401（净-4156，**已超 design doc < 500 行目标 ✅**）| 1.25h |
+| 16 | `P0+19-6.f` | 三 Center 收尾 | PromptCenter + GuardianCenter + CompanionCenter 109 行 → jarvis_routing.py 末尾；用 `_ensure_centers_deps` 延迟解析跨模块类，无循环依赖；nerve.py 404→295 | 0.25h |
+| 17 | `P0+19-final` | nerve.py 收尾验收 | nerve.py 加完工 banner，295→324 行（仍 < 500 ✅）；24+ 测试 `from jarvis_nerve import X` 0 改动垫层完美；剩 Sir 手动：rotate keys / 填 .env / `git init` / 实测一轮 | 0.5h |
+
+### 最终成果
+
+- **`jarvis_nerve.py`**：17479 → **324 行**（-98.1% / 仅余 `__main__` 入口 + 转发垫层）
+- **16 个新独立文件**：`jarvis_safety.py` / `jarvis_key_router.py` / `jarvis_llm_reflector.py` / `jarvis_env_probe.py` / `jarvis_sensors.py` / `jarvis_routing.py` / `jarvis_memory_core.py` / `jarvis_sentinels.py` / `jarvis_conductor.py` / `jarvis_return_sentinel.py` / `jarvis_commitment_watcher.py` / `jarvis_smart_nudge.py` / `jarvis_chat_bypass.py` / `jarvis_central_nerve.py` / `jarvis_worker.py` / `jarvis_ui.py`
+- **依赖锁定 + key 脱敏**：`requirements.txt` / `requirements-dev.txt` / `pyproject.toml` / `.env.example` / `.gitignore` / `jarvis_config/keys.py` / `scripts/install.ps1` 全部就绪
+- **enhanced.py 循环依赖死**：10 处延迟 import → 1 处顶部 import
+- **朋友分发套件就绪**：可 zip 发送，对方按 README 4 步走能装能跑
+
+### 测试统计
+
+- **基线**：1098 testcase
+- **13 次连续验证零失败**：每个 sub-step 完成后跑全测，无回归
+- **改造测试**：corpus 化共 ~80 处（自动 patch + 手工）
+- **新增 testcase**：0（本轮目标是拆，不引新行为）
+
+### 改动文件清单
+
+- **新增**：16 个 jarvis_*.py + `tests/_source_corpus.py` + 7 个 deps 文件 + 11 个 `scripts/_extract_p19_*.py` / `_patch_*.py`（一次性 batch 工具）
+- **改动**：`jarvis_nerve.py` (17479→324) + `jarvis_enhanced.py` (10 处延迟 import → 顶部 import) + 多个 jarvis_*.py 顶部 import 补齐
+- **`P0+19-final` 末尾修复**：4 次「补 import」补丁，因为拆出去的类用到的标准库 / 第三方 import 缺失（`numpy as np` / `io` / `sys` / `types` 等），最终 `jarvis_directives/sentinels/return_sentinel/commitment_watcher/smart_nudge.py` 顶部统一加 noqa F401 兜底 import 块
+
+### 工程量对比
+
+| 项 | design doc 估 | 实际 | 原因 |
+|---|---|---|---|
+| 总耗时 | 13h | **3.5h** | 用了 11 个 batch extract 脚本 (`scripts/_extract_p19_X.py`) + auto-patch 测试 corpus，省了大量手工搬代码时间 |
+| nerve.py 目标行数 | <500 | **324** | 转发垫层比预想紧凑 |
+| 拆出文件数 | 16 | 16 | 一致 |
+| 测试回归 | 0 | 0 | 一致 |
+
+### Sir 手动 4 件（推迟到 P0+20-α.5）
+
+1. rotate 8 keys（OpenRouter 5 + Google 3，控制台先建新 keys 验通后再删旧）
+2. `Copy-Item .env.example .env` + 填真实 keys
+3. `git init` + `git add .` + 首个 commit
+4. 改 `jarvis_nerve.py:234-241` 入口段，把硬编码 keys 改为 `load_keys()` 调用
+
+### 关键 marker（便于 grep）
+
+`P0+19-roll` / `P0+19-deps` / `P0+19-0` / `P0+19-1` / `P0+19-2` / `P0+19-3` / `P0+19-4` / `P0+19-5` / `P0+19-6.a` / `P0+19-6.b` / `P0+19-6.c` / `P0+19-6.d` / `P0+19-6.e` / `P0+19-6.f` / `P0+19-7` / `P0+19-8` / `P0+19-9` / `P0+19-final`
 
 ---
 
