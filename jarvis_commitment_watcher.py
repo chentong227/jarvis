@@ -438,7 +438,28 @@ class CommitmentWatcher(threading.Thread):
             return
 
         with self._lock:
-            deadline_ts = time.time() + 3600
+            # 🩹 [β.2.9.1.1 / 2026-05-18] Sir 01:14 反馈: deadline='now' 被默认 +3600 注册.
+            # 准则 6 (拒绝硬编码) 反例 — 默认 +1h 是凭空猜测.
+            # 修: deadline='now' / 'right now' / 'immediately' / '现在' / '马上' →
+            #     这不是未来承诺, 是 present-tense status, mark 已 nudged 跳过 deadline 路径.
+            #     deadline 不可解析时也 mark nudged (不强行 +1h 闹钟扰 Sir).
+            if deadline_str:
+                _dl_l = deadline_str.lower().strip()
+                _present_tense_markers = ('now', 'right now', 'immediately',
+                                            'at the moment', '现在', '马上',
+                                            '立刻', '正在', '此刻')
+                if _dl_l in _present_tense_markers or any(m == _dl_l for m in _present_tense_markers):
+                    try:
+                        from jarvis_utils import bg_log as _now_bg
+                        _now_bg(
+                            f"📝 [CommitmentWatcher] deadline='{deadline_str}' = present-tense, "
+                            f"not a future commitment — skipping registration ('{description[:60]}')"
+                        )
+                    except Exception:
+                        pass
+                    return
+
+            deadline_ts = 0  # 用 0 标记"未解析", 后面看是否真有效解析
             if deadline_str:
                 try:
                     dl_lower = deadline_str.lower().strip()
@@ -460,6 +481,21 @@ class CommitmentWatcher(threading.Thread):
                             deadline_ts = time.time() + (n * 60 if 'min' in unit else n * 3600)
                 except:
                     pass
+            # 解析失败 (deadline_ts 仍 = 0) → 准则 6: 不强行 +1h
+            if deadline_ts <= 0:
+                # 仍允许 conditional_reminder 走 predicate 路径; 否则不注册
+                if commit_type != 'conditional_reminder' or predicate is None:
+                    try:
+                        from jarvis_utils import bg_log as _fail_bg
+                        _fail_bg(
+                            f"📝 [CommitmentWatcher] deadline_str='{deadline_str}' 无法解析为具体时间, "
+                            f"且无 predicate — 不注册 (准则 6: 不强行默认 +1h). desc='{description[:60]}'"
+                        )
+                    except Exception:
+                        pass
+                    return
+                # conditional_reminder + predicate 时, deadline_ts 设很大 (predicate 主导)
+                deadline_ts = time.time() + 86400 * 30  # 30 天兜底, 实际 predicate 主导
 
             # [P0-1 bottom-guard / 2026-05-15] 凌晨上下文兜底：
             # 即便 LLM 把"两点"算成 14:00:00（凌晨 1 点说），这里再做一次 sanity check。

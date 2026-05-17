@@ -1036,6 +1036,60 @@ class CentralNerve:
             _parts.append(relational_block)
         if attention_block:
             _parts.append(attention_block)
+        # 🩹 [β.2.9.1.2 / 2026-05-18] Wake-time Callback context (扩展方向 A 落地):
+        # Sir 例子 00:55 "去睡了" → 01:04 又 wake → 主脑该知道 "Sir 9min 前说要睡了
+        # 现在又来了" 自己决定要不要打趣 (不教句式 — 准则 6, 不强制 callback — 准则 5).
+        try:
+            _worker = getattr(self, '_worker_ref', None)
+            _vt = getattr(_worker, 'voice_thread', None) if _worker else None
+            if _vt is not None:
+                _last_conv_end = float(getattr(_vt, 'last_conversation_end_time', 0) or 0)
+                if _last_conv_end > 0:
+                    _gap_s = time.time() - _last_conv_end
+                    # 短间隔 (< 30min) wake 才注入 — 长间隔走 return_greeting 老路径
+                    if 0 < _gap_s < 1800:
+                        _gap_min = _gap_s / 60
+                        # 最近一条 Sir utterance + 最近 hard promise
+                        _last_sir = ''
+                        try:
+                            _stm = getattr(self, 'short_term_memory', None) or []
+                            for _e in reversed(_stm[-5:]):
+                                _u = str(_e.get('user', '') or '').strip()
+                                if _u:
+                                    _last_sir = _u[:160]
+                                    break
+                        except Exception:
+                            pass
+                        _recent_promise = ''
+                        try:
+                            from jarvis_promise_log import get_default_log
+                            _plog = get_default_log()
+                            _pendings = [
+                                p for p in _plog.list_pending()
+                                if (time.time() - p.registered_at) < 1800
+                            ]
+                            if _pendings:
+                                _pendings.sort(key=lambda p: -p.registered_at)
+                                _recent_promise = f"{_pendings[0].description[:100]} (you said this {int((time.time()-_pendings[0].registered_at)/60)} min ago)"
+                        except Exception:
+                            pass
+                        _wake_lines = [
+                            f"[WAKE CONTEXT — Sir just re-engaged after a short gap]",
+                            f"- gap since last conversation: {_gap_min:.0f} minute(s)",
+                        ]
+                        if _last_sir:
+                            _wake_lines.append(f"- Sir's last words last time: \"{_last_sir}\"")
+                        if _recent_promise:
+                            _wake_lines.append(f"- pending self-commitment: {_recent_promise}")
+                        _wake_lines.append(
+                            "  → If Sir's current input contradicts what he said before "
+                            "(e.g. said sleep but woke up 9 min later), you may naturally "
+                            "callback it in your own voice. Not required — only if the "
+                            "contradiction is real and the moment fits."
+                        )
+                        _parts.append('\n'.join(_wake_lines))
+        except Exception:
+            pass
         core_persona = '\n\n'.join(_parts)
         self._asm_stage_t['soul_block'] = (time.time() - _t_soul) * 1000
 

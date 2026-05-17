@@ -1983,7 +1983,15 @@ class JarvisWorkerThread(QThread):
           3. ASR mute (复用现有 mute_until) — Sir 翻身说梦话不触发 Jarvis
         delay_sec=0 立即, > 60 在 delay 后用 Timer 延迟.
         失败任一项不影响其他 (各自 try-except).
+
+        🩹 [β.2.9.1.1] 去重: 1h 内已触发过不重复 (Sir 反馈连续跳多个 sleep 提醒).
         """
+        # 去重: 1h 内已触发过 → skip
+        _last = getattr(self, '_last_sleep_routine_ts', 0)
+        if time.time() - _last < 3600:
+            return
+        self._last_sleep_routine_ts = time.time()
+
         def _do_routine():
             from jarvis_utils import bg_log
             # 1. mute WeChat (单进程)
@@ -2824,6 +2832,19 @@ Rules:
     - Topic 是已知概念引用 ('Iron Man', 'Marvel', 'movie scene', '电影', '梗')
       而非具体待办动作 ('喝水', '取快递', '吃药', '开会')
 5. 'trigger_time_str': If is_future_task is true, calculate the EXACT target time in 'YYYY-MM-DD HH:MM:00' format based on Current System Time. Otherwise leave empty.
+5a2. [PRESENT-TENSE STATUS ≠ COMMITMENT — Sir 准则 6 / β.2.9.1.1]:
+    Statements like "I'm going to sleep NOW" / "我真去睡了" / "我现在就 X" /
+    "I'm doing X right now" describe a PRESENT-TENSE action Sir is starting
+    THIS MOMENT — they are STATUS, not future commitments.
+    Set has_commitment=false AND trigger_time_str="" for these.
+    Reason: a true commitment needs a FUTURE anchor (next hour / tomorrow / etc).
+    A 'now' action self-completes; nudging Sir about it 1h later is absurd.
+    EXAMPLES:
+      "我真去睡了" → has_commitment=false (Sir 已经在做了)
+      "I'm taking a break now" → has_commitment=false
+      "我先去吃饭了, 一会回来" → has_commitment=false (departure announcement)
+    BUT: "I'll sleep at 11pm" → has_commitment=true (future anchor)
+
 5b. [CONDITIONAL TRIGGER — Sir 准则 6 拒绝硬编码 / β.2.8.13]:
     If the user's commitment is **CONDITION-BASED rather than time-based** — e.g.
     "等我 X 就 Y" / "X 完之后提醒 Y" / "见到 X 告诉我 Y" / "after I finish X" /

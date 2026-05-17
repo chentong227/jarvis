@@ -219,7 +219,10 @@ class SmartNudgeSentinel(threading.Thread):
                         idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
                     except:
                         pass
-                    if idle_ms < 5000:
+                    # 🩹 [β.2.9.1.1 / 2026-05-18] Sir 01:14 反馈 "判断太广": 5s idle 阈值
+                    # 让 Sir 瞬时键鼠扰动 (碰一下鼠标) 就解 sleep mode. 准则 6 反例.
+                    # 改 30s 阈值 — Sir 真坐回电脑前 30s 持续活跃才算"真醒".
+                    if idle_ms < 30000:
                         self.gate.deactivate_sleep_mode()
                         # [P0+20-β.2.4 hotfix / 2026-05-16] P0+19 split 后 worker
                         # 直持 _on_activity_wake，原 worker.jarvis 守卫永不通 → 失效。
