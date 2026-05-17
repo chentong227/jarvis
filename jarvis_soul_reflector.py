@@ -200,15 +200,20 @@ class ConcernsReflector:
 # ============================================================
 
 WEEKLY_REFLECTOR_CONFIG = {
-    # 🩹 [β.2.7.4 / 2026-05-17] Sir 决定升 gemini-3.1-pro-preview（治 LLM 误判 STM 间隔=失眠）
-    # 频率：周 1 次 LLM 反思 / 重要性：决定 Jarvis 长期关心什么
+    # 🩹 [β.2.8.13 / 2026-05-18] Sir 00:50 决定 B+C: 触发式 + dedup + 1 天 1 次.
+    # 老 weekly 间隔太长, Sir 关心的新主题要 7 天才能 propose. 改 daily + 触发式
+    # (STM 新增 > 25 且 idle > 4h) 避免空跑. ConcernsLedger.propose 加 dedup
+    # 防同主题 7 倍堆 review.
     'primary_model': 'google/gemini-3.1-pro-preview',
     'fallback_model': 'google/gemini-2.5-flash-lite',
     'temperature': 0.2,        # 略放手让它创造
     'max_output_tokens': 600,
     'timeout_s': 10.0,
     'tick_seconds': 60.0,       # daemon tick 频率
-    'min_interval_s': 7 * 86400,  # 实际反思间隔（每 7 天一次）
+    # 🩹 β.2.8.13: 1 天 1 次 (老 7d 改 1d) + 触发式 (STM 新增 > min_new_stm 且 idle > min_idle_h)
+    'min_interval_s': 86400,         # 实际反思最小间隔: 1 天 (Sir 决定 B+C)
+    'min_new_stm_for_trigger': 25,   # 24h 内 STM 新增 ≥ 25 条才触发 (避免空跑)
+    'min_idle_hours_for_trigger': 4.0,  # Sir idle > 4h 才反思 (避开高频活跃期)
     'min_stm_for_reflection': 10,  # < 10 条 STM 不够反思
     'max_propose_per_run': 3,   # 每次最多 propose 3 条新 concern
 }
@@ -324,8 +329,11 @@ class WeeklyReflector(threading.Thread):
 
         while not self._stop.is_set():
             try:
-                # 是否到了反思周期？
-                if (time.time() - self._last_run_ts) >= self.config['min_interval_s']:
+                # 🩹 β.2.8.13: 触发式 — 满足任一条件:
+                # (a) 上次反思 > min_interval_s (老路径, 1 天兜底)
+                # (b) STM 新增 ≥ min_new_stm_for_trigger AND Sir idle ≥ min_idle_hours_for_trigger
+                #     (Sir 活跃过 N 条对话后, 在 idle 间隙反思)
+                if self._should_reflect_now():
                     self._reflect_once(force=False)
             except Exception as e:
                 self._stats['last_error'] = str(e)[:200]
@@ -337,6 +345,50 @@ class WeeklyReflector(threading.Thread):
             # 等下一个 tick
             if self._stop.wait(self.config['tick_seconds']):
                 return
+
+    def _should_reflect_now(self) -> bool:
+        """β.2.8.13 触发式: time-based 兜底 OR (STM 新增足够 AND Sir 当下 idle)."""
+        now = time.time()
+        elapsed = now - self._last_run_ts
+        # 条件 a: time-based 兜底 (24h)
+        if elapsed >= self.config['min_interval_s']:
+            return True
+        # 条件 b: trigger-based (STM 新增 + Sir idle)
+        try:
+            min_new = int(self.config.get('min_new_stm_for_trigger', 25))
+            min_idle_h = float(self.config.get('min_idle_hours_for_trigger', 4.0))
+            # 取 STM (用 stm_provider 或回 brain 兜底)
+            stm = []
+            try:
+                if self.stm_provider is not None:
+                    stm = self.stm_provider() or []
+            except Exception:
+                pass
+            new_in_window = sum(1 for e in stm
+                                  if e.get('when', 0) > self._last_run_ts)
+            if new_in_window < min_new:
+                return False
+            # Sir idle?
+            idle_h = 0
+            try:
+                import win32api  # type: ignore
+                idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
+                idle_h = idle_ms / 3600_000
+            except Exception:
+                pass
+            if idle_h < min_idle_h:
+                return False
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"🌙 [WeeklyReflector/Trigger] STM 新增 {new_in_window}/{min_new} "
+                    f"+ Sir idle {idle_h:.1f}h/{min_idle_h}h → 触发反思 (elapsed={elapsed/3600:.1f}h)"
+                )
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
 
     def _gather_stm_str(self, max_n: int = 50) -> str:
         """🩹 [β.2.7.7 / 2026-05-17] STM source 区分 + 过滤

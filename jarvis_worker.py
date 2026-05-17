@@ -2757,6 +2757,19 @@ Rules:
     - Topic 是已知概念引用 ('Iron Man', 'Marvel', 'movie scene', '电影', '梗')
       而非具体待办动作 ('喝水', '取快递', '吃药', '开会')
 5. 'trigger_time_str': If is_future_task is true, calculate the EXACT target time in 'YYYY-MM-DD HH:MM:00' format based on Current System Time. Otherwise leave empty.
+5b. [CONDITIONAL TRIGGER — Sir 准则 6 拒绝硬编码 / β.2.8.13]:
+    If the user's commitment is **CONDITION-BASED rather than time-based** — e.g.
+    "等我 X 就 Y" / "X 完之后提醒 Y" / "见到 X 告诉我 Y" / "after I finish X" /
+    "once X is done" / "when X happens" — DO NOT invent a fake clock time
+    (no "showering takes 30min → +30 min" guessing!).
+    Set trigger_time_str = "" (empty) AND keep has_commitment=true with the
+    condition phrase in description. A separate PredicateParser will translate
+    the condition into a Predicate (process_exit / after_afk / window_title_changes /
+    etc.) for the Watcher to evaluate truly.
+    EXAMPLE — Sir 23:45 says "I'll shower then sleep":
+      WRONG: trigger_time_str = "2026-05-18 00:15:00" (你不知道洗澡多久)
+      RIGHT: trigger_time_str = "", description = "洗完澡就睡觉",
+              PredicateParser will detect AfterAfk(min_afk_minutes=10) + bedtime.
 5a. [TIME-OF-DAY CONTEXT — CRITICAL] When the user says an ambiguous small number (e.g. "两点" / "two o'clock" / "三点" / "five"):
     [STEP 1 — Action verb takes precedence over hour-of-day default]:
     - "起床/醒/wake up/get up/醒来/起来" + small num → ALWAYS interpret as AM (e.g. "两点起床" = 02:00 if night, 14:00 ONLY if user explicitly said "下午两点"). Default: tomorrow morning small_num:00.

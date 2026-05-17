@@ -1,4 +1,14 @@
-# Jarvis TODO 工作板
+# Jarvis TODO
+
+## 🎯 Sir 想要的新功能 (β.2.9 候选, 等下次启动)
+
+| # | 功能 | 现状 | 实现方向 |
+|---|---|---|---|
+| 1 | 说 "睡觉" 自动单进程静音 WeChat (准则 5 真做不只说) | 缺 organ.command | 扩 `l4_audio_hands.py` 加 `mute_app(name)` 用 pycaw 单进程音量控制 |
+| 2 | 说 "睡觉" 自动 dim 显示器 | 缺 organ | 新 `l4_display_hands.py` 用 Win32 SetBrightness / monitor power state |
+| 3 | "睡觉模式" 总调度: 检测 sleep 意图 → 自动 (1) + (2) + 字幕透明化 + ASR mute 30min | 流程已有 (`SleepIntent`) 但缺 hook | sleep_intent → 触发 sleep_mode_routine() 依次调上述 |
+
+ 工作板
 
 **更新时间**：2026-05-16 21:45（**🌱 P0+20-β.2 灵魂工程 Layer 0+1 完工 / tag `v0.23.0-soul-foundation`**。
 

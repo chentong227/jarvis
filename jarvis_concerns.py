@@ -152,8 +152,41 @@ class ConcernsLedger:
     def propose(self, concern: Concern) -> bool:
         """[P0+20-β.2.5 / 2026-05-17] WeeklyReflector 等自动来源 propose 新 concern。
         强制 state=STATE_REVIEW，等 Sir 拍板。返回是否新增。
-        防 LLM 自作主张污染 Jarvis 的关心列表。详 docs/JARVIS_SOUL_DRIVE.md §5.2"""
+        防 LLM 自作主张污染 Jarvis 的关心列表。详 docs/JARVIS_SOUL_DRIVE.md §5.2
+
+        🩹 [β.2.8.13 / 2026-05-18] Sir 决定 WeeklyReflector 改 daily 触发, dedup 必加:
+        - id 相同 → 拒
+        - what_i_watch 字面 substring match → 拒 (主题相同换措辞 e.g.
+          'Sir 熬夜' vs 'Sir 是否熬夜')
+        - 与任何 state (active/review/archived) 的 concern 比较
+        """
         concern.state = STATE_REVIEW
+        # dedup
+        try:
+            new_id = concern.id
+            new_watch_l = (concern.what_i_watch or '').lower().strip()
+            for existing in self.concerns.values():
+                if existing.id == new_id:
+                    return False
+                ex_watch_l = (existing.what_i_watch or '').lower().strip()
+                if not new_watch_l or not ex_watch_l:
+                    continue
+                if new_watch_l == ex_watch_l:
+                    return False
+                # substring (one 包含 another) 且较短的 ≥ 15 字
+                if (new_watch_l in ex_watch_l or ex_watch_l in new_watch_l):
+                    if min(len(new_watch_l), len(ex_watch_l)) >= 15:
+                        try:
+                            from jarvis_utils import bg_log
+                            bg_log(
+                                f"🚫 [Concern/dedup] propose '{concern.id[:30]}' watch "
+                                f"substring match vs '{existing.id[:30]}', skip"
+                            )
+                        except Exception:
+                            pass
+                        return False
+        except Exception:
+            pass
         return self.register(concern)
 
     def update(self, concern: Concern) -> bool:

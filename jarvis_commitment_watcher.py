@@ -756,6 +756,9 @@ class CommitmentWatcher(threading.Thread):
         """β.2.8.6: 每 tick 构造 predicate evaluation context.
         含 idle_ms / sensor_snap / window_title / recent_stm / process events 等.
         失败的字段静默落空 (predicate evaluate 时自己处理 None / default).
+
+        🩹 [β.2.8.13 / 2026-05-18] 加 was_afk_recently_minutes 给 AfterAfk predicate.
+        启发式: ReturnSentinel._last_afk_minutes 暴露最近 AFK 时长.
         """
         ctx = {'now_ts': now_ts}
         try:
@@ -768,7 +771,6 @@ class CommitmentWatcher(threading.Thread):
             ctx['sensor_snap'] = snap
             ctx['window_title'] = snap.get('window_title', '') or getattr(P, 'current_window_title', '')
             ctx['first_active_today'] = bool(snap.get('is_first_active_today', False))
-            # process_died_events 预留接口 (β-2.7 PhysicalEnvironmentProbe 实现, 当前 None ok)
             ctx['process_died_events'] = getattr(P, 'process_died_events', []) or []
             ctx['running_processes'] = getattr(P, 'running_processes_cache', []) or []
         except Exception:
@@ -777,6 +779,17 @@ class CommitmentWatcher(threading.Thread):
             ctx['first_active_today'] = False
             ctx['process_died_events'] = []
             ctx['running_processes'] = []
+        # was_afk_recently_minutes — 从 ReturnSentinel 拿最近 AFK 时长 (β.2.8.13)
+        try:
+            rs = getattr(self.worker, 'return_sentinel', None)
+            if rs is not None:
+                ctx['was_afk_recently_minutes'] = float(
+                    getattr(rs, '_last_afk_minutes', 0) or 0
+                )
+            else:
+                ctx['was_afk_recently_minutes'] = 0
+        except Exception:
+            ctx['was_afk_recently_minutes'] = 0
         try:
             stm = getattr(self.worker.jarvis, 'short_term_memory', None) \
                   if hasattr(self.worker, 'jarvis') else None

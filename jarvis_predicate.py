@@ -323,6 +323,35 @@ class ActiveFor(Predicate):
         return {'minutes': self.minutes}
 
 
+class AfterAfk(Predicate):
+    """β.2.8.13: Sir AFK ≥ min_afk_minutes 后刚回到电脑 (idle 短).
+
+    经典场景: Sir 23:45 说"洗完澡就睡觉" — 洗澡 = AFK 15-30min, 回来 idle 短.
+    predicate fire 条件: 历史曾出现长时段 idle (≥ min_afk_minutes) + 当前 idle < 60s.
+
+    用 PhysicalEnvironmentProbe._last_long_idle_ts (β-2 接通) 判断.
+    暂时用 ctx['was_afk_recently_minutes'] (上游算好传入) + idle_ms.
+    """
+    name = 'after_afk'
+
+    def __init__(self, min_afk_minutes: int = 10):
+        self.min_afk_minutes = int(min_afk_minutes)
+
+    def evaluate(self, ctx):
+        # 当前要 active (idle < 60s)
+        if ctx.get('idle_ms', 9999_999) >= 60_000:
+            return False
+        # 历史曾长 idle ≥ min_afk_minutes
+        was_afk = float(ctx.get('was_afk_recently_minutes', 0) or 0)
+        return was_afk >= self.min_afk_minutes
+
+    def describe(self):
+        return f"Sir just returned from AFK (≥{self.min_afk_minutes}min) and is active now"
+
+    def _to_args(self):
+        return {'min_afk_minutes': self.min_afk_minutes}
+
+
 class StmContains(Predicate):
     """最近 N 轮 STM Sir 主动提过 keyword (任意一个)."""
     name = 'stm_contains'
@@ -365,6 +394,7 @@ PREDICATE_REGISTRY: Dict[str, type] = {
     'idle_for': IdleFor,
     'active_for': ActiveFor,
     'stm_contains': StmContains,
+    'after_afk': AfterAfk,
 }
 
 
