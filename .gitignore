@@ -52,6 +52,8 @@ memory_pool/concerns.json
 memory_pool/concerns_review.json
 # [P0+20-β.2.2 / 2026-05-16] RelationalState Layer 2 持久化：runtime 状态（Sir CLI 录入的笑点/默契/未竟之事）
 memory_pool/relational_state.json
+# [P0+20-β.3.3 / 2026-05-17] RelationalState Layer 4 propose 队列：runtime 状态
+memory_pool/relational_review.json
 # PlanLedger 持久化：runtime 状态
 memory_pool/plans.json
 jarvis_config/screenshots/
