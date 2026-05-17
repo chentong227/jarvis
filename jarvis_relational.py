@@ -473,8 +473,53 @@ class RelationalStateStore:
 
     def propose_inside_joke(self, joke: InsideJoke) -> bool:
         """SoulArchivistSentinel 等自动来源 propose 新 inside_joke。
-        强制 state=STATE_REVIEW，等 Sir 拍板。返回是否新增。"""
+        强制 state=STATE_REVIEW，等 Sir 拍板。返回是否新增。
+
+        🩹 [β.2.8.12 / 2026-05-18] dedup 防 BUG: Sir 00:25 反馈 furniture 笑话被
+        WeeklyReflector 自动提取 3 个变体堆 review. 加 phrase / birth_context 相似
+        度检查: 与任何已存在 (active/review/archived) 的 joke 相似度 > 0.7 → 拒.
+        """
         joke.state = STATE_REVIEW
+        # 去重: 字面相似 OR birth_context 相似
+        try:
+            new_phrase_l = (joke.phrase or '').lower().strip()
+            new_birth_l = (joke.birth_context or '').lower().strip()
+            for existing in self.inside_jokes.values():
+                ex_phrase_l = (existing.phrase or '').lower().strip()
+                # phrase 完全相同 / 包含 / 高度 substring 相似 → dedup
+                if new_phrase_l and ex_phrase_l:
+                    if new_phrase_l == ex_phrase_l:
+                        return False
+                    if new_phrase_l in ex_phrase_l or ex_phrase_l in new_phrase_l:
+                        if min(len(new_phrase_l), len(ex_phrase_l)) >= 5:
+                            try:
+                                from jarvis_utils import bg_log
+                                bg_log(
+                                    f"🚫 [InsideJoke/dedup] propose '{joke.phrase[:40]}' "
+                                    f"vs existing '{existing.phrase[:40]}' — substring match, skip"
+                                )
+                            except Exception:
+                                pass
+                            return False
+                # birth_context 高度重合 → 同一对话 → dedup
+                if new_birth_l and existing.birth_context:
+                    ex_birth_l = existing.birth_context.lower().strip()
+                    if len(new_birth_l) > 20 and len(ex_birth_l) > 20:
+                        common = set(new_birth_l.split()) & set(ex_birth_l.split())
+                        union = set(new_birth_l.split()) | set(ex_birth_l.split())
+                        jaccard = len(common) / max(1, len(union))
+                        if jaccard > 0.5:
+                            try:
+                                from jarvis_utils import bg_log
+                                bg_log(
+                                    f"🚫 [InsideJoke/dedup] propose '{joke.phrase[:40]}' "
+                                    f"birth_context jaccard {jaccard:.2f} with '{existing.id}', skip"
+                                )
+                            except Exception:
+                                pass
+                            return False
+        except Exception:
+            pass
         return self.add_inside_joke(joke)
 
     def propose_thread(self, thread: SharedHistoryThread) -> bool:

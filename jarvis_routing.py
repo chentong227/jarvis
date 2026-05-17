@@ -975,6 +975,34 @@ class CompanionCenter:
         except Exception as _hp_err:
             print(f"[CompanionCenter] HealthProbeDaemon 启动失败 (非致命): {_hp_err}")
 
+        # 🩹 [β.2.8.12 / 2026-05-18] L2 库启动摘要 — Sir 00:25 痛点: 不知道 review 队列存在
+        # 启动时 bg_log 总览: 当前 active joke / pending review, 让 Sir 一眼看清状态
+        try:
+            from jarvis_relational import get_default_store
+            from jarvis_utils import bg_log
+            _store = get_default_store()
+            _active_jokes = len([j for j in _store.inside_jokes.values()
+                                  if j.state == 'active'])
+            _review_jokes = len([j for j in _store.inside_jokes.values()
+                                  if j.state == 'review'])
+            _active_threads = len([t for t in _store.shared_history_threads.values()
+                                    if t.state == 'active'])
+            _review_threads = len([t for t in _store.shared_history_threads.values()
+                                    if t.state == 'review'])
+            _msg = (
+                f"📚 [L2 RelationalState] inside_jokes: {_active_jokes} active / {_review_jokes} review; "
+                f"threads: {_active_threads} active / {_review_threads} review."
+            )
+            if _review_jokes + _review_threads > 0:
+                _msg += (
+                    f" Sir 用 'python scripts/relational_dump.py --review-list' "
+                    f"看 review 队列, --activate <id> 激活, --reject <id> 拒掉."
+                )
+            print(_msg)
+            bg_log(_msg)
+        except Exception as _l2_err:
+            print(f"[CompanionCenter] L2 启动摘要失败 (非致命): {_l2_err}")
+
         print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel + ProactiveCareEngine)")
 
 

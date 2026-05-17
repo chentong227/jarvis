@@ -418,36 +418,127 @@ def _force_decay(s: RelationalStateStore) -> None:
     print(f"[DECAY] persist: {'写盘' if persisted else '无变更'}")
 
 
-def _print_review(s: RelationalStateStore) -> None:
-    """[β.2.4.4] 列出 SoulArchivistSentinel 自动 propose 的待审条目。"""
+def _print_review(s: RelationalStateStore, interactive: bool = True) -> None:
+    """[β.2.4.4] 列出 SoulArchivistSentinel 自动 propose 的待审条目。
+
+    🩹 [β.2.8.12 / 2026-05-18] Sir 反馈 "和处理关心的事一样, 每个选项跳出来 yes/no":
+    interactive=True (默认) 走交互式, 一条一条问 1=activate / 2=reject / 3=skip / q=quit.
+    interactive=False 仅列清单 (旧行为, 给 --review-list 用)
+    """
     joke_q = s.list_inside_jokes_review()
     thread_q = s.list_threads_review()
     if not joke_q and not thread_q:
-        print("[REVIEW QUEUE] 空（没有待审 proposed_inside_jokes / proposed_shared_history_threads）")
+        print("[REVIEW QUEUE] 空 (没有待审 proposed_inside_jokes / proposed_shared_history_threads)")
         print("  Tip: SoulArchivistSentinel 每小时 LLM 反思一次后会写入这里")
         return
+
+    if not interactive:
+        # 非交互模式 — 仅列清单
+        print("=" * 80)
+        print(f"[REVIEW QUEUE] {len(joke_q)} jokes + {len(thread_q)} threads 等 Sir 拍板")
+        print("=" * 80)
+        if joke_q:
+            print()
+            print("[JOKES — 待审]")
+            for j in joke_q:
+                print(f"  id           : {j.id}")
+                print(f"  phrase       : {j.phrase!r}")
+                print(f"  tone         : {j.tone or '-'}")
+                print(f"  birth_context: {j.birth_context or '-'}")
+                print(f"  source       : {j.source} ({j.source_marker})")
+                print()
+        if thread_q:
+            print("[THREADS — 待审]")
+            for t in thread_q:
+                print(f"  id        : {t.id}")
+                print(f"  title     : {t.title!r}")
+                if t.highlights:
+                    print(f"  latest    : {t.highlights[-1].get('what', '')[:100]}")
+                print(f"  source    : {t.source} ({t.source_marker})")
+                print()
+        print("Sir 命令:")
+        print("  python scripts/relational_dump.py --activate <id>")
+        print("  python scripts/relational_dump.py --reject   <id>")
+        return
+
+    # 交互模式 — align concerns_dump.py 风格
+    total = len(joke_q) + len(thread_q)
     print("=" * 80)
-    print(f"[REVIEW QUEUE] {len(joke_q)} jokes + {len(thread_q)} threads 等 Sir 拍板")
+    print(f"[REVIEW QUEUE] {total} 条 (含 {len(joke_q)} jokes + {len(thread_q)} threads) 等你拍板")
     print("=" * 80)
-    if joke_q:
+    print("每条问 4 个选项: 1=通过(activate) / 2=拒绝(archive) / 3=跳过 / q=退出")
+    print()
+
+    decisions = {'activate': [], 'reject': [], 'skip': []}
+    items = []
+    for j in joke_q:
+        items.append(('joke', j))
+    for t in thread_q:
+        items.append(('thread', t))
+
+    for idx, (kind, item) in enumerate(items, 1):
+        print("-" * 80)
+        if kind == 'joke':
+            print(f"[{idx}/{total}]  JOKE  {item.id}")
+            print(f"  phrase       : {item.phrase!r}")
+            print(f"  tone         : {item.tone or '-'}")
+            print(f"  birth_context: {item.birth_context or '-'}")
+            print(f"  source       : {item.source} ({item.source_marker})")
+        else:
+            print(f"[{idx}/{total}]  THREAD  {item.id}")
+            print(f"  title    : {item.title!r}")
+            if item.highlights:
+                print(f"  latest   : {item.highlights[-1].get('what', '')[:120]}")
+            print(f"  source   : {item.source} ({item.source_marker})")
         print()
-        print("[JOKES — 待审]")
-        for j in joke_q:
-            print(f"  id           : {j.id}")
-            print(f"  phrase       : {j.phrase!r}")
-            print(f"  tone         : {j.tone or '-'}")
-            print(f"  birth_context: {j.birth_context or '-'}")
-            print(f"  source       : {j.source} ({j.source_marker})")
-            print()
-    if thread_q:
-        print("[THREADS — 待审]")
-        for t in thread_q:
-            print(f"  id        : {t.id}")
-            print(f"  title     : {t.title!r}")
-            if t.highlights:
-                print(f"  latest    : {t.highlights[-1].get('what', '')[:100]}")
-            print(f"  source    : {t.source} ({t.source_marker})")
-            print()
+        while True:
+            try:
+                ans = input("  你的决定 [1=通过 / 2=拒绝 / 3=跳过 / q=退出]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n[退出]")
+                _persist_interactive_review(s, decisions)
+                return
+            if ans in ('q', 'quit', 'exit'):
+                _persist_interactive_review(s, decisions)
+                print("[退出]")
+                return
+            if ans == '1' or ans in ('y', 'yes', '通过'):
+                decisions['activate'].append(item.id)
+                try:
+                    s.activate_from_review(item.id)
+                except Exception:
+                    pass
+                print(f"  ✅ 通过 → '{item.id}' 转入 active\n")
+                break
+            elif ans == '2' or ans in ('n', 'no', '拒绝'):
+                decisions['reject'].append(item.id)
+                try:
+                    s.reject_from_review(item.id)
+                except Exception:
+                    pass
+                print(f"  ❌ 拒绝 → '{item.id}' 归档\n")
+                break
+            elif ans == '3' or ans == '' or ans in ('skip', '跳过'):
+                decisions['skip'].append(item.id)
+                print(f"  ⏭️  跳过 → '{item.id}' 保持 review, 下次再问\n")
+                break
+            else:
+                print(f"  无效输入 '{ans}', 请输 1/2/3/q")
+    _persist_interactive_review(s, decisions)
+
+
+def _persist_interactive_review(s: RelationalStateStore, decisions: dict) -> None:
+    s.persist()
+    try:
+        s.write_review_queue()
+    except Exception:
+        pass
+    print("=" * 80)
+    print("[本次总结]")
+    print(f"  ✅ 通过 {len(decisions['activate'])}: {decisions['activate']}")
+    print(f"  ❌ 拒绝 {len(decisions['reject'])}: {decisions['reject']}")
+    print(f"  ⏭️  跳过 {len(decisions['skip'])}: {decisions['skip']}")
+    print("=" * 80)
     print("Sir 操作：")
     print("  python scripts/relational_dump.py --activate <id>   # 通过")
     print("  python scripts/relational_dump.py --reject   <id>   # 拒绝")
@@ -534,7 +625,9 @@ def main():
 
     # Review queue (β.2.4.4): SoulArchivistSentinel 自动 propose 的条目等 Sir 拍板
     parser.add_argument('--review', action='store_true',
-                        help='列出待 Sir 审的 jokes / threads（自动 propose 队列）')
+                        help='[β.2.8.12] 默认走交互式 — 一条一条问 1=activate / 2=reject / 3=skip / q=quit (align concerns_dump 风格)')
+    parser.add_argument('--review-list', action='store_true',
+                        help='仅列清单不交互 (旧 --review 行为, 给批量脚本用)')
     parser.add_argument('--activate', metavar='ID',
                         help='把 review 状态的条目转 active（Sir 通过）')
     parser.add_argument('--reject', metavar='ID',
@@ -568,7 +661,10 @@ def main():
     if args.reject:
         return _reject_review(s, args.reject)
     if args.review:
-        _print_review(s)
+        _print_review(s, interactive=True)
+        return 0
+    if args.review_list:
+        _print_review(s, interactive=False)
         return 0
     if args.decay:
         _force_decay(s)
