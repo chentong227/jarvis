@@ -394,6 +394,51 @@ _EXPORT_KEYWORDS = ('导出完', '导出之后', '导完', 'export finished', 'e
 _PREMIERE_KEYWORDS = ('视频', 'premiere', '剪辑', 'video')
 
 
+def predicate_library_prompt() -> str:
+    """β-3: 给 Gatekeeper LLM 看的 predicate library 描述. 自动从 registry 生成,
+    新加 predicate 自动出现在 prompt 里 — 准则 6 (拒绝硬编码) 的真正落地.
+    """
+    lines = [
+        "Predicate library (use these as building blocks, NOT keyword-matched):",
+        "",
+    ]
+    # 单原子 predicate (跳过 composite 自身, 它们有专门 schema 段)
+    for name in sorted(PREDICATE_REGISTRY.keys()):
+        if name in ('AND', 'OR', 'NOT'):
+            continue
+        cls = PREDICATE_REGISTRY[name]
+        # 抽 __init__ args 让 LLM 知道怎么填
+        import inspect
+        try:
+            sig = inspect.signature(cls.__init__)
+            args = [p for p in sig.parameters.values()
+                    if p.name not in ('self',)]
+            args_str = ', '.join(
+                f'{p.name}'
+                + (f'={p.default!r}' if p.default is not inspect.Parameter.empty else '')
+                for p in args
+            )
+        except Exception:
+            args_str = '...'
+        # 取一份 description (通过 instance.describe(), 用默认值实例化)
+        # 失败 (无默认参数) 就只显示名字 + arg signature
+        try:
+            inst = cls()
+            desc = inst.describe()
+        except Exception:
+            desc = ''
+        if desc:
+            lines.append(f'  - type="{name}"({args_str}): {desc}')
+        else:
+            lines.append(f'  - type="{name}"({args_str})')
+    lines.append("")
+    lines.append("Composite (always recursive on `args`):")
+    lines.append('  - type="AND", args=[<predicate1>, <predicate2>, ...]')
+    lines.append('  - type="OR",  args=[<p1>, <p2>, ...]')
+    lines.append('  - type="NOT", arg=<predicate>')
+    return '\n'.join(lines)
+
+
 def heuristic_predicate_from_text(text: str) -> Optional[Predicate]:
     """从自然语言尝试启发式推断 predicate. LLM parser 未上前的兜底.
 

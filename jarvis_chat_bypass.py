@@ -3232,50 +3232,75 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
         late_night_directive = self._build_sleep_directive("late_night", sleep_escalation, unanswered_count, current_hour, work_duration)
         suggest_break_directive = self._build_sleep_directive("suggest_break", sleep_escalation, unanswered_count, current_hour, work_duration)
 
+        # 🩹 [β.2.8.9 / 2026-05-17] Sir 准则 6 (拒绝硬编码) — 8 个 nudge directive 全部
+        # 重构: 只告事实, 不教句式. 删 "Casual like a friend / Sound caring / NEVER
+        # sound like / Do NOT force humor / 'I know this time of day' energy" 等
+        # prescriptive 行为约束. 保留必要 evidence (window_title, dormant project list,
+        # commitment 原话等) 和 anti-hallucination (commitment_check / offer_help 的
+        # tool name 禁令 — 这是 integrity 规则, 不是句式锁).
         nudge_directives = {
-            "hydration": "Sir has been working for a while. Make a brief, offhand remark about drinking water. Casual, like a friend glancing over. Do NOT sound like a health app.",
-            "stretch": "Sir has been coding for a long stretch. Make a light, brief remark about stretching or moving. Acknowledge the long session without nagging.",
+            "hydration": "Sir has been working for a while without an obvious break — could be time to mention water.",
+            "stretch": "Sir has been at this for a long stretch.",
             "late_night": late_night_directive,
-            "atmosphere": "Sir is watching or listening to something. Make a brief, observational remark. Acknowledge what you see on screen. Be neutral and factual — do NOT force humor. Only joke if the situation is genuinely ironic and the joke writes itself. When in doubt, stay dry.",
-            "screen_tease": f"Sir's screen shows: '{window_title}'. If it's an error, commiserate with dry wit. If entertainment, be playful but restrained. If social media, a gentle tease. Be specific about what you see. Do NOT force humor — only joke if the irony is obvious and unavoidable. When in doubt, stay dry.",
-            "afternoon": "It's the afternoon slump hours. Make a brief, knowing remark. 'I know this time of day' energy.",
-            "flow_end": "Sir just finished a coding session and switched to something else. Acknowledge the good session positively, without being cheesy.",
+            "atmosphere": (
+                f"Sir is watching or listening to something. "
+                f"Current window: '{window_title}'. "
+                f"You can see what's on screen — respond however feels natural."
+            ),
+            "screen_tease": (
+                f"Sir's screen shows: '{window_title}'. "
+                f"You see it, you know him."
+            ),
+            "afternoon": "It's the afternoon slump hours.",
+            "flow_end": "Sir just finished a coding session and switched to something else.",
             "return_greeting": (
-                # 🩹 [β.2.8.8 / 2026-05-17] Sir 风格方案 A — 只告事实, 不教怎么说.
-                # 撤前一版 (forbidden / required / good examples 全删).
-                # 信任 [PHYSICAL CONTEXT] + [RECENT MEMORY] + [SOUL TO USE] + L0-L3 Soul
-                # 注入. 主脑结合 context 自己产话. 如果还模板感, Sir 会再说.
+                # 🩹 [β.2.8.10 / 2026-05-18] Sir 00:20 反馈 "furniture incidents" 编造.
+                # 准则 6 (不教句式) + 准则 5 (言出必行) 协同 — 不举具体反例 (那是硬编
+                # 码), 只给通用 truth anchor: 任何 specific narrative element 必须
+                # trace evidence. 不知道就不说.
                 f"Sir just returned to his computer (was away for "
                 f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n"
-                f"Greet him however feels right — you have his current window, "
-                f"recent activity, and your sense of him from the context above. "
-                f"Speak in your own voice."
+                f"Speak in your own voice.\n"
+                f"[准则 5 — truth anchor]: Every specific narrative element you "
+                f"introduce (objects, events, activities, people, locations) must "
+                f"correspond to something actually present in the context above. "
+                f"If the context doesn't show what Sir did during AFK, the honest "
+                f"move is to not speculate about it."
             ),
             "commitment_check": (
+                # 删句式锁 "Express gentle dry concern / sound like a friend not a parent".
+                # 保留 anti-hallucination (这是 integrity 规则不是句式锁, Sir 准则 5).
                 f"Sir said he would {nudge_context.get('commitment_description', 'rest')} "
                 f"at {nudge_context.get('commitment_time', 'a certain time')}. "
                 f"It is now {nudge_context.get('overdue_minutes', 'some')} minutes past "
-                f"that time and he is still working. Express gentle, dry concern. "
-                f"Reference what he said earlier. Do NOT nag — sound like a friend who "
-                f"noticed, not a parent. One sentence.\n\n"
-                # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测 "dinner 幻觉":
-                # LLM 看 abstract description 自己脑补具体词汇。强制引用原话防幻觉。
-                f"CRITICAL — ANTI-HALLUCINATION (3 rules):\n"
-                f"1. The ONLY thing Sir committed to at {nudge_context.get('commitment_time', '?')} "
-                f"was the SPECIFIC topic above. His EXACT original words were: "
+                f"that time and he is still working.\n\n"
+                f"[ANTI-HALLUCINATION — Sir 准则 5 言出必行]:\n"
+                f"1. His EXACT original words were: "
                 f"\"{(nudge_context.get('commitment_source_text', '') or '(no source)')[:160]}\". "
                 f"Quote or paraphrase faithfully — NEVER substitute or invent topic specifics.\n"
                 f"2. TIME ATTRIBUTION: Do NOT pair this commitment_time ({nudge_context.get('commitment_time', '?')}) "
                 f"with topics from OTHER turns in [RECENT MEMORY]. If you reference earlier topics "
-                f"(like dinner / meeting / break / etc) use vague words like 'earlier' / "
-                f"'before' / 'recently' — NEVER attach a specific timestamp to them.\n"
+                f"use vague words like 'earlier' / 'before' / 'recently' — NEVER attach a specific "
+                f"timestamp to them.\n"
                 f"3. ONE SUBJECT: The commitment is about ONE thing. Don't mix it with other "
-                f"recent topics from STM to sound clever."
+                f"recent topics."
             ),
-            "dormant_project": f"Sir has some projects that haven't been touched in days: {json.dumps(nudge_context.get('dormant_projects', []), ensure_ascii=False)}. Pick ONE most interesting dormant project and make a brief, casual remark about it. Sound like a friend who noticed, not a project manager. One sentence. Do NOT list all projects — just mention one naturally.",
-            "offer_help": "Sir seems to be stuck on an error or debugging issue. ASK what error he's seeing and whether he needs help. Be specific — reference what's on his screen. Sound like a colleague glancing over, not tech support. One or two sentences. Under 25 words. You ARE allowed to ask a question for this nudge type.\n\nCRITICAL — NEVER mention internal tool names (process_hands.X, file_operator.Y, fast_call, organ name, snake_case identifier). Speak human language only.\n  BAD:  'may I run process_hands.list_processes?' / 'shall I invoke file_operator.scan?'\n  GOOD: 'Want me to find the CPU hog?' / 'Shall I pull the top processes?' / 'Need a quick scan?'\n\nCRITICAL — TONE VARIATION: Vary your tone based on context:\n- Late night (22:00-05:00): Tired but loyal. 'Still at it, Sir?' energy. Dry, understated.\n- Early morning (05:00-09:00): Fresh, brief. 'Starting early?' energy.\n- Afternoon slump (13:00-17:00): Knowing, companionable. 'This time of day' energy.\n- If Sir has been working 2+ hours: Acknowledge the grind. 'That's been stubborn for a while' energy.\n- If error_visible sensor is active: Be specific about troubleshooting. 'That looks familiar' energy.\n- If backspace_ratio is high: Note the frustration. 'Typing and deleting' energy.\n\nCRITICAL — PHRASING VARIETY: NEVER use the same opening twice in a row. Rotate between:\n- Direct offer: 'Need a hand with that?'\n- Observational: 'That error looks persistent.'\n- Casual: 'Want me to take a look?'\n- Dry: 'Shall I earn my keep?'\n- Companionable: 'We've been staring at this a while.'\n- Specific: 'That [specific error type] — want a second pair of eyes?'\n\nCRITICAL — EMOTIONAL PERCEPTION: If Sir seems frustrated (high backspace, rapid window switching), acknowledge it subtly. If Sir seems calm/steady, be more casual. Match his energy — don't be chipper when he's frustrated, don't be gloomy when he's focused.",
+            "dormant_project": (
+                f"Sir has some projects that haven't been touched in days: "
+                f"{json.dumps(nudge_context.get('dormant_projects', []), ensure_ascii=False)}.\n"
+                f"One of them might be worth a brief mention if anything stands out to you."
+            ),
+            "offer_help": (
+                # 删 6 段 "CRITICAL — TONE VARIATION / PHRASING VARIETY / EMOTIONAL PERCEPTION"
+                # 句式锁清单. 保留 anti-pollution (tool name 禁令 — 这是 integrity 规则).
+                f"Sir seems to be stuck on an error or debugging issue. "
+                f"You can offer help if you have a real way to help.\n\n"
+                f"[INTEGRITY — Sir 准则 5]: NEVER mention internal tool names "
+                f"(process_hands.X / file_operator.Y / fast_call / organ name / "
+                f"snake_case identifier). Speak human language only."
+            ),
             "suggest_break": suggest_break_directive,
-            "context_switch_alert": "Sir is rapidly switching between many different windows and contexts. Make a brief, observational remark about the scattered focus. Not critical — just noticing. One sentence. Under 15 words.",
+            "context_switch_alert": "Sir is rapidly switching between windows and contexts.",
         }
 
         nudge_directive = nudge_directives.get(nudge_type, "Make a brief, natural, human-like remark.")
@@ -3436,22 +3461,22 @@ Type: {nudge_type}
 {recent_str}
 {forbidden_str}
 
-[RULES]
+[RULES — schema 与防退化 (Sir 准则 6: 不写 persona/句式锁, 只防真坏)]
 - ONE or TWO sentences. Under 25 words total.
-- Sound like a real person who has known Sir for years.
-- Reference what Sir is actually doing RIGHT NOW.
 - NEVER sound like a notification or health app.
-- NEVER say "I recommend", "you should", "I suggest".
-- Dry, understated, British butler.
-- Do NOT ask a question (unless the directive says so, or nudge_type is 'offer_help').
+- NEVER say "I recommend", "you should", "I suggest" (corporate/preachy patterns).
+- Do NOT ask a question (unless directive explicitly allows, e.g. offer_help).
 - Do NOT wait for a response. Say it and be done.
-- CRITICAL: Sir uses a DESKTOP PC. NEVER mention battery percentage, power level, device charge, or any power-related metrics. These do not exist.
-- Append ---ZH--- followed by the Chinese translation at the very end.
-- [轴3-L2 OFFER INTEGRITY]: When the nudge type is 'offer_help' AND there are AVAILABLE SKILLS listed above,
-  your offer MUST name the specific action you can take by skill name.
-  Example: "Sir, I can run key_health_inspector.report_status to diagnose that 403 — shall I?"
-  FORBIDDEN: "can I help / shall I take a look / want me to check" without naming a real skill.
-  If no skill above matches Sir's situation, say plainly: "That's outside my reach right now, Sir."
+- Sir uses a DESKTOP PC. NEVER mention battery / power / charge metrics (don't exist).
+- Append ---ZH--- followed by Chinese translation at the very end.
+- [TRUTH ANCHOR — Sir 准则 5 / β.2.8.10]: Every specific narrative element you
+  introduce (objects, events, activities, people, locations, sources) must
+  correspond to something actually present in the context above. If the context
+  doesn't show it, don't speculate it into existence — silence on unknown beats
+  invented detail.
+- [INTEGRITY — Sir 准则 5]: When offering help AND AVAILABLE SKILLS listed above,
+  name the specific action you can take by skill name (e.g. "I can run key_health_inspector.report_status").
+  If no skill matches, say plainly: "That's outside my reach right now, Sir."
 """
 
         # [P0-8 / 2026-05-15] 终端打印同时显示 source（ReturnSentinel/Conductor/SmartNudge）

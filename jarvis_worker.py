@@ -3051,10 +3051,47 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                             # [P0+18-c.9/c.10 / 2026-05-15] 传 cmd（用户原话）+ Time Hook 已确认信号
                                             if hasattr(self.jarvis, 'commitment_watcher') and self.jarvis.commitment_watcher:
                                                 _is_future_confirmed = bool(_commit_gd.get('is_future_task'))
+                                                # 🩹 [β.2.8.9 / 2026-05-17] L3 Predicate Parser:
+                                                # 检测条件触发模式 → 跑 LLM parser → 成功则走 conditional_reminder
+                                                # 准则 6 (拒绝硬编码): library 自动 dump, 不写场景 mapping.
+                                                _pred_kwargs = {}
+                                                try:
+                                                    from jarvis_predicate_parser import (
+                                                        looks_like_conditional,
+                                                        parse_user_text_to_predicate,
+                                                        make_llm_call_fn,
+                                                    )
+                                                    if looks_like_conditional(cmd):
+                                                        _kr = getattr(self.jarvis, 'key_router', None)
+                                                        if _kr is not None:
+                                                            _llm_fn = make_llm_call_fn(_kr)
+                                                            _parsed = parse_user_text_to_predicate(cmd, _llm_fn)
+                                                            if _parsed and _parsed.get('predicate'):
+                                                                _pred_kwargs = {
+                                                                    'commit_type': 'conditional_reminder',
+                                                                    'predicate': _parsed['predicate'],
+                                                                    'ttl_s': 86400.0,
+                                                                }
+                                                                try:
+                                                                    from jarvis_utils import bg_log as _pp_bg
+                                                                    _pp_bg(
+                                                                        f"✨ [PredicateParser] LLM 解析成功 → "
+                                                                        f"predicate={_parsed['predicate'].describe()[:80]} "
+                                                                        f"action={_parsed.get('action_text', '')[:60]}"
+                                                                    )
+                                                                except Exception:
+                                                                    pass
+                                                except Exception as _pp_e:
+                                                    try:
+                                                        from jarvis_utils import bg_log as _pp_bg
+                                                        _pp_bg(f"⚠️ [PredicateParser] {type(_pp_e).__name__}: {_pp_e}")
+                                                    except Exception:
+                                                        pass
                                                 self.jarvis.commitment_watcher.add_commitment(
                                                     desc, deadline,
                                                     user_text=cmd,
                                                     is_future_task_confirmed=_is_future_confirmed,
+                                                    **_pred_kwargs,
                                                 )
                                             # [R6/B1] 承诺也 publish 到事件总线
                                             try:
