@@ -1367,45 +1367,18 @@ Then proceed with the rest of your response normally.
 
         # 🩹 [P0+20-β.2.7.1 / 2026-05-17] 灵魂通用化 Phase 1：mode='nudge'
         # 详 docs/JARVIS_SOUL_UNIVERSALIZATION.md Phase 1。
-        # 让 SmartNudge / Conductor / CommitmentWatcher 等所有"主动发声"路径
-        # 走过 Layer 0-3 注入。通过复用 chat_bypass._build_public_layers
-        # （它含 BEHAVIORAL DIRECTIVES / TIME CONTEXT / EMOTION 等关键段），
-        # 把头部 JARVIS_CORE_PERSONA 替换成本函数构造的 core_persona（含 Layer 0-3）。
-        # stream_nudge 把它当 public_layers 用，[CURRENT CONTEXT]/[NUDGE]/[RULES] 段保持不变。
+        # 核心逻辑抽到 _build_nudge_prompt helper，方便 unit test 独立调用。
         if mode == "nudge":
-            cb = getattr(self, 'chat_bypass', None)
-            if cb is None:
-                # 退化：Sir 还没 wire chat_bypass 时直接返回 core_persona
-                return core_persona
-            try:
-                public_str = cb._build_public_layers(ledger_data)
-                # _build_public_layers 现在第一行就是 JARVIS_CORE_PERSONA 静态常量。
-                # 替换成 core_persona（含 Layer 0-3）让灵魂注入 visible 给 nudge 主脑。
-                _JCP_const = JARVIS_CORE_PERSONA
-                if public_str.startswith(_JCP_const):
-                    public_str = core_persona + public_str[len(_JCP_const):]
-                else:
-                    # 兼容：如果 _build_public_layers 改了头部结构，前置 core_persona
-                    public_str = core_persona + "\n\n" + public_str
-                try:
-                    from jarvis_utils import bg_log as _bg_n
-                    _bg_n(
-                        f"🪞 [Nudge SOUL inject] mode=nudge "
-                        f"prompt_len={len(public_str)}c L0={len(self_anchor_block)}c "
-                        f"L1={len(soul_block)}c L2={len(relational_block)}c "
-                        f"L3={len(attention_block)}c"
-                    )
-                except Exception:
-                    pass
-                return public_str
-            except Exception as _nudge_asm_err:
-                try:
-                    from jarvis_utils import bg_log as _bg_nerr
-                    _bg_nerr(f"⚠️ [Nudge SOUL inject] fallback: {type(_nudge_asm_err).__name__}: {str(_nudge_asm_err)[:80]}")
-                except Exception:
-                    pass
-                # 失败兜底：直接返回 core_persona，至少灵魂注入到了
-                return core_persona
+            return self._build_nudge_prompt(
+                core_persona=core_persona,
+                ledger_data=ledger_data,
+                _diag_sizes={
+                    'L0': len(self_anchor_block),
+                    'L1': len(soul_block),
+                    'L2': len(relational_block),
+                    'L3': len(attention_block),
+                },
+            )
 
         if mode == "mail":
             # [P0+18-c.2 / 2026-05-15] 修 Sir 主诉 BUG：reminder 触发后反问"要不要设倒计时"
@@ -1954,6 +1927,56 @@ User: {user_input}
             return "EVENING: Wind-down period. You may be slightly more conversational. Dry wit is more welcome now."
         else:
             return "LATE NIGHT: It is past midnight. Keep responses EXTREMELY brief — one or two sentences max. Do NOT be chatty."
+
+    def _build_nudge_prompt(self, core_persona: str, ledger_data: dict = None,
+                             _diag_sizes: dict = None) -> str:
+        """[P0+20-β.2.7.1 / 2026-05-17] 灵魂通用化 Phase 1 helper。
+
+        让 SmartNudge / Conductor / CommitmentWatcher 等所有"主动发声"路径的 prompt
+        包含 Layer 0-3 注入。通过复用 chat_bypass._build_public_layers
+        （它含 BEHAVIORAL DIRECTIVES / TIME CONTEXT / EMOTION 等关键段），
+        把头部 JARVIS_CORE_PERSONA 替换成本调用上游构造的 core_persona（含 Layer 0-3）。
+
+        Args:
+            core_persona: 已含 Layer 0-3 注入的 PERSONA 串（_assemble_prompt 顶部构造）
+            ledger_data: 透传给 _build_public_layers 的情绪 ledger
+            _diag_sizes: 诊断 log 用的 L0-L3 字符数 dict
+
+        Returns:
+            完整的 nudge public_layers 字符串。失败时退化返回 core_persona。
+        """
+        cb = getattr(self, 'chat_bypass', None)
+        if cb is None:
+            return core_persona
+        try:
+            public_str = cb._build_public_layers(ledger_data)
+            _JCP_const = JARVIS_CORE_PERSONA
+            if public_str.startswith(_JCP_const):
+                public_str = core_persona + public_str[len(_JCP_const):]
+            else:
+                public_str = core_persona + "\n\n" + public_str
+            try:
+                from jarvis_utils import bg_log as _bg_n
+                _ds = _diag_sizes or {}
+                _bg_n(
+                    f"🪞 [Nudge SOUL inject] mode=nudge "
+                    f"prompt_len={len(public_str)}c "
+                    f"L0={_ds.get('L0', 0)}c L1={_ds.get('L1', 0)}c "
+                    f"L2={_ds.get('L2', 0)}c L3={_ds.get('L3', 0)}c"
+                )
+            except Exception:
+                pass
+            return public_str
+        except Exception as _nudge_err:
+            try:
+                from jarvis_utils import bg_log as _bg_nerr
+                _bg_nerr(
+                    f"⚠️ [Nudge SOUL inject] fallback: "
+                    f"{type(_nudge_err).__name__}: {str(_nudge_err)[:80]}"
+                )
+            except Exception:
+                pass
+            return core_persona
 
     def _init_soul_router(self):
         import json, os

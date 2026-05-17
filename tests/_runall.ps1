@@ -107,7 +107,8 @@ $tests = @(
     "_test_p0_plus_20_beta2_worker_jarvis_resolve",
     "_test_p0_plus_20_beta2_5_hotfix",
     "_test_p0_plus_20_beta2_soul_reflector",
-    "_test_p0_plus_20_beta2_soul_evaluator"
+    "_test_p0_plus_20_beta2_soul_evaluator",
+    "_test_p0_plus_20_beta271_nudge_soul_inject"
 )
 
 foreach ($t in $tests) {
