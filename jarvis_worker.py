@@ -2575,6 +2575,20 @@ Rules:
 2. 'memory_type': Categorize strictly as "CHAT", "TASK", or "REMINDER".
 3. 'entities': Extract precise subjects, locations, and context. Use "none" if absent.
 4. [CRITICAL] 'is_future_task': MUST be false by default! Only set to true if the user uses EXPLICIT imperative scheduling language such as: "remind me at...", "set an alarm for...", "schedule...", "at X o'clock remind me...", "wake me up at...". Statements about future plans (e.g. "I will go tomorrow", "I want to learn driving") are NOT future tasks. Questions about future events are NOT future tasks. When in doubt, set to false.
+4a. 🩹 [β.2.7.9 / 2026-05-17] [HARD REJECT — 词义纠正/澄清绝对不是 future_task]:
+    Sir 实测 BUG: "Iron Man homecoming reference" 类闲聊词义纠正被误注册为 reminder ID:957 →
+    19:21 误 fire "Sir, it is time for the Homecoming reference"。
+    Setting is_future_task=true ONLY when ALL of these hold:
+    (a) Sir's utterance contains an explicit verb-noun action AND a future time anchor
+    (b) The utterance is NOT a clarification/correction/word-definition exchange.
+    HARD REJECT future_task=true if utterance contains any of:
+    - "不是 X 是 Y" / "X 不对应该是 Y" / "X is not / I meant Y" — 这是词义纠正
+    - "你说错了" / "记错了" / "wrong" / "incorrect" — 这是修正
+    - "什么是 X" / "X 是什么意思" / "what does X mean" — 这是问定义
+    - "其实是" / "actually it's" / "在指" — 这是澄清
+    - "I'm referring to" / "我指的是" — 这是消歧
+    - Topic 是已知概念引用 ('Iron Man', 'Marvel', 'movie scene', '电影', '梗')
+      而非具体待办动作 ('喝水', '取快递', '吃药', '开会')
 5. 'trigger_time_str': If is_future_task is true, calculate the EXACT target time in 'YYYY-MM-DD HH:MM:00' format based on Current System Time. Otherwise leave empty.
 5a. [TIME-OF-DAY CONTEXT — CRITICAL] When the user says an ambiguous small number (e.g. "两点" / "two o'clock" / "三点" / "five"):
     [STEP 1 — Action verb takes precedence over hour-of-day default]:
@@ -3213,6 +3227,36 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                                 goal="",
                                                                 new_summary=f"[用户纠正] 原: {old_val} → 新: {new_val}"
                                                             )
+                                                            # 🩹 [β.2.7.9 / 2026-05-17] P0-B: 治"Iron Man homecoming reference"
+                                                            # 误 fire BUG. 如果被修正的 mem 原本是 future_task (is_future_task=1
+                                                            # + trigger_time>0), 检查 new_val 是否是"词义纠正" (含 "不是"/"应该是"/
+                                                            # "is not"/"actually") → 是的话 deactivate (is_future_task=0,
+                                                            # trigger_time=0), 否则 reminder 会照旧 fire 出幻觉式提醒。
+                                                            try:
+                                                                _is_future_orig = bool(mem.get('is_future_task'))
+                                                                if _is_future_orig:
+                                                                    import re as _re_dq
+                                                                    _NEW_VAL_IS_CORRECTION = bool(_re_dq.search(
+                                                                        r'不是|应该是|是\s|实际(是|上)|actually|"|nothomes|'
+                                                                        r'is\s+not|i\s+meant|i\s+said|应改|更正|纠正',
+                                                                        new_val, _re_dq.IGNORECASE
+                                                                    ))
+                                                                    if _NEW_VAL_IS_CORRECTION:
+                                                                        # deactivate trigger
+                                                                        conn = self.jarvis.hippocampus._get_conn()
+                                                                        cur = conn.cursor()
+                                                                        cur.execute(
+                                                                            "UPDATE TaskMemories SET is_future_task=0, trigger_time=0 "
+                                                                            "WHERE id = ?", (mem_id,)
+                                                                        )
+                                                                        conn.commit()
+                                                                        try:
+                                                                            from jarvis_utils import bg_log as _r_bg
+                                                                            _r_bg(f"🚫 [Memory Correction] reminder ID:{mem_id} 被识为词义纠正 → deactivate (is_future_task=0)")
+                                                                        except Exception:
+                                                                            pass
+                                                            except Exception:
+                                                                pass
                                                             try:
                                                                 from jarvis_utils import bg_log
                                                                 bg_log(f" └─ ✅ 已修正记忆 ID:{mem_id}")
