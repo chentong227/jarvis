@@ -253,9 +253,9 @@ class ChatBypass:
         self._local_utterance_timer = None
         self._local_utterance_in_progress = False
         
-        threading.Thread(target=self._render_worker, daemon=True).start()
-        threading.Thread(target=self._play_worker, daemon=True).start()  # 👈 把体力工人请回来
-        threading.Thread(target=self._translate_worker, daemon=True).start()
+        threading.Thread(target=self._render_worker, daemon=True, name='TTS-Render').start()
+        threading.Thread(target=self._play_worker, daemon=True, name='TTS-Play').start()
+        threading.Thread(target=self._translate_worker, daemon=True, name='TTS-Translate').start()
 
     # [R7-β2 v5/Sir-2026-05-14] _generate_backchannel_pcm 已删除（与 play_acknowledgment_chime 重复）。
 
@@ -2041,7 +2041,7 @@ Spoken English:"""
                             print(f"║ ", end="", flush=True) 
                             self._has_routed_this_turn = True
                             if route_callback:
-                                threading.Thread(target=route_callback, daemon=True).start()
+                                threading.Thread(target=route_callback, daemon=True, name='RouteCallback').start()
                                 
                         if "<REQUEST_PHYSICAL>" in full_text and not self._has_routed_this_turn:
                             print(f"\n║ ⚠️[System] 检测到深度物理请求，等待人工确认...")
@@ -3241,29 +3241,15 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             "afternoon": "It's the afternoon slump hours. Make a brief, knowing remark. 'I know this time of day' energy.",
             "flow_end": "Sir just finished a coding session and switched to something else. Acknowledge the good session positively, without being cheesy.",
             "return_greeting": (
-                # 🩹 [β.2.8.7 / 2026-05-17] Sir 23:40 反馈: "还是模板感". 删句式锁
-                # ('languid drawn-out / Sir~ tilde / ellipsis') — Soul 层灌入再多
-                # 也压不过 directive 硬约束. 改为只给 evidence + 强制 reference 真实 fact.
-                f"Sir just returned after being away for {nudge_context.get('afk_minutes', 'a while')} minutes.\n"
-                f"\n[REQUIRED — REFERENCE ONE CONCRETE FACT from the lists above]:\n"
-                f"  - the active window title (what app/file Sir is in right now), OR\n"
-                f"  - the last STM topic Sir was working on, OR\n"
-                f"  - a pending commitment / unfinished thread that just surfaced.\n"
-                f"DO NOT pick a generic activity ('working') — name the actual thing.\n"
-                f"\n[FORBIDDEN OPENINGS — DO NOT START WITH ANY OF THESE]:\n"
-                f"  - 'Welcome back, Sir' / 'Welcome back' / 'Hello again' / 'Hi Sir'\n"
-                f"  - '回来了' / '欢迎回来' / '您回来了' / '先生回来了'\n"
-                f"  - 'Yes, Sir' / 'Of course, Sir'\n"
-                f"Skip the greeting word entirely — go straight to acknowledging the concrete fact.\n"
-                f"\n[STYLE]:\n"
-                f"  - ≤ 14 English words + ZH translation. Short.\n"
-                f"  - Sound like a colleague glancing over, not a hotel doorman.\n"
-                f"  - No interrogative ('how can I help' / 'what would you like') — STATEMENT only.\n"
-                f"  - If irony or wit naturally fits the concrete fact, mild humor; else direct.\n"
-                f"\n[GOOD examples — for inspiration only, never copy verbatim]:\n"
-                f"  - 'That PowerShell loop must've burned a hole through the screen by now.'\n"
-                f"  - '那个 commit 看来你已经动手了, Cursor 还没 staged.'\n"
-                f"  - '邮件第三遍打开了, 还在拿不定主意?'"
+                # 🩹 [β.2.8.8 / 2026-05-17] Sir 风格方案 A — 只告事实, 不教怎么说.
+                # 撤前一版 (forbidden / required / good examples 全删).
+                # 信任 [PHYSICAL CONTEXT] + [RECENT MEMORY] + [SOUL TO USE] + L0-L3 Soul
+                # 注入. 主脑结合 context 自己产话. 如果还模板感, Sir 会再说.
+                f"Sir just returned to his computer (was away for "
+                f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n"
+                f"Greet him however feels right — you have his current window, "
+                f"recent activity, and your sense of him from the context above. "
+                f"Speak in your own voice."
             ),
             "commitment_check": (
                 f"Sir said he would {nudge_context.get('commitment_description', 'rest')} "
