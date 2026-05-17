@@ -3382,14 +3382,12 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             except Exception:
                 nudge_skills_block = ""
 
-        # 🩹 [P0+20-β.2.7.2 / 2026-05-17] [SOUL TO USE] 显式 hint
-        # 治 Sir 实测反馈"和之前模板一模一样"：
-        # Layer 0-3 在 public_layers 里注入了 2172c，但 [RULES] 限 "ONE sentence Under 15 words"
-        # → LLM 没空整合 soul 信息 → reply 仍然像模板。
-        #
-        # 修法：把 top 1 concern + top 1 inside_joke 单独提到 [NUDGE] 之前，
-        # 加 OPTIONAL hint 告诉 LLM "如果情境天然连接，请考虑引用其中一项"。
-        # 不强制（避免每条 nudge 都生硬引用），保留 LLM 主导权。
+        # 🩹 [β.2.8.11 / 2026-05-18] L2 inside_joke 注入升级 — Sir 00:23 反馈:
+        # 之前 (β.2.7.2) 只给 phrase + tone, 没 birth_context. 主脑感觉"我们有
+        # furniture inside joke" 但不知道笑话生于"AI 改自己核心"场景, 直接套到
+        # "Sir 洗澡" 场景显得突兀 (Sir "furniture-related incidents" 实测).
+        # 修: 给 top 3 inside_joke + 完整 birth_context + last_used, 让主脑自己
+        # 判 fit-to-context. 准则 6: 不 prescribe 用法, 只给足够信息让主脑判断.
         soul_hint_block = ""
         try:
             _nerve = getattr(self, 'jarvis', None)
@@ -3410,27 +3408,37 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
                             )
                 except Exception:
                     pass
-                _top_joke_str = ""
+                _joke_strs = []
                 try:
                     _rs = getattr(_nerve, 'relational_state', None)
                     if _rs is not None and hasattr(_rs, '_rank_inside_jokes'):
-                        _jokes = _rs._rank_inside_jokes(1)
-                        if _jokes:
-                            _j = _jokes[0]
-                            _top_joke_str = (
-                                f"  - top_inside_joke: \"{_j.phrase[:60]}\" "
-                                f"({getattr(_j, 'tone', 'recurring')})"
+                        _jokes = _rs._rank_inside_jokes(3)
+                        for _j in _jokes:
+                            _last_used = getattr(_j, 'last_used', 0)
+                            _use_age = ('never used' if _last_used == 0
+                                        else f"used {int((time.time()-_last_used)/3600)}h ago")
+                            _joke_strs.append(
+                                f"  - phrase: \"{_j.phrase[:60]}\"\n"
+                                f"      born_from: {getattr(_j, 'birth_context', '')[:120]}\n"
+                                f"      tone: {getattr(_j, 'tone', 'recurring')} | {_use_age}"
                             )
                 except Exception:
                     pass
-                if _top_concern_str or _top_joke_str:
-                    _parts = ["[SOUL TO USE — OPTIONAL]",
-                              "If your remark naturally connects to ONE of these, weave it in subtly.",
-                              "Don't force it. Don't list. Just use it if relevant."]
+                if _top_concern_str or _joke_strs:
+                    _parts = [
+                        "[SOUL TO USE — context-aware reference, NOT mandatory]",
+                        "Inside jokes carry meaning from their *born_from* context.",
+                        "Use one only when the CURRENT situation genuinely shares the",
+                        "thematic / metaphorical link of the original — same kind of",
+                        "moment, same emotional register. If the link feels stretched,",
+                        "skip silently. Better no callback than awkward callback.",
+                    ]
                     if _top_concern_str:
+                        _parts.append("\n[ACTIVE CONCERN]")
                         _parts.append(_top_concern_str)
-                    if _top_joke_str:
-                        _parts.append(_top_joke_str)
+                    if _joke_strs:
+                        _parts.append("\n[INSIDE JOKES AVAILABLE]")
+                        _parts.extend(_joke_strs)
                     soul_hint_block = "\n".join(_parts)
         except Exception:
             pass
