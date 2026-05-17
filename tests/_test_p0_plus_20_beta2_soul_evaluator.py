@@ -465,6 +465,14 @@ class TestBgLogDiagMarkers(unittest.TestCase):
             self.assertFalse(_bg_log_should_hide(kept_msg),
                              f"不应 hide: {kept_msg}")
 
+    def test_timing_marker_kept_visible(self):
+        """[β.2.7.6] 新精炼 [Timing] marker 必须打终端 (Sir 在意回复时间)"""
+        from jarvis_utils import _bg_log_should_hide
+        self.assertFalse(_bg_log_should_hide('⏱️ [Timing] TTFT 3.2s | stream 4.7s | full 9.5s'))
+        # 旧的细 [Pipeline Timer] 都该 hide
+        self.assertTrue(_bg_log_should_hide('⏱️ [Pipeline Timer] Full pipeline: 9.5s'))
+        self.assertTrue(_bg_log_should_hide('⏱️ [Pipeline] First token: 4.0s'))
+
     def test_verbose_mode_disables_hiding(self):
         """JARVIS_VERBOSE_BG=1 时全部回归显示"""
         from jarvis_utils import _bg_log_should_hide

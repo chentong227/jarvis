@@ -1787,6 +1787,11 @@ Spoken English:"""
                             first_chunk = _future.result(timeout=25.0)
                             _exec.shutdown(wait=False)
                             _t_first_chunk = time.time()
+                            # 🩹 [β.2.7.6 / 2026-05-17] 暂存 TTFT 供精炼 timing log
+                            try:
+                                self._last_ttft_s = _t_first_chunk - _t_api_start
+                            except Exception:
+                                pass
                             try:
                                 from jarvis_utils import bg_log
                                 bg_log(f"⏱️ [Pipeline Timer] 首Token到达(TTFT): {_t_first_chunk - _t_api_start:.1f}s (连接{_t_api_connected - _t_api_start:.1f}s + 等待{_t_first_chunk - _t_api_connected:.1f}s)")
@@ -2998,6 +3003,16 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             bg_log(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)")
         except Exception:
             print(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)", file=sys.stderr)
+        # 🩹 [β.2.7.6 / 2026-05-17] 暂存 timing 供 jarvis_worker 打精炼版终端 log
+        try:
+            self._last_stream_timing = {
+                'stream_total_s': _t_total,
+                'screenshot_s': max(0, _t_ss_done - _t_ss_start),
+                'stream_only_s': _t_total - (_t_ss_done - _t_ss_start),
+                'ttft_s': getattr(self, '_last_ttft_s', None),
+            }
+        except Exception:
+            pass
         return False, final_reply
 
     def _build_public_layers(self, ledger_data=None):

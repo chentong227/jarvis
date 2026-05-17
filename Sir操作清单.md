@@ -99,6 +99,42 @@ python scripts\concerns_dump.py
 
 ---
 
+## 终端打印 — 现在看到什么 / 不看到什么
+
+**β.2.7.6** 起，所有诊断类后台 log 默认只写日志不打终端。Sir 看到的只剩重要的。
+
+| 打终端 ✅ | 只在日志 ❌ |
+|---|---|
+| ⏱️ [Timing] TTFT 3.2s \| stream 4.7s \| full 9.5s | 详细 [Pipeline Timer] / [Perf Diag] / [Asm Diag] |
+| 💤 [System Standby] / 🧠 [State] 状态切换 | 🪞 [SOUL inject] 字符数 / [Tone] / [Screenshot] |
+| 📝 [CommitmentWatcher] 真注册 | 🎯 [Evaluator] helped=yes (DirectiveEvaluator 后台评分) |
+| 📌 [SelfPromise] 真注册 | 🪞 [SoulEvaluator] alignment 每轮评分 |
+| 🛡️ [Shield TRIGGER] 真触发 | ⏸️ [SmartNudge/Skip] 各种诊断 |
+| ⚠️ / ❌ 错误警告 | 🔇 [BrowserDucking] 静音事件 |
+| 💾 [System] 记忆封存 | 🎚️ [Prompt Tier] / 🧭 [L2 inject] |
+| 🪞 [SelfAnchor] / 🌱 [ConcernsLedger] startup | 🔬 [Perf Diag] 各类 |
+
+**想看全部诊断**（debug 用）：
+```powershell
+$env:JARVIS_VERBOSE_BG = "1"   # 关闭黑名单
+.\start_jarvis.ps1
+```
+
+## Directive 调优 — 你不用动
+
+`memory_pool/directive_registry.json` 记录 14 条 directive 的累计 `fired/helped/rejected` 统计。
+我每隔一段会跑 `python scripts/registry_dump.py` 看，发现规律性问题再优化。
+
+你不用看，但好奇时可以：
+```powershell
+python scripts\registry_dump.py
+```
+
+会列每条 directive 的命中/有效/被拒次数。比如：
+- `bilingual_directive  fired=42, helped=40, rejected=2` ✅ 健康
+- `future_tense_check   fired=0` 长期 0 → 触发太严，可放宽
+- `xxx_directive        fired=10, helped=2, rejected_rate=60%` → directive 没用，可撤
+
 ## Jarvis 出问题时
 
 ### 没声音

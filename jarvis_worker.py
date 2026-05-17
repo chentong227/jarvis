@@ -2714,16 +2714,20 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
   }}
 ]"""
                             
+                            # 🩹 [β.2.7.5 / 2026-05-17] 升 Gatekeeper flash-lite → flash-preview
+                            # 治 Sir 实测："我大概1点05分睡" 被 lite 判 vague → 漏注册 commitment
+                            # flash-preview 推理强 + 仍是 flash 系列，延迟接近 (~+0.5s)
+                            # 月成本 ~$0.6 → ~$2.0 (Sir 已同意 ~$3/月升级预算)
                             def _gate_call(client):
                                 return client.models.generate_content(
-                                    model='gemini-3.1-flash-lite',
+                                    model='gemini-3-flash-preview',
                                     contents=gate_prompt
                                 )
                             
                             gate_res, _gate_key_name, _gate_client = safe_gemini_call(
-                                self.jarvis.key_router, KeyRouter.CALLER_GATEKEEPER, 'flash_lite',
+                                self.jarvis.key_router, KeyRouter.CALLER_GATEKEEPER, 'flash',
                                 _gate_call, max_retries=2, base_delay=1.0,
-                                model_name='gemini-3.1-flash-lite', contents_text=gate_prompt
+                                model_name='gemini-3-flash-preview', contents_text=gate_prompt
                             )
                             self.jarvis.key_router.release(_gate_key_name)
                                 
@@ -3662,6 +3666,26 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                     bg_log(f"⏱️ [Pipeline Timer] Full pipeline: {_t_llm_done - _t_pipeline_start:.1f}s")
                 except Exception:
                     print(f"⏱️ [Pipeline Timer] Full pipeline: {_t_llm_done - _t_pipeline_start:.1f}s", file=sys.stderr)
+                # 🩹 [β.2.7.6 / 2026-05-17] 精炼 timing 终端单行 (Sir 在意但要简化)
+                # 这条 [Timing] marker 不在黑名单 → 打终端
+                try:
+                    from jarvis_utils import bg_log as _bg_t
+                    _full_s = _t_llm_done - _t_pipeline_start
+                    _cb_timing = getattr(self.chat_bypass, '_last_stream_timing', {}) or {}
+                    _ttft = _cb_timing.get('ttft_s')
+                    _stream = _cb_timing.get('stream_total_s')
+                    _ss = _cb_timing.get('screenshot_s')
+                    _parts = []
+                    if _ttft is not None:
+                        _parts.append(f"TTFT {_ttft:.1f}s")
+                    if _stream is not None:
+                        _parts.append(f"stream {_stream:.1f}s")
+                    _parts.append(f"full {_full_s:.1f}s")
+                    if _ss is not None and _ss > 0.05:
+                        _parts.append(f"截图 {_ss:.1f}s")
+                    _bg_t(f"⏱️ [Timing] " + " | ".join(_parts))
+                except Exception:
+                    pass
 
                 # 🧬 [P0+20-W.2 / 2026-05-16] 该轮收尾：清 turn_id（保留 session_id）
                 # 之后的后台 daemon 日志不再带本轮 turn_id 前缀，避免误归因
