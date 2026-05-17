@@ -6,9 +6,10 @@ WeeklyReflector propose 队列）。
 
 用法：
     python scripts/concerns_dump.py                          # 默认 ASCII 表
-    python scripts/concerns_dump.py --review                 # 列 WeeklyReflector 提名待审
-    python scripts/concerns_dump.py --activate <id>          # Sir 通过
-    python scripts/concerns_dump.py --reject   <id>          # Sir 拒绝（→ archived）
+    python scripts/concerns_dump.py --review                 # 交互式审核（推荐，输 1/2/3/4）
+    python scripts/concerns_dump.py --review --no-interactive # 只打印列表
+    python scripts/concerns_dump.py --activate <id>          # 直接通过（脚本用）
+    python scripts/concerns_dump.py --reject   <id>          # 直接拒绝
     python scripts/concerns_dump.py --snooze   <id> --hours 24  # 暂停 24h
     python scripts/concerns_dump.py --json                   # 机读 JSON
     python scripts/concerns_dump.py --decay                  # 强制 apply_decay
@@ -61,27 +62,100 @@ def _print_table(ledger: ConcernsLedger) -> None:
     print(ledger.dump_human())
 
 
-def _print_review(ledger: ConcernsLedger) -> None:
+def _print_review(ledger: ConcernsLedger, interactive: bool = True) -> None:
+    """🩹 [β.2.7.4 / 2026-05-17] Sir 反馈"CLI 太复杂"→默认进交互模式，按数字操作。
+
+    interactive=True 时：列出每条 → Sir 输入 1/2/3/4 拍板
+    interactive=False 时：只打印列表，给 --no-interactive 使用
+    """
     review = ledger.list_review()
     if not review:
         print("[REVIEW QUEUE] 空（WeeklyReflector 尚未 propose 新 concerns / Sir 已全部拍板）")
         print("  Tip: WeeklyReflector 默认 7 天 LLM 反思一次。强制立刻跑：")
         print("    python scripts/concerns_dump.py --reflect-now")
         return
+
+    if not interactive:
+        print("=" * 80)
+        print(f"[REVIEW QUEUE] {len(review)} concerns 等 Sir 拍板")
+        print("=" * 80)
+        for c in review:
+            print(f"  id          : {c.id}")
+            print(f"  what_i_watch: {c.what_i_watch}")
+            print(f"  why_i_care  : {c.why_i_care}")
+            print(f"  severity    : {c.severity:.2f}")
+            print(f"  source      : {c.source} ({c.source_marker})")
+            print(f"  created_at  : {time.strftime('%Y-%m-%d %H:%M', time.localtime(c.created_at))}")
+            print()
+        print("Sir 操作：")
+        print("  python scripts/concerns_dump.py --activate <id>   # 通过")
+        print("  python scripts/concerns_dump.py --reject   <id>   # 拒绝")
+        return
+
+    # 交互模式
     print("=" * 80)
-    print(f"[REVIEW QUEUE] {len(review)} concerns 等 Sir 拍板")
+    print(f"[REVIEW QUEUE] {len(review)} 条 Jarvis 提议等你拍板")
     print("=" * 80)
-    for c in review:
-        print(f"  id          : {c.id}")
-        print(f"  what_i_watch: {c.what_i_watch}")
-        print(f"  why_i_care  : {c.why_i_care}")
-        print(f"  severity    : {c.severity:.2f}")
-        print(f"  source      : {c.source} ({c.source_marker})")
-        print(f"  created_at  : {time.strftime('%Y-%m-%d %H:%M', time.localtime(c.created_at))}")
+    print("每条问 4 个选项: 1=通过(activate) / 2=拒绝(archive) / 3=暂缓24h(snooze) / 4=跳过")
+    print("回车 = 跳过 / 输 q 立即退出")
+    print()
+
+    decisions = {'activate': [], 'reject': [], 'snooze': [], 'skip': []}
+    for idx, c in enumerate(review, 1):
+        print("-" * 80)
+        print(f"[{idx}/{len(review)}]  {c.id}  (severity {c.severity:.2f})")
+        print(f"  关心啥：  {c.what_i_watch}")
+        print(f"  为啥关心：{c.why_i_care}")
+        print(f"  来源：    {c.source} ({c.source_marker})")
+        print(f"  创建时间：{time.strftime('%Y-%m-%d %H:%M', time.localtime(c.created_at))}")
         print()
-    print("Sir 操作：")
-    print("  python scripts/concerns_dump.py --activate <id>   # 通过")
-    print("  python scripts/concerns_dump.py --reject   <id>   # 拒绝")
+        while True:
+            try:
+                ans = input("  你的决定 [1=通过 / 2=拒绝 / 3=暂缓 / 4=跳过 / q=退出]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n[退出]")
+                _persist_interactive_result(ledger, decisions)
+                return
+            if ans in ('q', 'quit', 'exit'):
+                _persist_interactive_result(ledger, decisions)
+                print("[退出]")
+                return
+            if ans == '1' or ans in ('y', 'yes', '通过'):
+                decisions['activate'].append(c.id)
+                ledger.activate(c.id)
+                print(f"  ✅ 通过 → '{c.id}' 转入 active\n")
+                break
+            elif ans == '2' or ans in ('n', 'no', '拒绝'):
+                decisions['reject'].append(c.id)
+                ledger.reject(c.id)
+                print(f"  ❌ 拒绝 → '{c.id}' 归档\n")
+                break
+            elif ans == '3' or ans in ('s', 'snooze', '暂缓'):
+                decisions['snooze'].append(c.id)
+                ledger.snooze(c.id, hours=24.0)
+                print(f"  ⏸️ 暂缓 24h → '{c.id}'\n")
+                break
+            elif ans == '4' or ans == '' or ans in ('skip', '跳过'):
+                decisions['skip'].append(c.id)
+                print(f"  ⏭️ 跳过 → '{c.id}' 保持 review，下次再问\n")
+                break
+            else:
+                print(f"  无效输入 '{ans}'，请输 1/2/3/4 或 q")
+
+    _persist_interactive_result(ledger, decisions)
+
+
+def _persist_interactive_result(ledger: ConcernsLedger, decisions: dict) -> None:
+    """交互结束后持久化 + 打总结。"""
+    ledger.persist()
+    ledger.write_review_queue()
+    print("=" * 80)
+    print("[本次总结]")
+    print(f"  ✅ 通过 {len(decisions['activate'])}: {decisions['activate']}")
+    print(f"  ❌ 拒绝 {len(decisions['reject'])}: {decisions['reject']}")
+    print(f"  ⏸️ 暂缓 {len(decisions['snooze'])}: {decisions['snooze']}")
+    print(f"  ⏭️ 跳过 {len(decisions['skip'])}: {decisions['skip']}")
+    print("=" * 80)
 
 
 def _activate(ledger: ConcernsLedger, cid: str) -> int:
@@ -211,7 +285,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--review', action='store_true',
-                        help='列 WeeklyReflector 提名待审 (state=review)')
+                        help='列 WeeklyReflector 提名待审 (state=review) — 默认进交互模式')
+    parser.add_argument('--no-interactive', action='store_true',
+                        help='--review 时不进交互，只打印列表')
     parser.add_argument('--activate', metavar='CONCERN_ID',
                         help='把指定 concern 转 active（Sir 通过）')
     parser.add_argument('--reject', metavar='CONCERN_ID',
@@ -237,7 +313,7 @@ def main():
     if args.snooze:
         return _snooze(ledger, args.snooze, args.hours)
     if args.review:
-        _print_review(ledger)
+        _print_review(ledger, interactive=(not args.no_interactive))
         return 0
     if args.decay:
         _force_decay(ledger)
