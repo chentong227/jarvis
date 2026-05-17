@@ -93,6 +93,110 @@ class CareEvidence:
 
 
 # ============================================================
+# CareConcernSensor — 从 sensor 派生 signal 喂给 concern (β-2.5)
+# ============================================================
+
+class CareConcernSensor:
+    """从 PhysicalEnvironmentProbe / KeyRouter / Hippocampus 等 sensor 派生 signal
+    自动喂给 ConcernsLedger. 让"主动关心"不依赖 Sir 主动开口才知道.
+
+    rule: 每 tick 跑一次, 命中 → ledger.record_signal(cid, what, severity_delta).
+    severity_delta 故意小 (0.02-0.05) 让长期累积而非单 tick 暴涨.
+    """
+
+    def __init__(self, ledger, nerve=None):
+        self.ledger = ledger
+        self.nerve = nerve
+        # 防同一条信号重复刷 (e.g. coding>60min 持续 30min 不应每 tick 都喂)
+        self._recent_signal_cooldown: dict = {}  # (cid, rule_id) → last_ts
+        self._cooldown_sec = 1800.0              # 30min 内同 rule 不重复
+
+    def _can_signal(self, cid: str, rule_id: str) -> bool:
+        key = (cid, rule_id)
+        last = self._recent_signal_cooldown.get(key, 0)
+        if time.time() - last < self._cooldown_sec:
+            return False
+        self._recent_signal_cooldown[key] = time.time()
+        return True
+
+    def tick(self) -> int:
+        """跑所有 rule, 返回新 signal 数."""
+        n = 0
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            snap = P.get_sensor_snapshot() or {}
+        except Exception:
+            snap = {}
+
+        # rule 1: Sir 连续 coding/work > 60min 无 break → hydration + pomodoro
+        try:
+            sess_min = snap.get('session_duration_minutes', 0)
+            cat = snap.get('work_category', '')
+            if sess_min > 60 and cat in ('Coding', 'General', 'Media'):
+                if self._signal('sir_hydration_habit', 'long_session',
+                                  f"{cat} {sess_min:.0f}min without obvious break", 0.03):
+                    n += 1
+                if self._signal('sir_pomodoro_compliance', 'long_session',
+                                  f"{cat} {sess_min:.0f}min — pomodoro overdue", 0.04):
+                    n += 1
+            # 90min 加重
+            if sess_min > 90 and cat == 'Coding':
+                if self._signal('sir_hydration_habit', 'very_long_session',
+                                  f"Coding {sess_min:.0f}min, dehydration risk", 0.05):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 2: 凌晨 1-5 点 + 仍活跃 → sleep_streak
+        try:
+            hour = time.localtime().tm_hour
+            idle_s = snap.get('idle_seconds', 999)
+            if 1 <= hour <= 5 and idle_s < 60:
+                if self._signal('sir_sleep_streak', 'late_night_active',
+                                  f"active at {hour}:00 (idle={idle_s}s)", 0.06):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 3: Sir 高 backspace_ratio (frustration) → 不直接 nudge offer_help
+        # 但喂 hydration / pomodoro signal (frustration 时更可能脱水/无休)
+        try:
+            br = snap.get('backspace_ratio', 0)
+            if br > 0.18:
+                if self._signal('sir_hydration_habit', 'frustration_observed',
+                                  f"high backspace ratio {br:.0%} — possible long debug", 0.02):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 4: KeyRouter dead → jarvis_keyrouter_health
+        try:
+            if self.nerve is not None:
+                kr = getattr(self.nerve, 'key_router', None)
+                if kr is not None:
+                    stats = kr.get_stats() if hasattr(kr, 'get_stats') else {}
+                    ks = stats.get('key_status', {})
+                    dead = sum(1 for info in ks.values() if not info.get('healthy', True))
+                    if dead > 0:
+                        if self._signal('jarvis_keyrouter_health', 'dead_keys',
+                                          f"{dead} dead key(s) observed", 0.05):
+                            n += 1
+        except Exception:
+            pass
+
+        return n
+
+    def _signal(self, concern_id: str, rule_id: str,
+                  what: str, severity_delta: float) -> bool:
+        if not self._can_signal(concern_id, rule_id):
+            return False
+        try:
+            return bool(self.ledger.record_signal(concern_id, what, severity_delta))
+        except Exception:
+            return False
+
+
+# ============================================================
 # CareSignalCollector — urgency 算法
 # ============================================================
 
@@ -571,6 +675,7 @@ class ProactiveCareEngine(threading.Thread):
         self.collector: Optional[CareSignalCollector] = None
         self.guard: Optional[CareWindowGuard] = None
         self.selector: Optional[CareSubjectSelector] = None
+        self.sensor: Optional[CareConcernSensor] = None
         self.synth = CareSpeechSynth()
 
         self.dry_run: bool = os.environ.get('JARVIS_PROACTIVE_CARE_LIVE', '0') != '1'
@@ -639,6 +744,8 @@ class ProactiveCareEngine(threading.Thread):
             self.guard = CareWindowGuard(self.worker, self.nerve)
         if self.selector is None:
             self.selector = CareSubjectSelector(self.ledger, self.l2_store, self.nerve)
+        if self.sensor is None:
+            self.sensor = CareConcernSensor(self.ledger, self.nerve)
         return True
 
     def _tick(self) -> None:
@@ -648,6 +755,15 @@ class ProactiveCareEngine(threading.Thread):
         # 1. warm-up
         if now_ts - self.start_ts < WARMUP_SECONDS:
             return
+
+        # 1.5. [β-2.5] 跑 sensor → 让 sensor 派生 signal 喂给 concern
+        # 不依赖 Sir 主动开口才知道关心啥
+        try:
+            n_signals = self.sensor.tick()
+            if n_signals > 0:
+                bg_log(f"📡 [ProactiveCare/Sensor] tick fed {n_signals} signal(s)")
+        except Exception as _sens_e:
+            bg_log(f"⚠️ [ProactiveCare/Sensor] tick err: {_sens_e}")
 
         # 2. 算 urgency
         with self._state_lock:

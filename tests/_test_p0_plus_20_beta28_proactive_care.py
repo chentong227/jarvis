@@ -548,6 +548,86 @@ class TestBeta2DeepWorkAndL2(unittest.TestCase):
         self.assertNotIn('OUR PROTOCOLS', d)
 
 
+class TestCareConcernSensor(unittest.TestCase):
+    """β-2.5: CareConcernSensor — sensor 自动喂 concern signal"""
+
+    def setUp(self):
+        from jarvis_proactive_care import CareConcernSensor
+        self.ledger = MagicMock()
+        self.ledger.record_signal.return_value = True
+        self.sensor = CareConcernSensor(self.ledger, None)
+
+    def test_long_session_feeds_hydration_and_pomodoro(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 75,
+            'work_category': 'Coding',
+            'idle_seconds': 30,
+            'backspace_ratio': 0.05,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            n = self.sensor.tick()
+        self.assertGreaterEqual(n, 2)
+        cids_called = [c.args[0] for c in self.ledger.record_signal.call_args_list]
+        self.assertIn('sir_hydration_habit', cids_called)
+        self.assertIn('sir_pomodoro_compliance', cids_called)
+
+    def test_very_long_session_extra_hydration_boost(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 100,
+            'work_category': 'Coding',
+            'idle_seconds': 30,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            n = self.sensor.tick()
+        # ≥3: hydration long_session + pomodoro long_session + hydration very_long_session
+        self.assertGreaterEqual(n, 3)
+
+    def test_late_night_feeds_sleep_streak(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 20,
+            'work_category': 'Coding',
+            'idle_seconds': 10,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap), \
+             patch('time.localtime') as mock_lt:
+            mock_lt.return_value = time.struct_time((2026, 5, 17, 3, 0, 0, 0, 0, 0))
+            self.sensor.tick()
+        cids = [c.args[0] for c in self.ledger.record_signal.call_args_list]
+        self.assertIn('sir_sleep_streak', cids)
+
+    def test_cooldown_prevents_double_signal(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 75,
+            'work_category': 'Coding',
+            'idle_seconds': 30,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            n1 = self.sensor.tick()
+            n2 = self.sensor.tick()  # 立刻又 tick 一次
+        self.assertGreaterEqual(n1, 2)
+        self.assertEqual(n2, 0)  # 全在 cooldown
+
+    def test_idle_no_session_no_signal(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 5,
+            'work_category': 'Idle',
+            'idle_seconds': 999,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            n = self.sensor.tick()
+        self.assertEqual(n, 0)
+
+
 class TestDryRunDefault(unittest.TestCase):
     def test_dry_run_default_when_env_unset(self):
         from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine
