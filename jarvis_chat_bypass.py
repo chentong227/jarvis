@@ -3531,6 +3531,13 @@ Type: {nudge_type}
                         else:
                             break
 
+            # 🩹 [P0+20-β.2.7.7 / 2026-05-17] 末尾 buffer flush dedup guard
+            # Sir 实测 return_greeting nudge 字幕重复 2 遍:
+            #   "Welcome back, Sir. I trust the meal was satisfactory.
+            #    Welcome back, Sir. I trust the meal was satisfactory."
+            # 根因可能: (a) LLM 模型复读输出 / (b) 末尾 flush 与上一句 splitter sentence
+            # 内容重叠 → subtitle_queue 双发 → UI 累计渲染。
+            # 防御: 末尾 sentence 含上一句 audio 的全文 → 跳过 (subtitle + audio 都不重发)
             if buffer.strip() and not getattr(self, 'is_interrupted', False):
                 sentence = buffer.strip()
                 if "---ZH---" in sentence:
@@ -3538,8 +3545,22 @@ Type: {nudge_type}
                     sentence = sentence.split("---ZH---")[0]
                 sentence = re.sub(r'<[^>]+>', '', sentence).strip()
                 if sentence and not _zh_seen:
-                    self._put_audio(sentence)
-                    self.subtitle_queue.put(("en", sentence))
+                    _last_audio = (getattr(self, '_last_audio_text', '') or '').strip()
+                    _is_dup = bool(_last_audio) and (
+                        sentence == _last_audio or
+                        sentence == _last_audio.rstrip('.!?。！？') or
+                        # 末尾 sentence 完整包含上一句 (LLM 复读 case)
+                        (len(_last_audio) >= 10 and _last_audio in sentence)
+                    )
+                    if not _is_dup:
+                        self._put_audio(sentence)
+                        self.subtitle_queue.put(("en", sentence))
+                    else:
+                        try:
+                            from jarvis_utils import bg_log
+                            bg_log(f"🔇 [Nudge Dedup] 末尾 flush 与上一句重复 → 跳过: '{sentence[:50]}'")
+                        except Exception:
+                            pass
 
             final_reply = full_text.split("---ZH---")[0].strip()
             

@@ -434,5 +434,73 @@ class TestReflectorSingleton(unittest.TestCase):
         self.assertIsNone(r)
 
 
+# ============================================================
+# [β.2.7.7 / 2026-05-17] STM source 区分 helper
+# 治 reflector 把"视频音/Jarvis 自言自语/系统事件"全当 Sir 说的事 幻觉
+# ============================================================
+class TestStmSourceClassification(unittest.TestCase):
+    """jarvis_utils.classify_stm_source / filter_stm_by_source"""
+
+    def test_classify_user_voice_default(self):
+        """裸 cmd (无 prefix) 默认 user_voice"""
+        from jarvis_utils import classify_stm_source, STM_SOURCE_USER_VOICE
+        self.assertEqual(
+            classify_stm_source({'user': '我累了', 'jarvis': '...'}),
+            STM_SOURCE_USER_VOICE
+        )
+        self.assertEqual(
+            classify_stm_source({'user': '帮我开 cursor'}),
+            STM_SOURCE_USER_VOICE
+        )
+
+    def test_classify_system_event_prefixes(self):
+        from jarvis_utils import classify_stm_source, STM_SOURCE_SYSTEM_EVENT
+        for prefix in ('[System Standby] 退场', '[SYSTEM ALERT] OpenRouter fallback',
+                       '[系统事件] commit_deadline', '[未确认提醒] 12:00 - 喝水'):
+            self.assertEqual(classify_stm_source({'user': prefix}),
+                             STM_SOURCE_SYSTEM_EVENT, f'failed: {prefix}')
+
+    def test_classify_jarvis_self_prefixes(self):
+        from jarvis_utils import classify_stm_source, STM_SOURCE_JARVIS_SELF
+        for prefix in ('[静默轻推] late_night', '[视觉脉冲] return',
+                       '[智能轻推] offer_help', '[Smart Nudge] commit_check'):
+            self.assertEqual(classify_stm_source({'user': prefix}),
+                             STM_SOURCE_JARVIS_SELF, f'failed: {prefix}')
+
+    def test_explicit_source_field_overrides_prefix(self):
+        """显式 source 字段优先 (β.2.8+ 写入端可主动标)"""
+        from jarvis_utils import classify_stm_source, STM_SOURCE_AMBIENT_PICKUP
+        e = {'user': '我累了', 'source': 'ambient_pickup'}
+        self.assertEqual(classify_stm_source(e), STM_SOURCE_AMBIENT_PICKUP)
+
+    def test_filter_excludes_system_and_ambient(self):
+        from jarvis_utils import filter_stm_by_source
+        stm = [
+            {'user': '我累了', 'jarvis': '注意休息'},                      # user_voice 保留
+            {'user': '[System Standby] 退场'},                             # system_event 排除
+            {'user': '[智能轻推] offer_help', 'jarvis': '需要帮助吗'},      # jarvis_self 保留
+            {'user': '[SYSTEM ALERT] x'},                                 # system_event 排除
+            {'user': '我大概1:05睡', 'source': 'user_voice'},              # user_voice 保留
+        ]
+        filtered = filter_stm_by_source(stm)
+        self.assertEqual(len(filtered), 3)
+        # 验证保留的是 user_voice + jarvis_self
+        sources = [e['_inferred_source'] for e in filtered]
+        self.assertIn('user_voice', sources)
+        self.assertIn('jarvis_self', sources)
+
+    def test_filter_empty_list(self):
+        from jarvis_utils import filter_stm_by_source
+        self.assertEqual(filter_stm_by_source([]), [])
+        self.assertEqual(filter_stm_by_source(None), [])
+
+    def test_filter_custom_exclude(self):
+        """exclude=() 时全部保留"""
+        from jarvis_utils import filter_stm_by_source
+        stm = [{'user': '[System Standby] x'}, {'user': '我累了'}]
+        full = filter_stm_by_source(stm, exclude=())
+        self.assertEqual(len(full), 2)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -223,20 +223,19 @@ You are Jarvis's Inner Reflective Self. Once a week you look back at recent conv
 4. 时间戳是"Jarvis 收到 Sir 话的时刻"，不是"Sir 在干什么"。Sir 不说话 ≠ Sir 醒着
 
 🩹 [β.2.7.5 / 2026-05-17] 治 Sir 反馈 "为什么会觉得我熬夜? 这些事我都不知道哪来的"
-[SOURCE 歧义铁律 — STM 不全是 Sir 说的]
-5. STM 里 user 字段 ≠ 一定是 Sir 自己说的。可能来源（按可信度排）：
-   (a) user_voice — Sir 真说了（最可信）
-   (b) ambient_pickup — 视频/音乐/旁人说话被 ASR 录入（不可信）
-   (c) jarvis_self — Jarvis 之前的 reply 被错归用户字段（不可信）
-   (d) system_event — 后台事件（Cursor 报错/commitment 触发 - 不是 Sir 行为）
-6. STM 没标 source —— 你必须用 **conservative inference** 自己判：
-   - utterance 像视频/电影/游戏台词 ("welcome to the desert" 类) → ambient
-   - utterance 是技术系统消息 ("error in cursor" / "stack trace") → system_event 或 jarvis_self
-   - utterance 含完整自然口语 + 涉及 Sir 个人生活/感受 ("我累了"/"我要睡了"/"明天有会") → user_voice
-7. propose concern 必须基于**至少 2 条 user_voice 类证据**（同主题被 Sir 自己提到 ≥2 次），不能基于单条 ambient/system 推论
-8. 凡 Sir 主体行为 propose ("Sir will do X" / "Sir is struggling with Y")，必须能从 STM **直接引用 Sir 第一人称话**作 evidence
-9. 系统已发生事件 (cursor error / file 操作失败 / Jarvis 自检异常) 不要 propose 成 "Sir 在解决 X" — 那是 Jarvis 自己的事
-10. 视频/电影/游戏类"梗"绝对不要变成 concern（"lighting was final piece for heaven" 是游戏台词 ≠ Sir 关心的"environment_lighting_logic"）
+🩹 [β.2.7.7 / 2026-05-17] STM 现在已有 [src=xxx] 标签（系统自动分类）
+[SOURCE 标签解读 — SOURCE 歧义铁律, STM 每条都有 [src=...] 前缀]
+5. 每条 STM 现在带 [src=...] 标签:
+   - [src=user_voice] — Sir 真说的, 最可信 (但仍可能含视频音污染, 默认 fallback 类)
+   - [src=jarvis_self] — Jarvis 自己之前发声 (主动 nudge/Smart Nudge/ReturnSentinel 等), 不算 Sir 意图
+6. system_event / ambient_pickup 已被系统过滤掉 (不再进入本 prompt), 你看到的 STM 已经清洁
+7. propose concern 必须基于 **至少 2 条 [src=user_voice] 证据** (同主题被 Sir 自己提到 ≥2 次)
+8. 凡 Sir 主体行为 propose ("Sir will do X" / "Sir is struggling with Y"), 必须能从 [src=user_voice] STM 直接引用 Sir 第一人称话作 evidence
+9. [src=jarvis_self] 类是 Jarvis 自己说的话, 不是 Sir 的意图 — 不能基于 jarvis_self 推 Sir 在做什么
+   - 比如 [src=jarvis_self] 含 "cursor error" 是 Jarvis 在抱怨自己开发环境, 不是 Sir 在解决 cursor error
+10. 系统事件 (cursor error / commitment 触发 / 文件操作失败) 即便能看到也不是 Sir 行为, 不要 propose 成 "Sir 在解决 X"
+11. 视频/电影/游戏类 "梗" 即便 src=user_voice 也要警惕 — 如果话像台词不像 Sir 个人生活 ("lighting was final piece for heaven"), 不要变 concern
+12. 即便 STM 标 user_voice, 单条/孤立陈述不足以 propose — 必须有 2 次以上同主题 Sir 自述
 
 [EXISTING CONCERNS — DO NOT DUPLICATE]
 {existing_concerns_str}
@@ -327,6 +326,11 @@ class WeeklyReflector(threading.Thread):
                 return
 
     def _gather_stm_str(self, max_n: int = 50) -> str:
+        """🩹 [β.2.7.7 / 2026-05-17] STM source 区分 + 过滤
+        
+        排除 system_event (commitment/standby/alert) + ambient_pickup (视频音),
+        只保留 user_voice + jarvis_self。每条 entry 加 [src=xxx] tag 给 LLM。
+        """
         if self.stm_provider is None:
             return '(no STM provider)'
         try:
@@ -335,13 +339,21 @@ class WeeklyReflector(threading.Thread):
             return '(STM error)'
         if not stm:
             return '(empty)'
+        try:
+            from jarvis_utils import filter_stm_by_source
+            stm = filter_stm_by_source(stm)  # 默认排除 system_event + ambient_pickup
+        except Exception:
+            pass
+        if not stm:
+            return '(all filtered as system/ambient — no user_voice STM in window)'
         lines = []
         for m in (stm[-max_n:] if len(stm) > max_n else stm):
             u = (m.get('user') or '')[:200]
             j = (m.get('jarvis') or '')[:200]
             ts = m.get('time', '') or ''
+            src = m.get('_inferred_source', 'user_voice')
             if u or j:
-                lines.append(f"[{ts}] U: {u} | J: {j}")
+                lines.append(f"[{ts}][src={src}] U: {u} | J: {j}")
         return '\n'.join(lines)[:5000]
 
     def _gather_profile_summary(self) -> str:

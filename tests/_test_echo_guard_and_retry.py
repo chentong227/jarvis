@@ -70,6 +70,37 @@ class TestTTSEchoRing(unittest.TestCase):
         self.assertTrue(is_recent_jarvis_echo("如您所愿，已静音"))
         self.assertTrue(is_recent_jarvis_echo("如您所愿 已静音"))
 
+    # 🩹 [β.2.7.7 / 2026-05-17] 短句宽容路径 — 治 Sir 实测 "What's sir" 漏过
+    def test_short_sentence_with_jarvis_jargon_echo(self):
+        """Jarvis 末尾 'Sir.' 被 ASR 切碎补全成 'What's sir' (3 token / 10 char) 也应识为 echo"""
+        register_jarvis_tts(
+            "Between your video editing suites and architectural refinements, "
+            "the system is often juggling significant resource demands. Sir."
+        )
+        # 主诉 BUG case
+        self.assertTrue(is_recent_jarvis_echo("What's sir"),
+                        "短句含 jarvis 高频词 'sir' 应识为 echo")
+        # 其他典型 Jarvis 余音
+        self.assertTrue(is_recent_jarvis_echo("Sir."))
+        self.assertTrue(is_recent_jarvis_echo("Yes sir"))
+
+    def test_real_user_short_query_not_echo(self):
+        """真用户短查询（不含 jarvis 高频词）不应误判为 echo"""
+        register_jarvis_tts(
+            "Sir, the system status is nominal across all subsystems."
+        )
+        # 真用户 query
+        self.assertFalse(is_recent_jarvis_echo("Show me cursor"))
+        self.assertFalse(is_recent_jarvis_echo("What time is it"))
+        self.assertFalse(is_recent_jarvis_echo("I am tired"))
+
+    def test_short_jarvis_jargon_no_jarvis_history_not_echo(self):
+        """Jarvis 没说过 'Of course'，即便短句不应误判"""
+        clear_jarvis_tts_ring()
+        register_jarvis_tts("Sir, the weather looks pleasant today.")
+        # "Of course" 含 jarvis 高频词但 ring 里没 Jarvis 答语含此词 → 不算 echo
+        self.assertFalse(is_recent_jarvis_echo("Of course"))
+
 
 class TestNonRetryableErrorGuard(unittest.TestCase):
     def test_403_detected(self):

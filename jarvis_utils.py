@@ -665,6 +665,91 @@ class TraceContext:
             cls._enabled = True
 
 
+# ============================================================
+# [P0+20-β.2.7.7 / 2026-05-17] STM source 区分 (治 reflector 幻觉 root cause)
+# Sir 反馈：sir_post_may_physical_labor / environment_lighting_logic 等 propose
+# 起因是"视频音被 ASR 录入" + "Jarvis 自己说的话" + "系统事件" 都堆 STM →
+# LLM 看 STM 全当 Sir 说的事 → 幻觉 concern。
+#
+# 最少改动方案: 不改 14 处 STM append 点的 schema, 在消费端 (WeeklyReflector
+# / SoulEvaluator 等) 调本 helper 按 user 字段 prefix 自动分类 source。
+# ============================================================
+
+STM_SOURCE_USER_VOICE = 'user_voice'        # Sir 真说的 (最可信)
+STM_SOURCE_JARVIS_SELF = 'jarvis_self'      # Jarvis 自己 reply 被错归 user 字段 / 自言自语
+STM_SOURCE_SYSTEM_EVENT = 'system_event'    # 后台事件 (commitment / reminder / alert / standby)
+STM_SOURCE_AMBIENT_PICKUP = 'ambient_pickup'  # 视频/音乐/旁人 ASR 录入 (难以单 prefix 判断)
+
+_STM_SYSTEM_EVENT_PREFIXES = (
+    '[System Standby]', '[SYSTEM ALERT]', '[系统事件]', '[未确认提醒]',
+    '[REMINDER FIRING NOW]', '[COMMITMENT DETECTED]', '[Commitment]',
+    '[SYSTEM BACKGROUND EVENT]',
+)
+_STM_JARVIS_SELF_PREFIXES = (
+    '[静默轻推]', '[视觉脉冲]', '[智能轻推]', '[Smart Nudge]',
+    '[ReturnSentinel]', '[Conductor]', '[Chronos]', '[CommitmentWatcher]',
+    '[Self-Promise]', '[Soul Capture]',
+)
+
+
+def classify_stm_source(entry: dict) -> str:
+    """根据 STM entry 的 user 字段 prefix 推断 source。
+    
+    最少改动 (不需要改 14 处 append 调用)。返回 4 大 source 之一:
+    - user_voice / jarvis_self / system_event / ambient_pickup
+    
+    注: ambient_pickup (视频音/旁人) 难以仅凭 prefix 判断, 需要更深的 ASR 置信度
+    或语义判断 (留待 β.2.8+)。当前默认裸 cmd 算 user_voice (接受会被 ambient
+    污染的现实, 但 prompt 加约束让 LLM 自己谨慎)。
+    """
+    if not isinstance(entry, dict):
+        return STM_SOURCE_USER_VOICE
+    user_text = entry.get('user', '') or ''
+    if not user_text:
+        return STM_SOURCE_USER_VOICE
+    
+    # 显式 source 字段优先 (β.2.8+ 写入端可以主动标)
+    explicit = entry.get('source')
+    if isinstance(explicit, str) and explicit in (
+        STM_SOURCE_USER_VOICE, STM_SOURCE_JARVIS_SELF,
+        STM_SOURCE_SYSTEM_EVENT, STM_SOURCE_AMBIENT_PICKUP,
+    ):
+        return explicit
+    
+    stripped = user_text.strip()
+    # System event prefix
+    for p in _STM_SYSTEM_EVENT_PREFIXES:
+        if stripped.startswith(p):
+            return STM_SOURCE_SYSTEM_EVENT
+    # Jarvis self prefix
+    for p in _STM_JARVIS_SELF_PREFIXES:
+        if stripped.startswith(p):
+            return STM_SOURCE_JARVIS_SELF
+    # 默认裸 cmd = user_voice (可能被 ambient 污染, 接受)
+    return STM_SOURCE_USER_VOICE
+
+
+def filter_stm_by_source(stm_list, exclude=(STM_SOURCE_SYSTEM_EVENT, STM_SOURCE_AMBIENT_PICKUP)):
+    """过滤 STM list, 默认排除 system_event + ambient_pickup。
+    
+    给 WeeklyReflector / SoulEvaluator 等"语义反思"消费端用。
+    保留 user_voice + jarvis_self (jarvis 自己说的话也是有用上下文)。
+    """
+    if not stm_list:
+        return []
+    out = []
+    for e in stm_list:
+        src = classify_stm_source(e)
+        if src in exclude:
+            continue
+        # 加 source 字段方便 LLM prompt 里区分 (不改原 entry)
+        new_e = dict(e) if isinstance(e, dict) else e
+        if isinstance(new_e, dict):
+            new_e['_inferred_source'] = src
+        out.append(new_e)
+    return out
+
+
 def bg_log(message: str, stream: str = "stderr", to_terminal: bool = True):
     """便捷入口：背景线程要打字时用这个，自动避开对话框。
     
@@ -791,7 +876,24 @@ class _TTSEchoRing:
         norm = cls._normalize(text)
         # [P0+18-a.8] 短词宽容路径：先短路 (≤4 字符 ASR token 直接查最近 jarvis 答语含不含)
         # 这条优先于 fuzzywuzzy 的 ratio 路径，因为 ratio 在文本极短时容易抖动。
-        if 0 < len(norm) <= 4:
+        # 🩹 [β.2.7.7 / 2026-05-17] 扩宽容到"短句 + 含 Jarvis 高频词" (治 "What's sir" 漏过)
+        # Sir 实测: Jarvis 末尾 "...Sir." 被 ASR 切碎补全成 "What's sir" 10 char/3 token
+        # 超出 ≤4 路径，但内容明显是 jarvis 余音。
+        _is_short = (0 < len(norm) <= 4)
+        _is_short_jarvis_jargon = False
+        if not _is_short:
+            _tokens = norm.split() if norm else []
+            _JARVIS_HIGH_FREQ = {
+                'sir', 'jarvis', 'yes', 'of', 'course', 'understood', 'shall',
+                'monitor', 'remind', 'noted', 'apologies', 'ill', 'will',
+                'precisely', 'indeed', 'quite', 'absolutely', 'certainly',
+                'as', 'you', 'wish', 'right', 'away',
+            }
+            if (len(norm) <= 18 and len(_tokens) <= 4 and
+                    any(t in _JARVIS_HIGH_FREQ for t in _tokens)):
+                _is_short_jarvis_jargon = True
+
+        if _is_short or _is_short_jarvis_jargon:
             with cls._lock:
                 snapshot_short = list(cls._entries)
             import re as _re_short
