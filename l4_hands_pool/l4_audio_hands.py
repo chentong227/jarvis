@@ -24,7 +24,11 @@ class Hands:
         5. "set_volume": {"level": <0-100 整数, 必填>}
            — 设置媒体音量。level 必须显式来自用户原话（如 "30%" → 30）；不要使用任何默认值。
            — 若用户没说具体数字，先用一句话向 Sir 确认，再发起此调用。
-        6. "mute": {"enable": true/false} — 静音/取消静音
+        6. "mute": {"enable": true/false} — 静音/取消静音 (系统级)
+        7. "mute_app": {"app_name": "wechat" or "WeChat.exe", "enable": true/false}
+           — [β.2.9.1] 单进程静音 (用 pycaw, Windows 应用音量混音器). 支持模糊名称匹配.
+           — Sir 经典场景: "睡觉就把微信静音". 不静音全局.
+        8. "list_app_volumes": {} — [β.2.9.1] 列出当前所有有音频流的应用 + 音量/静音状态.
         """
 
     def _run_ps(self, script):
@@ -143,6 +147,68 @@ class Hands:
                 user32.keybd_event(VK_VOLUME_MUTE, 0, 0x0001, 0)
                 user32.keybd_event(VK_VOLUME_MUTE, 0, 0x0001 | 0x0002, 0)
                 return ExecutionResult(success=True, msg=f"静音={'开' if enable else '关'}")
+
+            elif cmd == "mute_app":
+                # 🩹 [β.2.9.1 / 2026-05-18] 单进程音量控制 (pycaw / Windows Mixer)
+                # Sir 经典场景: 'sleep 时把 WeChat 静音'. 准则 5 真做不只说.
+                app_name = (params.get("app_name") or "").lower().strip()
+                if not app_name:
+                    return ExecutionResult(success=False, msg="缺 app_name 参数")
+                enable = bool(params.get("enable", True))
+                try:
+                    from pycaw.pycaw import AudioUtilities  # type: ignore
+                except ImportError:
+                    return ExecutionResult(
+                        success=False,
+                        msg="pycaw 未安装. 运行: pip install pycaw"
+                    )
+                sessions = AudioUtilities.GetAllSessions()
+                hit = []
+                for s in sessions:
+                    p = s.Process
+                    if p is None:
+                        continue
+                    p_name = (p.name() or '').lower()
+                    if app_name in p_name or p_name in app_name or \
+                       app_name.replace('.exe', '') in p_name:
+                        try:
+                            s.SimpleAudioVolume.SetMute(1 if enable else 0, None)
+                            hit.append(p.name())
+                        except Exception:
+                            pass
+                if not hit:
+                    return ExecutionResult(
+                        success=False,
+                        msg=f"未找到 '{app_name}' 的音频会话 (该应用当前可能没在播音频)"
+                    )
+                return ExecutionResult(
+                    success=True,
+                    msg=f"已 {'静音' if enable else '取消静音'} {len(hit)} 个进程: {hit}"
+                )
+
+            elif cmd == "list_app_volumes":
+                try:
+                    from pycaw.pycaw import AudioUtilities  # type: ignore
+                except ImportError:
+                    return ExecutionResult(success=False, msg="pycaw 未安装")
+                sessions = AudioUtilities.GetAllSessions()
+                out = []
+                for s in sessions:
+                    p = s.Process
+                    if p is None:
+                        continue
+                    try:
+                        v = s.SimpleAudioVolume
+                        out.append(
+                            f"  {p.name():30s}  vol={v.GetMasterVolume():.2f}  "
+                            f"muted={'Y' if v.GetMute() else 'N'}"
+                        )
+                    except Exception:
+                        continue
+                if not out:
+                    return ExecutionResult(success=True, msg="当前无应用音频会话")
+                return ExecutionResult(success=True,
+                    msg="当前应用音量:\n" + "\n".join(out))
 
             else:
                 return ExecutionResult(success=False, msg=f"未知指令: {cmd}")

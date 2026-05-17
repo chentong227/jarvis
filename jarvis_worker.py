@@ -1974,6 +1974,61 @@ class JarvisWorkerThread(QThread):
     _SLEEP_DEFAULT_DELAY_SEC = 1800  # 默认 30 分钟
     _SLEEP_GRACE_SEC = 900           # 目标时间到了还多给 15 分钟 grace
 
+    def _trigger_sleep_mode_routine(self, delay_sec: float) -> None:
+        """🩹 [β.2.9.1 / 2026-05-18] Sir 准则 5 落地: 'I shall mute/dim' 真做.
+
+        Sir 说 "睡觉" → 自动调:
+          1. audio_hands.mute_app(WeChat) — 不被消息吵
+          2. display_hands.sleep_display — 屏幕休眠 (动鼠标自动唤醒)
+          3. ASR mute (复用现有 mute_until) — Sir 翻身说梦话不触发 Jarvis
+        delay_sec=0 立即, > 60 在 delay 后用 Timer 延迟.
+        失败任一项不影响其他 (各自 try-except).
+        """
+        def _do_routine():
+            from jarvis_utils import bg_log
+            # 1. mute WeChat (单进程)
+            try:
+                jarvis = getattr(self, 'jarvis', None)
+                if jarvis is None:
+                    return
+                audio_cls = jarvis.hand_registry.get('audio_hands')
+                if audio_cls:
+                    inst = audio_cls()
+                    from jarvis_blood import Action
+                    r = inst.execute(Action(command='mute_app',
+                                              params={'app_name': 'WeChat',
+                                                       'enable': True}))
+                    bg_log(f"😴 [SleepMode/MuteWeChat] {r.msg[:120]}")
+            except Exception as e:
+                bg_log(f"⚠️ [SleepMode/MuteWeChat] {e}")
+            # 2. sleep_display
+            try:
+                disp_cls = jarvis.hand_registry.get('display_hands')
+                if disp_cls:
+                    inst = disp_cls()
+                    from jarvis_blood import Action
+                    r = inst.execute(Action(command='sleep_display', params={}))
+                    bg_log(f"😴 [SleepMode/SleepDisplay] {r.msg[:120]}")
+            except Exception as e:
+                bg_log(f"⚠️ [SleepMode/SleepDisplay] {e}")
+            # 3. ASR mute 30min 防梦话误触
+            try:
+                self.mute_until = max(getattr(self, 'mute_until', 0),
+                                       time.time() + 30 * 60)
+                bg_log(f"😴 [SleepMode/ASRMute] ASR muted for 30min")
+            except Exception:
+                pass
+
+        # 立即 (delay < 60s) or 延迟 (Timer)
+        if delay_sec < 60:
+            threading.Thread(target=_do_routine, daemon=True,
+                              name='SleepModeRoutine').start()
+        else:
+            timer = threading.Timer(delay_sec, _do_routine)
+            timer.daemon = True
+            timer.name = 'SleepModeRoutineTimer'
+            timer.start()
+
     def _detect_sleep_intent(self, cmd: str):
         """[v5.1 / P0-2 expanded 2026-05-15 / P0+12 注] 检测 Sir 表态'X 分钟后睡'或'X 点睡' → 设置静默催睡窗口。
         与 CentralNerve._detect_sleep_intent **同名异义**（后者触发"全床深度休眠"模式）。
@@ -2133,6 +2188,18 @@ class JarvisWorkerThread(QThread):
             new_until = time.time() + delay_sec + self._SLEEP_GRACE_SEC
             old_until = getattr(self, '_sleep_intent_until', 0.0)
             self._sleep_intent_until = max(old_until, new_until)
+
+            # 🩹 [β.2.9.1 / 2026-05-18] sleep_mode_routine: 自动执行 Sir 想要的"睡觉模式"
+            # mute WeChat + dim display (准则 5 真做, 不只 prompt 上说 'I shall').
+            # 失败不影响 sleep_intent 主路径 (try-except 包裹).
+            try:
+                self._trigger_sleep_mode_routine(delay_sec)
+            except Exception as _smr_e:
+                try:
+                    from jarvis_utils import bg_log as _smr_bg
+                    _smr_bg(f"⚠️ [SleepModeRoutine] err: {_smr_e}")
+                except Exception:
+                    pass
 
             try:
                 from jarvis_utils import bg_log
