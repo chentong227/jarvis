@@ -297,7 +297,10 @@ class CommitmentWatcher(threading.Thread):
 
     def add_commitment(self, description: str, deadline_str: str,
                        user_text: str = None,
-                       is_future_task_confirmed: bool = False):
+                       is_future_task_confirmed: bool = False,
+                       source: str = 'user_text'):
+        """source='user_text' (Sir 承诺) | 'self_promise' (Jarvis 自承诺)
+        🩹 [β.2.7.3 / 2026-05-17] 加 source — Jarvis 自承诺与 Sir 承诺平等持久化"""
         """注册一条用户承诺。
 
         [P0+18-c.9/c.10 / 2026-05-15] 修 Sir 实测 BUG：
@@ -469,13 +472,15 @@ class CommitmentWatcher(threading.Thread):
                 'grace_minutes': 10,
                 'nudged': False,
                 'source_text': f"[Commitment] {description}",
+                'source': source,  # 🩹 β.2.7.3: 'user_text' | 'self_promise'
                 'created_at': time.time()
             })
             dl_str = time.strftime("%H:%M", time.localtime(deadline_ts))
             # [P0+18-c.8 / 2026-05-15] 改 bg_log 不漏到对话框
             try:
                 from jarvis_utils import bg_log as _cw_bg_log
-                _cw_bg_log(f"📝 [CommitmentWatcher] 已注册: {description} @ {dl_str} (DB#{_new_db_id})")
+                _src_tag = '/SelfPromise' if source == 'self_promise' else ''
+                _cw_bg_log(f"📝 [CommitmentWatcher{_src_tag}] 已注册: {description} @ {dl_str} (DB#{_new_db_id})")
             except Exception:
                 pass
 
