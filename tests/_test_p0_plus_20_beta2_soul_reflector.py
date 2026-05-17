@@ -374,6 +374,42 @@ class TestWeeklyReflectorInterpretationRules(unittest.TestCase):
         from jarvis_soul_reflector import WEEKLY_REFLECTOR_CONFIG
         self.assertIn('flash-lite', WEEKLY_REFLECTOR_CONFIG['fallback_model'])
 
+    # ========================================================
+    # [β.2.7.5 / 2026-05-17] SOURCE 歧义铁律
+    # 治 Sir 反馈："为什么会觉得我熬夜? 这些事我不知道哪来的"
+    # ========================================================
+    def test_prompt_contains_source_disambiguation_rules(self):
+        """[β.2.7.5] prompt 必须明确 STM source 歧义 — 视频/旁人/Jarvis 自己 ≠ Sir"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        self.assertIn('SOURCE 歧义', WEEKLY_REFLECTOR_PROMPT)
+        self.assertIn('ambient_pickup', WEEKLY_REFLECTOR_PROMPT)
+        self.assertIn('jarvis_self', WEEKLY_REFLECTOR_PROMPT)
+        self.assertIn('user_voice', WEEKLY_REFLECTOR_PROMPT)
+
+    def test_prompt_requires_two_user_voice_evidence(self):
+        """propose 必须基于 ≥2 条 user_voice 证据，单条 ambient/system 不能推论"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        self.assertTrue(
+            '2 条' in WEEKLY_REFLECTOR_PROMPT or
+            '2 次' in WEEKLY_REFLECTOR_PROMPT or
+            '≥2' in WEEKLY_REFLECTOR_PROMPT or
+            'at least 2' in WEEKLY_REFLECTOR_PROMPT.lower(),
+            "prompt 必须要求至少 2 条 user_voice 证据"
+        )
+
+    def test_prompt_forbids_video_lines_as_concerns(self):
+        """视频/电影/游戏台词不要变 concern"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        self.assertTrue(
+            '视频' in WEEKLY_REFLECTOR_PROMPT or '电影' in WEEKLY_REFLECTOR_PROMPT,
+            "prompt 必须明确禁止视频/电影台词变 concern"
+        )
+
+    def test_prompt_forbids_system_event_as_sir_behavior(self):
+        """系统事件 (cursor error) 不要 propose 成 'Sir 在解决 X'"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        self.assertIn('cursor error', WEEKLY_REFLECTOR_PROMPT.lower())
+
 
 # ============================================================
 # F. Singleton + lifecycle
