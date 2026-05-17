@@ -16,14 +16,26 @@
 - 长期记忆（SQLite + Gemini embedding） / 智能轻推 / 承诺看守
 - ~30 个 jarvis_*.py 文件 / 1098+ pytest testcase
 
-**Sir 的 5 项设计理念是最高准则**：
+**Sir 的 6 项设计理念是最高准则**：
 1. **高效**（TTFT < 5s / pipeline < 8s）
 2. **反应迅速**（终端不卡 / 异步链）
 3. **符合人设**（butler 风格 / 不奉承）
 4. **懂我**（profile / hippocampus / 老友感）
-5. **言出必行**（INTEGRITY ABSOLUTE / 不假装完成）
+5. **言出必行**（INTEGRITY ABSOLUTE / 不假装完成 / 任何 specific factual claim 必须 trace 到 evidence）
+6. **拒绝硬编码**（β.2.8.8 / 2026-05-17 Sir 立准则）— 一切以足够智能的动态上下文注入让 Jarvis 自然涌现"懂我"的感觉, 不靠硬编码句式/触发/角色
 
-任何改动让这 5 项退步，**Sir 真机实测会立刻打回**。
+任何改动让这 6 项退步，**Sir 真机实测会立刻打回**。
+
+### 准则 6 —"拒绝硬编码" 4 类反例 + 替代方案
+
+| 硬编码反例 | 等价替代 |
+|---|---|
+| **句式锁**: directive 写死 "languid drawn-out / Sir~ with tilde / ellipsis for pauses" | 只告事实 (e.g. AFK X min, current window=Y), 信任 Soul L0-L3 + STM + sensor 注入 → 主脑自己涌现 |
+| **类型硬编码**: 加 `if commit_type == 'wake'` / `if nudge_type in (...)` 写死 8 类 | 抽象成 Predicate / Concern / 通用 schema (predicate.evaluate(ctx) 让 LLM 翻译) |
+| **关键词硬编码**: 反幻觉只 cover "timestamp" 单一 case | 通用条款 (任何 specific factual claim → trace evidence) + 运行时 ClaimTracer 检测 |
+| **风格 forbidden list**: "禁止 'Welcome back / 回来了'" 这类负面 list | 删 list, 加正向 evidence + Soul 注入让主脑自由 |
+
+**判别**: 写新 directive/prompt 时, 自问"如果 Sir 看到这段会不会说'怎么和模板一样'?". 凡是 prescribe 句式/词汇/动作步骤的 → 大概率硬编码 → 改成 evidence-only.
 
 ---
 
