@@ -407,6 +407,55 @@ _init_runtime_tee_log()
 # - 对话结束时 → 一次性按顺序 flush 到 stderr，每条都自带换行
 # - 对话未激活时 → 直接打到 stderr
 # ============================================================
+# 🩹 [P0+20-β.2.7.6 / 2026-05-17] 诊断类 marker 黑名单 — 自动只写日志不打终端
+# Sir 反馈"贾维斯说完话后输出实在太多了，影响判断重要信息"
+# 这些 markers 是后台诊断/性能/异步评分，Sir 不需要看终端，只放日志足够。
+# call site 不用改 — bg_log 入口看 message 含任一 marker 自动 to_terminal=False
+# verbose 模式 (env JARVIS_VERBOSE_BG=1) 时全部回归显示，给 debug 用
+_BG_LOG_DIAG_MARKERS = (
+    '[Prompt Tier]',
+    '[L2 inject]',
+    '[SOUL inject]',
+    '[Nudge SOUL inject]',
+    '[SoulEvaluator]',
+    '[Tone]',
+    '[Screenshot]',
+    '[Prompt Size]',
+    '[Asm Diag]',
+    '[Perf Diag]',
+    '[Pipeline Timer]',
+    '[Pipeline]',
+    '[Evaluator]',                     # 'helped=' 异步评分 (DirectiveEvaluator)
+    '[Conversation Event]',
+    '[Gatekeeper Async]',
+    '[Gatekeeper Slow]',
+    '[BrowserDucking]',
+    '[SmartNudge/Skip]',
+    '[Shield watching]',
+    '[ReturnSentinel/Diag]',
+    '[ReturnSentinel/Health]',
+    '[CommitmentWatcher/StartupGuard]',
+    '[Render Guard]',                  # audio guard 拦截不重要
+    '[Audio Guard / Tool Name]',
+    '[Audio Guard / Orphan Done]',
+    '[Audio Guard / Upstream',         # local-fallback 类
+    '[HabitClock LLM]',
+    '[Local Phrase Pool]',
+    '[FunnelLogger]',
+    '[ConcernsDecayWorker]',
+    '[DirectiveDecayWorker]',
+    '[Embedding Backfill Worker]',
+)
+
+
+def _bg_log_should_hide(message: str) -> bool:
+    """诊断 marker 自动 hide。verbose 模式 (env JARVIS_VERBOSE_BG=1) 全显示。"""
+    import os as _os_bg
+    if _os_bg.environ.get('JARVIS_VERBOSE_BG', '').strip() == '1':
+        return False
+    return any(m in message for m in _BG_LOG_DIAG_MARKERS)
+
+
 class _BgLogBuffer:
     _lock = threading.Lock()
     _active = False
@@ -426,16 +475,21 @@ class _BgLogBuffer:
         return cls._active
 
     @classmethod
-    def log(cls, message: str, stream: str = "stderr"):
+    def log(cls, message: str, stream: str = "stderr", to_terminal: bool = True):
         """记录一条背景日志。message 不要自带前后换行，函数会负责。
         
-        [P0+20-α.7 / 2026-05-16] 双路径分流（终端 = 主体；日志 = prefix+主体）：
+        [P0+20-α.7 / 2026-05-16] 双路径分流（终端 = 主体；日志 = prefix+主体）
+        [P0+20-β.2.7.6 / 2026-05-17] to_terminal=False 时只写文件不进 buffer
         - 终端：走 _TeeStream._orig 直接写原始 stderr/stdout，绕过 Tee 双写，避免 trace_id prefix 污染终端
         - 日志：直接 put 到 _TEE_QUEUE，带 TraceContext prefix（grep 友好）
         """
         if not message:
             return
         line = message.rstrip("\r\n")
+        # 🩹 [β.2.7.6] 显式 to_terminal=False / diag marker 自动判断 — 只写日志不打终端
+        if (not to_terminal) or _bg_log_should_hide(line):
+            cls._write_to_logfile_only(line)
+            return
         with cls._lock:
             if cls._active:
                 if len(cls._buffer) < cls._max_buffer:
@@ -611,14 +665,15 @@ class TraceContext:
             cls._enabled = True
 
 
-def bg_log(message: str, stream: str = "stderr"):
+def bg_log(message: str, stream: str = "stderr", to_terminal: bool = True):
     """便捷入口：背景线程要打字时用这个，自动避开对话框。
     
-    [P0+20-α.7 / 2026-05-16] trace_id 注入位置改到 _BgLogBuffer 内部：
-    - 终端：仅消息主体（不污染显示）
-    - 日志文件：[sess_xxx] [turn_yyy] message （grep 友好）
+    [P0+20-α.7 / 2026-05-16] trace_id 注入位置改到 _BgLogBuffer 内部
+    [P0+20-β.2.7.6 / 2026-05-17] 加 to_terminal=False (Sir 反馈终端输出太多)
+    - to_terminal=True (默认): 进对话框后 [Background] 块 + 写日志文件
+    - to_terminal=False: 只写日志文件不打终端 (诊断类用此)
     """
-    _BgLogBuffer.log(message, stream=stream)
+    _BgLogBuffer.log(message, stream=stream, to_terminal=to_terminal)
 
 
 def set_conversation_active(active: bool):

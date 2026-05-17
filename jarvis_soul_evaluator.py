@@ -45,8 +45,16 @@ except Exception:
 # ============================================================
 
 SOUL_EVALUATOR_CONFIG = {
-    'primary_model': 'google/gemini-3-flash-preview',
+    # 🩹 [β.2.7.6 / 2026-05-17] 动态切 model 方案 (Sir 批准 A 方案):
+    # - flash_model: 简单 turn 用 (~70% 流量, 1.4x base cost)
+    # - pro_model:   复杂 turn 用 (~30% 流量, 4x base cost)
+    # - 综合月成本: ~$1.9 (vs 全 flash $1.2 / 全 pro $3.5 / 全 3.1-pro $4.9)
+    # 复杂度评分见 _select_model_for_turn()
+    'flash_model': 'google/gemini-3-flash-preview',
+    'pro_model': 'google/gemini-2.5-pro',
     'fallback_model': 'google/gemini-2.5-flash-lite',
+    # primary_model/fallback_model 保留向后兼容 (老调用方传 None 时 fallback 到这)
+    'primary_model': 'google/gemini-3-flash-preview',
     'temperature': 0.0,
     'max_output_tokens': 200,
     'timeout_s': 8.0,
@@ -54,6 +62,8 @@ SOUL_EVALUATOR_CONFIG = {
     'rate_limit_per_minute': 30,
     'min_concerns_for_eval': 1,       # < 1 active concerns 时跳过（无 alignment 可评）
     'min_reply_chars': 10,             # 太短的回复（"OK Sir"）评分无意义
+    # 复杂度阈值: score >= 此值 → 用 pro, 否则用 flash
+    'complexity_threshold_pro': 3,
 }
 
 
@@ -126,6 +136,10 @@ class SoulEvalResult:
     error: str = ''
     elapsed_ms: int = 0
     turn_id: str = ''
+    # 🩹 [β.2.7.6 / 2026-05-17] 动态模型切换 — 让 Sir grep 看 pro/flash 选择分布
+    picked_model: str = ''
+    complexity_score: int = 0
+    complexity_breakdown: dict = field(default_factory=dict)
 
 
 # ============================================================
@@ -289,6 +303,73 @@ class SoulAlignmentEvaluator:
             turn_id=turn_id,
         )
 
+    # 🩹 [β.2.7.6 / 2026-05-17] 动态切 model — 复杂度评分
+    _EMOTION_KEYWORDS_EN = (
+        'tired', 'sad', 'frustrated', 'exhausted', 'anxious', 'lonely',
+        'overwhelmed', 'stressed', 'depressed', 'angry', 'upset',
+        'happy', 'excited', 'proud', 'grateful',
+    )
+    _EMOTION_KEYWORDS_ZH = (
+        '累', '困', '烦', '焦虑', '难过', '抑郁', '生气', '失落',
+        '崩溃', '孤独', '担心', '紧张', '兴奋', '开心', '满意',
+    )
+    _PROMISE_KEYWORDS = (
+        'I will', 'I shall', "I'll", '我会', '我要', '承诺', '保证',
+        'monitor', 'supervise', 'remind', 'check in', '监督', '催', '盯',
+    )
+
+    def _select_model_for_turn(self, user_input: str, jarvis_reply: str,
+                                 concerns_count: int) -> tuple:
+        """根据 turn 复杂度选 model。返回 (model_name, complexity_score, breakdown)。
+
+        score >= complexity_threshold_pro → 用 pro_model (更细的 alignment 判断)
+        否则 → 用 flash_model (速度+成本最优)
+        """
+        breakdown = {}
+        score = 0
+        ui_low = (user_input or '').lower()
+        jr = jarvis_reply or ''
+
+        # 1. reply 较长 → 多内容值得细判
+        if len(jr) > 250:
+            score += 1
+            breakdown['long_reply'] = 1
+
+        # 2. multi-sentence reply
+        sentence_n = jr.count('.') + jr.count('。') + jr.count('!') + jr.count('?') + jr.count('？')
+        if sentence_n >= 3:
+            score += 1
+            breakdown['multi_sentence'] = 1
+
+        # 3. 多个 active concerns → alignment 判断维度多
+        if concerns_count >= 3:
+            score += 1
+            breakdown['many_concerns'] = 1
+
+        # 4. user 含情绪信号 → relational 判断重要
+        emo_hit = (any(w in ui_low for w in self._EMOTION_KEYWORDS_EN) or
+                   any(w in (user_input or '') for w in self._EMOTION_KEYWORDS_ZH))
+        if emo_hit:
+            score += 1
+            breakdown['emotion'] = 1
+
+        # 5. Jarvis 含承诺 → 与 commitment_watcher 交叉判断
+        promise_hit = any(w in jr for w in self._PROMISE_KEYWORDS)
+        if promise_hit:
+            score += 1
+            breakdown['promise'] = 1
+
+        threshold = SOUL_EVALUATOR_CONFIG.get('complexity_threshold_pro', 3)
+        if score >= threshold:
+            model = SOUL_EVALUATOR_CONFIG.get('pro_model', self.primary_model)
+            tier = 'pro'
+        else:
+            model = SOUL_EVALUATOR_CONFIG.get('flash_model', self.primary_model)
+            tier = 'flash'
+        breakdown['_score'] = score
+        breakdown['_tier'] = tier
+        return model, score, breakdown
+
     # ---- 单次评分 ----
     def _evaluate_one(self, user_input: str, jarvis_reply: str,
                       turn_id: str = '') -> SoulEvalResult:
@@ -321,11 +402,22 @@ class SoulAlignmentEvaluator:
             jarvis_reply=jarvis_reply[:600],
         )
 
+        # 🩹 [β.2.7.6] 动态选 model
+        _concerns_n = 0
+        try:
+            if self.concerns_ledger is not None:
+                _concerns_n = len(self.concerns_ledger.list_active())
+        except Exception:
+            pass
+        _picked_model, _cscore, _cbreak = self._select_model_for_turn(
+            user_input, jarvis_reply, _concerns_n
+        )
+
         raw_resp = ''
         try:
             raw_resp = safe_openrouter_call(
                 openrouter_key=okey,
-                model=self.primary_model,
+                model=_picked_model,
                 prompt=prompt,
                 max_tokens=SOUL_EVALUATOR_CONFIG['max_output_tokens'],
                 temperature=SOUL_EVALUATOR_CONFIG['temperature'],
@@ -355,6 +447,14 @@ class SoulAlignmentEvaluator:
                 self.key_router.release(_label)
             except Exception:
                 pass
+
+        # 把 picked model + complexity score 记到 result 供 _record_completion log
+        try:
+            result.picked_model = _picked_model
+            result.complexity_score = _cscore
+            result.complexity_breakdown = _cbreak
+        except Exception:
+            pass
 
         parsed = _parse_soul_response(raw_resp)
         result.alignment = parsed.get('alignment', 'unknown')
@@ -387,10 +487,15 @@ class SoulAlignmentEvaluator:
             else:
                 _ali_n = len(result.aligned_concern_ids)
                 _miss_n = len(result.missed_concern_ids)
+                # 🩹 [β.2.7.6] 动态模型 — 让 Sir 能 grep 看 pro/flash 分布
+                _model_tag = ''
+                if result.picked_model:
+                    _short = result.picked_model.split('/')[-1].replace('gemini-', '')
+                    _model_tag = f" [{_short} score={result.complexity_score}]"
                 bg_log(
                     f"🪞 [SoulEvaluator] {result.turn_id or '?'} → "
                     f"alignment={result.alignment} aligned={_ali_n} missed={_miss_n} "
-                    f"({result.elapsed_ms}ms) {result.what_aligned[:40]!r}"
+                    f"({result.elapsed_ms}ms){_model_tag} {result.what_aligned[:40]!r}"
                 )
         except Exception:
             pass

@@ -1011,9 +1011,11 @@ class Hippocampus:
 --- 原始记录 ---
 {chat_log}"""
                 
-                # 调用大模型进行高度概括
+                # 🩹 [β.2.7.6 / 2026-05-17] 升 gemini-3-flash-preview 与主对话模型一致
+                # 凌晨 1 次/天 压缩，cost 几乎 0 差额（同 pricing tier 0.50/3 vs 0.30/2.5）
+                # 一致性: 主对话 reply 风格被 hippocampus summary 忠实保留
                 summary_res = client.models.generate_content(
-                    model='gemini-2.5-flash', 
+                    model='gemini-3-flash-preview',
                     contents=prompt
                 )
                 summary_text = summary_res.text

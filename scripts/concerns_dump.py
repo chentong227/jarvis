@@ -40,6 +40,11 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
+# 🩹 [β.2.7.5 / 2026-05-17] CLI 独立进程不继承 Jarvis 主进程的 proxy env
+# google/* / openai/* 在 Sir region 走 OpenRouter 时 403, 必须经 127.0.0.1:7890 出
+os.environ.setdefault('HTTP_PROXY', 'http://127.0.0.1:7890')
+os.environ.setdefault('HTTPS_PROXY', 'http://127.0.0.1:7890')
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -219,19 +224,17 @@ def _reflect_now(ledger: ConcernsLedger) -> int:
     """
     print("[reflect-now] 立刻让 WeeklyReflector 反思一次...")
     try:
-        from jarvis_key_router import KeyRouter, _ALL_KEYS as _allkeys  # noqa: F401
-    except Exception as e:
-        print(f"[ERROR] key_router 不可用: {e}")
-        print("        (CLI 反射需要 KeyRouter 提供 openrouter_key)")
-        return 2
-
-    try:
         from jarvis_config.keys import load_keys
         from jarvis_key_router import KeyRouter
         _keys = load_keys()
-        kr = KeyRouter(_keys.google_keys, _keys.openrouter_keys)
+        kr = KeyRouter(
+            main_brain_key=_keys.OPENROUTER_MAIN,
+            google_keys=_keys.GOOGLE_LIST,
+            openrouter_keys=_keys.OPENROUTER_LIST,
+        )
     except Exception as e:
         print(f"[ERROR] KeyRouter 初始化失败: {e}")
+        print("        (CLI 反射需要 KeyRouter 提供 openrouter_key)")
         return 2
 
     # STM provider：读 ConversationHistory 表最近 50 条

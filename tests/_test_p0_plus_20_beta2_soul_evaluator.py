@@ -358,5 +358,127 @@ class TestSoulEvaluatorSingleton(unittest.TestCase):
         e1.shutdown(wait=False)
 
 
+# ============================================================
+# E. [β.2.7.6 / 2026-05-17] 动态模型切换 (Sir 批准 A 方案)
+# ============================================================
+class TestDynamicModelSelection(unittest.TestCase):
+    """根据 turn 复杂度动态选 flash/pro"""
+
+    def setUp(self):
+        self.eval = SoulAlignmentEvaluator.__new__(SoulAlignmentEvaluator)
+        self.eval.primary_model = SOUL_EVALUATOR_CONFIG['primary_model']
+
+    def test_config_has_flash_pro_models(self):
+        self.assertIn('flash_model', SOUL_EVALUATOR_CONFIG)
+        self.assertIn('pro_model', SOUL_EVALUATOR_CONFIG)
+        self.assertIn('complexity_threshold_pro', SOUL_EVALUATOR_CONFIG)
+        # flash 必须是 3-flash-preview (与主对话一致), pro 必须是 2.5-pro (稳定)
+        self.assertIn('flash-preview', SOUL_EVALUATOR_CONFIG['flash_model'])
+        self.assertIn('2.5-pro', SOUL_EVALUATOR_CONFIG['pro_model'])
+
+    def test_short_simple_reply_picks_flash(self):
+        m, s, b = self.eval._select_model_for_turn('hi', 'OK Sir.', 1)
+        self.assertEqual(b['_tier'], 'flash')
+        self.assertEqual(s, 0)
+        self.assertIn('flash', m)
+
+    def test_complex_reply_with_emotion_picks_pro(self):
+        m, s, b = self.eval._select_model_for_turn(
+            '我累了，今天 cursor error 太多了',
+            'Sir, I will check on you at 11pm. We have been through worse.',
+            5
+        )
+        self.assertEqual(b['_tier'], 'pro')
+        self.assertGreaterEqual(s, 3)
+        self.assertIn('pro', m)
+
+    def test_promise_signal_triggers_pro_via_score(self):
+        long_reply = ("Sir, I will remind you at 11pm to drink water. "
+                      "Also I'll monitor your hydration today and check in this evening. "
+                      "Recall that I shall keep watch over the sleep streak concern as well.")
+        m, s, b = self.eval._select_model_for_turn(
+            'remind me to drink water and watch my sleep',
+            long_reply, 3,
+        )
+        # long_reply > 250c, multi_sentence>=3, concerns>=3, promise (I will/I shall/monitor)
+        # → 至少 4 个信号
+        self.assertGreaterEqual(s, 3)
+        self.assertEqual(b['_tier'], 'pro')
+
+    def test_emotion_keyword_zh(self):
+        m, s, b = self.eval._select_model_for_turn(
+            '我焦虑得不行了', 'Take a breath.', 1
+        )
+        # 仅情绪 1 个信号 → 不到 3
+        self.assertIn('emotion', b)
+        self.assertEqual(b['_tier'], 'flash')
+
+
+class TestSoulResultDataclassDynamicFields(unittest.TestCase):
+    """SoulEvalResult 新增动态模型字段"""
+
+    def test_default_picked_model_empty(self):
+        r = SoulEvalResult()
+        self.assertEqual(r.picked_model, '')
+        self.assertEqual(r.complexity_score, 0)
+        self.assertEqual(r.complexity_breakdown, {})
+
+
+# ============================================================
+# F. [β.2.7.6 / 2026-05-17] bg_log 黑名单自动 hide
+# ============================================================
+class TestBgLogDiagMarkers(unittest.TestCase):
+    """诊断 marker 自动只写日志不打终端 (Sir 反馈终端太吵)"""
+
+    def test_diag_markers_hidden(self):
+        from jarvis_utils import _bg_log_should_hide
+        for marker_msg in [
+            '🎚️ [Prompt Tier] SHORT_CHAT',
+            '🧭 [L2 inject] tier=...',
+            '🪞 [SOUL inject] L0=898c',
+            '🪞 [Nudge SOUL inject] mode=nudge',
+            '🪞 [SoulEvaluator] turn_xxx',
+            '🎭 [Tone] dry-witty',
+            '📸 [Screenshot] strategy=fresh',
+            '🔬 [Perf Diag] connect=2.92s',
+            '⏱️ [Pipeline Timer] Full pipeline: 9.5s',
+            '🎯 [Evaluator] bilingual_directive → helped=yes',
+            '🔇 [BrowserDucking] 静音了',
+            '⏸️ [SmartNudge/Skip] dormant_project',
+        ]:
+            self.assertTrue(_bg_log_should_hide(marker_msg),
+                            f"应该 hide: {marker_msg}")
+
+    def test_important_messages_NOT_hidden(self):
+        from jarvis_utils import _bg_log_should_hide
+        for kept_msg in [
+            '🪞 [SelfAnchor] Layer 0 ready',
+            '🌱 [ConcernsLedger] active=5 review=2',
+            '💞 [RelationalState] jokes=2',
+            '📝 [CommitmentWatcher/SelfPromise] 已注册',
+            '🛡️ [Shield TRIGGER] type=...',
+            '💤 [System Standby] 专注锁超时',
+            '🧠 [State] active_conversation: True→False',
+            '❌ [RenderWorker] 重试仍失败',
+            '📌 [SelfPromise] 注册 Jarvis 自承诺',
+        ]:
+            self.assertFalse(_bg_log_should_hide(kept_msg),
+                             f"不应 hide: {kept_msg}")
+
+    def test_verbose_mode_disables_hiding(self):
+        """JARVIS_VERBOSE_BG=1 时全部回归显示"""
+        from jarvis_utils import _bg_log_should_hide
+        import os
+        original = os.environ.get('JARVIS_VERBOSE_BG', '')
+        os.environ['JARVIS_VERBOSE_BG'] = '1'
+        try:
+            self.assertFalse(_bg_log_should_hide('🎚️ [Prompt Tier] SHORT_CHAT'))
+        finally:
+            if original:
+                os.environ['JARVIS_VERBOSE_BG'] = original
+            else:
+                os.environ.pop('JARVIS_VERBOSE_BG', None)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
