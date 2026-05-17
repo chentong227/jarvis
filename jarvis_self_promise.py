@@ -111,6 +111,41 @@ _REJECT_PATTERNS = [
 ]
 
 
+# 🩹 [β.2.7.8 / 2026-05-17] Soft Promise (无时间锚的"I will X" / "我会 X")
+# Sir 实测 18:46: Jarvis 说 "I will integrate reminders into our dialogue and
+# issue proactive prompts when necessary" — 这是承诺但**没具体时间**。
+# 原 SelfPromiseDetector regex 严格要求 time anchor → 漏判 → 没注册 → Jarvis 嘴说会做但没机制。
+#
+# 修法: 加 soft promise 检测路径 — 含 "I will/我会" + ongoing intent verb (monitor/
+# remind/keep watch/integrate/ensure/track/守候/留意/持续) 但无时间锚 → 注册成
+# concerns_ledger.notes_for_self 或 PlanLedger soft action (不走 commitment_watcher 定时
+# nudge 因为没时间, 但下次 _assemble_prompt 时 LLM 能看到 "I owe Sir X 长期监督")
+_EN_SOFT_PROMISE_VERBS = (
+    'monitor', 'remind', 'keep an? eye on', 'keep watch over', 'integrate reminders',
+    'issue proactive', 'ensure', 'track', 'watch over', 'stay vigilant',
+    'follow up', 'check in', 'keep tabs on',
+)
+_ZH_SOFT_PROMISE_VERBS = (
+    '持续监督', '持续提醒', '留意', '关注', '守候', '守护', '保持关注', '主动提醒',
+    '加入提醒', '集成提醒', '在对话中提醒', '主动提示', '盯着', '关照', '看着',
+    '记下', '记着', '记住', '不会忘', '不会遗忘',
+)
+
+_EN_SOFT_PATTERN = re.compile(
+    r"(?P<subject>\bi\s*(?:will|shall|'ll|am\s+going\s+to|am\s+committed\s+to|am\s+about\s+to))\s+"
+    r"(?P<action>[^.!?]*?(?:"
+    + '|'.join(_EN_SOFT_PROMISE_VERBS) +
+    r")[^.!?]{0,80})",
+    re.IGNORECASE,
+)
+_ZH_SOFT_PATTERN = re.compile(
+    r"(?P<subject>我(?:会|要|将|得|打算|答应|确保|保证))"
+    r"(?P<action>[^。！？]{0,30}?(?:"
+    + '|'.join(_ZH_SOFT_PROMISE_VERBS) +
+    r")[^。！？]{0,40})"
+)
+
+
 # ============================================================
 # Detector
 # ============================================================
@@ -175,6 +210,50 @@ class SelfPromiseDetector:
                         'lang': 'zh',
                     })
 
+        # 🩹 [β.2.7.8] Soft promise (无时间锚 ongoing intent)
+        # 标 'kind': 'soft' (硬承诺 'hard') 让消费端区分:
+        # - hard: 注册 commitment_watcher 定时 nudge
+        # - soft: 写 concern.notes_for_self 或 PlanLedger soft action (持续监督)
+        # dedup 用 startswith/包含：避免 hard "I will remind you" + soft "I will remind you at 23:00" 双计
+        hard_descs_en = [r.get('description', '').lower() for r in results if r.get('lang') == 'en']
+        hard_descs_zh = [r.get('description', '') for r in results if r.get('lang') == 'zh']
+        # EN soft
+        for m in _EN_SOFT_PATTERN.finditer(text):
+            action = m.groupdict().get('action', '').strip()
+            if not action or len(action) < 5:
+                continue
+            desc = f"{m.group('subject').strip()} {action}".strip()
+            desc_low = desc.lower()
+            # 已被 hard 抓到 (desc 含 hard desc 或 hard desc 是 prefix)
+            if any(h in desc_low or desc_low.startswith(h) for h in hard_descs_en if h):
+                continue
+            results.append({
+                'description': desc[:140],
+                'deadline_str': '',
+                'raw_match': m.group(0)[:160],
+                'lang': 'en',
+                'kind': 'soft',
+            })
+        # ZH soft
+        for m in _ZH_SOFT_PATTERN.finditer(text):
+            action = m.groupdict().get('action', '').strip()
+            if not action or len(action) < 4:
+                continue
+            desc = f"{m.group('subject')}{action}".strip()
+            if any(h in desc or desc.startswith(h) for h in hard_descs_zh if h):
+                continue
+            results.append({
+                'description': desc[:140],
+                'deadline_str': '',
+                'raw_match': m.group(0)[:160],
+                'lang': 'zh',
+                'kind': 'soft',
+            })
+
+        # 默认 hard 标 'kind' 字段
+        for r in results:
+            r.setdefault('kind', 'hard')
+
         return self._dedup_within_result(results)
 
     @staticmethod
@@ -233,6 +312,26 @@ class SelfPromiseDetector:
                     'skipped_reason': 'no_watcher'}
 
         for p in promises:
+            ok = self._register_one_promise(p, commitment_watcher, jarvis_reply, turn_id)
+            if ok:
+                registered += 1
+
+        with self._lock:
+            self._stats['registered'] += registered
+
+        return {'registered': registered, 'detected': len(promises), 'skipped_reason': None}
+
+    def _register_one_promise(self, p: Dict, commitment_watcher,
+                                jarvis_reply: str, turn_id: str = '') -> bool:
+        """注册一条 promise (hard 或 soft)。返回 True 表示成功 (统计入 registered)。
+        🩹 [β.2.7.8 / 2026-05-17]
+        - hard (有 deadline_str) → commitment_watcher.add_commitment 定时 nudge
+        - soft (无 deadline_str) → 写 concerns_ledger.notes_for_self + 升 severity 0.05
+        """
+        from jarvis_utils import bg_log as _bg
+        _kind = p.get('kind', 'hard')
+        _is_hard = (_kind == 'hard' and bool(p.get('deadline_str')))
+        if _is_hard:
             try:
                 commitment_watcher.add_commitment(
                     description=p['description'],
@@ -241,30 +340,79 @@ class SelfPromiseDetector:
                     is_future_task_confirmed=True,
                     source='self_promise',
                 )
-                registered += 1
+            except Exception as e:
                 try:
-                    from jarvis_utils import bg_log
-                    bg_log(
-                        f"📌 [SelfPromise] 注册 Jarvis 自承诺: "
-                        f"'{p['description'][:60]}' deadline='{p['deadline_str']}' "
-                        f"(lang={p['lang']} turn={turn_id or '?'})"
-                    )
+                    _bg(f"⚠️ [SelfPromise] hard add_commitment 失败: "
+                        f"{type(e).__name__}: {str(e)[:80]}")
                 except Exception:
                     pass
-            except Exception as _add_err:
+                return False
+        else:
+            # soft promise: 找匹配的 concern 写 notes_for_self
+            _written = False
+            try:
+                _nerve = (getattr(commitment_watcher, 'jarvis', None) or
+                          getattr(commitment_watcher, 'worker', None) or
+                          getattr(commitment_watcher, 'central_nerve', None))
+                _cl = getattr(_nerve, 'concerns_ledger', None) if _nerve else None
+                if _cl is not None:
+                    best = self._find_matching_concern(_cl, p['description'])
+                    if best is not None:
+                        existing = (getattr(best, 'notes_for_self', '') or '').strip()
+                        new_note = f"[β.2.7.8 self_soft] {p['description'][:100]}"
+                        if existing and len(existing) < 500:
+                            best.notes_for_self = (existing + " | " + new_note)[:600]
+                        else:
+                            best.notes_for_self = new_note
+                        try:
+                            best.severity = min(1.0, getattr(best, 'severity', 0.0) + 0.05)
+                        except Exception:
+                            pass
+                        try:
+                            _cl.persist()
+                        except Exception:
+                            pass
+                        _written = True
+                        try:
+                            _bg(f"📎 [SelfPromise soft] '{p['description'][:60]}' "
+                                f"→ 加到 concern '{best.id}' notes_for_self")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if not _written:
                 try:
-                    from jarvis_utils import bg_log
-                    bg_log(
-                        f"⚠️ [SelfPromise] add_commitment 失败: "
-                        f"{type(_add_err).__name__}: {str(_add_err)[:80]}"
-                    )
+                    _bg(f"📎 [SelfPromise soft] 无匹配 concern, 仅 log: "
+                        f"'{p['description'][:60]}'")
                 except Exception:
                     pass
+                # 没写成 — 但 soft 没匹配 concern 也算"已识别"，仍返回 True 让统计入 detected/registered
+        # 统一记一条注册成功 log
+        try:
+            _kind_tag = '/soft' if _kind == 'soft' or not p.get('deadline_str') else ''
+            _bg(f"📌 [SelfPromise{_kind_tag}] 注册 Jarvis 自承诺: "
+                f"'{p['description'][:60]}' deadline='{p.get('deadline_str', '')}' "
+                f"(lang={p.get('lang', '?')} turn={turn_id or '?'})")
+        except Exception:
+            pass
+        return True
 
-        with self._lock:
-            self._stats['registered'] += registered
-
-        return {'registered': registered, 'detected': len(promises), 'skipped_reason': None}
+    @staticmethod
+    def _find_matching_concern(ledger, desc: str):
+        """根据 desc 关键词匹配 ledger 里最相关的 active concern。返回 Concern 或 None。"""
+        desc_lower = (desc or '').lower()
+        if not desc_lower:
+            return None
+        for c in ledger.list_active():
+            cid_lower = (c.id or '').lower()
+            what_lower = (getattr(c, 'what_i_watch', '') or '').lower()
+            for kw in cid_lower.replace('sir_', '').split('_'):
+                if kw and len(kw) >= 4 and kw in desc_lower:
+                    return c
+            for kw in what_lower.split()[:6]:
+                if kw and len(kw) >= 4 and kw in desc_lower:
+                    return c
+        return None
 
     def detect_and_register_async(self, jarvis_reply: str,
                                     commitment_watcher=None,

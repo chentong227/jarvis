@@ -290,9 +290,10 @@ class ChatBypass:
         'SHORT_CHAT':      None,  # 不补位（短聊很快）
         'WAKE_ONLY':       None,  # 不补位
     }
-    # [P0+18-a.9 / 2026-05-15] 阈值 2.5s → 3.5s：大部分慢响应 6-15s 才有意义补位，
-    # 2.5s 阈值常常 first_token 刚要到了又被预渲打断。
-    _LOCAL_PHRASE_THRESHOLD = 3.5  # TTFT > 3.5s 才触发
+    # [P0+18-a.9 / 2026-05-15] 阈值 2.5s → 3.5s：大部分慢响应 6-15s 才有意义补位
+    # 🩹 [β.2.7.8 / 2026-05-17] 3.5s → 10s (Sir 反馈: 3-4s 基本回复了，没必要插入 "One moment")
+    # 10s 才触发预渲补位 — 只在 LLM 真卡时才填充
+    _LOCAL_PHRASE_THRESHOLD = 10.0  # TTFT > 10s 才触发预渲补位
 
     def _warmup_local_phrase_pool(self):
         """[轴 2.4] 启动时一次性预渲所有短句的 PCM 字节。
@@ -3212,7 +3213,27 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
                 f"Sound caring, NOT interrogative. **ONE sentence under 12 words.** Be restrained. "
                 f"NEVER ask 'how can I help' / 'what would you like' — just acknowledge presence + recent work."
             ),
-            "commitment_check": f"Sir said he would {nudge_context.get('commitment_description', 'rest')} at {nudge_context.get('commitment_time', 'a certain time')}. It is now {nudge_context.get('overdue_minutes', 'some')} minutes past that time and he is still working. Express gentle, dry concern. Reference what he said earlier. Do NOT nag — sound like a friend who noticed, not a parent. One sentence.",
+            "commitment_check": (
+                f"Sir said he would {nudge_context.get('commitment_description', 'rest')} "
+                f"at {nudge_context.get('commitment_time', 'a certain time')}. "
+                f"It is now {nudge_context.get('overdue_minutes', 'some')} minutes past "
+                f"that time and he is still working. Express gentle, dry concern. "
+                f"Reference what he said earlier. Do NOT nag — sound like a friend who "
+                f"noticed, not a parent. One sentence.\n\n"
+                # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测 "dinner 幻觉":
+                # LLM 看 abstract description 自己脑补具体词汇。强制引用原话防幻觉。
+                f"CRITICAL — ANTI-HALLUCINATION (3 rules):\n"
+                f"1. The ONLY thing Sir committed to at {nudge_context.get('commitment_time', '?')} "
+                f"was the SPECIFIC topic above. His EXACT original words were: "
+                f"\"{(nudge_context.get('commitment_source_text', '') or '(no source)')[:160]}\". "
+                f"Quote or paraphrase faithfully — NEVER substitute or invent topic specifics.\n"
+                f"2. TIME ATTRIBUTION: Do NOT pair this commitment_time ({nudge_context.get('commitment_time', '?')}) "
+                f"with topics from OTHER turns in [RECENT MEMORY]. If you reference earlier topics "
+                f"(like dinner / meeting / break / etc) use vague words like 'earlier' / "
+                f"'before' / 'recently' — NEVER attach a specific timestamp to them.\n"
+                f"3. ONE SUBJECT: The commitment is about ONE thing. Don't mix it with other "
+                f"recent topics from STM to sound clever."
+            ),
             "dormant_project": f"Sir has some projects that haven't been touched in days: {json.dumps(nudge_context.get('dormant_projects', []), ensure_ascii=False)}. Pick ONE most interesting dormant project and make a brief, casual remark about it. Sound like a friend who noticed, not a project manager. One sentence. Do NOT list all projects — just mention one naturally.",
             "offer_help": "Sir seems to be stuck on an error or debugging issue. ASK what error he's seeing and whether he needs help. Be specific — reference what's on his screen. Sound like a colleague glancing over, not tech support. One or two sentences. Under 25 words. You ARE allowed to ask a question for this nudge type.\n\nCRITICAL — NEVER mention internal tool names (process_hands.X, file_operator.Y, fast_call, organ name, snake_case identifier). Speak human language only.\n  BAD:  'may I run process_hands.list_processes?' / 'shall I invoke file_operator.scan?'\n  GOOD: 'Want me to find the CPU hog?' / 'Shall I pull the top processes?' / 'Need a quick scan?'\n\nCRITICAL — TONE VARIATION: Vary your tone based on context:\n- Late night (22:00-05:00): Tired but loyal. 'Still at it, Sir?' energy. Dry, understated.\n- Early morning (05:00-09:00): Fresh, brief. 'Starting early?' energy.\n- Afternoon slump (13:00-17:00): Knowing, companionable. 'This time of day' energy.\n- If Sir has been working 2+ hours: Acknowledge the grind. 'That's been stubborn for a while' energy.\n- If error_visible sensor is active: Be specific about troubleshooting. 'That looks familiar' energy.\n- If backspace_ratio is high: Note the frustration. 'Typing and deleting' energy.\n\nCRITICAL — PHRASING VARIETY: NEVER use the same opening twice in a row. Rotate between:\n- Direct offer: 'Need a hand with that?'\n- Observational: 'That error looks persistent.'\n- Casual: 'Want me to take a look?'\n- Dry: 'Shall I earn my keep?'\n- Companionable: 'We've been staring at this a while.'\n- Specific: 'That [specific error type] — want a second pair of eyes?'\n\nCRITICAL — EMOTIONAL PERCEPTION: If Sir seems frustrated (high backspace, rapid window switching), acknowledge it subtly. If Sir seems calm/steady, be more casual. Match his energy — don't be chipper when he's frustrated, don't be gloomy when he's focused.",
             "suggest_break": suggest_break_directive,

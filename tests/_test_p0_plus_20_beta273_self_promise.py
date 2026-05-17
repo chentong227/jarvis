@@ -83,11 +83,14 @@ class TestDetectChinese(unittest.TestCase):
         self.assertGreater(len(promises), 0)
         self.assertTrue(any('11' in p['deadline_str'] or '11' in p['raw_match'] for p in promises))
 
-    def test_no_time_no_promise(self):
-        """无时间锚不算承诺"""
+    def test_no_time_no_hard_promise_but_soft_caught(self):
+        """🩹 [β.2.7.8] 无时间锚 → 不再算 0 promises, 而是算 soft promise"""
         reply = "好的，先生。我会留意您的睡眠。"  # 没具体时间
         promises = self.det.detect(reply)
-        self.assertEqual(len(promises), 0)
+        # soft promise 路径捕获
+        self.assertGreater(len(promises), 0)
+        self.assertEqual(promises[0]['kind'], 'soft')
+        self.assertEqual(promises[0]['deadline_str'], '')
 
     def test_past_tense_zh(self):
         reply = "我刚才提醒过您了。"
@@ -134,10 +137,15 @@ class TestDetectAndRegister(unittest.TestCase):
 
     def test_add_commitment_failure_does_not_crash(self):
         self.cw.add_commitment.side_effect = RuntimeError('mock fail')
+        # 用 .jarvis = None 避免 soft promise fallback 误匹配
+        self.cw.jarvis = None
+        self.cw.worker = None
+        self.cw.central_nerve = None
         reply = "I shall remind you at 23:00."
         result = self.det.detect_and_register(reply, commitment_watcher=self.cw)
-        # 检测到了但注册失败，不应该 raise
+        # 检测到了 hard 但注册失败, 应不 raise + registered=0
         self.assertEqual(result['registered'], 0)
+        self.assertGreater(result['detected'], 0)
 
 
 class TestDetectAndRegisterAsync(unittest.TestCase):
@@ -172,6 +180,90 @@ class TestStats(unittest.TestCase):
         stats = det.get_stats()
         self.assertGreaterEqual(stats['detected'], 1)
         self.assertGreaterEqual(stats['registered'], 1)
+
+
+# ============================================================
+# C2. [β.2.7.8] Soft Promise (无时间锚 ongoing intent)
+# ============================================================
+class TestSoftPromise(unittest.TestCase):
+
+    def setUp(self):
+        from jarvis_self_promise import SelfPromiseDetector
+        self.det = SelfPromiseDetector()
+
+    def test_en_soft_will_integrate_reminders(self):
+        """治 Sir 18:46 实测: 'I will integrate reminders into our dialogue and issue
+        proactive prompts' — 无时间锚 → soft"""
+        reply = ("Understood, Sir. I will integrate reminders into our dialogue and "
+                 "issue proactive prompts when necessary to ensure you don't neglect "
+                 "your hydration intake.")
+        promises = self.det.detect(reply)
+        self.assertGreater(len(promises), 0)
+        soft = [p for p in promises if p.get('kind') == 'soft']
+        self.assertGreater(len(soft), 0, "应识别为 soft promise (无时间锚)")
+        # description 含 integrate reminders 或 issue proactive
+        joined = ' '.join(p['description'].lower() for p in soft)
+        self.assertTrue(
+            'integrate reminders' in joined or 'issue proactive' in joined,
+            f"soft promise desc 应含 ongoing intent: {soft}"
+        )
+
+    def test_zh_soft_keep_watch(self):
+        """中文 soft: '我会留意您的睡眠' (无具体时间)"""
+        reply = "好的，先生。我会留意您的睡眠，主动提醒您休息。"
+        promises = self.det.detect(reply)
+        self.assertGreater(len(promises), 0)
+        soft = [p for p in promises if p.get('kind') == 'soft']
+        self.assertGreater(len(soft), 0)
+        for p in soft:
+            self.assertEqual(p['deadline_str'], '')
+
+    def test_hard_promise_marks_kind_hard(self):
+        """hard promise 应被标 kind='hard'"""
+        promises = self.det.detect("I shall remind you at 23:00.")
+        hards = [p for p in promises if p.get('kind') == 'hard']
+        self.assertGreater(len(hards), 0)
+
+    def test_soft_dedup_with_hard(self):
+        """同 reply 既有 hard 又有 soft 时 dedup (避免双计)"""
+        promises = self.det.detect("I shall remind you at 23:00.")
+        # 不应同时含 hard 和 soft 同句 (hard remind you at 23:00 vs soft remind)
+        kinds = [p.get('kind') for p in promises]
+        # 至少 1 个，且不重复同 description
+        self.assertEqual(len(promises), len(set(p['description'][:30] for p in promises)))
+
+    def test_soft_writes_to_matching_concern_notes(self):
+        """soft promise 找匹配 concern 写 notes_for_self + 升 severity"""
+        from jarvis_self_promise import SelfPromiseDetector
+        from jarvis_concerns import Concern, ConcernsLedger, STATE_ACTIVE
+        import tempfile, os as _os
+        tmpdir = tempfile.mkdtemp()
+        ledger = ConcernsLedger(persist_path=_os.path.join(tmpdir, 'c.json'),
+                                 review_path=_os.path.join(tmpdir, 'r.json'))
+        # 注册 hydration concern
+        hyd = Concern(
+            id='sir_hydration_habit', what_i_watch='hydration target 3L',
+            why_i_care='health', severity=0.5, state=STATE_ACTIVE,
+        )
+        ledger.register(hyd)
+
+        cw = MagicMock()
+        # 让 detector 通过 cw.jarvis.concerns_ledger 找到 ledger
+        cw.jarvis = MagicMock()
+        cw.jarvis.concerns_ledger = ledger
+
+        det = SelfPromiseDetector()
+        reply = "Understood, Sir. I will integrate reminders for your hydration intake."
+        result = det.detect_and_register(reply, commitment_watcher=cw, turn_id='t1')
+
+        # 验证 soft 被注册
+        self.assertGreater(result['registered'], 0)
+        # 验证 notes_for_self 被写入
+        c = ledger.get('sir_hydration_habit')
+        self.assertIsNotNone(c)
+        self.assertIn('β.2.7.8', c.notes_for_self or '')
+        # severity 升了 0.05
+        self.assertAlmostEqual(c.severity, 0.55, places=2)
 
 
 # ============================================================

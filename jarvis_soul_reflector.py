@@ -76,6 +76,19 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
         ('billing', 0.04), ('订阅', 0.05), ('续费', 0.06), ('付费', 0.04),
         ('账单', 0.04), ('支付失败', 0.10),
     ],
+    # 🩹 [β.2.7.8 / 2026-05-17] Sir 18:46 实测：要求 Jarvis 主动提醒喝水
+    # 之前 keyword 表没含 hydration → reflector 不触发 → severity 没累计
+    # 治：加水/水分/hydration/drink 等中英 keyword
+    'sir_hydration_habit': [
+        ('water', 0.06), ('hydration', 0.08), ('hydrate', 0.06),
+        ('drink water', 0.10), ('drink some water', 0.10),
+        ('dehydrated', 0.10), ('thirsty', 0.06),
+        ('water intake', 0.10), ('liters', 0.05),
+        ('喝水', 0.10), ('喝点水', 0.10), ('喝水了', 0.10),
+        ('补水', 0.10), ('水分', 0.06), ('口渴', 0.06),
+        ('多喝水', 0.10), ('喝杯水', 0.08), ('3 升', 0.06), ('3.5 升', 0.06),
+        ('八杯水', 0.08), ('8 杯', 0.06),
+    ],
     'unfinished_jiazhao_ke1': [
         ('driving', 0.04), ('license', 0.04), ('jiazhao', 0.08),
         ('科一', 0.10), ('驾照', 0.08), ('练车', 0.06), ('驾考', 0.08),

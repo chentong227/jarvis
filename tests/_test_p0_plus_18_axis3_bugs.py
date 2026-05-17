@@ -365,13 +365,13 @@ class TestP0Plus18_a9_LocalPhraseThreshold(unittest.TestCase):
         self.assertIsNotNone(m,
             "_LOCAL_PHRASE_TIER_ROUTE['TOOL_REQUEST'] 必须改成 None")
 
-    def test_threshold_raised_to_35(self):
-        """阈值必须从 2.5 提到 3.5"""
+    def test_threshold_raised_to_10s(self):
+        """🩹 [β.2.7.8 / 2026-05-17] Sir 反馈: 3-4s 基本回复了, 阈值 3.5s → 10.0s"""
         m = re.search(
-            r"_LOCAL_PHRASE_THRESHOLD\s*=\s*3\.5",
+            r"_LOCAL_PHRASE_THRESHOLD\s*=\s*10(?:\.0)?",
             self.src)
         self.assertIsNotNone(m,
-            "_LOCAL_PHRASE_THRESHOLD 必须改成 3.5")
+            "_LOCAL_PHRASE_THRESHOLD 必须改成 10.0 (Sir 实测 3-4s 已足够)")
 
     def test_start_backchannel_uses_constant_not_literal(self):
         """stream_chat 调 _start_backchannel_timer 必须用 self._LOCAL_PHRASE_THRESHOLD 而非硬编码 2.5"""

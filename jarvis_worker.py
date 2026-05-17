@@ -3163,6 +3163,27 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                     bg_log(f"🔧 [Memory Correction] '{old_val}' → '{new_val}'")
                                                 except Exception:
                                                     print(f"║ 🔧 [Memory Correction] '{old_val}' → '{new_val}'")
+                                                # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测 BUG：
+                                                # Jarvis 说 "I shall update my internal profile" 但实际只更新
+                                                # hippocampus 不调 profile_card → 名实不符。
+                                                # 同步调 profile_card.apply_correction 让长期画像也得信号。
+                                                # confidence=0.4 让 profile_card 自己决定累计权重。
+                                                try:
+                                                    if hasattr(self.jarvis, 'profile_card') and self.jarvis.profile_card:
+                                                        self.jarvis.profile_card.apply_correction(
+                                                            'memory_correction',
+                                                            'preferences.user_correction',
+                                                            str(old_val)[:160],
+                                                            str(new_val)[:160],
+                                                            0.4,
+                                                        )
+                                                        try:
+                                                            from jarvis_utils import bg_log as _pc_bg
+                                                            _pc_bg(f"📇 [ProfileCard] 同步 memory_correction → field=preferences.user_correction")
+                                                        except Exception:
+                                                            pass
+                                                except Exception:
+                                                    pass
                                             try:
                                                 if category_conflict:
                                                     queries = []
@@ -3874,49 +3895,18 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                 
                 if gate_future:
                     if _is_critical:
+                        # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测"喝水提醒卡 40s":
+                        # 之前同步等 gate_future.result(timeout=25.0) → 12s 阻塞主对话框
+                        # 改异步: 立刻 update STM + 后台 collect gate_future
+                        # Trade-off: Memory Correction 失败 Sir 不会立刻知 (实测 success>95%)
+                        # 但 Gatekeeper success log "🚪 [Gatekeeper One-Shot] Memory saved"
+                        # 异步出 — Sir 在终端能看到 (即便延后 5-10s)
                         try:
                             from jarvis_utils import bg_log
-                            bg_log(f"🔒 [Gatekeeper Sync] 检测到日程/记忆关键词，等待守门人...")
+                            bg_log(f"🔓 [Gatekeeper Async/Critical] 关键路径异步收，主对话框立即返回（β.2.7.8 优化）")
                         except Exception:
-                            print(f"🔒 [Gatekeeper Sync] 检测到日程/记忆关键词，等待守门人...", file=sys.stderr)
-                        try:
-                            gate_result = gate_future.result(timeout=25.0)
-                            if gate_result.get('clean_intent') and gate_result['clean_intent'] != cmd:
-                                clean_intent = gate_result['clean_intent']
-                            if gate_result.get('gate_data_to_save'):
-                                gate_data_to_save = gate_result['gate_data_to_save']
-                            if gate_result.get('system_alert_text'):
-                                system_alert_text = gate_result['system_alert_text']
-                            if gate_result.get('conversation_event') and isinstance(gate_result['conversation_event'], dict):
-                                event = gate_result['conversation_event']
-                                self.pending_event = event.get('description', '')
-                            _t_gate_done = time.time()
-                            try:
-                                from jarvis_utils import bg_log
-                                bg_log(f"⏱️ [Gatekeeper Slow] 解析完成: {_t_gate_done - _t_gate_start:.1f}s (同步等待)")
-                            except Exception:
-                                print(f"⏱️ [Gatekeeper Slow] 解析完成: {_t_gate_done - _t_gate_start:.1f}s (同步等待)", file=sys.stderr)
-                        except concurrent.futures.TimeoutError:
-                            try:
-                                from jarvis_utils import bg_log
-                                bg_log(f"⚠️ [Gatekeeper Slow] 结果收集超时！关键路径存储未确认")
-                            except Exception:
-                                print(f"⚠️ [Gatekeeper Slow] 结果收集超时！关键路径存储未确认", file=sys.stderr)
-                            jarvis_reply = "Sir, my memory system is currently overloaded. I heard you but couldn't confirm the save. Could you repeat that?"
-                            final_clean_reply = jarvis_reply
-                            filtered_reply = jarvis_reply
-                            self.chat_bypass.audio_queue.put((jarvis_reply, {}))
-                        except Exception as e:
-                            try:
-                                from jarvis_utils import bg_log
-                                bg_log(f"⚠️ [Gatekeeper Slow] 结果收集异常: {e}")
-                            except Exception:
-                                print(f"⚠️ [Gatekeeper Slow] 结果收集异常: {e}", file=sys.stderr)
-                            jarvis_reply = "I encountered an error processing that request, Sir. Please try again."
-                            final_clean_reply = jarvis_reply
-                            filtered_reply = jarvis_reply
-                            self.chat_bypass.audio_queue.put((jarvis_reply, {}))
-                        
+                            pass
+                        # 立刻 update STM (用当前最佳 clean_intent / cmd, 后台 collect 后覆盖)
                         self.jarvis.short_term_memory.append({
                             "time": time.strftime("%H:%M:%S"),
                             "user": clean_intent,
@@ -3924,18 +3914,54 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         })
                         if hasattr(self, 'commitment_watcher') and self.commitment_watcher:
                             self.commitment_watcher.extract_from_input(clean_intent)
-                        # [R7-β4] 记录 Jarvis 回复供"防套话密度版"统计
                         try:
                             pt = getattr(self.jarvis, 'phrase_tracker', None)
                             if pt is not None and final_clean_reply:
                                 pt.record_reply(final_clean_reply)
                         except Exception:
                             pass
+                        # seal_chat 用当前 gate_data_to_save (可能不完整, 但 hippocampus 写入)
                         if final_clean_reply:
                             self.jarvis.hippocampus.seal_chat_async(
                                 self.jarvis.gemini_key, clean_intent, final_clean_reply,
                                 memory_protocol=gate_data_to_save
                             )
+
+                        # 后台 collect Gatekeeper 结果 + 覆盖 STM clean_intent
+                        def _async_critical_gate_collect():
+                            try:
+                                _gate_r = gate_future.result(timeout=25.0)
+                                _ci = _gate_r.get('clean_intent', '')
+                                _gd = _gate_r.get('gate_data_to_save')
+                                if _ci and _ci != cmd:
+                                    try:
+                                        if self.jarvis.short_term_memory:
+                                            self.jarvis.short_term_memory[-1]['user'] = _ci
+                                    except Exception:
+                                        pass
+                                if _gate_r.get('conversation_event') and isinstance(_gate_r['conversation_event'], dict):
+                                    self.pending_event = _gate_r['conversation_event'].get('description', '')
+                                _t_gate_done = time.time()
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"⏱️ [Gatekeeper Slow] 解析完成: {_t_gate_done - _t_gate_start:.1f}s (Critical 后台异步)")
+                                except Exception:
+                                    pass
+                            except concurrent.futures.TimeoutError:
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"⚠️ [Gatekeeper Slow/Critical] 后台 collect 超时，记忆可能未完整确认")
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                try:
+                                    from jarvis_utils import bg_log as _bg
+                                    _bg(f"⚠️ [Gatekeeper Slow/Critical] 后台 collect 异常: {e}")
+                                except Exception:
+                                    pass
+
+                        threading.Thread(target=_async_critical_gate_collect,
+                                          daemon=True, name='GatekeeperCriticalAsync').start()
                     else:
                         try:
                             from jarvis_utils import bg_log

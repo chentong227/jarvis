@@ -465,13 +465,20 @@ class CommitmentWatcher(threading.Thread):
             except Exception:
                 pass
 
+            # 🩹 [β.2.7.8 / 2026-05-17] source_text 必须存 user 原话, 不是 [Commitment]
+            # prefix. 治 Sir 实测 "dinner 幻觉": commitment_check nudge 没有原话引用 →
+            # LLM 看到 abstract description 自己脑补具体细节 (urinate → dinner)。
+            # 修: 优先存 user_text (cmd 原话), 缺失时才 fallback prefix。
+            _sxt = (user_text or '').strip()[:240]
+            if not _sxt:
+                _sxt = f"[Commitment] {description}"
             self.commitments.append({
                 'db_id': _new_db_id,
                 'deadline_ts': deadline_ts,
                 'description': description,
                 'grace_minutes': 10,
                 'nudged': False,
-                'source_text': f"[Commitment] {description}",
+                'source_text': _sxt,
                 'source': source,  # 🩹 β.2.7.3: 'user_text' | 'self_promise'
                 'created_at': time.time()
             })
@@ -649,6 +656,8 @@ class CommitmentWatcher(threading.Thread):
         context = {
             "type": "commitment_check",
             "commitment_description": commitment['description'],
+            # 🩹 [β.2.7.8] 传原话给 nudge prompt, LLM 必须引用原话而不是幻觉细节
+            "commitment_source_text": commitment.get('source_text', '')[:200],
             "commitment_time": time.strftime("%H:%M", time.localtime(commitment['deadline_ts'])),
             "source_text": commitment['source_text'],
             "overdue_minutes": overdue_minutes
