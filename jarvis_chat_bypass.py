@@ -3106,7 +3106,27 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             except:
                 pass
 
-        public_layers = self._build_public_layers(ledger_data)
+        # 🩹 [P0+20-β.2.7.1 / 2026-05-17] 灵魂通用化 Phase 1：
+        # 走 nerve._assemble_prompt(mode='nudge') 让 nudge 路径接通 Layer 0-3。
+        # _build_public_layers 保留作 fallback（不删，注释 deprecated）。
+        # 详 docs/JARVIS_SOUL_UNIVERSALIZATION.md Phase 1
+        try:
+            _nudge_directive_proxy = nudge_context.get('nudge_directive') or nudge_context.get('type', '') or ''
+            public_layers = self.jarvis._assemble_prompt(
+                user_input=str(_nudge_directive_proxy)[:200],
+                ledger_data=ledger_data,
+                mode='nudge',
+            )
+        except Exception as _nudge_inj_err:
+            try:
+                from jarvis_utils import bg_log as _bg_nudge_err
+                _bg_nudge_err(
+                    f"⚠️ [stream_nudge] _assemble_prompt(mode=nudge) failed, "
+                    f"fallback _build_public_layers: {type(_nudge_inj_err).__name__}: {str(_nudge_inj_err)[:80]}"
+                )
+            except Exception:
+                pass
+            public_layers = self._build_public_layers(ledger_data)
 
         sleep_escalation = nudge_context.get('sleep_escalation', 0)
         unanswered_count = nudge_context.get('unanswered_count', 0)

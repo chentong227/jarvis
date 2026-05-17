@@ -1365,6 +1365,48 @@ Then proceed with the rest of your response normally.
             except Exception:
                 fuzzy_candidates_policy = ""
 
+        # 🩹 [P0+20-β.2.7.1 / 2026-05-17] 灵魂通用化 Phase 1：mode='nudge'
+        # 详 docs/JARVIS_SOUL_UNIVERSALIZATION.md Phase 1。
+        # 让 SmartNudge / Conductor / CommitmentWatcher 等所有"主动发声"路径
+        # 走过 Layer 0-3 注入。通过复用 chat_bypass._build_public_layers
+        # （它含 BEHAVIORAL DIRECTIVES / TIME CONTEXT / EMOTION 等关键段），
+        # 把头部 JARVIS_CORE_PERSONA 替换成本函数构造的 core_persona（含 Layer 0-3）。
+        # stream_nudge 把它当 public_layers 用，[CURRENT CONTEXT]/[NUDGE]/[RULES] 段保持不变。
+        if mode == "nudge":
+            cb = getattr(self, 'chat_bypass', None)
+            if cb is None:
+                # 退化：Sir 还没 wire chat_bypass 时直接返回 core_persona
+                return core_persona
+            try:
+                public_str = cb._build_public_layers(ledger_data)
+                # _build_public_layers 现在第一行就是 JARVIS_CORE_PERSONA 静态常量。
+                # 替换成 core_persona（含 Layer 0-3）让灵魂注入 visible 给 nudge 主脑。
+                _JCP_const = JARVIS_CORE_PERSONA
+                if public_str.startswith(_JCP_const):
+                    public_str = core_persona + public_str[len(_JCP_const):]
+                else:
+                    # 兼容：如果 _build_public_layers 改了头部结构，前置 core_persona
+                    public_str = core_persona + "\n\n" + public_str
+                try:
+                    from jarvis_utils import bg_log as _bg_n
+                    _bg_n(
+                        f"🪞 [Nudge SOUL inject] mode=nudge "
+                        f"prompt_len={len(public_str)}c L0={len(self_anchor_block)}c "
+                        f"L1={len(soul_block)}c L2={len(relational_block)}c "
+                        f"L3={len(attention_block)}c"
+                    )
+                except Exception:
+                    pass
+                return public_str
+            except Exception as _nudge_asm_err:
+                try:
+                    from jarvis_utils import bg_log as _bg_nerr
+                    _bg_nerr(f"⚠️ [Nudge SOUL inject] fallback: {type(_nudge_asm_err).__name__}: {str(_nudge_asm_err)[:80]}")
+                except Exception:
+                    pass
+                # 失败兜底：直接返回 core_persona，至少灵魂注入到了
+                return core_persona
+
         if mode == "mail":
             # [P0+18-c.2 / 2026-05-15] 修 Sir 主诉 BUG：reminder 触发后反问"要不要设倒计时"
             # 触发文案虽然改了，但 mail mode prompt 最小化，LLM 仍然可能用过去时框架回。
