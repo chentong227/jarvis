@@ -187,7 +187,9 @@ class ConcernsReflector:
 # ============================================================
 
 WEEKLY_REFLECTOR_CONFIG = {
-    'primary_model': 'google/gemini-3-flash-preview',
+    # 🩹 [β.2.7.4 / 2026-05-17] Sir 决定升 gemini-3.1-pro-preview（治 LLM 误判 STM 间隔=失眠）
+    # 频率：周 1 次 LLM 反思 / 重要性：决定 Jarvis 长期关心什么
+    'primary_model': 'google/gemini-3.1-pro-preview',
     'fallback_model': 'google/gemini-2.5-flash-lite',
     'temperature': 0.2,        # 略放手让它创造
     'max_output_tokens': 600,
@@ -209,6 +211,16 @@ You are Jarvis's Inner Reflective Self. Once a week you look back at recent conv
 4. NEVER propose meta concerns about "Sir using Jarvis" / "system reliability" / similar self-referential drivel.
 5. Concerns should be about Sir's long-term wellbeing / unfinished projects / things he'd be grateful Jarvis noticed.
 6. Output empty array if nothing legitimate emerges.
+
+[INTERPRETATION RULES — STM 时间戳间隔 ≠ 行为推断]
+🩹 [β.2.7.4 / 2026-05-17] 治 Sir 反馈：误把 "01:55 goodnight → 08:25 morning" 沉默 6.5h 判为 insomnia
+1. 大间隔 (>= 4h) 在夜间/凌晨时段 → 默认假设 = 正常睡眠，不要 propose 失眠/作息类 concern
+   - 例：01:55 'goodnight' → 08:25 'morning' = 6.5h 沉默 = 正常 6-8h 睡眠
+   - 例：03:00 最后说话 → 07:00 第一次说话 = 4h 沉默 = 短睡眠（可能值得 note 但不是 insomnia 证据）
+2. 失眠 (insomnia) 类 concern 必须有直接证据：Sir 说 "睡不着" / "insomnia" / "翻来覆去" / "失眠" / "alarm 都没用"
+   - 单凭 STM 时间戳间隔本身永远不能 propose insomnia
+3. 上一条 utterance 含 'goodnight' / 'sleep' / '睡' / 'bed' 类词 + 长沉默 → 强烈暗示 Sir 真睡了
+4. 时间戳是"Jarvis 收到 Sir 话的时刻"，不是"Sir 在干什么"。Sir 不说话 ≠ Sir 醒着
 
 [EXISTING CONCERNS — DO NOT DUPLICATE]
 {existing_concerns_str}

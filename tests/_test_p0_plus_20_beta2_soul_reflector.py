@@ -337,6 +337,45 @@ class TestWeeklyReflectorMockedLLM(unittest.TestCase):
 
 
 # ============================================================
+# [β.2.7.4 / 2026-05-17] WeeklyReflector prompt + 模型升级回归测试
+# 治 Sir 反馈：把 "01:55 goodnight → 08:25 morning" 沉默 6.5h 误判成 insomnia
+# ============================================================
+class TestWeeklyReflectorInterpretationRules(unittest.TestCase):
+    """验证 prompt 含 STM 时间戳间隔 ≠ 行为推断 的约束 + 模型升级"""
+
+    def test_prompt_contains_interpretation_rules(self):
+        """[β.2.7.4] prompt 必须含 INTERPRETATION RULES 段"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        self.assertIn('INTERPRETATION RULES', WEEKLY_REFLECTOR_PROMPT)
+        # 关键约束：长间隔不算失眠证据
+        self.assertIn('失眠', WEEKLY_REFLECTOR_PROMPT)
+        self.assertIn('正常睡眠', WEEKLY_REFLECTOR_PROMPT)
+        self.assertIn('insomnia', WEEKLY_REFLECTOR_PROMPT)
+        # 必须有直接证据条款
+        self.assertIn('直接证据', WEEKLY_REFLECTOR_PROMPT)
+
+    def test_prompt_warns_about_timestamp_interval(self):
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_PROMPT
+        # 必须明确"时间戳间隔" + "不是行为推断"
+        self.assertIn('时间戳', WEEKLY_REFLECTOR_PROMPT)
+        # 必须有 4h 阈值说明
+        self.assertTrue('4h' in WEEKLY_REFLECTOR_PROMPT or '>= 4' in WEEKLY_REFLECTOR_PROMPT)
+
+    def test_primary_model_upgraded_to_gemini_3_1_pro(self):
+        """[β.2.7.4] primary model 升级到 gemini-3.1-pro-preview 提高判断质量"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_CONFIG
+        self.assertEqual(
+            WEEKLY_REFLECTOR_CONFIG['primary_model'],
+            'google/gemini-3.1-pro-preview'
+        )
+
+    def test_fallback_model_still_lite_for_quota_safety(self):
+        """fallback 保留 lite 兜底，primary 失败时不挂"""
+        from jarvis_soul_reflector import WEEKLY_REFLECTOR_CONFIG
+        self.assertIn('flash-lite', WEEKLY_REFLECTOR_CONFIG['fallback_model'])
+
+
+# ============================================================
 # F. Singleton + lifecycle
 # ============================================================
 class TestReflectorSingleton(unittest.TestCase):
