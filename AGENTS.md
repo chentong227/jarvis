@@ -189,7 +189,50 @@ Get-Content tests\last_run.json
 
 ---
 
-## 11. 当前迭代状态（动态 — 由 TODO.md 维护）
+## 11. Agent 定期维护责任（β.2.7.6 起强制）
+
+每次 Agent 上线接手前，先跑下面这套"健康巡检"（5 分钟）。发现规律性问题后**主动**优化，不等 Sir 反馈。
+
+### A. 看 directive 健康（每次接手必做）
+```powershell
+python scripts\registry_dump.py
+```
+判断标准:
+- `fired N 次, helped 0 次, rejected_rate > 30%` → directive 没用，可撤
+- `fired = 0` 长期（≥ 14 天）→ 触发条件太严或场景已废，可放宽 / 撤
+- `helped_rate > 90%` 长期 → 已是 baseline，可考虑合并进 PERSONA 让它常驻
+
+### B. 看 concerns / relational queue（每次接手必做）
+```powershell
+python scripts\concerns_dump.py --review --no-interactive
+python scripts\relational_dump.py
+```
+- review queue 长期堆积 → prompt 或模型有问题，调 prompt 或问 Sir 决策
+- relational store 空（无 inside_joke / protocol）→ Sir 还没录入，写入到对话报告
+- concerns 全部 severity 偏低（< 0.2）→ 信号 decay 太狠或采集不够
+
+### C. 看日志体积 / 进程健康
+```powershell
+Get-ChildItem docs\runtime_logs\jarvis_*.log | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | Format-Table Name, Length, LastWriteTime
+```
+- 单 log > 200KB 而 session 没崩 → 后台 spam 重，找 grep `[BgLog spam]`
+- 7d 内 log 总和 > 100MB → archive 老 log 到 `docs/runtime_logs/archive/`
+
+### D. 看测试健康
+```powershell
+Get-Content tests\last_run.json | Select-String "passed|failed|duration"
+```
+- failed > 0 立刻修
+- duration > 5min → 看有没有重复 IO，能否 mock
+
+### E. 看 LLM 成本（月度建议跑 1 次）
+- grep `[Timing]` 看分布：`stream` 持续 > 10s 表示 prompt 太大或模型慢
+- grep `[OpenRouter]` 看 429 / 403 频率
+- 看 `memory_pool/key_router_state.json` 永久死的 key 数
+
+---
+
+## 12. 当前迭代状态（动态 — 由 TODO.md 维护）
 
 - **上轮完工**：P0+19 (Nerve 拆分 17479→324 / 16 新文件)
 - **当前轨 1**：P0+20-α（拆分收尾 + 4 缺口修复）
