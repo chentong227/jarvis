@@ -22,19 +22,44 @@
 
 ---
 
-## 1. 概念模型
+## 1. 概念模型 — 承诺三角 (Sir 2026-05-17 23:28 澄清)
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  Commitment = (description, predicate, action, ttl)    │
-├────────────────────────────────────────────────────────┤
-│  Predicate.evaluate(ctx) -> bool                       │
-│    ctx = {now_ts, idle_ms, sensor_snap, window_title,  │
-│            recent_stm, wechat_unread, ...}             │
-│  CompositePredicate(AND|OR, [p1, p2, ...])             │
-│  Predicate 内置 library + LLM 解析自然语言新条件        │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Commitment = (predicate, action, ttl, commit_type)              │
+│              with subject_of_predicate + subject_of_action       │
+├─────────────────────────────────────────────────────────────────┤
+│  commit_type ∈ {'sir_self_promise',                              │
+│                 'conditional_reminder',  ← Sir 托付 Jarvis 监视  │
+│                 'jarvis_self_promise'}                           │
+│                                                                  │
+│  Predicate.evaluate(ctx) -> bool                                 │
+│    .subject ∈ {'sir' (默认), 'jarvis' (未来扩展)}                │
+│    ctx 含 Sir 维度: idle_ms, sensor_snap, window_title, stm,     │
+│            recent process_died_events, ...                       │
+│    未来 ctx 加 Jarvis 维度: jarvis_running_tasks, jarvis_state,  │
+│            self_promise_pending, key_health, ...                 │
+│                                                                  │
+│  Action.executor ∈ {'voice_nudge' (默认走 stream_nudge),         │
+│                     'tool_call' (将来扩展, 自动执行 organ.cmd),  │
+│                     'silent_log' (只 PromiseLog 不出声)}         │
+│  Action.target   ∈ {'sir' (默认), 'jarvis' (自我变更),           │
+│                     'system' (改全局 state)}                     │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**为什么三角**: Sir 22:48 反例 "等我导出完视频去喝水":
+- 承诺人 ≠ Sir (不是 "我承诺我要去喝水"; Sir 没承诺)
+- 谓词主体 = Sir (Premiere 进程退出 = Sir 行为状态变化)
+- 行动主体 = Jarvis 提醒 Sir
+→ commit_type='conditional_reminder', predicate.subject='sir',
+   action.executor='voice_nudge', action.target='sir'
+
+未来扩展场景 — Jarvis 自主任务:
+- "Jarvis 把视频压缩完了告诉我 + 自动放到 Sir 桌面"
+- predicate.subject='jarvis' (检测 Jarvis 自己的压缩 task 完成)
+- action.executor='tool_call' (file_operator.move)
+- action.target='sir' (move 到 Sir 桌面 + 顺带通知)
 
 | Sir 自然语言 | Predicate | Action |
 |---|---|---|
@@ -211,12 +236,14 @@ def run(self):
 
 ## 4. 实施 4 阶段
 
-| 阶段 | 工时 | 内容 | 必做 |
-|---|---|---|---|
-| **β-1 Predicate base + library** | 2h | 6 个内置 predicate + CompositePredicate + 持久化 JSON | ✅ |
-| **β-2 Watcher 接 predicate** | 1.5h | CommitmentWatcher tick 跑 evaluate, 老路径并存 | ✅ |
-| **β-3 LLM Parser** | 3h | Gatekeeper prompt 加 condition 字段 + 测试 5 类自然语言场景 | ⭐ 核心 |
-| **β-4 scripts/predicate_tail.py + 真机** | 1.5h | Sir 实测 + 边角调 | ⭐ |
+| 阶段 | 工时 | 内容 | 必做 | 状态 |
+|---|---|---|---|---|
+| **β-1 Predicate base + library** | 2h | 12 个内置 predicate + Composite + 持久化 + subject 接口 | ✅ | **DONE** (β.2.8.6) |
+| **β-2 Watcher 接 predicate** | 1.5h | CommitmentWatcher tick 跑 evaluate, 老路径并存 | ✅ | **DONE** (β.2.8.6) |
+| **β-3 LLM Parser** | 3h | Gatekeeper prompt 加 condition 字段 + 测试 5 类自然语言场景 | ⭐ 核心 | 待做 |
+| **β-4 scripts/predicate_tail.py + 真机** | 1.5h | Sir 实测 + 边角调 | ⭐ | 待做 |
+| **β-5 接 action.executor='tool_call'** | 2h | tool_call 通道接通 — Jarvis 自动 organ.cmd 不只是出声 | 推荐 | 待做 (β.2.9+) |
+| **β-6 接 predicate.subject='jarvis'** | 1.5h | ctx 加 jarvis 维度 + Jarvis 自主任务监视 (压缩/上传/备份完成) | 推荐 | 待做 (β.2.9+) |
 
 ---
 

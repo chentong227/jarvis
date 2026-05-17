@@ -2950,6 +2950,27 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🩹 [P0+20-β.2.8.7 / 2026-05-17] ClaimTracer — 通用反幻觉检测
+        # Sir 23:32 反馈: "硬编码只是时间不能编造幻觉吗?" 改通用 framework.
+        # 解析 final_reply 抽 specific factual claim (时间/数字/quote) →
+        # trace 到 tool_results / STM / uncertainty marker → 没 trace 到 bg_log warning.
+        try:
+            from jarvis_claim_tracer import trace_reply, update_stats
+            from jarvis_utils import TraceContext as _TC
+            try:
+                _ttid = _TC.get_turn_id() or ''
+            except Exception:
+                _ttid = ''
+            _claim_result = trace_reply(
+                jarvis_reply=final_reply,
+                tool_results=list(_tool_results) if '_tool_results' in dir() else [],
+                stm_recent=list(getattr(self.jarvis, 'short_term_memory', []) or []),
+                turn_id=_ttid,
+            )
+            update_stats(_claim_result)
+        except Exception:
+            pass
+
         # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 ConcernsReflector
         # 每轮对话末尾启发式扫 keyword → 给相关 concerns 加 signal。
         # 纯启发式，~50us，不走 LLM。fire-and-forget thread 即可，但本身就快。
@@ -3220,13 +3241,29 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             "afternoon": "It's the afternoon slump hours. Make a brief, knowing remark. 'I know this time of day' energy.",
             "flow_end": "Sir just finished a coding session and switched to something else. Acknowledge the good session positively, without being cheesy.",
             "return_greeting": (
-                f"Sir just returned after being away for {nudge_context.get('afk_minutes', 'a while')} minutes. "
-                f"Give a personalized welcome back that **references the actual work / topic from STM** "
-                f"(NOT generic 'welcome back'). If STM is empty, just say 'Yes, Sir~' or '在呢，先生~'. "
-                f"Use a languid, drawn-out tone — 'Sir~' with a tilde, ellipsis for pauses, "
-                f"like you just woke up from a nap yourself. "
-                f"Sound caring, NOT interrogative. **ONE sentence under 12 words.** Be restrained. "
-                f"NEVER ask 'how can I help' / 'what would you like' — just acknowledge presence + recent work."
+                # 🩹 [β.2.8.7 / 2026-05-17] Sir 23:40 反馈: "还是模板感". 删句式锁
+                # ('languid drawn-out / Sir~ tilde / ellipsis') — Soul 层灌入再多
+                # 也压不过 directive 硬约束. 改为只给 evidence + 强制 reference 真实 fact.
+                f"Sir just returned after being away for {nudge_context.get('afk_minutes', 'a while')} minutes.\n"
+                f"\n[REQUIRED — REFERENCE ONE CONCRETE FACT from the lists above]:\n"
+                f"  - the active window title (what app/file Sir is in right now), OR\n"
+                f"  - the last STM topic Sir was working on, OR\n"
+                f"  - a pending commitment / unfinished thread that just surfaced.\n"
+                f"DO NOT pick a generic activity ('working') — name the actual thing.\n"
+                f"\n[FORBIDDEN OPENINGS — DO NOT START WITH ANY OF THESE]:\n"
+                f"  - 'Welcome back, Sir' / 'Welcome back' / 'Hello again' / 'Hi Sir'\n"
+                f"  - '回来了' / '欢迎回来' / '您回来了' / '先生回来了'\n"
+                f"  - 'Yes, Sir' / 'Of course, Sir'\n"
+                f"Skip the greeting word entirely — go straight to acknowledging the concrete fact.\n"
+                f"\n[STYLE]:\n"
+                f"  - ≤ 14 English words + ZH translation. Short.\n"
+                f"  - Sound like a colleague glancing over, not a hotel doorman.\n"
+                f"  - No interrogative ('how can I help' / 'what would you like') — STATEMENT only.\n"
+                f"  - If irony or wit naturally fits the concrete fact, mild humor; else direct.\n"
+                f"\n[GOOD examples — for inspiration only, never copy verbatim]:\n"
+                f"  - 'That PowerShell loop must've burned a hole through the screen by now.'\n"
+                f"  - '那个 commit 看来你已经动手了, Cursor 还没 staged.'\n"
+                f"  - '邮件第三遍打开了, 还在拿不定主意?'"
             ),
             "commitment_check": (
                 f"Sir said he would {nudge_context.get('commitment_description', 'rest')} "

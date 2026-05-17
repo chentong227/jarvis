@@ -81,12 +81,22 @@ class HealthProbeDaemon(threading.Thread):
             except Exception:
                 num_handles = -1
             cpu_pct = p.cpu_percent(interval=None)
+            # 🩹 [β.2.8.7 / 2026-05-17] Sir 23:28 反馈: 严格排查 thread 来源
+            # Python 角度 (threading.enumerate()) 看到的 thread = 我们能控制的
+            # OS 角度 (num_threads) = Python 线程 + native (CUDA/gRPC/PyAudio/Qt 等)
+            # 差值 = native, 不可控
+            import threading
+            py_threads = threading.enumerate()
+            py_thread_count = len(py_threads)
+            native_thread_count = max(0, num_threads - py_thread_count)
             sample = {
                 'ts': time.time(),
                 'iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
                 'ws_mb': round(ws_mb, 1),
                 'private_mb': round(private_mb, 1),
                 'threads': num_threads,
+                'py_threads': py_thread_count,
+                'native_threads': native_thread_count,
                 'handles': num_handles,
                 'cpu_pct': round(cpu_pct, 1),
             }
@@ -94,6 +104,26 @@ class HealthProbeDaemon(threading.Thread):
         except Exception as e:
             bg_log(f"⚠️ [HealthProbe] sample err: {e}")
             return None
+
+    def dump_python_threads(self) -> str:
+        """详细列 Python 线程 (按 name prefix 分组). 给 Sir 排查用."""
+        import threading
+        import collections
+        threads = threading.enumerate()
+        groups = collections.Counter()
+        named = []
+        for t in threads:
+            name = t.name or 'unnamed'
+            # group by prefix (split by - or _ or digit)
+            import re
+            prefix = re.split(r'[\-_0-9]', name, maxsplit=1)[0]
+            groups[prefix or name] += 1
+            named.append(name)
+        lines = ["=== Python 线程分组 ==="]
+        for grp, n in groups.most_common():
+            lines.append(f"  {grp:30s}  {n}")
+        lines.append(f"\n总 Python 线程: {len(threads)}")
+        return '\n'.join(lines)
 
     def evaluate_alerts(self, s: Dict) -> List[str]:
         """根据当前 sample 出告警 list."""
@@ -158,7 +188,13 @@ class HealthProbeDaemon(threading.Thread):
             self._append_history(s0)
             bg_log(f"💓 [HealthProbe/Baseline] ws={s0['ws_mb']}MB "
                    f"private={s0['private_mb']}MB threads={s0['threads']} "
+                   f"(py={s0.get('py_threads', '?')} native={s0.get('native_threads', '?')}) "
                    f"handles={s0['handles']}")
+            # β.2.8.7: baseline 时打一份 Python 线程分组让 Sir 看清来源
+            try:
+                bg_log(self.dump_python_threads())
+            except Exception:
+                pass
         while not self._stop.is_set():
             self._stop.wait(self.interval)
             if self._stop.is_set():

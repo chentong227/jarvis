@@ -301,7 +301,19 @@ class CommitmentWatcher(threading.Thread):
                        source: str = 'user_text',
                        commit_type: str = 'sir_self_promise',
                        predicate: 'Predicate' = None,
-                       ttl_s: float = 86400.0):
+                       ttl_s: float = 86400.0,
+                       action_executor: str = 'voice_nudge',
+                       action_target: str = 'sir'):
+        """
+        🩹 [β.2.8.7 / 2026-05-17] Sir 23:28 反馈承诺三角接口预留:
+          action_executor: 谁执行 action 'voice_nudge' (默认, 走 stream_nudge 出声)
+                          | 'tool_call' (将来扩展: 直接执行 organ.command, 例如
+                                          自动暂停 chrome, kill premiere 后真喝水提醒+开播)
+                          | 'silent_log' (只记 PromiseLog, 不打扰)
+          action_target: 谁是被影响者 'sir' (默认提醒 Sir) | 'jarvis' (自我状态变更, 调 tool)
+                          | 'system' (改全局 state)
+          当前实现只支持 voice_nudge → sir, 字段存进 commitment dict 等 β.2.9 接通其他通道.
+        """
         """source='user_text' (Sir 承诺) | 'self_promise' (Jarvis 自承诺)
         🩹 [β.2.7.3 / 2026-05-17] 加 source — Jarvis 自承诺与 Sir 承诺平等持久化
         🩹 [β.2.8.6 / 2026-05-17] Predicate-driven commitment + 承诺三角 (Sir 22:48 澄清):
@@ -520,6 +532,9 @@ class CommitmentWatcher(threading.Thread):
                 'commit_type': commit_type,
                 'predicate': predicate,
                 'ttl_s': float(ttl_s),
+                # 🩹 β.2.8.7: 承诺三角接口预留 (Sir 23:28)
+                'action_executor': action_executor,
+                'action_target': action_target,
             })
             dl_str = time.strftime("%H:%M", time.localtime(deadline_ts))
             # [P0+18-c.8 / 2026-05-15] 改 bg_log 不漏到对话框

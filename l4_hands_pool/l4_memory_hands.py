@@ -23,6 +23,7 @@ class Hands:
         3. "delete_record": {"id": 12} <- 删除/取消指定的【数据库】记忆或日程。NOT for deleting physical files!
         4. "modify_record": {"id": 12, "new_intent": "新的内容(可选)", "new_time": "YYYY-MM-DD HH:MM:00 (可选)"} <- 修改已有日程的时间或内容。
         5. "add_reminder": {"intent": "提醒内容", "trigger_time": "YYYY-MM-DD HH:MM:00"} <- 创建新的未来提醒/待办事项。仅在用户明确要求设置提醒时使用！
+        6. "list_commitments": {"max_age_hours": 48} <- 查 CommitmentWatcher 注册的承诺. 含真实 created_at 时间 (诚实接口, 避免编造时间幻觉). 用于回答 "你什么时候记下的承诺" / "我承诺过什么".
         """
 
     def execute(self, action: Action) -> ExecutionResult:
@@ -59,6 +60,39 @@ class Hands:
                 reminders_str = "\n".join([f"-[任务ID: {r[0]}] 触发时间: {time.strftime('%Y-%m-%d %H:%M', time.localtime(r[2])) if r[2]>0 else '未知'} | 内容: {r[1]}" for r in rows])
                 return ExecutionResult(success=True, msg=f"当前待办日程如下：\n{reminders_str}")
                 
+            elif cmd == "list_commitments":
+                # 🩹 [β.2.8.7 / 2026-05-17] 治 Sir 23:19 实测 LLM 时间幻觉
+                # Sir 问 "你什么时候记下的承诺" 主脑没真接口 → 编时间.
+                # 此接口直接查 Commitments 表 真 created_at + deadline_ts.
+                max_age_h = float(params.get("max_age_hours", 48))
+                cutoff = time.time() - max_age_h * 3600
+                conn = self.hippocampus._get_conn()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, description, deadline_ts, created_at, source_text, "
+                    "       nudged, is_deleted "
+                    "FROM Commitments WHERE created_at >= ? "
+                    "ORDER BY created_at DESC LIMIT 30",
+                    (cutoff,)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+                if not rows:
+                    return ExecutionResult(success=True,
+                        msg=f"过去 {max_age_h:.0f}h 内无 Commitment 记录")
+                lines = []
+                for r in rows:
+                    cid, desc, dl, ca, src, ng, isd = r
+                    ca_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ca)) if ca else '?'
+                    dl_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(dl)) if dl else '?'
+                    st = 'NUDGED' if ng else ('DELETED' if isd else 'PENDING')
+                    lines.append(
+                        f"- [DB#{cid}] {st} 注册于 {ca_str} | deadline={dl_str} | "
+                        f"desc='{desc[:60]}' | source='{(src or '')[:60]}'"
+                    )
+                return ExecutionResult(success=True,
+                    msg=f"Commitments (最近 {max_age_h:.0f}h, {len(rows)} 条):\n" + "\n".join(lines))
+
             elif cmd == "delete_record":
                 record_id = params.get("id")
                 if not record_id: return ExecutionResult(success=False, msg="缺少 id 参数。")

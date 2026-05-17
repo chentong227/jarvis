@@ -33,9 +33,18 @@ from typing import Any, Dict, List, Optional
 
 
 class Predicate(ABC):
-    """抽象谓词. 子类必须实现 evaluate(ctx) 和 _to_args / from_args."""
+    """抽象谓词. 子类必须实现 evaluate(ctx) 和 _to_args / from_args.
+
+    🩹 [β.2.8.7 / 2026-05-17] Sir 23:28 反馈: 留 observer / executor 接口
+      - subject: 谁的状态被观察? 'sir' (默认, 现有所有 predicate 都看 Sir) |
+                  'jarvis' (未来扩展, 让 Jarvis 也能看自己: 'jarvis 备份完了就...')
+      - 当前所有 predicate 默认 subject='sir'. 添加 jarvis-subject 时 ctx 加
+        ctx['jarvis_state'] / ctx['jarvis_running_tasks'] 等字段, predicate
+        实现自己处理 (向后兼容: 不读 jarvis 字段就和现在一样).
+    """
 
     name: str = 'base'         # 类标识 (= type 字段)
+    subject: str = 'sir'        # 'sir' | 'jarvis' (β.2.8.7 接口预留)
 
     @abstractmethod
     def evaluate(self, ctx: Dict[str, Any]) -> bool:
@@ -48,7 +57,10 @@ class Predicate(ABC):
 
     def to_dict(self) -> dict:
         """序列化 (持久化 + LLM parse 输出)."""
-        return {'type': self.name, **self._to_args()}
+        d = {'type': self.name, **self._to_args()}
+        if self.subject != 'sir':
+            d['subject'] = self.subject
+        return d
 
     def _to_args(self) -> dict:
         return {}
@@ -64,9 +76,12 @@ class Predicate(ABC):
 
     @classmethod
     def from_args(cls, d: dict) -> 'Predicate':
-        """默认实现: 用 d 减去 type 字段当 kwargs."""
-        kw = {k: v for k, v in d.items() if k != 'type'}
-        return cls(**kw)
+        """默认实现: 用 d 减去 type/subject 字段当 kwargs, subject 单独 set."""
+        subject = d.get('subject', 'sir')
+        kw = {k: v for k, v in d.items() if k not in ('type', 'subject')}
+        inst = cls(**kw)
+        inst.subject = subject
+        return inst
 
 
 # ============================================================

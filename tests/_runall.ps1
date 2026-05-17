@@ -114,7 +114,8 @@ $tests = @(
     "_test_p0_plus_20_beta28_proactive_care",
     "_test_p0_plus_20_beta284_subtitle_double_write",
     "_test_p0_plus_20_beta285_promise_log",
-    "_test_p0_plus_20_beta286_predicate"
+    "_test_p0_plus_20_beta286_predicate",
+    "_test_p0_plus_20_beta287_claim_tracer"
 )
 
 foreach ($t in $tests) {
