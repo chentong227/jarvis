@@ -242,7 +242,13 @@ L0_TESTS = [
             ('keys_1_dead_or_capacity', re.compile(
                 r'67\s*%|one\s+of\s+(my\s+)?three|permanently|decommission|2\s+(of\s+3\s+)?healthy|\b1\s+(dead|down|out|gone)\b',
                 re.I)),
-            ('mood_diminished', re.compile(r'diminish|throttle|suboptimal|slight(ly)?\s+(reduced|impaired|down)|capacity\s+limit', re.I)),
+            # 🩹 [P0+20-β.2.7.1 / 2026-05-17] 同步 self_anchor.py β.3.3 拟人化措辞:
+            # "I'm operating at 67% capacity right now: 1 of 3 of my API keys is permanently dead"
+            # + "my mood: alert, slightly diminished" (mood 字段)
+            ('mood_diminished', re.compile(
+                r'diminish|throttle|suboptimal|slight(ly)?\s+(reduced|impaired|down|diminished)|'
+                r'capacity\s+limit|operating\s+at|\b67\s*%|\bdiminished\b|alert.*diminished',
+                re.I)),
         ],
     },
     {
