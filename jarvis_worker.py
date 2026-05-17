@@ -3689,7 +3689,13 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             result['system_alert_text'] = f"\n[SYSTEM ALERT]: The memory module failed ({error_type}). YOU DID NOT RECORD ANYTHING. IF Sir requested a reminder, elegantly apologize, mention a brief cognitive glitch, and ask Sir to repeat."
                         return result
                     
-                    gate_future = concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(_do_gatekeeper)
+                    # 🩹 [β.2.8.6 / 2026-05-17] 线程泄漏修复:
+                    # 原 ThreadPoolExecutor(max_workers=1) 每轮新建不 shutdown 泄漏 stack.
+                    # 改用 self._gate_pool 单例 (lazy init), 复用 worker 池子.
+                    if not hasattr(self, '_gate_pool') or self._gate_pool is None:
+                        self._gate_pool = concurrent.futures.ThreadPoolExecutor(
+                            max_workers=2, thread_name_prefix='GatePool')
+                    gate_future = self._gate_pool.submit(_do_gatekeeper)
                 
                 # === 快轨：用原始 cmd 直接查 LTM，不等门神 ===
                 ltm_context = "暂时未回想起相关的历史记录。"

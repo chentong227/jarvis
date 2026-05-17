@@ -957,6 +957,24 @@ class CompanionCenter:
             print(f"[CompanionCenter] ProactiveCareEngine 启动失败 (非致命): {_pce_err}")
             self.proactive_care = None
 
+        # 🩹 [β.2.8.5 / 2026-05-17] Promise 账本 sweep daemon — 让"言出必行"可观察
+        # 每 1h 跑 sweep_untracked 把超过 24h 无 evidence 的 promise → untracked
+        try:
+            from jarvis_promise_log import ensure_sweep_daemon_started
+            ensure_sweep_daemon_started()
+            print("[CompanionCenter] PromiseSweepDaemon 就绪 (每 1h 扫 untracked)")
+        except Exception as _psw_err:
+            print(f"[CompanionCenter] PromiseSweepDaemon 启动失败 (非致命): {_psw_err}")
+
+        # 🩹 [β.2.8.6 / 2026-05-17] Jarvis 健康自检 daemon (Sir 22:42 痛点: 2G 内存正不正常)
+        # 每 5min 采 ws/private/threads/handles, 异常告警 + jsonl 趋势数据
+        try:
+            from jarvis_health_probe import ensure_health_probe_started
+            ensure_health_probe_started()
+            print("[CompanionCenter] HealthProbeDaemon 就绪 (每 5min 自检)")
+        except Exception as _hp_err:
+            print(f"[CompanionCenter] HealthProbeDaemon 启动失败 (非致命): {_hp_err}")
+
         print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel + ProactiveCareEngine)")
 
 

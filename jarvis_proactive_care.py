@@ -735,10 +735,22 @@ class CareSpeechSynth:
         if channel == 'silent_text':
             nudge_ctx['silent_text'] = self.render_silent_text(evi)
         if dry_run:
+            # 🩹 [β.2.8.5 hotfix / 2026-05-17] Sir 22:30 反馈: dry-run 每 60s 重复刷
+            # same concern same urgency 看着像系统坏了. 加 (cid, urgency_bucket) 30min 节流.
+            if not hasattr(self, '_dry_log_throttle'):
+                self._dry_log_throttle = {}
+            urgency_bucket = int(evi.urgency_score * 10) / 10.0  # 0.1 粒度
+            key = (evi.concern_id, urgency_bucket, channel)
+            now_ts = time.time()
+            last_log = self._dry_log_throttle.get(key, 0)
+            if now_ts - last_log < 1800.0:  # 30min 内同 key 不重复 log
+                return False
+            self._dry_log_throttle[key] = now_ts
             bg_log(
                 f"🤝 [ProactiveCare/DRY] would nudge concern={evi.concern_id} "
                 f"urgency={evi.urgency_score:.2f} channel={channel} "
-                f"quote='{evi.sir_recent_quote[:40]}' joke='{evi.inside_joke_ref[:40]}'"
+                f"quote='{evi.sir_recent_quote[:40]}' joke='{evi.inside_joke_ref[:40]}' "
+                f"(node throttled 30min for same urgency bucket)"
             )
             return False
         try:
@@ -748,6 +760,17 @@ class CareSpeechSynth:
                 f"🤝 [ProactiveCare/LIVE] pushed concern={evi.concern_id} "
                 f"urgency={evi.urgency_score:.2f} channel={channel}"
             )
+            # 🩹 [β.2.8.5] 主动关心也算"言出必行"的兑现 -
+            # 我 (Jarvis) 之前可能承诺"I'll keep an eye on hydration",
+            # 这次主动 nudge 就是兑现. 配对 evidence.
+            try:
+                from jarvis_promise_log import try_pair_evidence
+                try_pair_evidence(
+                    evidence_kind='proactive_care_nudge',
+                    evidence_what=f"actively raised concern {evi.concern_id}: {evi.what_i_watch[:80]}",
+                )
+            except Exception:
+                pass
             return True
         except Exception as e:
             bg_log(f"⚠️ [ProactiveCare] push fail: {e}")

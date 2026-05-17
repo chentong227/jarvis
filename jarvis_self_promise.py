@@ -327,10 +327,28 @@ class SelfPromiseDetector:
         🩹 [β.2.7.8 / 2026-05-17]
         - hard (有 deadline_str) → commitment_watcher.add_commitment 定时 nudge
         - soft (无 deadline_str) → 写 concerns_ledger.notes_for_self + 升 severity 0.05
+        🩹 [β.2.8.5 / 2026-05-17] 承诺生命周期可见 (Sir "言出必行" 监督):
+        - 所有 promise 都 register 到 PromiseExecutionLog (终端可见 + scripts 可查)
+        - 关键 log 从 bg_log 提升到 print, 不再静默 (Sir 直接看到)
         """
         from jarvis_utils import bg_log as _bg
         _kind = p.get('kind', 'hard')
         _is_hard = (_kind == 'hard' and bool(p.get('deadline_str')))
+        # β.2.8.5: PromiseExecutionLog 注册 (无论 hard/soft 都登记)
+        _promise_id = ''
+        try:
+            from jarvis_promise_log import get_default_log
+            _plog = get_default_log()
+            _promise_id = _plog.register(
+                description=p.get('description', '')[:120],
+                kind=_kind,
+                deadline_str=p.get('deadline_str', ''),
+                jarvis_reply=jarvis_reply[:200],
+                turn_id=turn_id,
+                lang=p.get('lang', ''),
+            )
+        except Exception:
+            pass
         if _is_hard:
             try:
                 commitment_watcher.add_commitment(
@@ -387,12 +405,16 @@ class SelfPromiseDetector:
                 except Exception:
                     pass
                 # 没写成 — 但 soft 没匹配 concern 也算"已识别"，仍返回 True 让统计入 detected/registered
-        # 统一记一条注册成功 log
+        # 🩹 [β.2.8.5] 终端显式打印承诺注册 — Sir 必须看到 (不走 bg_log 静默)
         try:
             _kind_tag = '/soft' if _kind == 'soft' or not p.get('deadline_str') else ''
-            _bg(f"📌 [SelfPromise{_kind_tag}] 注册 Jarvis 自承诺: "
-                f"'{p['description'][:60]}' deadline='{p.get('deadline_str', '')}' "
-                f"(lang={p.get('lang', '?')} turn={turn_id or '?'})")
+            _line = (
+                f"📌 [Jarvis Promise{_kind_tag}] {_promise_id or 'p_?'} "
+                f"识别承诺: '{p['description'][:60]}'"
+                + (f" by {p.get('deadline_str')}" if p.get('deadline_str') else "")
+            )
+            print(_line)
+            _bg(_line)  # 同步入 log
         except Exception:
             pass
         return True

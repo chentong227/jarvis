@@ -298,9 +298,20 @@ class CommitmentWatcher(threading.Thread):
     def add_commitment(self, description: str, deadline_str: str,
                        user_text: str = None,
                        is_future_task_confirmed: bool = False,
-                       source: str = 'user_text'):
+                       source: str = 'user_text',
+                       commit_type: str = 'sir_self_promise',
+                       predicate: 'Predicate' = None,
+                       ttl_s: float = 86400.0):
         """source='user_text' (Sir 承诺) | 'self_promise' (Jarvis 自承诺)
-        🩹 [β.2.7.3 / 2026-05-17] 加 source — Jarvis 自承诺与 Sir 承诺平等持久化"""
+        🩹 [β.2.7.3 / 2026-05-17] 加 source — Jarvis 自承诺与 Sir 承诺平等持久化
+        🩹 [β.2.8.6 / 2026-05-17] Predicate-driven commitment + 承诺三角 (Sir 22:48 澄清):
+          - commit_type='sir_self_promise' (老兼容): Sir 承诺自己做某事 → 走 first_person 检查
+          - commit_type='conditional_reminder': Sir 托付 Jarvis 监视 predicate + 满足时提醒
+                                                 跳过 first_person, 必须有 predicate
+          - commit_type='jarvis_self_promise': Jarvis 自承诺 (source='self_promise')
+          - predicate: 可选, 满足时立刻 fire 不走 deadline_ts
+          - ttl_s: predicate 路径的过期时间 (default 24h)
+        """
         """注册一条用户承诺。
 
         [P0+18-c.9/c.10 / 2026-05-15] 修 Sir 实测 BUG：
@@ -349,6 +360,28 @@ class CommitmentWatcher(threading.Thread):
                     pass
                 return
 
+        # 🩹 [β.2.8.6 / 2026-05-17] conditional_reminder 类型跳过 first_person 检查
+        # Sir 澄清: "等我导出完视频提醒我喝水" — Sir 没承诺自己做啥, 是托付 Jarvis
+        # 监视 predicate. 这种 commit 必须有 predicate 字段才允许 (兜底安全).
+        if commit_type == 'conditional_reminder':
+            if predicate is None:
+                try:
+                    from jarvis_utils import bg_log as _cw_bg_log
+                    _cw_bg_log(f"📝 [CommitmentWatcher] 🛡️ conditional_reminder 必须带 predicate, "
+                               f"拒绝注册 '{description[:60]}'")
+                except Exception:
+                    pass
+                return
+            # 跳过 first_person 检查, 直接进 lock 块注册
+            try:
+                from jarvis_utils import bg_log as _cw_bg_log
+                _cw_bg_log(f"📝 [CommitmentWatcher/CondReminder] 接受 '{description[:60]}' "
+                           f"predicate={predicate.describe()[:80]}")
+            except Exception:
+                pass
+            has_first_person = True   # 标记让后续 logic 不再阻拦
+            has_rest_intent = True
+
         # 描述要么出现第一人称（"我"/"I"），要么是和作息相关的强关键词，
         # 否则视为可疑（设备控制、外部事件、家务等都不应被当成用户对自己的承诺）
         # [P0+18-c.10 / 2026-05-15] 扩词典 + 检查 user_text（原话）+ 信任 Time Hook 已确认
@@ -366,11 +399,13 @@ class CommitmentWatcher(threading.Thread):
             r'(吃药|吃饭|喝水|早餐|午餐|晚餐|宵夜)',         # 生活类
         ]
         # 优先看用户原话（user_text）的 first_person —— extracted desc 经常丢"我"
-        first_person_source = user_text.lower() if user_text else desc_lower
-        has_first_person = any(re.search(p, first_person_source) for p in first_person_markers) or \
-                           any(re.search(p, desc_lower) for p in first_person_markers)
-        has_rest_intent = any(re.search(p, desc_lower) for p in rest_intent_markers) or \
-                          (user_text and any(re.search(p, user_text.lower()) for p in rest_intent_markers))
+        # 注意: conditional_reminder 在上面已 short-circuit 设了 has_first_person=True
+        if commit_type != 'conditional_reminder':
+            first_person_source = user_text.lower() if user_text else desc_lower
+            has_first_person = any(re.search(p, first_person_source) for p in first_person_markers) or \
+                               any(re.search(p, desc_lower) for p in first_person_markers)
+            has_rest_intent = any(re.search(p, desc_lower) for p in rest_intent_markers) or \
+                              (user_text and any(re.search(p, user_text.lower()) for p in rest_intent_markers))
 
         # Time Hook 已确认 future_task → CW 信任,跳过第一人称/作息检查
         if is_future_task_confirmed:
@@ -480,7 +515,11 @@ class CommitmentWatcher(threading.Thread):
                 'nudged': False,
                 'source_text': _sxt,
                 'source': source,  # 🩹 β.2.7.3: 'user_text' | 'self_promise'
-                'created_at': time.time()
+                'created_at': time.time(),
+                # 🩹 β.2.8.6: predicate-driven 字段 (None 时走老 deadline_ts 路径)
+                'commit_type': commit_type,
+                'predicate': predicate,
+                'ttl_s': float(ttl_s),
             })
             dl_str = time.strftime("%H:%M", time.localtime(deadline_ts))
             # [P0+18-c.8 / 2026-05-15] 改 bg_log 不漏到对话框
@@ -629,6 +668,53 @@ class CommitmentWatcher(threading.Thread):
                                 self.commitments.remove(c)
                             continue
 
+                        # 🩹 [β.2.8.6 / 2026-05-17] Predicate-driven trigger:
+                        # commitment 若含 predicate (β-3 LLM 解析 / β-2 heuristic 自动绑定)
+                        # → 每 tick evaluate(ctx), True 则 fire. 时间锚仅保底 (老路径并存).
+                        # 详 docs/JARVIS_PREDICATE_COMMITMENT.md
+                        _pred = c.get('predicate', None)
+                        if _pred is not None:
+                            try:
+                                _ctx = self._build_predicate_ctx(now)
+                                _fire = bool(_pred.evaluate(_ctx))
+                            except Exception as _eve:
+                                try:
+                                    from jarvis_utils import bg_log as _wb
+                                    _wb(f"⚠️ [PredicateEval] {c.get('description', '?')[:40]}: {_eve}")
+                                except Exception:
+                                    pass
+                                _fire = False
+                            if _fire:
+                                c['nudged'] = True
+                                try:
+                                    from jarvis_utils import bg_log as _wb
+                                    _wb(f"✨ [CommitmentWatcher/Predicate] FIRE "
+                                        f"'{c['description'][:50]}' by {_pred.describe()[:80]}")
+                                except Exception:
+                                    pass
+                                try:
+                                    db_id = c.get('db_id', 0)
+                                    if db_id and db_id > 0:
+                                        hippo = self._get_hippo()
+                                        if hippo is not None:
+                                            hippo.mark_commitment_nudged(db_id)
+                                except Exception:
+                                    pass
+                                self._dispatch_commitment_nudge(c)
+                                continue
+                            # 未 fire: ttl 检查 (默认 24h)
+                            _ttl_s = float(c.get('ttl_s', 86400))
+                            _age = now - float(c.get('created_at', now))
+                            if _age > _ttl_s:
+                                c['nudged'] = True
+                                try:
+                                    from jarvis_utils import bg_log as _wb
+                                    _wb(f"⏰ [CommitmentWatcher/Predicate] EXPIRED ({_ttl_s/3600:.0f}h) "
+                                        f"never fired: '{c['description'][:50]}'")
+                                except Exception:
+                                    pass
+                            continue
+
                         if now > c['deadline_ts'] + c['grace_minutes'] * 60:
                             try:
                                 idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
@@ -650,6 +736,39 @@ class CommitmentWatcher(threading.Thread):
                 time.sleep(30)
             except Exception:
                 time.sleep(30)
+
+    def _build_predicate_ctx(self, now_ts: float) -> dict:
+        """β.2.8.6: 每 tick 构造 predicate evaluation context.
+        含 idle_ms / sensor_snap / window_title / recent_stm / process events 等.
+        失败的字段静默落空 (predicate evaluate 时自己处理 None / default).
+        """
+        ctx = {'now_ts': now_ts}
+        try:
+            ctx['idle_ms'] = win32api.GetTickCount() - win32api.GetLastInputInfo()
+        except Exception:
+            ctx['idle_ms'] = 0
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            snap = P.get_sensor_snapshot() or {}
+            ctx['sensor_snap'] = snap
+            ctx['window_title'] = snap.get('window_title', '') or getattr(P, 'current_window_title', '')
+            ctx['first_active_today'] = bool(snap.get('is_first_active_today', False))
+            # process_died_events 预留接口 (β-2.7 PhysicalEnvironmentProbe 实现, 当前 None ok)
+            ctx['process_died_events'] = getattr(P, 'process_died_events', []) or []
+            ctx['running_processes'] = getattr(P, 'running_processes_cache', []) or []
+        except Exception:
+            ctx['sensor_snap'] = {}
+            ctx['window_title'] = ''
+            ctx['first_active_today'] = False
+            ctx['process_died_events'] = []
+            ctx['running_processes'] = []
+        try:
+            stm = getattr(self.worker.jarvis, 'short_term_memory', None) \
+                  if hasattr(self.worker, 'jarvis') else None
+            ctx['recent_stm'] = list(stm) if stm else []
+        except Exception:
+            ctx['recent_stm'] = []
+        return ctx
 
     def _dispatch_commitment_nudge(self, commitment):
         overdue_minutes = int((time.time() - commitment['deadline_ts']) / 60)

@@ -56,6 +56,10 @@ memory_pool/relational_state.json
 memory_pool/relational_review.json
 # PlanLedger 持久化：runtime 状态
 memory_pool/plans.json
+# [P0+20-β.2.8.5 / 2026-05-17] Jarvis 自承诺账本：含 jarvis_reply 真实对话片段, runtime 私人数据
+memory_pool/jarvis_promise_log.json
+# [P0+20-β.2.8.6 / 2026-05-17] HealthProbe 自检趋势数据 — runtime 时间序列
+memory_pool/jarvis_health_history.jsonl
 jarvis_config/screenshots/
 jarvis_config/user_status_history/
 jarvis_config/user_status_ledger.json

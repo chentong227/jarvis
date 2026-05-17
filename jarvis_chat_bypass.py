@@ -2475,6 +2475,17 @@ Spoken English:"""
                                 if exec_res.success:
                                     _tool_results.append(f"✅ {organ_name}.{command}: {tool_result[:80]}")
                                     _consecutive_tool_fail = 0  # 成功重置熔断计数
+                                    # 🩹 [β.2.8.5 / 2026-05-17] Promise 兑现配对:
+                                    # tool 成功 → 尝试匹配最近 pending promise 的 keyword
+                                    # 例: "I'll check key_router_health" + 此处 organ=key_router → fulfilled
+                                    try:
+                                        from jarvis_promise_log import try_pair_evidence
+                                        try_pair_evidence(
+                                            evidence_kind=f"tool:{organ_name}.{command}",
+                                            evidence_what=f"{organ_name} {command} {str(params)[:60]} → {tool_result[:60]}",
+                                        )
+                                    except Exception:
+                                        pass
                                     # 🚀 Bug J 修复：简单单步设备指令成功后直接本地收尾，
                                     # 不再让大模型走第二轮（之前要 18s 才说一句 "Done, Sir."）
                                     _ok_count = sum(1 for r in _tool_results if r.startswith("✅"))
