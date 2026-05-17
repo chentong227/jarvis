@@ -254,7 +254,17 @@ class VoiceListenThread(QThread):
     # - STRICT_STOP_WORDS: 即便句子稍长（如"你给我闭嘴"）也立刻触发
     # - SOFT_STOP_WORDS:  容易和正常陈述歧义（如"安静"），必须在首位且短句才触发
     # 注意"安静"从硬档移除 —— "外面很安静" 不应误炸为强制停止。
-    STRICT_STOP_WORDS = ["停止", "终止", "别弄了", "退下", "闭嘴", "shut up", "stand down"]
+    STRICT_STOP_WORDS = [
+        "停止", "终止", "别弄了", "退下", "闭嘴", "shut up", "stand down",
+        # 🩹 [β.2.7.10 / 2026-05-17] Sir 焦点退出痛点: 显式 dismiss 立刻 mute
+        # 让 Sir 不用小心翼翼避免说话被录入
+        "好的就这样", "就这样吧", "ok that's all", "thats all",
+        "我去打电话", "i am taking a call", "i'm taking a call",
+        "我在打电话", "on a call", "im taking a call", "taking a call",
+        "我跟别人说话", "我和别人说话", "我和我妈说话", "我跟我妈说话",
+        "我和我爸说话", "我跟我爸说话", "和别人说话呢",
+        "稍等一下", "等一下", "wait a moment", "hold on",
+    ]
     SOFT_STOP_WORDS = ["安静", "shut"]
     # 兼容字段：保持外部访问 STOP_WORDS 的旧调用不挂（合并所有词）
     STOP_WORDS = STRICT_STOP_WORDS + SOFT_STOP_WORDS
@@ -569,6 +579,103 @@ class VoiceListenThread(QThread):
 
         return True, cmd
 
+    # 🩹 [β.2.7.10 / 2026-05-17] Sir 焦点退出"小心翼翼"痛点修复
+    # Sir 不想"焦点模式期间随便录入电话/旁人话/视频音都触发 Jarvis"
+    # 启发式打分: ASR 文本是否像"对 Jarvis 说" vs "对其他人/旁路说"
+    # 返回 0-1 score, < 0.3 视为旁路语, 不触发主脑
+    _JARVIS_DIRECT_WAKE = (
+        'jarvis', '贾维斯', 'javis', 'jervis', 'jarvi',
+    )
+    _JARVIS_DIRECT_VERBS_EN = (
+        'help me', 'tell me', 'find', 'search', 'open', 'close', 'launch',
+        'remind me', 'set ', 'show me', 'play ', 'stop ', 'pause ',
+        'note this', 'save ', 'remember ', 'forget ', 'cancel ',
+        'check ', 'list ', 'kill ', 'mute', 'unmute',
+        'what time', 'what date', 'what is the', 'how do i',
+    )
+    _JARVIS_DIRECT_VERBS_ZH = (
+        '帮我', '告诉我', '查一下', '找一下', '打开', '关闭', '关了', '启动',
+        '提醒我', '设个', '设一个', '播放', '暂停', '停一下',
+        '记下', '保存', '记一下', '取消', '取消提醒',
+        '查看', '列一下', '杀掉', '静音',
+        '几点了', '今天几号', '什么是', '怎么',
+        '帮个忙', '麻烦你', '请你', '你帮我', '替我',
+    )
+    _PHONE_OPENERS_EN = (
+        'hello', 'hi ', 'hey ', 'are you there', 'can you hear me',
+    )
+    _PHONE_OPENERS_ZH = (
+        '喂', '你好啊', '你好吗', '在不在', '在吗', '听得到吗', '能听到吗',
+    )
+    _THIRD_PERSON_INDICATORS_ZH = (
+        '他说', '她说', '他们', '她们', '他在', '她在',
+        '你妈', '你爸', '我妈', '我爸', '我儿', '我女',
+    )
+    _THIRD_PERSON_INDICATORS_EN = (
+        ' he ', ' she ', ' they ', 'mum ', 'dad ', 'mom ', 'mother ',
+        'father ', 'boyfriend', 'girlfriend',
+    )
+
+    def classify_jarvis_directness(self, text: str) -> tuple:
+        """启发式打分: ASR 文本是否像"对 Jarvis 说"。返回 (score, breakdown).
+        score 0-1: 越高越像直接对 Jarvis 说话.
+          >= 0.6: 直接触发主脑
+          0.3-0.6: 灰区, 仍触发 (保守)
+          < 0.3:  视为旁路语 (电话/旁人/视频), 不触发主脑
+        """
+        if not text or not text.strip():
+            return 0.0, {'empty': True}
+        t = text.lower().strip()
+        t_pad = ' ' + t + ' '
+        breakdown = {}
+        score = 0.5  # 基线中性
+
+        # +0.5 含 Jarvis 直接称呼
+        if any(w in t for w in self._JARVIS_DIRECT_WAKE):
+            score += 0.5
+            breakdown['wake_word'] = +0.5
+
+        # +0.4 含 jarvis-direct verb (中英)
+        if any(v in t for v in self._JARVIS_DIRECT_VERBS_EN):
+            score += 0.35
+            breakdown['en_direct_verb'] = +0.35
+        if any(v in t for v in self._JARVIS_DIRECT_VERBS_ZH):
+            score += 0.35
+            breakdown['zh_direct_verb'] = +0.35
+
+        # -0.5 电话开场词
+        if any(t.startswith(p) for p in self._PHONE_OPENERS_EN) or \
+           any(t.startswith(p) for p in self._PHONE_OPENERS_ZH):
+            score -= 0.4
+            breakdown['phone_opener'] = -0.4
+
+        # -0.3 含明确第三人称指代 (含 padding 避免误判 ' the ')
+        third_hits_zh = sum(1 for w in self._THIRD_PERSON_INDICATORS_ZH if w in text)
+        third_hits_en = sum(1 for w in self._THIRD_PERSON_INDICATORS_EN if w in t_pad)
+        if third_hits_zh + third_hits_en >= 1:
+            penalty = min(0.4, 0.2 + (third_hits_zh + third_hits_en) * 0.1)
+            score -= penalty
+            breakdown['third_person'] = -penalty
+
+        # -0.2 长句 + 多疑问号 (电话/对外深度对话)
+        q_count = text.count('?') + text.count('？')
+        if len(text) > 40 and q_count >= 2:
+            score -= 0.2
+            breakdown['long_multi_question'] = -0.2
+
+        # -0.15 含 "我和/和我...说" 之类外部对话标记
+        if '和我' in text or '跟我' in text or '我和' in text or '我跟' in text:
+            score -= 0.15
+            breakdown['conversational_marker'] = -0.15
+
+        # -0.1 极短句 (≤3 字) 且无 wake word (mhm/嗯/对/好) 默认旁路概率高
+        if len(t) <= 3 and 'wake_word' not in breakdown:
+            score -= 0.15
+            breakdown['too_short'] = -0.15
+
+        score = max(0.0, min(1.0, score))
+        return score, breakdown
+
     def _emit_with_attention(self, cmd: str):
         """[R7-α/AttentionContext] emit text_ready 之前先抓拍一份 attention 快照。
         slot 未挂上时不挂；抓拍异常吞掉不影响 emit 主路径。
@@ -799,6 +906,15 @@ class VoiceListenThread(QThread):
                                 self.awake_signal.emit(False)
                                 self.interrupt_signal.emit()
                                 set_browser_ducking(False)
+                                # 🩹 [β.2.7.10 / 2026-05-17] 显式 dismiss → ASR mute 30s
+                                # 治 Sir "焦点退出小心翼翼" 痛点: Sir 说"我去打电话"立刻不再录入
+                                self.mute_until = max(getattr(self, 'mute_until', 0), time.time() + 30.0)
+                                self._bypass_speech_count = 0
+                                try:
+                                    from jarvis_utils import bg_log as _ds_bg
+                                    _ds_bg(f"🤫 [Dismiss] 显式停止指令 → ASR mute 30s ('{clean_text[:40]}')")
+                                except Exception:
+                                    pass
                                 # [R7-β1/post-test] 清字幕
                                 try:
                                     if self._subtitle_queue is not None:
@@ -978,9 +1094,49 @@ class VoiceListenThread(QThread):
                             elif self.in_active_conversation:
                                 cmd = re.sub(r'[，。,.!?？！\s]+$', '', clean_text)
                                 if cmd:
-                                    self.last_interaction_time = time.time() 
-                                    set_browser_ducking(True) 
-                                    self._emit_with_attention(cmd)
+                                    # 🩹 [β.2.7.10 / 2026-05-17] Sir 痛点: 焦点期间不应触发旁路语
+                                    # (Sir 打电话/和家人说话/视频音被 ASR 录入 → 不应 trigger Jarvis)
+                                    _score, _bd = self.classify_jarvis_directness(cmd)
+                                    if _score < 0.3:
+                                        # 旁路语 — 静默丢弃, 仅 bg_log 留痕
+                                        # 触发"旁路语计数器", 累计 3 次后缩 TIMEOUT
+                                        self._bypass_speech_count = getattr(self, '_bypass_speech_count', 0) + 1
+                                        try:
+                                            from jarvis_utils import bg_log as _by_bg
+                                            _by_bg(
+                                                f"🔇 [Bypass Speech] 旁路语 score={_score:.2f} "
+                                                f"breakdown={_bd} count={self._bypass_speech_count}: "
+                                                f"'{cmd[:60]}'"
+                                            )
+                                        except Exception:
+                                            pass
+                                        # 连续 3 次旁路语 → 缩 TIMEOUT 让 Jarvis 早点退场
+                                        if self._bypass_speech_count >= 3:
+                                            self.last_interaction_time = time.time() - (ACTIVE_TIMEOUT - 8.0)
+                                            try:
+                                                from jarvis_utils import bg_log as _to_bg
+                                                _to_bg(
+                                                    "🔇 [Bypass Speech] 连续 3 次旁路语 → "
+                                                    "缩 ACTIVE_TIMEOUT 让 Jarvis 8s 后自动退场"
+                                                )
+                                            except Exception:
+                                                pass
+                                            self._bypass_speech_count = 0
+                                    else:
+                                        # jarvis-direct, 重置 bypass 计数 + 正常触发
+                                        if _score < 0.6:
+                                            try:
+                                                from jarvis_utils import bg_log as _gz_bg
+                                                _gz_bg(
+                                                    f"🟡 [Directness Gray] score={_score:.2f} "
+                                                    f"breakdown={_bd} '{cmd[:50]}' — 仍触发但灰区"
+                                                )
+                                            except Exception:
+                                                pass
+                                        self._bypass_speech_count = 0
+                                        self.last_interaction_time = time.time()
+                                        set_browser_ducking(True)
+                                        self._emit_with_attention(cmd)
 
                         self.mute_until = time.time() + 1.0
 
