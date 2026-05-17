@@ -139,13 +139,16 @@ class TestSleepIntentDetection(unittest.TestCase):
         self.assertLess(delta, 3620)
 
     def test_chinese_马上去睡(self):
+        # 🩹 [P0+20-β.2.7.3 / 2026-05-17] 旧测试 "马上=5min" 是错的语义。
+        # Sir 真意是 immediate (0s) — 旧版本兜底误判成 5min 给延迟监督，
+        # 新版本走 immediate 分支 = 0s + 900s grace = 900s。
         worker = self._make_worker()
         before = time.time()
         worker._detect_sleep_intent("我马上去睡")
         delta = worker._sleep_intent_until - before
-        # "马上" → 300s + 900s grace = 1200s
-        self.assertGreater(delta, 1180)
-        self.assertLess(delta, 1220)
+        # "马上" = immediate → 0s + 900s grace = 900s
+        self.assertGreater(delta, 880)
+        self.assertLess(delta, 920)
 
     def test_no_match_normal_speech(self):
         worker = self._make_worker()

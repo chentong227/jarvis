@@ -154,7 +154,13 @@ class ChronosTick(threading.Thread):
     def _speak_mail(self, mail: dict):
         """统一的语音播报入口"""
         self.ui_callback("THINKING")
-        set_browser_ducking(True)
+        # 🩹 [P0+20-β.2.7.2 / 2026-05-17] NameError 修：set_browser_ducking 没 import
+        # log 报 "NameError: name 'set_browser_ducking' is not defined" 导致 _speak_mail 整个 crash
+        try:
+            from jarvis_central_nerve import set_browser_ducking as _sbd
+            _sbd(True)
+        except Exception:
+            pass
         
         current_hour = int(time.strftime("%H"))
         is_late_night = current_hour >= 23 or current_hour < 6
@@ -221,8 +227,30 @@ class ChronosTick(threading.Thread):
             self.jarvis.focus_callback()
             
         self.ui_callback("IDLE")
+        # 🩹 [P0+20-β.2.7.2 / 2026-05-17] 同 line 160：set_browser_ducking 没顶层 import
         import threading as _thr
-        _thr.Thread(target=lambda: (time.sleep(3), set_browser_ducking(False)), daemon=True).start()
+        def _restore_duck():
+            time.sleep(3)
+            try:
+                from jarvis_central_nerve import set_browser_ducking as _sbd
+                _sbd(False)
+            except Exception:
+                pass
+        _thr.Thread(target=_restore_duck, daemon=True).start()
+
+        # 🩹 [P0+20-β.2.7.3 / 2026-05-17] Self-Promise Detector (Chronos mail)
+        # Jarvis 在 Chronos mail 播报里说"我会 X 时 Y" 也算承诺
+        try:
+            from jarvis_self_promise import get_default_detector as _gdp_sm
+            cw_sm = getattr(self.jarvis, 'commitment_watcher', None)
+            if jarvis_reply and cw_sm is not None:
+                _gdp_sm().detect_and_register_async(
+                    jarvis_reply=jarvis_reply,
+                    commitment_watcher=cw_sm,
+                    turn_id='chronos_mail',
+                )
+        except Exception:
+            pass
         return jarvis_reply
 
     def _check_escalations(self):

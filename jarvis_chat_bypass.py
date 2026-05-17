@@ -147,6 +147,51 @@ _C3_ACTION_HAND_COMMANDS = frozenset([
 ])
 
 
+# 🩹 [P0+20-β.2.7.3 / 2026-05-17] splitter helper：识别 organ.command 中间的 .，
+# 避免 splitter 在工具名内部切句导致 TTS 念出 "process hands . get top cpu" 类失真。
+# 编译一次缓存，所有 splitter 复用，零额外开销。
+import re as _re_split_helper
+_ORGAN_NAME_LOOKBEHIND = _re_split_helper.compile(
+    r'\b(process_hands|file_operator(?:_hands)?|txt_writer_hands\w*|'
+    r'system_hands|memory_hands|fuzzy_resolver|ui_control|hippocampus|'
+    r'commitment_watcher|return_sentinel|smart_nudge|chat_bypass|'
+    r'audio_hands|window_hands|media_control_hands|notification_hands|'
+    r'key_health_inspector|input_hands|clipboard_hands|network_hands|'
+    r'text_hands|url_launcher|desktop)\s*$', _re_split_helper.IGNORECASE
+)
+
+
+def _find_sentence_split_idx(buffer: str, soft_split: bool = True) -> int:
+    """splitter helper：在 buffer 找下一句的切分位置。-1 表示没有可切位置。
+
+    设计原则（性能第一）：
+    - 编译 regex 全局缓存
+    - 仅当 char='.' 时做 lookbehind/lookahead (~5us per 点)
+    - 不在 organ.command 的 . 处切
+    - soft_split=True 时支持 ',;' 软切
+
+    详 docs/JARVIS_SOUL_UNIVERSALIZATION.md / β.2.7.3 修法。
+    """
+    hard_symbols = {".", "!", "?", "\n"}
+    soft_symbols = {",", ";", "，", "；"} if soft_split else set()
+    _buf_len = len(buffer)
+    for i, char in enumerate(buffer):
+        if char in hard_symbols:
+            if char == '.':
+                # lookbehind: . 左边是否为 organ 名
+                if _ORGAN_NAME_LOOKBEHIND.search(buffer[:i]) and \
+                        i + 1 < _buf_len and buffer[i + 1].isalnum():
+                    continue
+            if char == '\n' or i >= 20:
+                return i
+        elif soft_split and char in soft_symbols:
+            if i >= 15 and _buf_len > i + 5:
+                lookahead = buffer[i + 1:i + 6].lower()
+                if not lookahead.startswith(" sir") and not lookahead.startswith(" jar"):
+                    return i
+    return -1
+
+
 class ChatBypass:
     def __init__(self, key_router, vocal_cord, state_callback):
         self.key_router = key_router
@@ -1014,13 +1059,8 @@ Spoken English:"""
                     streamed_text += delta
 
                 while True:
-                    earliest_idx = -1
-                    hard_symbols = {".", "!", "?", "\n"}
-                    for i, char in enumerate(buffer):
-                        if char in hard_symbols:
-                            if char == '\n' or i >= 20:
-                                earliest_idx = i
-                                break
+                    # 🩹 [P0+20-β.2.7.3] 复用 _find_sentence_split_idx（含 organ.command 保护）
+                    earliest_idx = _find_sentence_split_idx(buffer, soft_split=False)
 
                     if earliest_idx == -1 and len(buffer) > 80:
                         for i in range(len(buffer) - 1, 20, -1):
@@ -1311,18 +1351,8 @@ Spoken English:"""
                             return ""
 
                         while True:
-                            earliest_idx = -1
-                            hard_symbols = {".", "!", "?", "\n"}
-                            soft_symbols = {",", ";", "，", "；"}
-                            for i, char in enumerate(buffer):
-                                if char in hard_symbols:
-                                    if char == '\n' or i >= 20:
-                                        earliest_idx = i
-                                        break
-                                elif char in soft_symbols:
-                                    if i >= 15 and len(buffer) > i + 5:
-                                        earliest_idx = i
-                                        break
+                            # 🩹 [P0+20-β.2.7.3] 复用 helper（含 organ.command 保护）
+                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
                             if earliest_idx == -1 and len(buffer) > 80:
                                 for i in range(len(buffer) - 1, 20, -1):
                                     if buffer[i] == ' ':
@@ -1534,6 +1564,19 @@ Spoken English:"""
                         PromiseActivator.activate_from_text(full_text, plan_ledger_ref)
                         PromiseActivator.cancel_from_text(full_text, plan_ledger_ref)
                         PromiseActivator.resume_from_text(full_text, plan_ledger_ref)
+                except Exception:
+                    pass
+
+                # 🩹 [P0+20-β.2.7.3 / 2026-05-17] Self-Promise Detector (cloud followup)
+                try:
+                    from jarvis_self_promise import get_default_detector as _gdp_cf
+                    cw_cf = getattr(self.jarvis, 'commitment_watcher', None)
+                    if full_text and cw_cf is not None:
+                        _gdp_cf().detect_and_register_async(
+                            jarvis_reply=full_text,
+                            commitment_watcher=cw_cf,
+                            turn_id='cloud_followup',
+                        )
                 except Exception:
                     pass
 
@@ -2008,22 +2051,9 @@ Spoken English:"""
                             continue
 
                         while True:
-                            earliest_idx = -1
-                            hard_symbols = {".", "!", "?", "\n"}
-                            soft_symbols = {",", ";", "，", "；"}
-                            
-                            for i, char in enumerate(buffer):
-                                if char in hard_symbols:
-                                    if char == '\n' or i >= 20:
-                                        earliest_idx = i
-                                        break
-                                elif char in soft_symbols:
-                                    if i >= 15 and len(buffer) > i + 5:  
-                                        lookahead = buffer[i+1:i+6].lower()
-                                        if not lookahead.startswith(" sir") and not lookahead.startswith(" jar"):
-                                            earliest_idx = i
-                                            break
-                                            
+                            # 🩹 [P0+20-β.2.7.3] 复用 helper（含 organ.command 保护）
+                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
+
                             if earliest_idx == -1 and len(buffer) > 80:
                                 for i in range(len(buffer) - 1, 20, -1):
                                     if buffer[i] == ' ':
@@ -2946,6 +2976,22 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 )
         except Exception:
             pass
+        # 🩹 [P0+20-β.2.7.3 / 2026-05-17] Self-Promise Detector：
+        # Jarvis 自己说"我会监督您 13:05" → 注册成 commitment + 定时 nudge
+        # 与 Sir 的承诺平等地走 commitment_watcher。
+        # 详 docs/JARVIS_SOUL_UNIVERSALIZATION.md / 承诺必行原则
+        try:
+            from jarvis_self_promise import get_default_detector as _gdp
+            cw = getattr(self.jarvis, 'commitment_watcher', None)
+            _sp_reply = full_text if (full_text and full_text.strip()) else final_reply
+            if _sp_reply and cw is not None:
+                _gdp().detect_and_register_async(
+                    jarvis_reply=_sp_reply,
+                    commitment_watcher=cw,
+                    turn_id=_turn_id_now,
+                )
+        except Exception:
+            pass
         _t_total = time.time() - _t0
         try:
             from jarvis_utils import bg_log
@@ -3230,6 +3276,59 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             except Exception:
                 nudge_skills_block = ""
 
+        # 🩹 [P0+20-β.2.7.2 / 2026-05-17] [SOUL TO USE] 显式 hint
+        # 治 Sir 实测反馈"和之前模板一模一样"：
+        # Layer 0-3 在 public_layers 里注入了 2172c，但 [RULES] 限 "ONE sentence Under 15 words"
+        # → LLM 没空整合 soul 信息 → reply 仍然像模板。
+        #
+        # 修法：把 top 1 concern + top 1 inside_joke 单独提到 [NUDGE] 之前，
+        # 加 OPTIONAL hint 告诉 LLM "如果情境天然连接，请考虑引用其中一项"。
+        # 不强制（避免每条 nudge 都生硬引用），保留 LLM 主导权。
+        soul_hint_block = ""
+        try:
+            _nerve = getattr(self, 'jarvis', None)
+            if _nerve is not None:
+                _top_concern_str = ""
+                try:
+                    _cl = getattr(_nerve, 'concerns_ledger', None)
+                    if _cl is not None:
+                        _actives = sorted(
+                            _cl.list_active(),
+                            key=lambda c: -getattr(c, 'severity', 0.0),
+                        )
+                        if _actives:
+                            _c = _actives[0]
+                            _top_concern_str = (
+                                f"  - top_concern: {_c.id} (sev={_c.severity:.2f}) — "
+                                f"{getattr(_c, 'what_i_watch', '')[:100]}"
+                            )
+                except Exception:
+                    pass
+                _top_joke_str = ""
+                try:
+                    _rs = getattr(_nerve, 'relational_state', None)
+                    if _rs is not None and hasattr(_rs, '_rank_inside_jokes'):
+                        _jokes = _rs._rank_inside_jokes(1)
+                        if _jokes:
+                            _j = _jokes[0]
+                            _top_joke_str = (
+                                f"  - top_inside_joke: \"{_j.phrase[:60]}\" "
+                                f"({getattr(_j, 'tone', 'recurring')})"
+                            )
+                except Exception:
+                    pass
+                if _top_concern_str or _top_joke_str:
+                    _parts = ["[SOUL TO USE — OPTIONAL]",
+                              "If your remark naturally connects to ONE of these, weave it in subtly.",
+                              "Don't force it. Don't list. Just use it if relevant."]
+                    if _top_concern_str:
+                        _parts.append(_top_concern_str)
+                    if _top_joke_str:
+                        _parts.append(_top_joke_str)
+                    soul_hint_block = "\n".join(_parts)
+        except Exception:
+            pass
+
         prompt = f"""{public_layers}
 
 [CURRENT CONTEXT]
@@ -3247,6 +3346,8 @@ Process: {process_name}
 
 {nudge_skills_block}
 
+{soul_hint_block}
+
 [NUDGE]
 You are making a brief, unsolicited remark — NOT starting a conversation.
 Type: {nudge_type}
@@ -3255,7 +3356,7 @@ Type: {nudge_type}
 {forbidden_str}
 
 [RULES]
-- ONE sentence. Under 15 words.
+- ONE or TWO sentences. Under 25 words total.
 - Sound like a real person who has known Sir for years.
 - Reference what Sir is actually doing RIGHT NOW.
 - NEVER sound like a notification or health app.
@@ -3388,21 +3489,9 @@ Type: {nudge_type}
                             streamed_text += delta
 
                     while True:
-                        earliest_idx = -1
-                        hard_symbols = {".", "!", "?", "\n"}
-                        soft_symbols = {",", ";", "，", "；"}
-
-                        for i, char in enumerate(buffer):
-                            if char in hard_symbols:
-                                if char == '\n' or i >= 20:
-                                    earliest_idx = i
-                                    break
-                            elif char in soft_symbols:
-                                if i >= 15 and len(buffer) > i + 5:
-                                    lookahead = buffer[i+1:i+6].lower()
-                                    if not lookahead.startswith(" sir") and not lookahead.startswith(" jar"):
-                                        earliest_idx = i
-                                        break
+                        # 🩹 [P0+20-β.2.7.3 / 2026-05-17] 复用 module-level _find_sentence_split_idx
+                        # （内含 organ.command 中间 . 不切的保护）
+                        earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
 
                         if earliest_idx == -1 and len(buffer) > 80:
                             for i in range(len(buffer) - 1, 20, -1):
@@ -3457,6 +3546,22 @@ Type: {nudge_type}
                         bucket.append(_opening)
                         if len(bucket) > self._NUDGE_RECENT_MAX:
                             self._nudge_recent_phrases[nudge_type] = bucket[-self._NUDGE_RECENT_MAX:]
+            except Exception:
+                pass
+
+            # 🩹 [P0+20-β.2.7.3 / 2026-05-17] Self-Promise Detector：
+            # SmartNudge/Conductor/CommitmentWatcher/ReturnSentinel 路径里 Jarvis 自己
+            # 说"我会监督您 X" 也要注册成 commitment（与 Sir 承诺平等）。
+            try:
+                from jarvis_self_promise import get_default_detector as _gdp
+                cw = getattr(self.jarvis, 'commitment_watcher', None)
+                _sp_reply = full_text if (full_text and full_text.strip()) else final_reply
+                if _sp_reply and cw is not None:
+                    _gdp().detect_and_register_async(
+                        jarvis_reply=_sp_reply,
+                        commitment_watcher=cw,
+                        turn_id='nudge_' + (nudge_type or '?'),
+                    )
             except Exception:
                 pass
 

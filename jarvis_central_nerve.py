@@ -181,6 +181,42 @@ class CentralNerve:
 
     def __init__(self, api_key, gemini_key, key_router=None, state_callback=None):
         print("[CentralNerve] 系统点火序列启动中...")
+        # 🩹 [P0+20-β.2.7.2 / 2026-05-17] Sir 实测反馈"听不到声音"：Python 进程在
+        # Windows 应用音量混合器里被锁在 1%（灰色滑块拖不动）。
+        # 这是 Windows 记的历史值（之前某次手动设过 / 第三方音频驱动 / Discord/OBS 等）。
+        # 启动时强制把 python.exe 自己 SetMasterVolume(1.0)，避免 Sir 重启 Jarvis 还没声音。
+        try:
+            import os as _os_v
+            import comtypes
+            from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
+            comtypes.CoInitialize()
+            _self_pid = _os_v.getpid()
+            sessions = AudioUtilities.GetAllSessions()
+            _fixed_n = 0
+            for session in sessions:
+                try:
+                    if not session.Process:
+                        continue
+                    pname = (session.Process.name() or '').lower()
+                    if pname in ('python.exe', 'pythonw.exe'):
+                        v = session._ctl.QueryInterface(ISimpleAudioVolume)
+                        cur_vol = v.GetMasterVolume()
+                        if cur_vol < 0.5:
+                            v.SetMasterVolume(1.0, None)
+                            _fixed_n += 1
+                            print(f"🔊 [VolumeRecover] python.exe (pid={session.ProcessId}) "
+                                  f"volume {cur_vol:.0%} → 100% (Windows 历史锁定恢复)")
+                except Exception:
+                    continue
+            comtypes.CoUninitialize()
+            if _fixed_n > 0:
+                print(f"🔊 [VolumeRecover] 恢复了 {_fixed_n} 个 Python 进程的音量")
+        except Exception as _vr_err:
+            try:
+                print(f"⚠️ [VolumeRecover] 启动音量恢复跳过: {type(_vr_err).__name__}: {str(_vr_err)[:60]}")
+            except Exception:
+                pass
+
         # [R7-α/B1] 中央状态机：所有 is_awake / is_active_task / in_active_conversation
         # 写入都经过这里，自带 reason + bg_log + 可选 event_bus 投递。
         # JarvisWorkerThread / VoiceListenThread 共用同一实例 (后面赋值 / __init__ 末尾接入)。

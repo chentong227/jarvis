@@ -1843,9 +1843,46 @@ class JarvisWorkerThread(QThread):
 
             delay_sec = None
 
+            # 🩹 [P0+20-β.2.7.3 / 2026-05-17] 优先级 0：immediate 关键词
+            # 治 Sir 13:16 实测 BUG："我现在就去睡觉" 被默认 30min 兜底
+            # → 静默窗口拖到 14:01，Sir 等不到夜间监督。
+            # 命中即 delay_sec=0（仍加 _SLEEP_GRACE_SEC 给监督留 buffer）
+            # 守门：text 含相对/绝对时间锚时跳过 immediate，让正常解析优先。
+            _HAS_TIME_ANCHOR = bool(re.search(
+                r'\d+\s*(?:分钟|分|min(?:ute)?s?|小时|hours?|hrs?)|'
+                r'(?:半|半个|一个|两个|个把)\s*(?:小时|hour)|'
+                r'(?:再过|过|等|大概|大约|差不多|约|左右)|'
+                r'[一二两俩三四五六七八九十\d]{1,2}\s*点|'
+                r'\d{1,2}:\d{2}|'
+                r'(?:at|by|in|around|near|until|before|after)\s+\d|'
+                r'half\s+(?:an?\s+)?hour',
+                text, re.IGNORECASE
+            ))
+            _IMMEDIATE_PATTERNS = (
+                # 中文：现在/马上/立刻/立即/这就 + 任意 0-4 字 + 睡|床|去睡
+                r'现在\s*.{0,4}?(?:就)?(?:去|上)?\s*(?:睡|床)',
+                r'马上\s*.{0,4}?(?:去|上)?\s*(?:睡|床)',
+                r'立(?:刻|即|马)\s*.{0,4}?(?:去|上)?\s*(?:睡|床)',
+                r'这就\s*.{0,4}?(?:去|上)?\s*(?:睡|床)',
+                r'(?:我)?去睡(?:觉|了)',
+                r'我现在就(?:去|要)',  # 兜底："我现在就去 X" 即便 X 不是睡 (sleep_intent_patterns 已守门)
+                # 英文
+                r"going\s+to\s+(?:sleep|bed)\s+now",
+                r"i'?m\s+(?:off\s+to\s+)?bed",
+                r"time\s+(?:for|to)\s+(?:sleep|bed)",
+                r"heading\s+to\s+bed",
+                r"\bright\s+now\b",
+                r"\bimmediately\b",
+                r"sleep\s+now",
+            )
+            if not _HAS_TIME_ANCHOR and any(re.search(p, text) for p in _IMMEDIATE_PATTERNS):
+                delay_sec = 0
+
             # 优先级 1：绝对时间点 — 中文"X 点 / X 点 N 分"，X 可以是中文数字
+            # 🩹 [P0+20-β.2.7.3 / 2026-05-17] 加 if delay_sec is None: 守门，
+            # 否则优先级 0 (immediate) 设的 delay_sec=0 会被本分支误覆盖
             cn_hour_pat = r"(?:凌晨|早上|早晨|上午|中午|下午|晚上|今晚)?\s*([一二两俩三四五六七八九十]|十一|十二|\d{1,2})\s*点(?:\s*(半|[一二三四五六七八九十]\d?|\d{1,2})\s*分?)?"
-            m_cn = re.search(cn_hour_pat, text)
+            m_cn = re.search(cn_hour_pat, text) if delay_sec is None else None
             if m_cn:
                 try:
                     hour_str = m_cn.group(1)
@@ -2570,14 +2607,21 @@ Output format: {{"type": "breakthrough", "description": "One sentence directive 
 
 11. 'commitment': Detect ONLY user-self-commitments (the user promising what THEY themselves will do). Set has_commitment=true ONLY when ALL three conditions hold:
     (a) The subject is "I/我" — the user is the one taking the action.
-    (b) The user uses self-binding language: "I will...", "I promise...", "I need to... by...", "I'm going to... by...", "remind me to...".
-    (c) There is a concrete future deadline or time.
+    (b) The user uses self-binding language. ACCEPT both DIRECT and HEDGED forms:
+        - Direct:  "I will...", "I promise...", "I'm going to...", "remind me to...",
+                   "我会...", "我要...", "我打算...", "我答应..."
+        - Hedged but time-anchored (ALSO COUNT): "I'll probably...", "I might...", "I should...",
+                   "I think I'll...", "大概会...", "可能会...", "估计会...", "也许...", "差不多...",
+                   "我大概 X 点...", "我大概会 X". Hedging is OK as long as (c) holds.
+    (c) There is a concrete future deadline or time anchor (a clock time, 'tonight', 'tomorrow X', etc.).
     HARD REJECT (has_commitment=false) for ALL of the following — even if a time appears:
       - Commands directed at Jarvis: "帮我...", "给我...", "把...调到...", "请你...", "Jarvis,...", "set...", "turn off...", "adjust...", "change...", "open...", "close...".
       - Imperatives without an explicit "I/我" subject ("调亮度到50%" / "turn down the volume").
       - Role-play / hypothetical prompts: "假装...", "扮演...", "pretend you...", "act as if...".
       - Questions, status checks, or descriptions of what Jarvis should do.
-    When in doubt, set has_commitment=false. False positives here corrupt Sir's commitment ledger — be conservative.
+      - Aspirations without time anchor: "I want to be healthier" (no time) → false. "我想早点睡" (no specific time) → false.
+    🩹 [β.2.7.3 / 2026-05-17]: hedged + time = STILL commitment（治 Sir "我大概1:05睡" 漏判 BUG）。
+    False positives here corrupt Sir's commitment ledger — but missing real hedged commitments is just as bad.
 
 12. [MEMORY CORRECTION] 'correction': Detect if the user is CORRECTING a previous statement or memory (changing wrong info to right info). Triggers: "that was wrong", "I meant X not Y", "I said it wrong", "actually it's X", "no, I meant X", "不是...是...", "说错了...应该是...", "纠正一下". CRITICAL: Do NOT trigger correction if the user is asking to DELETE/REMOVE a memory. If the user says "delete that memory" or "删掉那个记忆", use delete_memory_hint (rule 13) instead. When triggered:
    - 'has_correction': true
@@ -2792,8 +2836,20 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                 # [P0+18-d.4 / 2026-05-15] Multi-op 支持 —— commitment 循环处理 list
                                 # 修 Sir 18:30 实测 BUG：一句话提"取消快递 + 加科目一"两件事，
                                 # Gatekeeper 旧版只看 [0]，多余 record 丢失。
+                                # 🩹 [β.2.7.3 / 2026-05-17] 加诊断 log：让 Sir 能 grep 'Gatekeeper Commitment' 排查漏判
                                 for _commit_gd in gate_data_list:
                                     commitment = _commit_gd.get("commitment", {}) if isinstance(_commit_gd, dict) else {}
+                                    _has_c = bool(isinstance(commitment, dict) and commitment.get("has_commitment"))
+                                    _desc_dbg = (commitment.get("description", "") if isinstance(commitment, dict) else "")[:60]
+                                    _ddl_dbg = (commitment.get("deadline", "") if isinstance(commitment, dict) else "")[:30]
+                                    try:
+                                        from jarvis_utils import bg_log as _gk_bg
+                                        _gk_bg(
+                                            f"📝 [Gatekeeper Commitment] has_commitment={_has_c} "
+                                            f"desc='{_desc_dbg}' deadline='{_ddl_dbg}' cmd='{cmd[:60]}'"
+                                        )
+                                    except Exception:
+                                        pass
                                     if isinstance(commitment, dict) and commitment.get("has_commitment"):
                                         desc = commitment.get("description", "")
                                         deadline = commitment.get("deadline", "")
