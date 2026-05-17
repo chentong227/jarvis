@@ -109,7 +109,9 @@ $tests = @(
     "_test_p0_plus_20_beta2_soul_reflector",
     "_test_p0_plus_20_beta2_soul_evaluator",
     "_test_p0_plus_20_beta271_nudge_soul_inject",
-    "_test_p0_plus_20_beta273_self_promise"
+    "_test_p0_plus_20_beta273_self_promise",
+    "_test_p0_plus_20_beta2710_directness",
+    "_test_p0_plus_20_beta28_proactive_care"
 )
 
 foreach ($t in $tests) {

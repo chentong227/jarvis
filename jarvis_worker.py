@@ -2406,6 +2406,17 @@ class JarvisWorkerThread(QThread):
                         # [R7-α/NudgeChannel] 三档分流：voice / silent_text / visual_pulse
                         nudge_channel = nudge_context.get('channel', 'voice')
 
+                        # 🩹 [P0+20-β.2.8 / 2026-05-17] 任何 nudge 入队都通知 ProactiveCare
+                        # 防双发: voice 档真出声前先登记 last_any_nudge_ts (silent/visual 不算)
+                        if nudge_channel == 'voice':
+                            try:
+                                from jarvis_proactive_care import get_default_engine
+                                _pce = get_default_engine()
+                                if _pce is not None:
+                                    _pce.notify_any_nudge_sent()
+                            except Exception:
+                                pass
+
                         if hasattr(self.jarvis, 'nudge_gate') and self.jarvis.nudge_gate.is_sleep_mode():
                             if nudge_type not in ('return_greeting',):
                                 continue

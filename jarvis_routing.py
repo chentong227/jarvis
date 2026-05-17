@@ -929,6 +929,7 @@ class CompanionCenter:
         # [P0+14 / 2026-05-15] HumorMemory 共享单例 —— main 段会传一个进来
         self.humor_memory = humor_memory
         self.smart_nudge = None
+        self.proactive_care = None
 
     def start_all(self):
         _ensure_centers_deps()
@@ -940,7 +941,23 @@ class CompanionCenter:
         )
         self.smart_nudge.start()
 
-        print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel)")
+        # [P0+20-β.2.8 / 2026-05-17] ProactiveCareEngine 并行跑, 默认 dry-run
+        # 启动失败不影响 SmartNudge 主路径 (try-except 包裹)
+        try:
+            from jarvis_proactive_care import get_default_engine
+            nerve_ref = getattr(self.worker, 'jarvis', None)
+            self.proactive_care = get_default_engine(self.worker, nerve_ref)
+            if self.proactive_care is not None:
+                self.proactive_care.start()
+                print(
+                    f"[CompanionCenter] ProactiveCareEngine 就绪 "
+                    f"(dry_run={self.proactive_care.dry_run})"
+                )
+        except Exception as _pce_err:
+            print(f"[CompanionCenter] ProactiveCareEngine 启动失败 (非致命): {_pce_err}")
+            self.proactive_care = None
+
+        print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel + ProactiveCareEngine)")
 
 
 # [P0+19-final fix 5 / 2026-05-16] 全量跨模块类引用兜底（try/except 防循环依赖）

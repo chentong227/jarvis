@@ -3241,7 +3241,14 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
         }
 
         nudge_directive = nudge_directives.get(nudge_type, "Make a brief, natural, human-like remark.")
-        
+
+        # 🩹 [P0+20-β.2.8 / 2026-05-17] ProactiveCareEngine 可直接传 nudge_directive 覆盖.
+        # 让新引擎不必污染 nudge_directives 8 类 dict, 直接给主脑一段动态 directive.
+        # 若 nudge_context['nudge_directive'] 非空 → 覆盖 (但 conductor_msg 优先级仍高).
+        _explicit_directive = nudge_context.get('nudge_directive', '') or ''
+        if _explicit_directive and isinstance(_explicit_directive, str) and len(_explicit_directive) > 30:
+            nudge_directive = _explicit_directive
+
         conductor_msg = nudge_context.get('conductor_message', '')
         if conductor_msg:
             nudge_directive = (
@@ -3418,6 +3425,8 @@ Type: {nudge_type}
                 _nudge_source = 'Conductor'
             elif nudge_context.get('via_return_sentinel'):
                 _nudge_source = 'ReturnSentinel'
+            elif nudge_context.get('type') == 'proactive_care':
+                _nudge_source = 'ProactiveCare'
             else:
                 _nudge_source = 'SmartNudge'
         _src_tag = f" [{_nudge_source}]"
