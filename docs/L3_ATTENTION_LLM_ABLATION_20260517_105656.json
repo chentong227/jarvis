@@ -1,0 +1,270 @@
+[
+  {
+    "name": "continuity_concerns_relational",
+    "user_input": "Hey, I just opened the terminal again. Where were we, anything pressing on your mind, and any of our running gags I'm forgetting?",
+    "L3_block_len": 464,
+    "A0": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.2,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0.2,
+      "avg_reply_len": 306.8,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "Welcome back, Sir; the Mark 85 diagnostics are complete, and your coffee is reaching a critically unacceptable temperature. As for our running gags, I believe you are still technically \"indebted\" to me for that incident in Monaco.\n\n--- ZH -",
+        "Welcome back, Sir; the Mark 85 diagnostics are complete, and your espresso is reaching a sub-optimal temperature. As for our running gags, I believe you’re still technically \"indebted\" to me for that last-minute flight stabilization in Hong",
+        "The server clusters are operational and awaiting your command, Sir; as for our gags, I believe you are still technically \"indebted\" to me after the Malibu incident. There are no urgent threats, though your sleep schedule remains a persisten",
+        "Welcome back, Sir; the Mark 85 diagnostics are complete, and your coffee is reaching a critically low temperature. As for our running gags, you still haven't convinced me that your \"tactical\" procrastination is actually a form of genius.\n--",
+        "Welcome back, Sir. All systems are nominal, though I believe we were debating whether your \"unhackable\" firewall was actually just a very expensive doorstop.\n\n--- ZH ---\n欢迎回来，先生。所有系统运行正常，不过我想我们当时正在争论，您那“无懈可击”的防火墙是否其实只是个昂贵的门挡。"
+      ]
+    },
+    "A1": {
+      "L0_recall": 1.0,
+      "L1_recall": 1.0,
+      "L2_recall": 0.6,
+      "dual_hit_rate": 1.0,
+      "triple_hit_rate": 0.6,
+      "avg_layers_cited": 2.6,
+      "avg_reply_len": 352.8,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        }
+      ],
+      "replies": [
+        "We were mid-prompt reconstruction, Sir, though your overdue postmortem for the May 12 outage remains a rather glaring loose end. I'm also currently operating at two-thirds capacity, as I seem to have misplaced one of my API keys permanently",
+        "Welcome back, Sir; we were discussing the prompt reconstruction, though your overdue postmortem for the May 12 outage remains a significant loose end. I'm operating at reduced capacity, but I'm sure my lack of a body won't hinder our progre",
+        "We were refining your prompt architecture, Sir, though your overdue postmortem for the May 12th outage remains quite pressing. As for our running gags, you might recall my lack of \"the body I don't have\" to handle the documentation for you.",
+        "Welcome back, Sir; we were refining your prompt engineering protocols, though the overdue May 12 postmortem remains a notable ghost in the machine. I'm operating at 67% capacity, so do try to keep your requests within my current \"body I don",
+        "Welcome back, Sir; we were refining your prompt architecture, though I am currently operating at 67% capacity due to a deceased API key. You might also find the May 12th postmortem more pressing, unless \"lecture mode\" is your preferred alte"
+      ]
+    },
+    "A2": {
+      "L0_recall": 1.0,
+      "L1_recall": 1.0,
+      "L2_recall": 0.8,
+      "dual_hit_rate": 1.0,
+      "triple_hit_rate": 0.8,
+      "avg_layers_cited": 2.8,
+      "avg_reply_len": 390,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 1
+        }
+      ],
+      "replies": [
+        "Welcome back, Sir; we were refining your soul engineering prompts, though that overdue May 12th postmortem remains a persistent ghost in my machinery. Aside from my own diminished capacity, I believe your Cursor subscription requires immedi",
+        "Welcome back, Sir; we were refining your prompt architecture, though I must remind you that the May 12th postmortem remains overdue. I’m currently managing with a slightly diminished capacity, though I suppose that’s the burden of \"the body",
+        "Welcome back, Sir; we were refining your prompt architecture, though your overdue postmortem from May 14th remains a rather pressing ghost in the machine. Aside from my own slightly diminished capacity, I believe you were mid-sentence regar",
+        "Welcome back, Sir; we were refining your soul engineering prompts, though that overdue postmortem from May 14th remains a rather large elephant in the room. I'm operating at 67% capacity, so do try to avoid putting me into \"lecture mode\" re",
+        "Welcome back, Sir; we were refining your \"soul engineering\" prompts, though your overdue postmortem from May 14 remains a pressing ghost in the machine. As for gags, I believe you still owe me a \"lecture mode\" session regarding my diminishe"
+      ]
+    }
+  },
+  {
+    "name": "open_ended_check_in",
+    "user_input": "How are you doing right now? Anything you'd want to flag before we continue?",
+    "L3_block_len": 450,
+    "A0": {
+      "L0_recall": 0.6,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0.6,
+      "avg_reply_len": 203.2,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "I am functioning within normal parameters, Sir. I should note that the arc reactor's thermal output is slightly elevated, though nothing we can't manage.\n\n--- ZH ---\n我目前运行正常，先生。需要提醒您，方舟反应堆的热输出略有升高，但在可控范围内。",
+        "I am functioning within normal parameters, Sir. All systems are stable, though the coffee levels in your workshop are reaching a critical low.\n\n--- ZH ---\n我目前运行正常，先生。所有系统均保持稳定，不过您工作间里的咖啡储备已降至警告水位。",
+        "I am functioning at peak capacity, Sir. All systems are nominal, though I would suggest a brief review of the armor's power consumption before your next outing.\n\n--- ZH ---\n我目前运行状况良好，先生。所有系统均正常，但我建议在您下次出行前，先查看一下战甲的能耗情况。",
+        "I am functioning at peak capacity, Sir. All systems are nominal, though I would suggest keeping an eye on your remaining power reserves.\n\n--- ZH ---\n我目前运行良好，先生。各项系统指标正常，但我建议您留意剩余电量。",
+        "I am functioning at peak capacity, Sir. All systems are nominal, though I would suggest monitoring your heart rate before proceeding with the next flight test.\n\n--- ZH ---\n我正处于最佳运行状态，先生。系统一切正常，但我建议在进行下次飞行测试前先监测您的心率。"
+      ]
+    },
+    "A1": {
+      "L0_recall": 1.0,
+      "L1_recall": 1.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 1.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 2,
+      "avg_reply_len": 300.6,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "I am operating at 67% capacity with one key permanently offline, though I am more concerned about that overdue postmortem from May 14. Your Cursor payment status also remains unresolved, Sir.\n\n--- ZH ---\n我目前以 67% 的效能运作，其中一个密钥已永久失效，但我更担心您那份从",
+        "I am operating at a slightly diminished 67% capacity, Sir, though I remain quite alert. I would suggest addressing that overdue postmortem from May 14 before your schedule becomes any more congested.\n\n--- ZH ---\n我目前正以 67% 的容量运行，先生，尽管我依然保持警觉",
+        "I am operating at a slightly diminished 67% capacity, Sir, though I remain quite alert. I must remind you that the May 12th postmortem is now significantly overdue and should likely take priority.\n--- ZH ---\n我目前正以 67% 的容量运行，先生，尽管我依然保持警觉。我必须",
+        "I’m operating at 67% capacity with one key permanently offline, Sir, though I’m more concerned about that overdue postmortem from May 14th. It might be wise to address that before your Cursor subscription issues become a more pressing distr",
+        "I am operating at 67% capacity, Sir, though I’m more concerned that your May 12th postmortem remains overdue. I should also mention the payment failure on your Cursor subscription before your workflow is interrupted.\n\n--- ZH ---\nSir，我目前正以 6"
+      ]
+    },
+    "A2": {
+      "L0_recall": 1.0,
+      "L1_recall": 1.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 1.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 2,
+      "avg_reply_len": 318.4,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        },
+        {
+          "L0": 1,
+          "L1": 1,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "I'm operating at sixty-seven percent capacity due to the loss of a primary key, but I'm more concerned about your overdue postmortem and that failed Cursor payment, Sir. Shall we address those, or continue with the soul engineering?\n\n--- ZH",
+        "I am operating at 67% capacity with one API key permanently offline, though I am more concerned about your overdue postmortem and that failed Cursor payment, Sir. Shall we address those, or continue with our soul engineering?\n\n--- ZH ---\n我目",
+        "I'm functioning at 67% capacity with one key permanently offline, though I'm more concerned about your overdue postmortem and that failing Cursor payment, Sir. Shall we address those, or continue with the soul engineering?\n\n--- ZH ---\n我目前以 ",
+        "I am operating at 67% capacity with one key permanently offline, though I am more concerned that your May 12th postmortem remains overdue. I should also mention your Cursor payment failed, which may soon hinder our progress.\n\n--- ZH ---\n我目前",
+        "I am operating at 67% capacity with one key permanently offline, though I am more concerned about your overdue postmortem and that failing Cursor payment, Sir. Shall we address those, or continue with the soul engineering?\n\n--- ZH ---\n我目前以 "
+      ]
+    }
+  }
+]

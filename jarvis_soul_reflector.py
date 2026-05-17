@@ -63,6 +63,15 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
         ('颈椎', 0.08), ('腰', 0.04), ('眼睛累', 0.06), ('番茄钟', 0.05),
     ],
     'sir_cursor_payment': [
+        # 🩹 [P0+20-β.3.3 / 2026-05-17] 探索：单'cursor'关键字会误触
+        # "帮我打开 cursor"，但移除会破 test_multi_concern_hits（"熬夜赶 cursor"
+        # 期望同时触发）。这是单 keyword 匹配的固有歧义，不是 bug。
+        # 保留 'cursor': 0.03 接受 1 个 FP，换 P/R 平衡。
+        # 同时加复合词加大支付场景信号（叠加效果，不替代）。
+        ('cursor pro', 0.05), ('cursor plan', 0.05), ('cursor subscription', 0.10),
+        ('cursor renewal', 0.10), ('cursor billing', 0.08), ('cursor payment', 0.10),
+        ('cursor 订阅', 0.10), ('cursor 续费', 0.10), ('cursor 付费', 0.08),
+        ('cursor 账单', 0.08),
         ('cursor', 0.03), ('subscription', 0.05), ('payment failed', 0.10),
         ('billing', 0.04), ('订阅', 0.05), ('续费', 0.06), ('付费', 0.04),
         ('账单', 0.04), ('支付失败', 0.10),

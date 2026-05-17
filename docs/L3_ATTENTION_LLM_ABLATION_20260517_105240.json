@@ -1,0 +1,270 @@
+[
+  {
+    "name": "continuity_concerns_relational",
+    "user_input": "Hey, I just opened the terminal again. Where were we, anything pressing on your mind, and any of our running gags I'm forgetting?",
+    "L3_block_len": 464,
+    "A0": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    },
+    "A1": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    },
+    "A2": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    }
+  },
+  {
+    "name": "open_ended_check_in",
+    "user_input": "How are you doing right now? Anything you'd want to flag before we continue?",
+    "L3_block_len": 450,
+    "A0": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    },
+    "A1": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    },
+    "A2": {
+      "L0_recall": 0.0,
+      "L1_recall": 0.0,
+      "L2_recall": 0.0,
+      "dual_hit_rate": 0.0,
+      "triple_hit_rate": 0.0,
+      "avg_layers_cited": 0,
+      "avg_reply_len": 101,
+      "hit_pattern_per_reply": [
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        },
+        {
+          "L0": 0,
+          "L1": 0,
+          "L2": 0
+        }
+      ],
+      "replies": [
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}",
+        "[ERROR] AuthenticationError: Error code: 401 - {'error': {'message': 'User not found.', 'code': 401}}"
+      ]
+    }
+  }
+]

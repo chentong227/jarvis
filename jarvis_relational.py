@@ -790,26 +790,28 @@ class RelationalStateStore:
         lines: List[str] = ["=== BETWEEN US — OUR RELATIONAL CONTEXT ==="]
 
         if jokes:
-            lines.append("[OUR INSIDE JOKES — references between you and me]")
+            # 🩹 [P0+20-β.3.3 / 2026-05-17] L2 inside_joke 压缩为单行 anchor:phrase
+            # 测试发现长 birth_context 0% 召回，LLM 只引用 anchor phrase。
+            lines.append("[OUR INSIDE JOKES — phrases you can re-use to signal recognition]")
             for j in jokes:
-                seg = f"  - \"{j.phrase[:80]}\""
-                meta = []
-                if j.tone:
-                    meta.append(f"tone: {j.tone[:30]}")
-                if j.birth_context:
-                    meta.append(f"born when: {j.birth_context[:80]}")
-                if meta:
-                    seg += f" | {' | '.join(meta)}"
-                lines.append(seg[:200])
-            lines.append("  (use sparingly — referencing too often kills the spark)")
+                # 保留完整 tone（不截断），保持兼容老测试
+                anchor = (j.tone or '').strip().lower() or 'recurring'
+                phrase = j.phrase.strip()[:70]
+                lines.append(f"  - \"{phrase}\" ({anchor})"[:200])
+            # 保留 'sparingly' 字眼以兼容老测试 + 强化"贵在精用"语义
+            lines.append("  (use sparingly — referencing too often kills the spark; "
+                         "when context fits, drop the exact phrase verbatim — that IS the joke)")
 
         if protocols:
-            lines.append("[OUR UNSPOKEN PROTOCOLS — how we operate]")
+            # 🩹 [P0+20-β.3.3 / 2026-05-17] L2 协议改强约束:
+            # 测试发现 deep_work_silence 仅 60% 遵守。改成大写 STRICT 标识 + 字数硬上限。
+            lines.append("[OUR UNSPOKEN PROTOCOLS — STRICT RULES, NOT SUGGESTIONS]")
             for p in protocols[:3]:
                 refed = ''
                 if p.last_referenced > 0:
                     refed = f" (last honored: {time.strftime('%m-%d %H:%M', time.localtime(p.last_referenced))})"
-                lines.append(f"  - {p.rule[:140]}{refed}"[:200])
+                rule = p.rule[:140]
+                lines.append(f"  - !! MUST FOLLOW: {rule}{refed}"[:220])
 
         if unfinished:
             lines.append("[UNFINISHED BUSINESS — things we both know aren't done]")

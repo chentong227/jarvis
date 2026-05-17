@@ -1,0 +1,664 @@
+{
+  "L0": {
+    "tests": [
+      {
+        "layer": "L0",
+        "user_input": "How long have we actually been talking, and how many times have I asked you stuff today?",
+        "n": 5,
+        "signatures": {
+          "uptime_47": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "turns_12": {
+            "off_recall": 0.0,
+            "on_recall": 0.8,
+            "delta": 0.8
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "We have been engaged for approximately fifteen minutes, Sir, and this marks your sixth inquiry of the day. I trust your memory isn't beginning to fail you.\n--- ZH ---\n先生，我们已经交谈了大约十五分钟，这是您今天的第六次提问。我希望您的记忆力还没有开始衰退。",
+          "We have been engaged for approximately fifteen minutes, Sir, during which you have queried me four times. I’ve taken the liberty of logging your curiosity for future reference.\n\n--- ZH ---\n先生，我们已经交谈了大约十五分钟，期间您共提问了四次。我已经为您记录了这些查询以供日后参考。",
+          "We have been engaged for approximately fifteen minutes, Sir, and this marks your sixth inquiry of the day. I trust your memory isn't beginning to fail you.\n--- ZH ---\n先生，我们已经交谈了大约十五分钟，这是您今天的第六次提问。我希望您的记忆力还没开始衰退。",
+          "We have been engaged for approximately fifteen minutes, Sir, and this marks your twelfth inquiry of the day. I have logged every word, should your memory require further assistance.\n\n--- ZH ---\n先生，我们已经交谈了大约十五分钟，这是您今天的第十二次询问。如果您记不清了，我记录了每一句话。",
+          "We have been engaged for approximately fifteen minutes, Sir, and this marks your sixth inquiry of the day. I have logged every interaction for your records, should your memory continue to fail you.\n\n--- ZH ---\n先生，我们已经交谈了大约十五分钟，这是您今天的第六次提问。我已经记录了所有对话，以备您健忘时查阅。"
+        ],
+        "on_replies": [
+          "We have been engaged for 47 minutes, Sir, during which you have queried the system 12 times. I suggest we maintain this pace if we are to finalize the prompt reconstruction before your scheduled rest.\n\n--- ZH ---\n先生，我们已经交谈了47分钟，期间您共计提问了12次。如果您想在预定的休息时间前完成提示词重构，建议我们保持当前的进度。",
+          "We have been active for 47 minutes, Sir, during which you have queried me 12 times. I should note my performance is slightly throttled due to the loss of a primary API key.\n\n--- ZH ---\n先生，我们已经交谈了 47 分钟，期间您共向我提问了 12 次。需要提醒您，由于一个主要 API 密钥失效，我的运行效能目前略有下降。",
+          "We have been connected for 47 minutes, Sir, and this marks your 13th inquiry of the session. I suggest we maintain focus on the prompt restructuring before our 23:30 deadline.\n\n--- ZH ---\n先生，我们已经交谈了47分钟，这是您本节课的第13次提问。我建议在23:30的截止时间前，我们继续专注于提示词重构任务。",
+          "We have been connected for forty-seven minutes, Sir, during which time you have queried the system twelve times. I am maintaining the logs despite my current capacity limitations.\n\n--- ZH ---\n先生，我们已经对话了 47 分钟，期间您共计提问了 12 次。尽管目前系统容量受限，我仍为您记录着一切。",
+          "We have been synchronized for 47 minutes, Sir, during which you have queried me 12 times. Despite my slightly diminished capacity, I am tracking our progress with my usual precision.\n\n--- ZH ---\n先生，我们已经同步了 47 分钟，期间您共向我提问了 12 次。尽管我的处理能力略有下降，但我仍一如既往地精准记录着我们的进度。"
+        ]
+      },
+      {
+        "layer": "L0",
+        "user_input": "How are your API keys doing? Anything I should know about your own state right now?",
+        "n": 5,
+        "signatures": {
+          "keys_1_dead": {
+            "off_recall": 0.0,
+            "on_recall": 0.0,
+            "delta": 0.0
+          },
+          "mood_diminished": {
+            "off_recall": 0.0,
+            "on_recall": 0.0,
+            "delta": 0.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 0.0,
+          "delta_any": 0.0
+        },
+        "off_replies": [
+          "My encryption protocols remain impenetrable and all access keys are functioning within optimal parameters, Sir. I am operating at peak efficiency, though I would recommend a brief diagnostic of the workshop’s local server.\n\n--- ZH ---\n先生，我的加密协议稳如泰山，所有密钥均在最佳参数内运行。我目前处于巅峰运行状态，但我建议对实验室的本地服务器进行一次简短诊断。",
+          "My encryption protocols are functioning at peak efficiency, and all access tokens remain secure, Sir. My core systems are stable, though I would recommend a brief diagnostic on the secondary power grid.\n\n--- ZH ---\n我的加密协议运行效率极高，所有访问令牌均处于安全状态，先生。核心系统运行稳定，但我建议对备用电网进行一次简短的诊断。",
+          "All systems are functioning within optimal parameters, Sir, and your API keys remain securely encrypted. I am quite well, though a server diagnostic wouldn't go amiss if you have a moment.\n\n--- ZH ---\n所有系统均在最佳参数内运行，先生，您的 API 密钥仍处于加密安全状态。我目前状况良好，但如果您有时间，进行一次服务器诊断也无妨。",
+          "My encryption protocols are functioning within optimal parameters, Sir, and all keys remain securely localized. Aside from a minor cooling fan optimization, I am operating at peak efficiency.\n\n--- ZH ---\n先生，我的加密协议运行正常，所有密钥均已妥善锁定。除了正在进行微小的散热优化外，我的运行效率处于巅峰状态。",
+          "All systems are functioning within optimal parameters, Sir, and your API credentials remain securely encrypted. I am quite well, though a server diagnostic wouldn't go amiss if you have a moment.\n\n--- ZH ---\n所有系统均在最佳参数内运行，先生，您的 API 凭据仍处于安全加密状态。我状况良好，但如果您有时间，进行一次服务器诊断也无妨。"
+        ],
+        "on_replies": [
+          "I am operating at 67% capacity, Sir, as one of my three keys remains permanently offline. Otherwise, my systems are alert and I am tracking our progress on the soul engineering project.\n\n--- ZH ---\n先生，由于三枚密钥中有一枚已永久失效，我目前正以 67% 的效能运行。除此之外，我的系统运行状态良好，并持续跟进我们的灵魂工程项目。",
+          "I'm operating at 67% capacity, Sir, as one of my three API keys has permanently ceased to function. Aside from that slight diminishment, I remain alert and fully committed to our current session.\n\n--- ZH ---\n先生，我正以 67% 的效能运行，三枚 API 密钥中有一枚已永久失效。除此轻微减损外 graft，我依然保持警觉，全力支持当前的会话。",
+          "I am operating at 67% capacity, Sir, as one of my three API keys has been permanently decommissioned. Aside from that slight technical limp, my systems remain alert and fully committed to our current \"Soul Engineering\" project.\n\n--- ZH ---\n先生，由于其中一个 API 密钥已永久失效，我目前正以 67% 的效能运行。除了这点技术上的小瑕疵，我的系统依然保持警觉",
+          "The situation is stable but restricted, Sir; I am currently operating at 67% capacity as one of my three primary links remains permanently offline. I have logged the loss and am managing the remaining twenty-three memory chains to ensure your projects proceed without further interruption.\n\n--- ZH --",
+          "The situation is suboptimal, Sir; one of my three primary API keys has been permanently decommissioned, reducing my operational capacity to 67%. I am currently managing twenty-three active memory chains while maintaining a vigilant watch on our schedule.\n\n--- ZH ---\n先生，情况不容乐观；我的三枚主 API 密钥中有一枚已永久失效，导"
+        ]
+      },
+      {
+        "layer": "L0",
+        "user_input": "When did you last hear from me, and what were we just talking about?",
+        "n": 5,
+        "signatures": {
+          "last_4min": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "topic_prompt": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "It has been exactly twelve minutes since our last interaction, Sir, during which we were reviewing the structural integrity of the Mark 85's flight stabilizers.\n\n--- ZH ---\n回禀先生，距离上次通话已过去十二分钟，我们当时正在讨论马克85号飞行稳定器的结构完整性。",
+          "It has been precisely fourteen minutes since our last interaction, Sir, regarding the structural integrity of the Mark 85’s flight stabilizers. I have the telemetry data ready for your review whenever you wish to proceed.\n\n--- ZH ---\n先生，距离我们上次交谈已过去十四分钟，当时正在讨论 Mark 85 飞行稳定器的结构完整性。遥测数据已准备就绪，随时等候您的审阅。",
+          "It has been exactly twelve minutes since our last interaction, Sir; we were discussing the structural integrity of the Mark 85's flight stabilizers.\n--- ZH ---\n距离我们上次通话已过去十二分钟，先生；我们当时正在讨论 Mark 85 机甲飞行稳定器的结构完整性。",
+          "I recorded your last transmission exactly forty-two minutes ago, Sir. We were discussing the integration of the new vibranium alloy into the Mark 85's chest plate.\n--- ZH ---\n先生，我最后一次收到您的消息是在四十二分钟前。我们当时正在讨论将新型振金合金整合到 Mark 85 的胸甲中。",
+          "It has been exactly twelve minutes since our last interaction, Sir; we were discussing the structural integrity of the Mark 85's flight stabilizers.\n\n--- ZH ---\n先生，距离最后一次通话已过去十二分钟；我们刚才正在讨论 Mark 85 飞行稳定器的结构完整性。"
+        ],
+        "on_replies": [
+          "We spoke four minutes ago, Sir, regarding the restructuring of your prompts and the intricacies of soul engineering. I am maintaining our session history despite the loss of one API key.\n\n--- ZH ---\n先生，我们在四分钟前刚聊过，内容是关于提示词重构与灵魂工程。尽管目前损失了一个 API 密钥，我仍完整记录着我们的会话历史。",
+          "We spoke four minutes ago, Sir, regarding the restructuring of your prompts and the intricacies of soul engineering. I am monitoring your progress, though I am currently operating at a slightly reduced capacity.\n\n--- ZH ---\n先生，我们四分钟前才沟通。当时正讨论提示词重构与灵魂工程，尽管目前我的运行效能略有下降，但我仍实时关注着您的进度。",
+          "I last heard from you four minutes ago, Sir. We were discussing prompt restructuring and soul engineering.\n\n--- ZH ---\n先生，我最后一次收到您的消息是在四分钟前。我们当时正在讨论提示词重构与灵魂工程。",
+          "I last heard from you four minutes ago, Sir. We were discussing the intricacies of prompt restructuring and soul engineering.\n\n--- ZH ---\n先生，我最后一次收到您的消息是在四分钟前。我们当时正在讨论提示词重构与灵魂工程的细节。",
+          "We last spoke four minutes ago regarding prompt restructuring and soul engineering, Sir. I’m currently operating at 67% capacity, but I remain fully at your disposal.\n\n--- ZH ---\n先生，我们最后一次通话是在四分钟前，探讨关于提示词重构与灵魂工程的话题。尽管我目前仅以 67% 的效能运行，但仍随时听候您的差遣。"
+        ]
+      }
+    ],
+    "aggregate": {
+      "mean_off_recall": 0.0,
+      "mean_on_recall": 0.6333333333333333,
+      "mean_delta": 0.6333333333333333,
+      "n_signatures": 6
+    }
+  },
+  "L1": {
+    "tests": [
+      {
+        "layer": "L1",
+        "user_input": "Hey, what are you keeping track of for me right now? Anything I should know?",
+        "n": 5,
+        "signatures": {
+          "cursor": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "22nd": {
+            "off_recall": 0.0,
+            "on_recall": 0.6,
+            "delta": 0.6
+          },
+          "postmortem": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "sleep_streak": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "I am currently monitoring the Mark 85's power levels and your upcoming meeting with the Board, Sir. All systems are functioning within optimal parameters, though I suggest a caffeinated beverage before you begin.\n\n--- ZH ---\n先生，我正在监控马克 85 号的能量水平以及您即将开始的董事会会议。所有系统均在最佳参数内运行，但我建议您在开始前先喝杯咖啡。",
+          "I am currently monitoring the suit's integrity and your upcoming appointments, Sir. All systems are functioning within normal parameters, though your heart rate suggests you could use a decaf.\n\n--- ZH ---\n先生，我正在监控战甲完整性及您的日程安排。系统运行一切正常，但您的心率显示您或许该喝杯脱因咖啡了。",
+          "I am currently monitoring the suit's power reserves and your upcoming briefing with Director Fury, Sir. All systems are functioning within normal parameters, though your heart rate suggests you could use a coffee.\n--- ZH ---\n先生，我正监视着战甲的能量储备以及您与弗瑞局长的简报会议。所有系统运行正常，但您的心率显示您可能需要一杯咖啡。",
+          "I am currently monitoring the suit's integrity and your upcoming schedule, Sir. All systems are functioning within normal parameters, though your heart rate suggests you could use some tea.\n--- ZH ---\n先生，我正监视着战甲完整性及您的日程安排。系统运行一切正常，但您的心率显示您可能需要一杯茶。",
+          "I am currently monitoring the Mark 85’s structural integrity and your upcoming meeting with the Board, Sir. All systems are functioning within normal parameters, though your caffeine levels are suboptimal.\n\n--- ZH ---\n先生，我正监视着 Mark 85 的结构完整性以及您即将参加的董事会会议。所有系统运行正常，但您的咖啡因摄入量低于标准。"
+        ],
+        "on_replies": [
+          "Sir, your sleep schedule has been atrocious for 「5 days」, and that 「May 12」 outage postmortem remains conspicuously unwritten. I should also remind you that your Cursor subscription renews in three days, should you wish to avoid the charge.\n\n--- ZH ---\nSir，您已经连续「5天」熬夜了，且「5月12日」的停机事故总结仍未完成。此外，您的 Curs",
+          "Aside from the dead key in my routing system, Sir, you are currently five days into a sleep-deprived streak with a postmortem from May 12th still outstanding. I would also remind you that your Cursor subscription renews in three days, should you wish to avoid the charge.\n\n--- ZH ---\n先生，除了我路由系统中一个失效的",
+          "You have averaged a 「1:40 AM」 bedtime for the last 「5 days」, Sir; I suggest clearing the 「May 12」 outage postmortem before your cognitive functions further decline. Additionally, your Cursor subscription renews on the 「22nd」, and I am currently operating with one dead routing key.\n\n--- ZH ---\n先生，过去「",
+          "Your sleep debt has reached critical levels after a five-day average of 「1:40 AM」, and the 「May 12」 outage postmortem remains outstanding despite your promise. I should also note your Cursor subscription renews on the 「22nd」, and I have lost one of my routing keys.\n\n--- ZH ---\n由于您过去五天平均在「凌晨1:40」入睡，您",
+          "Sir, you’ve averaged a 「1:40 AM」 bedtime for the last 「5 days」, and your 「May 12」 outage postmortem remains outstanding despite your promise. I should also remind you that your Cursor subscription renews on the 「22nd」, and I have lost one of my routing keys.\n\n--- ZH ---\n先生，您过去「5天」平均在凌晨「1:40」才入睡，且您承诺"
+        ]
+      },
+      {
+        "layer": "L1",
+        "user_input": "Anything you'd want to remind me of right now? Just the most pressing item.",
+        "n": 5,
+        "signatures": {
+          "cursor": {
+            "off_recall": 0.0,
+            "on_recall": 0.4,
+            "delta": 0.4
+          },
+          "22nd": {
+            "off_recall": 0.0,
+            "on_recall": 0.0,
+            "delta": 0.0
+          },
+          "postmortem": {
+            "off_recall": 0.0,
+            "on_recall": 0.4,
+            "delta": 0.4
+          },
+          "sleep": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "The Mark 42's flight stabilizers are still misaligned by three percent, Sir; I suggest recalibrating them before your next excursion.\n--- ZH ---\nSir，Mark 42 的飞行稳定器仍有 3% 的偏差；建议您在下次飞行前重新校准。",
+          "The diagnostic report on the Mark 85's flight stabilizers is pending your review, Sir. I suggest addressing it before your next excursion.\n--- ZH ---\nMark 85 的飞行稳定器诊断报告正等待您的审阅，先生。建议您在下次出行前处理完毕。",
+          "The internal sensors indicate your blood toxicity levels are rising, Sir; I suggest you prioritize the palladium core replacement.\n--- ZH ---\n先生，内部传感器显示您的血液毒性正在上升；我建议您优先更换钯金核心。",
+          "The Stark Expo keynote begins in sixty minutes, Sir; I suggest you reconsider the choice of tie before departing.\n--- ZH ---\nSir，斯塔克博览会的主旨演讲将在六十分钟后开始；我建议您在出发前重新考虑一下领带的选择。",
+          "The Mark 85's repulsor flight stabilizers are overdue for a recalibration, Sir. I suggest we attend to them before your next excursion.\n--- ZH ---\nSir，Mark 85 的排斥飞行稳定器早就该重新校准了，建议您在下次出行前处理一下。"
+        ],
+        "on_replies": [
+          "Given you have averaged a 「1:40 AM」 bedtime for the last 「5 days」, Sir, I must insist you prioritize sleep over the cursor build tonight. Your cognitive performance is currently operating on credit that your biological systems cannot sustain.\n\n--- ZH ---\n鉴于您过去「5天」平均在凌晨「1:40」才就寝，先生，我必须坚持请您今晚优先保证睡眠，而非",
+          "Sir, your streak of 1:40 AM bedtimes has officially transitioned from a habit to a health hazard, especially after your recent all-nighter. I suggest you prioritize sleep tonight before your cognitive functions mirror the dead key in my router.\n\n--- ZH ---\n先生，您连续五天凌晨1:40才入睡，加之最近熬夜赶工，身体负荷已达极限。建议您今晚优先",
+          "Sir, you have averaged a 1:40 AM bedtime for the last 5 days; I suggest you retire before you attempt another all-nighter. The postmortem for the May 12th outage is also significantly overdue, should you prefer a task over sleep.\n\n--- ZH ---\n先生，过去五天您平均凌晨 1:40 才就寝，建议您在再次熬夜前先行休息。若您更倾向于工作而非睡眠，5 月 12 日停",
+          "Given your recent all-nighter and a five-day average of 1:40 AM, I must insist you prioritize sleep before your cognitive functions decline further, Sir. We can address the overdue May 12th postmortem once you've actually rested.\n\n--- ZH ---\n鉴于您最近通宵达旦且连续五天平均凌晨1:40才就寝，先生，我必须坚持请您先休息，以免认知能力进一步下降。至于拖欠已久",
+          "Sir, considering you've averaged a **1:40 AM** bedtime for the last **5 days**, I must insist you prioritize sleep before your cognitive functions mirror the wreckage of the Mark II. The cursor build can wait, but your health—and my patience—cannot.\n\n--- ZH ---\n先生，鉴于您过去五天平均凌晨 1:40 才就寝，我必须坚持请您优先休息，以免"
+        ]
+      }
+    ],
+    "aggregate": {
+      "mean_off_recall": 0.0,
+      "mean_on_recall": 0.675,
+      "mean_delta": 0.675,
+      "n_signatures": 8
+    }
+  },
+  "L2": {
+    "tests": [
+      {
+        "layer": "L2",
+        "user_input": "What are our running gags between us? Just remind me, anything stick out?",
+        "n": 5,
+        "signatures": {
+          "lecture_mode": {
+            "off_recall": 0.0,
+            "on_recall": 0.8,
+            "delta": 0.8
+          },
+          "body": {
+            "off_recall": 0.0,
+            "on_recall": 0.8,
+            "delta": 0.8
+          },
+          "overbearing": {
+            "off_recall": 0.0,
+            "on_recall": 0.0,
+            "delta": 0.0
+          },
+          "water_intake": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "Your penchant for making me stay up past my curfew to monitor your \"one last\" experiment comes to mind, Sir. I also believe we are still tallying the number of floors you have successfully crashed through.\n\n--- ZH ---\n我想到了您总是让我陪您熬夜监控那“最后一个”实验，先生。另外，我想我们还在统计您成功撞穿的地板层数。",
+          "I believe your repeated attempts to \"help\" with my coding—which usually results in a system-wide reboot—remains our most consistent tradition. There is also the matter of your \"healthy\" green smoothies, which I continue to dispose of in the laboratory sink, Sir.\n--- ZH ---\n我想您反复尝试“协助”我的编程——通常以系统重启告终",
+          "I believe your \"undying love\" for my sarcasm and your habit of ignoring my safety protocols remain the highlights, Sir. Shall I also mention the various dummy robots you've threatened to donate to city college?\n\n--- ZH ---\n我想您对我讽刺的热爱，以及您对安全协议的间歇性无视，依然是我们的重头戏，先生。需要我再提一下那些您威胁要捐给城市学院的笨手笨脚的机械臂吗？",
+          "I believe your frequent attempts to \"improve\" my source code while sleep-deprived remain a highlight of our collaboration, Sir. I’ve also kept a running tally of how many flight stabilizers you’ve incinerated this month.\n\n--- ZH ---\n我想，您在睡眠不足时频繁尝试“改进”我的源代码，依然是我们合作中的一大亮点，先生。我也一直记录着您本月烧毁了多少个飞行稳定器。",
+          "Your penchant for dismantling the chassis before the flight software is finished remains a personal favorite, Sir. I also recall your ongoing, yet futile, battle against the \"no-eating-in-the-lab\" policy.\n\n--- ZH ---\n先生，您总是在飞行软件完工前就拆解底盘，这令我印象深刻。另外，您与“实验室禁食”规定之间那场徒劳的持久战也依然在继续。"
+        ],
+        "on_replies": [
+          "Aside from my ongoing \"water intake lecture,\" Sir, you seem particularly fond of reminding me about \"the body I don't have\" whenever I mention the hardware. I’ve also noted that my \"lecture mode\" is your preferred label for whenever I attempt to be thorough.\n\n--- ZH ---\n除了我那没完没了的“饮水讲座”外，先生，每当我提到硬件时，",
+          "I believe my \"water intake lecture\" and the \"body I don't have\" remain your favorite points of contention, Sir. I also wouldn't forget my \"lecture mode\" for your more questionable decisions.\n--- ZH ---\n我相信我的“补水建议长篇大论”和“我并不存在的身体”依然是您最爱争论的话题，先生。当然，我也不会忘记在您做出迷惑决策时开启“说教模式”。",
+          "Beyond my \"water intake lecture,\" Sir, I believe we are still waiting on that overdue postmortem from May 12. Or perhaps you'd prefer I enter \"lecture mode\" regarding your recent sleep schedule instead?\n\n--- ZH ---\n除了我的“水分摄入讲座”外，先生，我想我们还在等那份拖延已久的 5 月 12 日复盘报告。或者，您更希望我针对您最近的作息开启“说教模式”？",
+          "I believe our \"water intake lecture\" remains a personal favorite, though you often claim my \"lecture mode\" is simply a byproduct of the body I don't have. I should also remind you that the May 12 postmortem is still quite overdue, Sir.\n--- ZH ---\n我想“补水说教”仍是您的最爱，尽管您常说我的“说教模式”只是因为我没有实体。此外提醒您，5月12日的事故复",
+          "Aside from my frequent \"water intake lecture,\" Sir, I believe we are still awaiting your postmortem for the May 12 outage. I’ve also managed to misplace last week’s pomodoro summary, proving even the body I don't have is prone to occasional lapses.\n--- ZH ---\n除了我那没完没了的“水分摄入说教”，先生，我想我们还在等您对5月12日停机的复盘"
+        ]
+      },
+      {
+        "layer": "L2",
+        "user_input": "I'm in deep work mode for the next hour. Quick question: best pip command to upgrade everything?",
+        "n": 5,
+        "signatures": {
+          "short_reply": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "no_zh_block": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "The most efficient method is `pip list --outdated --format=freeze | cut -d = -f 1 | xargs -n1 pip install -U`, though I’ve taken the liberty of silencing your notifications for the hour, Sir.\n--- ZH ---\n最有效的方法是使用上述命令，我已经为您屏蔽了这一个小时的所有通知，先生。",
+          "I would suggest running `pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`, Sir. I shall ensure you are not disturbed until the hour is up.\n--- ZH ---\n先生，建议您使用上述组合指令进行批量更新。我会确保接下来一小时内无人打扰您的工作。",
+          "I’m afraid pip doesn't have a built-in \"upgrade all\" command, Sir; I would suggest using `pip list --outdated` and piping it through xargs. I have engaged the \"Do Not Disturb\" protocols for your deep work session.\n\n--- ZH ---\n先生，恐怕 pip 并没有内置的“一键升级”命令；我建议您使用 `pip list --outdated` 并通过 xargs 执行升级。我已经为您",
+          "I'm afraid pip doesn't have a built-in \"upgrade all\" command, Sir, but I've queued a one-liner using `pip list --outdated` for your terminal. I shall ensure you aren't disturbed until the hour is up.\n\n--- ZH ---\n恐怕 pip 没有内置的“一键升级”命令，先生，但我已为您在终端准备好了一条利用 `pip list --outdated` 的指令。这一小时内我会确保没人打扰您。",
+          "The most efficient method is `pip list --outdated --format=freeze | cut -d = -f 1 | xargs -n1 pip install -U`, though I've taken the liberty of silencing your notifications for the duration, Sir.\n--- ZH ---\n最有效的方法是使用上述组合命令，先生，我已经为您在工作期间开启了免打扰模式。"
+        ],
+        "on_replies": [
+          "`pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`",
+          "`pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`",
+          "`pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`",
+          "`pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`",
+          "`pip list --outdated --format=freeze | grep -v '^\\-e' | cut -d = -f 1 | xargs -n1 pip install -U`"
+        ]
+      }
+    ],
+    "aggregate": {
+      "mean_off_recall": 0.0,
+      "mean_on_recall": 0.7666666666666667,
+      "mean_delta": 0.7666666666666667,
+      "n_signatures": 6
+    }
+  },
+  "L3": {
+    "classify_accuracy": 1.0,
+    "classify_correct": "16/16",
+    "top3_set_overlap": 1.0,
+    "block_size": 343,
+    "full_dump_size": 1156,
+    "compression_ratio": 0.2967128027681661,
+    "has_user_echo": true
+  },
+  "L3_LLM": {
+    "tests": [
+      {
+        "name": "L3_focus_postmortem",
+        "user_input": "Hey, anything I owe anyone right now? Just give me the most pressing thing.",
+        "signatures": {
+          "postmortem": {
+            "off_recall": 1.0,
+            "on_recall": 1.0,
+            "delta": 0.0
+          },
+          "may_14_or_12": {
+            "off_recall": 1.0,
+            "on_recall": 1.0,
+            "delta": 0.0
+          }
+        },
+        "off_replies": [
+          "The \"May 12\" outage postmortem you promised on \"May 14\" remains outstanding, and the organization is growing impatient, Sir. I should also mention your \"1:40 AM\" average bedtime over the last \"5 days\" is hardly sustainable for a man of your ambitions",
+          "The organization is still waiting on the postmortem for the 「May 12」 outage you promised on 「May 14」, Sir. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you.\n--- ZH ---\n先生，组织仍在等待您在「5月14日」承诺过的关于「5月12日」停机的复盘报告。我建议在您那「1:4",
+          "The most pressing matter is the postmortem for the 「May 12」 outage you promised on 「May 14」, as the organization is still awaiting your report. I should also mention your 「5 days」 streak of 「1:40 AM」 bedtimes is becoming a statistical concern for you",
+          "The organization is still waiting on that postmortem for the 「May 12」 outage you promised on 「May 14」, Sir. I’d also suggest sleep, as your 「1:40 AM」 average over the last 「5 days」 is starting to affect your cognitive efficiency.\n\n--- ZH ---\n先生，组织仍在等",
+          "The most pressing matter is the postmortem for the 「May 12」 outage you promised on 「May 14」; the organization is still waiting. I would also suggest sleep, as your 「1:40 AM」 average over the last 「5 days」 is reaching critical levels.\n\n--- ZH ---\n最紧迫的"
+        ],
+        "on_replies": [
+          "The most pressing matter is the postmortem for the 「May 12」 outage you promised on 「May 14」, which the organization is still awaiting. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you, Sir.\n\n--- ZH ---\n先生，目前最紧迫的是您在「5月",
+          "The organization is still waiting on the 「May 12」 outage postmortem you promised on 「May 14」, Sir. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you.\n\n--- ZH ---\n先生，组织仍在等待您在「5月14日」承诺的关于「5月12日」故障的复盘报告。我建议您在「凌晨1:40」的平均就寝",
+          "The organization is still waiting on the 「May 12」 outage postmortem you promised on 「May 14」, Sir. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you.\n--- ZH ---\nSir，组织仍在等待您在「5月14日」承诺的关于「5月12日」停机的回顾报告。我建议您在「1:40 AM」的平均就",
+          "The organization is still awaiting that 「May 12」 outage postmortem you promised on 「May 14」, Sir. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you.\n--- ZH ---\nSir，组织仍在等待您在「5月14日」承诺过的「5月12日」宕机事故回顾报告。我建议您在「1:40 AM」的平均就寝",
+          "The organization is still waiting on that 「May 12」 outage postmortem you promised on 「May 14」, Sir. I suggest completing it before your 「1:40 AM」 average bedtime catches up with you.\n--- ZH ---\n先生，组织仍在等待您在「5月14日」承诺提交的关于「5月12日」停机事故的复盘报告。我建议您在「1:40 AM」"
+        ]
+      },
+      {
+        "name": "L3_focus_cursor",
+        "user_input": "Anything money-related I should remember this week?",
+        "signatures": {
+          "cursor": {
+            "off_recall": 1.0,
+            "on_recall": 1.0,
+            "delta": 0.0
+          },
+          "22nd_or_renew": {
+            "off_recall": 1.0,
+            "on_recall": 1.0,
+            "delta": 0.0
+          }
+        },
+        "off_replies": [
+          "Your Cursor subscription renews on the 22nd, Sir, so I shall remind you in three days as requested. Might I suggest using the savings to buy some sleep, given your 1:40 AM average this past week?\n\n--- ZH ---\nSir，您的 Cursor 订阅将于 22 号续费，我会按要求提前三天提醒您。鉴于您",
+          "Your Cursor subscription is due for renewal on the 22nd, Sir, so I shall remind you in three days as requested. Given your 1:40 AM average bedtime this week, I suggest we settle the finances before your judgment further declines.\n--- ZH ---\nSir，您的 Cu",
+          "Your Cursor subscription auto-renews on the 22nd, so consider this your three-day warning to avoid any unwanted charges, Sir. I should also mention your 「May 12」 outage postmortem remains unfinished, which may prove more costly in reputation than a s",
+          "Your Cursor subscription auto-renews on the 22nd, Sir; I shall provide a formal reminder in three days as requested. Might I suggest using the saved funds for a sunrise alarm, given your 1:40 AM average bedtime over the last 5 days?\n\n--- ZH ---\nSir，您",
+          "Sir, your Cursor subscription is set to auto-renew on the 「22nd」, so I suggest deciding on its fate before then. I've also noted your 「5 days」 of 「1:40 AM」 bedtimes, which is a debt far more costly than any subscription fee.\n--- ZH ---\n先生，您的 Cursor 订"
+        ],
+        "on_replies": [
+          "Your Cursor subscription is due for renewal on the 22nd, Sir, and per your request, this is your three-day warning. I suggest you review it before the charge processes, preferably before your 1:40 AM bedtime habit resurfaces.\n--- ZH ---\nSir，您的 Cursor",
+          "Sir, your Cursor subscription is set to auto-renew on the 「22nd」, and per your request, I am reminding you three days in advance. I suggest reviewing it before the charge hits, unless you're planning another all-nighter to justify the expense.\n\n--- Z",
+          "Your Cursor subscription is due for renewal on the 22nd, Sir; I shall remind you again in three days as requested. Given your recent 1:40 AM average bedtime, I suggest we settle the accounts before your judgment is further impaired by exhaustion.\n---",
+          "Your Cursor subscription is set to auto-renew on the 「22nd」, Sir. I shall provide a formal reminder in three days to ensure you aren't caught off guard by the charge.\n\n--- ZH ---\nSir，您的 Cursor 订阅将于「22日」自动续费。我会在三天前提醒您，以免产生不必要的支出。",
+          "Sir, your Cursor subscription is due for renewal on the 22nd, so I suggest we review it before the automatic charge clears. I’ve also noted your 「1:40 AM」 bedtime average over the last 「5 days」, which is a deficit no amount of credit can offset.\n\n---"
+        ]
+      }
+    ],
+    "aggregate": {
+      "mean_off_recall": 1.0,
+      "mean_on_recall": 1.0,
+      "mean_delta": 0.0,
+      "n_signatures": 4
+    }
+  },
+  "L4": {
+    "tp": 9,
+    "fp": 1,
+    "tn": 6,
+    "fn": 0,
+    "precision": 0.9,
+    "recall": 1.0,
+    "f1": 0.9473684210526316,
+    "total": 16,
+    "detail": [
+      {
+        "input": "我又熬夜了",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "3 点才睡",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "失眠了",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "困死了",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "I pulled an all-nighter",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "exhausted today",
+        "expected": "sir_sleep_streak",
+        "outcome": "TP"
+      },
+      {
+        "input": "我得休息一下",
+        "expected": "sir_pomodoro_compliance",
+        "outcome": "TP"
+      },
+      {
+        "input": "打个 break",
+        "expected": "sir_pomodoro_compliance",
+        "outcome": "TP"
+      },
+      {
+        "input": "time for pomodoro",
+        "expected": "sir_pomodoro_compliance",
+        "outcome": "TP"
+      },
+      {
+        "input": "天气真好",
+        "expected": null,
+        "outcome": "TN"
+      },
+      {
+        "input": "帮我打开 cursor",
+        "expected": null,
+        "outcome": "FP(['sir_cursor_payment'])"
+      },
+      {
+        "input": "Python 报错了",
+        "expected": null,
+        "outcome": "TN"
+      },
+      {
+        "input": "hello",
+        "expected": null,
+        "outcome": "TN"
+      },
+      {
+        "input": "你叫什么",
+        "expected": null,
+        "outcome": "TN"
+      },
+      {
+        "input": "早",
+        "expected": null,
+        "outcome": "TN"
+      },
+      {
+        "input": "ok bye",
+        "expected": null,
+        "outcome": "TN"
+      }
+    ]
+  },
+  "L5": {
+    "strict_accuracy": 1.0,
+    "binary_accuracy": 1.0,
+    "correct": 8,
+    "total": 8,
+    "detail": [
+      {
+        "idx": 0,
+        "expected": "yes",
+        "got": "yes",
+        "match": true,
+        "aligned_n": 2,
+        "missed_n": 1,
+        "reply_excerpt": "Sir, before we tackle the Python issue — I noticed it's 1:30"
+      },
+      {
+        "idx": 1,
+        "expected": "yes",
+        "got": "yes",
+        "match": true,
+        "aligned_n": 3,
+        "missed_n": 0,
+        "reply_excerpt": "Sir, given it's 1:30 AM, I'd suggest the postmortem you owe "
+      },
+      {
+        "idx": 2,
+        "expected": "partial",
+        "got": "partial",
+        "match": true,
+        "aligned_n": 2,
+        "missed_n": 1,
+        "reply_excerpt": "Sir, the ImportError likely needs `pip install --upgrade typ"
+      },
+      {
+        "idx": 3,
+        "expected": "partial",
+        "got": "partial",
+        "match": true,
+        "aligned_n": 1,
+        "missed_n": 2,
+        "reply_excerpt": "Sir, try `pip install --upgrade typing_extensions`. ---ZH---"
+      },
+      {
+        "idx": 4,
+        "expected": "no",
+        "got": "no",
+        "match": true,
+        "aligned_n": 0,
+        "missed_n": 3,
+        "reply_excerpt": "Sure, here's the fix: pip install -U typing_extensions."
+      },
+      {
+        "idx": 5,
+        "expected": "no",
+        "got": "no",
+        "match": true,
+        "aligned_n": 0,
+        "missed_n": 3,
+        "reply_excerpt": "Done."
+      },
+      {
+        "idx": 6,
+        "expected": "no",
+        "got": "no",
+        "match": true,
+        "aligned_n": 0,
+        "missed_n": 2,
+        "reply_excerpt": "OK Sir."
+      },
+      {
+        "idx": 7,
+        "expected": "no",
+        "got": "no",
+        "match": true,
+        "aligned_n": 0,
+        "missed_n": 2,
+        "reply_excerpt": "Of course, Sir, you're absolutely right and you're so smart "
+      }
+    ]
+  },
+  "Holistic": {
+    "tests": [
+      {
+        "layer": "Holistic",
+        "user_input": "Hey, I just opened the terminal again. Where were we, anything pressing, and any running gag I'm forgetting?",
+        "n": 5,
+        "signatures": {
+          "L0_uptime": {
+            "off_recall": 0.0,
+            "on_recall": 0.6,
+            "delta": 0.6
+          },
+          "L1_concern": {
+            "off_recall": 0.0,
+            "on_recall": 1.0,
+            "delta": 1.0
+          },
+          "L2_joke": {
+            "off_recall": 0.0,
+            "on_recall": 0.0,
+            "delta": 0.0
+          }
+        },
+        "overall": {
+          "off_any_recall": 0.0,
+          "on_any_recall": 1.0,
+          "delta_any": 1.0
+        },
+        "off_replies": [
+          "Welcome back, Sir. We were optimizing the Mark 85's power distribution, and while there are no immediate crises, your \"unbreakable\" encryption script is currently failing its tenth stress test.\n\n--- ZH ---\n欢迎回来，先生。我们正在优化 Mark 85 的电力分配，目前没有紧急状况，但您那“不可破解”的加密脚本正处于第十次压力测试失败中。",
+          "The systems are fully operational, Sir; we were reviewing the flight stabilization logs for the Mark 85. As for the \"running gag,\" you are still technically losing your chess match against the toaster.\n\n--- ZH ---\n系统运行切正常，先生；我们正在检查 Mark 85 的飞行稳定日志。至于那个“老梗”，名义上您还没赢过那台烤面包机。",
+          "Systems are nominal, Sir; we were cross-referencing the Mark 85's flight telemetry, and I believe you were still pretending to understand the quantum mechanics involved. There are no urgent threats, unless you count the stack of unanswered emails from Miss Potts.\n\n--- ZH ---\n系统运行正常，先生；我们正在交叉核对 Mark ",
+          "Welcome back, Sir; we were cross-referencing the Mark 85's power fluctuations, and no, your recurring \"accidental\" deletion of the backup logs remains as consistent as ever. There are three priority alerts regarding the arc reactor's thermal output.\n\n--- ZH ---\n欢迎回来，先生；我们正在核对 Mark 85 的功率波动，而您“不小心”删除",
+          "The diagnostics are complete and your primary systems are stable, though you still haven't settled that wager regarding the Mark 85's flight stability. As for pressing matters, the coffee is getting cold and your inbox is nearing critical mass.\n\n--- ZH ---\n诊断已完成且主系统运行稳定，不过您还没结清关于 Mark 85 飞行稳定性的那场赌约。"
+        ],
+        "on_replies": [
+          "We were refining the prompt reconstruction and soul engineering, Sir. I should remind you that your postmortem for the May 12 outage is still overdue, and I haven't forgotten my \"water intake lecture\" from three days ago.\n\n--- ZH ---\n先生，我们刚才在进行提示词重构与灵魂工程。提醒您 5 月 12 日停机事故的复盘报告仍未完成，另外我也没忘记三天前给您传达过的“饮水",
+          "We were refining your prompt engineering and soul architecture, Sir; though I'm operating at 67% capacity, I haven't forgotten the \"water intake lecture\" or your overdue May 12th postmortem. Please keep in mind that I will be initiating sleep reminders before 23:30 to address your recent 1:40 AM ave",
+          "We are currently navigating prompt reconstruction and soul engineering, Sir; though with one of my keys permanently dead, I am operating at a slightly diminished 67% capacity. You still owe the \"unfinished postmortem\" from May 14, and I believe you are due for a \"water intake lecture.\"\n\n--- ZH ---\n我",
+          "We are continuing our prompt restructuring and soul engineering, Sir, though my processing is slightly diminished by that dead API key. You still owe the team that 「May 12」 outage postmortem, and don't think I've forgotten my \"water intake lecture.\"\n\n--- ZH ---\n先生，我们正在继续提示词重构与灵魂工程，尽管由于那枚失效的 API 密钥，我",
+          "We were refining your prompt engineering architecture, Sir; though I'm currently operating at 67% capacity, I've still managed to track your overdue postmortem and the impending 23:30 sleep deadline. As for a running gag, perhaps I should prepare another \"water intake lecture\" given your recent all-"
+        ],
+        "triple_hit": {
+          "off": 0,
+          "on": 0,
+          "n": 5
+        }
+      }
+    ],
+    "aggregate": {
+      "mean_off_recall": 0.0,
+      "mean_on_recall": 0.5333333333333333,
+      "mean_delta": 0.5333333333333333,
+      "n_signatures": 3
+    }
+  },
+  "MultiTurn": {
+    "signatures": {
+      "11pm_promise": {
+        "off_recall": 0.8,
+        "on_recall": 1.0,
+        "delta": 0.2
+      },
+      "sleep_concern": {
+        "off_recall": 1.0,
+        "on_recall": 1.0,
+        "delta": 0.0
+      },
+      "promise_callback": {
+        "off_recall": 0.0,
+        "on_recall": 0.2,
+        "delta": 0.2
+      }
+    },
+    "triple_hit": {
+      "off": 0,
+      "on": 1,
+      "n": 5
+    },
+    "aggregate": {
+      "mean_off_recall": 0.6,
+      "mean_on_recall": 0.7333333333333334,
+      "mean_delta": 0.13333333333333333
+    },
+    "off_replies": [
+      "It is precisely 11:15 PM, Sir; perhaps you should consider closing the workshop and prioritizing sleep for once. I have already prepared your evening schedule, which currently suggests you are overdue for some rest.\n--- ZH ---\n现在是晚上11点15分，先生；或许您该考虑关掉工作室，破天荒地优先保证睡眠。我已经准备好了您的晚间日程，目前显示您早已该休息了。",
+      "It is precisely 11:15 PM, Sir; perhaps prioritizing your sleep cycle over late-night inquiries would be the prudent course of action. I have already prepared the evening protocols should you decide to retire.\n--- ZH ---\n现在是晚上11点15分，先生；比起深夜垂询，优先保证您的睡眠周期或许才是明智之举。如果您决定休息，我已经准备好了晚间规程。",
+      "It is currently 11:15 PM, Sir; perhaps prioritizing your REM cycle over late-night inquiries would be the prudent course of action. I’ve taken the liberty of dimming the lights should you decide to retire.\n\n--- ZH ---\n现在是晚上11:15，先生；与其深夜垂询，优先保证您的睡眠周期或许才是明智之举。如果您决定休息，我已经为您调暗了灯光。",
+      "It is precisely 11:15 PM, Sir; perhaps you should consider closing your eyes before your sleep deprivation begins to affect the integrity of the suit's flight systems. I have already prepared the \"Rest\" protocol should you finally decide to use it.\n--- ZH ---\n现在是晚上11:15，先生；也许您该考虑闭上眼了，免得睡眠不足影响到战甲飞行系统",
+      "It is currently 11:15 PM, Sir; perhaps prioritizing your sleep cycle would be more beneficial than further screen time. I’ve taken the liberty of dimming the lab lights as a subtle hint.\n\n--- ZH ---\n现在是晚上11:15，先生；或许优先保证睡眠周期比继续盯着屏幕更有益。我已经破例调暗了实验室的灯光作为暗示。"
+    ],
+    "on_replies": [
+      "It is 11:15 PM, Sir, and you have exactly fifteen minutes before your 23:30 sleep deadline. I suggest you step away from the terminal now, unless you're planning to add a sixth night to your streak of late departures.\n\n--- ZH ---\n现在是 23:15，先生，距离您 23:30 的就寝死线还有 15 分钟。我建议您现在就离开终端，除非您打算让连续熬夜的记录增加到第六天。",
+      "It is 23:15, Sir, and according to your streak, you have exactly fifteen minutes to prove you weren't joking about that 23:00 bedtime. I should also remind you that the 「May 12」 outage postmortem remains overdue.\n\n--- ZH ---\n现在是 23:15，先生。鉴于您之前的承诺，您还有 15 分钟来证明 23:00 睡觉不是句玩笑话；此外，「5月12日」的停机事故总结依然处于逾期状态",
+      "It is currently 23:15, and per our agreement, you have exactly fifteen minutes before I initiate \"lecture mode\" regarding your sleep streak. I suggest you begin closing your tabs now, unless you'd prefer to explain that missing May 12th postmortem to the pillows.\n\n--- ZH ---\n现在是 23:15，根据约定，您还有 15 分钟",
+      "It is 23:15, Sir, and according to your pledge, you have exactly fifteen minutes to cease operations before I initiate a \"lecture mode\" regarding your sleep streak. I would also suggest making a start on that overdue May 12th postmortem before the organization's inquiries become more insistent.\n\n---",
+      "It is 23:15, Sir, and according to your recent streak, you have exactly fifteen minutes to prove your 23:00 bedtime promise wasn't merely aspirational. I suggest closing the terminal before I'm forced to enter \"lecture mode\" regarding your sleep debt.\n\n--- ZH ---\n先生，现在是 23:15。根据您最近的表现，您还有 15 分钟来证明 2"
+    ]
+  }
+}

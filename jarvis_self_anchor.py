@@ -238,7 +238,7 @@ class SelfAnchor:
             return []
         return list(getattr(self.nerve, 'short_term_memory', []) or [])[-6:]
 
-    def build_block(self, max_chars: int = 700) -> str:
+    def build_block(self, max_chars: int = 900) -> str:
         """构造 SELF 块注入 prompt。
 
         返回多行字符串，结构：
@@ -281,17 +281,27 @@ class SelfAnchor:
             for c in commitments:
                 lines.append(f"    * {c}")
         lines.append("")
+        # 🩹 [P0+20-β.3.3 / 2026-05-17] L0 健康字段拟人化:
+        # 测试发现"google keys: 2 healthy / 1 dead" 召回率 0%，因为太工程化。
+        # 改成第一人称"working at X% capacity"，让 LLM 识别成"我有问题"。
         lines.append("[MY OWN HEALTH RIGHT NOW]")
-        kr_state = (
-            f"google keys: {health['healthy_keys']} healthy / "
-            f"{health['dead_keys']} dead"
-        )
-        lines.append(f"  - {kr_state}")
+        _h = health.get('healthy_keys', 0)
+        _d = health.get('dead_keys', 0)
+        _total = _h + _d if (_h + _d) > 0 else 1
+        _cap_pct = int(100 * _h / _total)
+        if _d >= 1:
+            lines.append(
+                f"  - I'm working at {_cap_pct}% capacity right now: "
+                f"{_d} of {_total} of my API keys are permanently dead. "
+                f"This is real, not a hypothetical."
+            )
+        else:
+            lines.append(f"  - All {_h} of my API keys are healthy ({_cap_pct}% capacity).")
         lines.append(
-            f"  - memory: {health['memory_chains']} chains in STM, "
+            f"  - my memory holds: {health['memory_chains']} chains in STM, "
             f"{health['active_concerns']} active concerns"
         )
-        lines.append(f"  - my mood right now: {mood}")
+        lines.append(f"  - what I feel about that right now: {mood}")
         lines.append("")
         lines.append("[REFERENT MAP — for this conversation]")
         lines.append("  - when Sir says \"you\", \"your side\", \"this terminal\" → he means ME (this LLM)")

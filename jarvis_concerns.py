@@ -360,28 +360,47 @@ class ConcernsLedger:
     def to_prompt_block(self, top_n: int = 3, max_chars: int = 800) -> str:
         """构造注入 prompt 的 [MY SELF / SOUL] 块。
 
-        - 取 top_n active concerns，按 severity 降序
-        - 每条 ≤ 150 chars
-        - 总长度硬上限 max_chars
+        🩹 [P0+20-β.3.3 / 2026-05-17] 测试发现日期/数字（如 "22nd"）召回率仅 20%。
+        改进：
+        1. severity > 0.6 的 concern 用 [⚠ URGENT] 前缀
+        2. concern 文本里的关键日期/数字用 「N」 显式高亮
+        3. why_i_care 移到独立行（不挤一行）
         """
+        import re as _re
         active = sorted(self.list_active(), key=lambda c: -c.severity)
         if not active:
             return ''
         top = active[:top_n]
+
+        def _emphasize_facts(text: str) -> str:
+            """关键日期/数字 → 「N」 形式高亮。"""
+            # 月份+日 (May 22, May 12)
+            text = _re.sub(r'\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2})\b',
+                           r'「\1」', text)
+            # 序数日 (22nd, 5th)
+            text = _re.sub(r'\b(\d{1,2}(?:st|nd|rd|th))\b', r'「\1」', text)
+            # 时间 (1:40 AM, 23:30)
+            text = _re.sub(r'\b(\d{1,2}:\d{2}(?:\s*[AP]M)?)\b', r'「\1」', text)
+            # N days running / N-day streak
+            text = _re.sub(r'\b(\d+)\s+(days?|nights?|weeks?)\b', r'「\1 \2」', text)
+            return text
+
         lines = ["=== MY SELF / SOUL ===",
-                 "[CONCERNS I'M WATCHING NOW]"]
+                 "[CONCERNS I'M WATCHING — facts in 「」 are precise, do not paraphrase away]"]
         for c in top:
+            urgent = " [⚠ URGENT]" if c.severity > 0.6 else ""
             severity_label = "high" if c.severity > 0.7 else "moderate" if c.severity > 0.4 else "low"
-            line = (f"  - {c.id} ({severity_label}, sev={c.severity:.2f}): "
-                    f"{c.what_i_watch[:60]}")
+            watch = _emphasize_facts(c.what_i_watch[:120])
+            lines.append(f"  - {c.id}{urgent} ({severity_label}, sev={c.severity:.2f}):"[:160])
+            lines.append(f"      what I watch: {watch}"[:200])
             if c.why_i_care:
-                line += f" | why: {c.why_i_care[:50]}"
-            lines.append(line[:150])
+                why = _emphasize_facts(c.why_i_care[:80])
+                lines.append(f"      why: {why}"[:160])
             if c.recent_signals:
                 last = c.recent_signals[-1]
-                what = last.get('what', '')[:60]
+                what = _emphasize_facts(last.get('what', '')[:80])
                 if what:
-                    lines.append(f"    recent: {what}"[:150])
+                    lines.append(f"      recent signal: {what}"[:160])
         out = '\n'.join(lines)
         if len(out) > max_chars:
             _suffix = '\n…[truncated]'
