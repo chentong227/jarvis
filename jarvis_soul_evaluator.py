@@ -524,6 +524,26 @@ class SoulAlignmentEvaluator:
                 self.concerns_ledger.persist()
             except Exception:
                 pass
+        # 🩹 [P0+20-β.2.8.2 / 2026-05-17] β-4 学习反馈循环:
+        # aligned → ProactiveCare 衰减 fatigue (说明 nudge 有效)
+        # missed  → ProactiveCare 累加 fatigue (Jarvis 提了但没 honor → 减速)
+        # 失败不影响 record_alignment 主路径
+        try:
+            from jarvis_proactive_care import get_default_engine
+            _pce = get_default_engine()
+            if _pce is not None:
+                for cid in result.aligned_concern_ids[:5]:
+                    try:
+                        _pce.notify_concern_aligned(cid)
+                    except Exception:
+                        continue
+                for cid in result.missed_concern_ids[:5]:
+                    try:
+                        _pce.notify_concern_rejected(cid)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
     def get_stats(self) -> dict:
         with self._lock:

@@ -392,6 +392,162 @@ class TestSingletonAndNotifications(unittest.TestCase):
         self.assertEqual(e.fatigue_map['x'], 2)
 
 
+class TestBeta2DeepWorkAndL2(unittest.TestCase):
+    """β-2 强化: deep_work 检测 + L2 protocols + unfinished_business 注入"""
+
+    def setUp(self):
+        from jarvis_proactive_care import CareWindowGuard, CareSubjectSelector
+        self.worker = MagicMock()
+        self.worker.voice_thread.in_active_conversation = False
+        self.worker.voice_thread.is_jarvis_speaking = False
+        self.worker.voice_thread._bypass_speech_count = 0
+        self.nerve = MagicMock()
+        self.nerve.nudge_gate.is_sleep_mode.return_value = False
+        self.nerve.short_term_memory = []
+        self.guard = CareWindowGuard(self.worker, self.nerve)
+
+    def test_deep_work_blocks_low_urgency(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'switch_frequency_5min': 1,
+            'window_stay_seconds': 900,
+            'key_press_count_5min': 150,
+            'work_category': 'Coding',
+            'session_duration_minutes': 60,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            now = time.time() - 86400
+            ok, reason = self.guard.can_speak(_mock_concern(), 0.6, now, 0, 0)
+            self.assertFalse(ok)
+            self.assertIn('deep_work_focus', reason)
+
+    def test_deep_work_allows_high_urgency(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'switch_frequency_5min': 1,
+            'window_stay_seconds': 900,
+            'work_category': 'Coding',
+            'session_duration_minutes': 60,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            now = time.time() - 86400
+            ok, _ = self.guard.can_speak(_mock_concern(), 0.8, now, 0, 0)
+            self.assertTrue(ok)
+
+    def test_not_deep_work_allows_normal(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'switch_frequency_5min': 8,
+            'window_stay_seconds': 30,
+            'key_press_count_5min': 50,
+            'work_category': 'General',
+            'session_duration_minutes': 5,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            now = time.time() - 86400
+            ok, _ = self.guard.can_speak(_mock_concern(), 0.6, now, 0, 0)
+            self.assertTrue(ok)
+
+    def test_protocol_hints_relevant(self):
+        from jarvis_proactive_care import CareSubjectSelector
+        proto = MagicMock()
+        proto.rule = "I should not pester Sir about hydration more than once per hour"
+        proto.violations = []
+        l2 = MagicMock()
+        l2.list_protocols.return_value = [proto]
+        l2.list_inside_jokes.return_value = []
+        l2.list_unfinished.return_value = []
+        sel = CareSubjectSelector(MagicMock(), l2, None)
+        c = _mock_concern(cid='sir_hydration_habit',
+                          what='watch water intake during long sessions')
+        hints = sel._find_relevant_protocols(c)
+        self.assertEqual(len(hints), 1)
+        self.assertIn('hydration', hints[0].lower())
+
+    def test_protocol_hints_violated_always_included(self):
+        from jarvis_proactive_care import CareSubjectSelector
+        proto = MagicMock()
+        proto.rule = "I should let Sir finish his thought"
+        proto.violations = [{'when': time.time(), 'what': 'cut in'}]
+        l2 = MagicMock()
+        l2.list_protocols.return_value = [proto]
+        sel = CareSubjectSelector(MagicMock(), l2, None)
+        c = _mock_concern(cid='sir_hydration_habit')
+        hints = sel._find_relevant_protocols(c)
+        self.assertEqual(len(hints), 1)
+
+    def test_unfinished_business_match(self):
+        from jarvis_proactive_care import CareSubjectSelector
+        ub = MagicMock()
+        ub.topic = 'finish water bottle refill setup'
+        l2 = MagicMock()
+        l2.list_unfinished.return_value = [ub]
+        l2.list_inside_jokes.return_value = []
+        l2.list_protocols.return_value = []
+        sel = CareSubjectSelector(MagicMock(), l2, None)
+        c = _mock_concern(cid='sir_hydration_habit',
+                          what='watch water intake')
+        out = sel._find_related_unfinished(c)
+        self.assertIn('water', out)
+
+    def test_current_activity_snapshot(self):
+        from unittest.mock import patch
+        from jarvis_proactive_care import CareSubjectSelector
+        sel = CareSubjectSelector(MagicMock(), None, None)
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.current_work_category', 'Coding'), \
+             patch('jarvis_env_probe.PhysicalEnvironmentProbe.work_duration_minutes', 45.0), \
+             patch('jarvis_env_probe.PhysicalEnvironmentProbe.current_window_title', 'cursor.exe — main.py'):
+            s = sel._snapshot_current_activity()
+        self.assertIn('Coding', s)
+        self.assertIn('45', s)
+
+    def test_evidence_includes_protocols_and_unfinished(self):
+        from jarvis_proactive_care import CareSubjectSelector
+        proto = MagicMock()
+        proto.rule = "I should not pester Sir about hydration more than once per hour"
+        proto.violations = []
+        ub = MagicMock()
+        ub.topic = 'water bottle refill'
+        l2 = MagicMock()
+        l2.list_protocols.return_value = [proto]
+        l2.list_unfinished.return_value = [ub]
+        l2.list_inside_jokes.return_value = []
+        sel = CareSubjectSelector(MagicMock(), l2, None)
+        c = _mock_concern(cid='sir_hydration_habit',
+                          what='watch water intake')
+        evi = sel.build_evidence(c, 0.7, {})
+        self.assertTrue(len(evi.protocol_hints) >= 1)
+        self.assertIn('water', evi.related_unfinished.lower())
+
+    def test_directive_includes_protocols_when_present(self):
+        from jarvis_proactive_care import CareSpeechSynth, CareEvidence
+        synth = CareSpeechSynth()
+        evi = CareEvidence(
+            concern_id='c1', urgency_score=0.7,
+            what_i_watch='x', why_i_care='y', severity=0.5,
+            breakdown={},
+            protocol_hints=['I should not pester Sir more than once per hour'],
+        )
+        d = synth.build_directive(evi)
+        self.assertIn('OUR PROTOCOLS', d)
+        self.assertIn('pester Sir', d)
+
+    def test_directive_skips_protocols_section_when_empty(self):
+        from jarvis_proactive_care import CareSpeechSynth, CareEvidence
+        synth = CareSpeechSynth()
+        evi = CareEvidence(
+            concern_id='c1', urgency_score=0.7,
+            what_i_watch='x', why_i_care='y', severity=0.5,
+            breakdown={},
+            protocol_hints=[],
+        )
+        d = synth.build_directive(evi)
+        self.assertNotIn('OUR PROTOCOLS', d)
+
+
 class TestDryRunDefault(unittest.TestCase):
     def test_dry_run_default_when_env_unset(self):
         from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine

@@ -84,6 +84,12 @@ class CareEvidence:
     sir_recent_quote: str = ''      # STM 找到的 Sir 自己提过的话
     last_signal_what: str = ''      # concern.recent_signals[-1].what
     inside_joke_ref: str = ''       # L2 找到的可引用 joke phrase
+    # [β-2] L2 协议提示 — 让 LLM 避免违反 Sir 反过的话
+    protocol_hints: List[str] = field(default_factory=list)
+    # [β-2] L2 unfinished_business 关联 — 如果此 concern 和某 unfinished 关联
+    related_unfinished: str = ''
+    # [β-2] 当前活动上下文 — 让生成的话有 "right now" 实感
+    current_activity: str = ''
 
 
 # ============================================================
@@ -243,7 +249,42 @@ class CareWindowGuard:
         except Exception:
             pass
 
+        # 9. [β-2 强化] Sir 深度工作中 → 只有高 urgency 才打扰
+        try:
+            if self._is_deep_work() and urgency < 0.75:
+                return False, f'deep_work_focus (urgency={urgency:.2f} < 0.75 needed)'
+        except Exception:
+            pass
+
         return True, 'ok'
+
+    def _is_deep_work(self) -> bool:
+        """启发式判定 Sir 是否在深度工作.
+
+        命中任意 2 条即视为 deep_work:
+        - switch_frequency_5min < 3 (窗口切换少)
+        - window_stay_seconds > 600 (10min 没换窗)
+        - key_press_count_5min > 100 (高强度敲键)
+        - work_category == Coding 且 session_duration > 25min
+        """
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            snap = P.get_sensor_snapshot() or {}
+        except Exception:
+            return False
+        if not snap:
+            return False
+        hits = 0
+        if snap.get('switch_frequency_5min', 99) < 3:
+            hits += 1
+        if snap.get('window_stay_seconds', 0) > 600:
+            hits += 1
+        if snap.get('key_press_count_5min', 0) > 100:
+            hits += 1
+        if snap.get('work_category') == 'Coding' and \
+                snap.get('session_duration_minutes', 0) > 25:
+            hits += 1
+        return hits >= 2
 
 
 # ============================================================
@@ -274,7 +315,65 @@ class CareSubjectSelector:
 
         evi.sir_recent_quote = self._find_recent_sir_quote(concern) or ''
         evi.inside_joke_ref = self._find_inside_joke(concern) or ''
+        evi.protocol_hints = self._find_relevant_protocols(concern)
+        evi.related_unfinished = self._find_related_unfinished(concern) or ''
+        evi.current_activity = self._snapshot_current_activity()
         return evi
+
+    def _find_relevant_protocols(self, concern, max_n: int = 2) -> List[str]:
+        """L2 unspoken_protocols: 找和此 concern 相关 + Jarvis 违规过的 protocol.
+        让 LLM 谨慎不要重蹈覆辙."""
+        if self.l2_store is None:
+            return []
+        try:
+            protocols = self.l2_store.list_protocols()
+        except Exception:
+            return []
+        if not protocols:
+            return []
+        kws = self._concern_keywords(concern)
+        out = []
+        for p in protocols:
+            rule_l = str(getattr(p, 'rule', '')).lower()
+            if not rule_l:
+                continue
+            relevant = any(k.lower() in rule_l for k in kws)
+            has_violation = bool(getattr(p, 'violations', []) or [])
+            if relevant or has_violation:
+                out.append(str(p.rule)[:120])
+            if len(out) >= max_n:
+                break
+        return out
+
+    def _find_related_unfinished(self, concern) -> str:
+        """L2 unfinished_business: 看是否有 unfinished 和此 concern 关联."""
+        if self.l2_store is None:
+            return ''
+        try:
+            ubs = self.l2_store.list_unfinished()
+        except Exception:
+            return ''
+        if not ubs:
+            return ''
+        kws = self._concern_keywords(concern)
+        for ub in ubs:
+            topic_l = str(getattr(ub, 'topic', '')).lower()
+            if any(k.lower() in topic_l for k in kws):
+                return str(getattr(ub, 'topic', ''))[:100]
+        return ''
+
+    def _snapshot_current_activity(self) -> str:
+        """从 PhysicalEnvironmentProbe 拿当下 1 行活动描述."""
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            cat = getattr(P, 'current_work_category', 'Unknown')
+            dur = getattr(P, 'work_duration_minutes', 0)
+            title = getattr(P, 'current_window_title', '') or ''
+            if title:
+                return f"{cat} for {dur:.0f}min: '{title[:60]}'"
+            return f"{cat} for {dur:.0f}min"
+        except Exception:
+            return ''
 
     def _find_recent_sir_quote(self, concern, max_age_hours: float = 4.0) -> str:
         """从 STM 找 Sir 最近 X 小时内提过此 concern keyword 的话."""
@@ -361,6 +460,16 @@ class CareSpeechSynth:
         sir_quote = evi.sir_recent_quote or '(no recent quote on this topic)'
         last_sig = evi.last_signal_what or '(no logged signal)'
         joke = evi.inside_joke_ref or '(none — only reference if joke fits naturally)'
+        unfinished = evi.related_unfinished or '(no related unfinished business)'
+        activity = evi.current_activity or '(activity unknown)'
+
+        protocols_str = ''
+        if evi.protocol_hints:
+            lines = '\n'.join(f"  - {p}" for p in evi.protocol_hints)
+            protocols_str = (
+                "\n[OUR PROTOCOLS — respect these or Sir will push back]\n"
+                f"{lines}\n"
+            )
 
         directive = (
             "You are making a brief proactive remark to Sir.\n"
@@ -375,7 +484,10 @@ class CareSpeechSynth:
             f"[EVIDENCE FROM RECENT MEMORY]\n"
             f"  - Sir's recent words on this topic: \"{sir_quote}\"\n"
             f"  - Last signal you noticed:          \"{last_sig}\"\n"
+            f"  - Related unfinished business:      \"{unfinished}\"\n"
             f"  - Inside joke you may reference (sparingly): \"{joke}\"\n\n"
+            f"[CURRENT ACTIVITY]\n  {activity}\n"
+            f"{protocols_str}\n"
             "[ANTI-HALLUCINATION]\n"
             "- Quote Sir's exact recent words above if relevant. NEVER invent specifics\n"
             "  (no fake dinner times, no fake activities he didn't actually mention).\n"
@@ -387,6 +499,8 @@ class CareSpeechSynth:
             "- Reference YOUR watching ('I've been watching...' / 'I notice...'), not\n"
             "  Sir's behavior judgment ('you always...' / 'you should...').\n"
             "- If irony arises naturally, mild wit; else direct.\n"
+            "- If [CURRENT ACTIVITY] is concrete (e.g. 'Coding for 45min: cursor.exe'),\n"
+            "  weave that into the remark to give it 'right now' feel.\n"
         )
         return directive
 
