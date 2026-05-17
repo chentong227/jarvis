@@ -628,6 +628,100 @@ class TestCareConcernSensor(unittest.TestCase):
         self.assertEqual(n, 0)
 
 
+class TestBeta31ChannelEscalation(unittest.TestCase):
+    """β-3.1: channel 动态升级 (silent_text → voice)"""
+
+    def setUp(self):
+        from jarvis_proactive_care import CareSpeechSynth, CareEvidence
+        self.synth = CareSpeechSynth()
+        self.evi_mid = CareEvidence(
+            concern_id='sir_hydration_habit', urgency_score=0.65,
+            what_i_watch='x', why_i_care='y', severity=0.5, breakdown={})
+        self.evi_high = CareEvidence(
+            concern_id='sir_sleep_streak', urgency_score=0.9,
+            what_i_watch='x', why_i_care='y', severity=0.8, breakdown={})
+
+    def test_high_urgency_always_voice(self):
+        ch = self.synth.choose_channel(self.evi_high, silent_done_recently=False)
+        self.assertEqual(ch, 'voice')
+        ch2 = self.synth.choose_channel(self.evi_high, silent_done_recently=True)
+        self.assertEqual(ch2, 'voice')
+
+    def test_mid_urgency_first_time_silent(self):
+        ch = self.synth.choose_channel(self.evi_mid, silent_done_recently=False)
+        self.assertEqual(ch, 'silent_text')
+
+    def test_mid_urgency_after_silent_escalates_voice(self):
+        ch = self.synth.choose_channel(self.evi_mid, silent_done_recently=True)
+        self.assertEqual(ch, 'voice')
+
+    def test_render_silent_text(self):
+        out = self.synth.render_silent_text(self.evi_mid)
+        self.assertIn('Sir hydration habit', out)
+        self.assertIn('watching', out.lower())
+
+    def test_push_silent_channel(self):
+        worker = MagicMock()
+        sent = self.synth.push(worker, self.evi_mid, dry_run=False, channel='silent_text')
+        self.assertTrue(sent)
+        payload = worker.push_command.call_args[0][0]
+        ctx = json.loads(payload[len('__NUDGE__:'):])
+        self.assertEqual(ctx['channel'], 'silent_text')
+        self.assertIn('silent_text', ctx)
+        self.assertIn('Sir hydration habit', ctx['silent_text'])
+
+
+class TestBeta32ExtraSensorRules(unittest.TestCase):
+    """β-3.2: 额外 sensor 规则 (error_visible / context_switch / first_active / unfinished)"""
+
+    def setUp(self):
+        from jarvis_proactive_care import CareConcernSensor
+        self.ledger = MagicMock()
+        self.ledger.record_signal.return_value = True
+        self.ledger.list_active.return_value = []
+        self.sensor = CareConcernSensor(self.ledger, None)
+
+    def test_error_visible_feeds_pomodoro(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'session_duration_minutes': 30,
+            'work_category': 'Coding',
+            'idle_seconds': 30,
+            'error_visible': True,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            self.sensor.tick()
+        cids = [c.args[0] for c in self.ledger.record_signal.call_args_list]
+        self.assertIn('sir_pomodoro_compliance', cids)
+
+    def test_high_switch_feeds_hydration(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'switch_frequency_5min': 15,
+            'session_duration_minutes': 20,
+            'idle_seconds': 30,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            self.sensor.tick()
+        cids = [c.args[0] for c in self.ledger.record_signal.call_args_list]
+        self.assertIn('sir_hydration_habit', cids)
+
+    def test_first_active_today_feeds_hydration(self):
+        from unittest.mock import patch
+        fake_snap = {
+            'is_first_active_today': True,
+            'session_duration_minutes': 5,
+            'idle_seconds': 5,
+        }
+        with patch('jarvis_env_probe.PhysicalEnvironmentProbe.get_sensor_snapshot',
+                    return_value=fake_snap):
+            self.sensor.tick()
+        cids = [c.args[0] for c in self.ledger.record_signal.call_args_list]
+        self.assertIn('sir_hydration_habit', cids)
+
+
 class TestDryRunDefault(unittest.TestCase):
     def test_dry_run_default_when_env_unset(self):
         from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine

@@ -2030,7 +2030,11 @@ Spoken English:"""
                                 self._mark_first_token()
                                 print(_box_newline(delta), end="", flush=True)
                                 streamed_text += delta
-                                self.subtitle_queue.put(("en", delta))
+                                # 🩹 [β.2.8.4 / 2026-05-17] Sir 22:08 实测 BUG:
+                                # 字幕英文重复双写 — token-level put + sentence-level put
+                                # 双写 → SubtitleOverlay._en_words.extend 两次 → 内容乱序重复.
+                                # 修: 删 token-level put, 仅保留 sentence-level put.
+                                # 终端 print(delta) 仍实时, 字幕只滞后到句切完才出 (200-800ms).
 
                         if "<ENGAGE_PHYSICAL_BODY>" in full_text and not self._has_routed_this_turn:
                             print(f"\n║ ⚡  [System] 最高授权已授予，唤醒 L1~L5 深度战术网络...")
@@ -2121,8 +2125,8 @@ Spoken English:"""
                         self._mark_first_token()
                         print(_box_newline(delta), end="", flush=True)
                         streamed_text += delta
-                        self.subtitle_queue.put(("en", delta))
-                    
+                        # 🩹 [β.2.8.4 / 2026-05-17] 删 token-level 字幕 put 防双写 (详 line 2033)
+
                     if buffer.strip() and not getattr(self, 'is_interrupted', False):
                         sentence = buffer.strip()
                         # [P0+18-c.11 / 2026-05-15] gatekeeper_triggered 路径 buffer flush
@@ -2261,7 +2265,7 @@ Spoken English:"""
                         self._mark_first_token()
                         print(_box_newline(delta), end="", flush=True)
                         streamed_text += delta
-                        self.subtitle_queue.put(("en", delta))
+                        # 🩹 [β.2.8.4 / 2026-05-17] 删 token-level 字幕 put 防双写 (详 line 2033)
 
                     # 🛡️ Bug E 修复 (cont.)：buffer 此时可能装着 "<FAST_CALL>{json}</FAST_CALL>" + 
                     # LLM 在 FAST_CALL 之后预先吹的牛（"Done, Sir." 之类）。

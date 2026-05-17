@@ -38,9 +38,23 @@ except Exception:  # pragma: no cover
 # Tunables (集中在顶部, 方便 Sir 调)
 # ============================================================
 
+# Sir 总开关 (env JARVIS_PROACTIVE_CARE_LEVEL):
+# - 'silent' (0): 完全不主动 (急救模式 / Sir 太忙)
+# - 'low' (1):    高阈值 (0.7), 长冷却 (10min), 仅 critical 主动
+# - 'normal' (2): 默认 (0.55 / 5min)
+# - 'high' (3):   低阈值 (0.4), 短冷却 (3min), 更勤主动 (Sir 想多陪伴)
+_LEVEL_PRESETS = {
+    'silent': dict(threshold=2.0, global_cooldown=86400),    # 实质禁用
+    'low':    dict(threshold=0.70, global_cooldown=600),
+    'normal': dict(threshold=0.55, global_cooldown=300),
+    'high':   dict(threshold=0.40, global_cooldown=180),
+}
+_DEFAULT_LEVEL = os.environ.get('JARVIS_PROACTIVE_CARE_LEVEL', 'normal').strip().lower()
+_LEVEL_CONF = _LEVEL_PRESETS.get(_DEFAULT_LEVEL, _LEVEL_PRESETS['normal'])
+
 TICK_INTERVAL_S = 60.0                  # daemon tick
 WARMUP_SECONDS = 300                    # 启动 5 分钟 silent
-DEFAULT_URGENCY_THRESHOLD = 0.55        # urgency ≥ 阈值才考虑发
+DEFAULT_URGENCY_THRESHOLD = _LEVEL_CONF['threshold']
 NIGHT_CRITICAL_THRESHOLD = 0.85         # 凌晨 2-5 点仅 critical
 HIGH_ACTIVITY_DAMPEN = 0.85             # Sir 高活跃 (≥10 turn 最近 1h) 降权
 UNHEALTHY_KEY_DAMPEN = 0.75             # KeyRouter 不健康降权
@@ -184,6 +198,65 @@ class CareConcernSensor:
         except Exception:
             pass
 
+        # rule 5: [β-3.2] error_visible → 不直接喂 offer_help (Sir 没要), 但派生 signal
+        # 给 sir_pomodoro_compliance + sir_hydration (报错时容易死磕)
+        try:
+            if snap.get('error_visible'):
+                if self._signal('sir_pomodoro_compliance', 'error_battle',
+                                  "error on screen during long session — likely grinding", 0.02):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 6: [β-3.2] context_switch 频繁 → 散乱 → 也喂 hydration (散乱状态自我照顾差)
+        try:
+            sw5 = snap.get('switch_frequency_5min', 0)
+            if sw5 >= 12:
+                if self._signal('sir_hydration_habit', 'high_context_switching',
+                                  f"high switching ({sw5}/5min) — scattered focus", 0.02):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 7: [β-3.2] AFK 长时段后回来 → 触发 hydration signal (Sir 离开通常没喝水)
+        try:
+            idle_s = snap.get('idle_seconds', 0)
+            cat = snap.get('work_category', '')
+            # idle 短但前面 AFK 长 — 通过 PhysicalEnvironmentProbe.is_first_active_today
+            if snap.get('is_first_active_today'):
+                if self._signal('sir_hydration_habit', 'first_active',
+                                  "first active period today — hydration check", 0.04):
+                    n += 1
+        except Exception:
+            pass
+
+        # rule 8: [β-3.2] L2 unfinished_business 长期未碰 → 派生 signal 给关联 concern
+        try:
+            if self.nerve is not None:
+                from jarvis_relational import get_default_store
+                l2 = get_default_store()
+                for ub in l2.list_unfinished()[:5]:
+                    last_touched = float(getattr(ub, 'last_referenced', 0) or
+                                           getattr(ub, 'created_at', 0))
+                    if last_touched <= 0:
+                        continue
+                    age_days = (time.time() - last_touched) / 86400
+                    if age_days < 14:
+                        continue
+                    # 找 concern 关联此 ub.topic
+                    topic_l = str(getattr(ub, 'topic', '')).lower()
+                    for c in self.ledger.list_active():
+                        cid = c.id.lower()
+                        # 简单 substring match
+                        if any(w in topic_l for w in cid.split('_') if len(w) >= 4):
+                            if self._signal(c.id, 'unfinished_stale',
+                                              f"unfinished business '{topic_l[:50]}' "
+                                              f"untouched for {age_days:.0f}d", 0.03):
+                                n += 1
+                            break  # 一个 ub 喂一个 concern 就够
+        except Exception:
+            pass
+
         return n
 
     def _signal(self, concern_id: str, rule_id: str,
@@ -191,9 +264,28 @@ class CareConcernSensor:
         if not self._can_signal(concern_id, rule_id):
             return False
         try:
-            return bool(self.ledger.record_signal(concern_id, what, severity_delta))
+            ok = bool(self.ledger.record_signal(concern_id, what, severity_delta))
         except Exception:
             return False
+        # [β-3.2] event_bus publish 让 L4 reflector / WeeklyReflector 看到
+        # 周末时 L4 看 sensor 派生频次, 自动调 severity 上下限
+        if ok and self.nerve is not None:
+            try:
+                bus = getattr(self.nerve, 'event_bus', None)
+                if bus is not None:
+                    bus.publish(
+                        etype='care_signal_derived',
+                        description=f"{concern_id}: {what[:100]}",
+                        source='ProactiveCareSensor',
+                        metadata={
+                            'concern_id': concern_id,
+                            'rule_id': rule_id,
+                            'severity_delta': severity_delta,
+                        },
+                    )
+            except Exception:
+                pass
+        return ok
 
 
 # ============================================================
@@ -608,22 +700,45 @@ class CareSpeechSynth:
         )
         return directive
 
-    def push(self, worker, evi: CareEvidence, dry_run: bool) -> bool:
+    def choose_channel(self, evi: CareEvidence,
+                         silent_done_recently: bool) -> str:
+        """β-3.1 动态 channel 选择: 不每次都吵.
+
+        - 极高 urgency (>= 0.85): voice
+        - 中高 urgency 第一次 (0.55-0.85, 没 silent 过): silent_text (字幕飘过)
+        - 中高 urgency 已经 silent 过: voice (升级)
+        """
+        if evi.urgency_score >= 0.85:
+            return 'voice'
+        if silent_done_recently:
+            return 'voice'
+        return 'silent_text'
+
+    def render_silent_text(self, evi: CareEvidence) -> str:
+        """silent_text 档不调 LLM, 直接构 1 行中性话."""
+        cid_human = evi.concern_id.replace('_', ' ').replace('sir ', 'Sir ').strip()
+        sig = evi.last_signal_what or evi.what_i_watch
+        return f"[I'm watching: {cid_human}] {sig[:80]}"
+
+    def push(self, worker, evi: CareEvidence, dry_run: bool,
+              channel: str = 'voice') -> bool:
         directive = self.build_directive(evi)
         nudge_ctx = {
             'type': 'proactive_care',
-            'channel': 'voice',
+            'channel': channel,
             'nudge_directive': directive,
             'concern_id': evi.concern_id,
             'urgency_score': round(evi.urgency_score, 3),
             'source': 'ProactiveCareEngine',
             'urgency_breakdown': evi.breakdown,
         }
+        if channel == 'silent_text':
+            nudge_ctx['silent_text'] = self.render_silent_text(evi)
         if dry_run:
             bg_log(
                 f"🤝 [ProactiveCare/DRY] would nudge concern={evi.concern_id} "
-                f"urgency={evi.urgency_score:.2f} quote='{evi.sir_recent_quote[:40]}' "
-                f"joke='{evi.inside_joke_ref[:40]}'"
+                f"urgency={evi.urgency_score:.2f} channel={channel} "
+                f"quote='{evi.sir_recent_quote[:40]}' joke='{evi.inside_joke_ref[:40]}'"
             )
             return False
         try:
@@ -631,7 +746,7 @@ class CareSpeechSynth:
             worker.push_command(payload)
             bg_log(
                 f"🤝 [ProactiveCare/LIVE] pushed concern={evi.concern_id} "
-                f"urgency={evi.urgency_score:.2f}"
+                f"urgency={evi.urgency_score:.2f} channel={channel}"
             )
             return True
         except Exception as e:
@@ -667,6 +782,9 @@ class ProactiveCareEngine(threading.Thread):
         self.last_any_nudge_ts: float = 0.0
         self.explicit_reject_until: float = 0.0
         self.fatigue_map: dict = {}      # concern_id → int rejection count
+        # [β-3.1] concern_id → 上次 silent_text 推送时间. 用于决定下次升级 voice
+        self.silent_history: dict = {}
+        self.silent_decay_s: float = 3600.0  # 1h 内 silent 算"试探过", 该升级
 
         # 关键依赖 lazy resolved (start 时再拿)
         self.ledger = None
@@ -801,12 +919,21 @@ class ProactiveCareEngine(threading.Thread):
             )
             return
 
-        # 6. build evidence + push
+        # 6. build evidence + 选 channel + push
         evi = self.selector.build_evidence(top_c, top_u, top_bd)
-        sent = self.synth.push(self.worker, evi, dry_run=self.dry_run)
+        # β-3.1 channel 升级: 先 silent 试探, 再 voice 升级
+        with self._state_lock:
+            last_silent_ts = self.silent_history.get(top_c.id, 0)
+        silent_recent = (now_ts - last_silent_ts) < self.silent_decay_s
+        channel = self.synth.choose_channel(evi, silent_recent)
+        sent = self.synth.push(self.worker, evi, dry_run=self.dry_run, channel=channel)
         if sent:
             with self._state_lock:
-                self.last_any_nudge_ts = now_ts
+                # voice 算"全局 nudge", silent_text 不占全局 cooldown 但占 per_concern
+                if channel == 'voice':
+                    self.last_any_nudge_ts = now_ts
+                else:
+                    self.silent_history[top_c.id] = now_ts
             try:
                 self.ledger.record_triggered(top_c.id)
             except Exception:
