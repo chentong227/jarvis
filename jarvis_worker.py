@@ -854,8 +854,18 @@ class VoiceListenThread(QThread):
                                 # 同时清 accum 防 Jarvis 自己说话期间污染下次唤醒
                                 try:
                                     self._acoustic_det.mark_wake_triggered()
-                                except Exception:
+                                    try:
+                                        from jarvis_utils import bg_log as _cd_log
+                                        _cd_log(f"⏸️ [Acoustic Wake] cooldown 启动 ({self._acoustic_det.cooldown_s:.0f}s) — 期内 acoustic 通道关")
+                                    except Exception:
+                                        pass
+                                except Exception as _mt_e:
                                     self._acoustic_det.reset_accum()
+                                    try:
+                                        from jarvis_utils import bg_log as _cd_log
+                                        _cd_log(f"⚠️ [Acoustic Wake] mark_wake_triggered 失败 fallback reset: {_mt_e}")
+                                    except Exception:
+                                        pass
                                 audio_frames = []
                                 is_speaking = False
                                 break

@@ -326,13 +326,13 @@ class TestP0Plus20Beta48WorkerIntegration(unittest.TestCase):
         # 找 "feed_pyaudio_buffer" 前后看上下文
         idx = self.src.find('self._acoustic_det.feed_pyaudio_buffer(data)')
         self.assertGreater(idx, 0)
-        # 前 200 字符必有 try:, 后 1200 字符必有 except (β.4.8 P2 加了 mark_wake_triggered + 注释扩展了块)
-        context = self.src[max(0, idx-200):idx+1200]
+        # 前 200 字符必有 try:, 后 1800 字符必有 except (β.4.8 P2 加 cooldown bg_log 扩了块)
+        context = self.src[max(0, idx-200):idx+1800]
         self.assertIn('try:', context, 'feed_pyaudio_buffer 必须包在 try 内')
-        # 必须 ≥ 2 个 except (一个 inner mark_wake_triggered try/except, 一个 outer feed_buffer try/except)
+        # 必须 ≥ 3 个 except (inner mark_wake_triggered + inner bg_log + outer feed_buffer)
         except_count = context.count('except')
-        self.assertGreaterEqual(except_count, 2,
-            f'必须 ≥ 2 个 except 兜底 (β.4.8 P2 inner+outer), 实际 {except_count}')
+        self.assertGreaterEqual(except_count, 3,
+            f'必须 ≥ 3 个 except 兜底 (β.4.8 P2: inner mark/bg_log + outer), 实际 {except_count}')
         self.assertIn('容忍', context, 'outer except 必须 bg_log "容忍" 提示 (不阻塞主链)')
 
     def test_does_not_break_legacy_wake(self):

@@ -66,6 +66,9 @@ FATIGUE_FLOOR = 0.2                     # 疲劳惩罚下限
 
 # 防双发: 距上次任何 nudge (SmartNudge 或自身) 至少 X 秒
 GLOBAL_NUDGE_COOLDOWN_S = 300.0
+# [β.4.10 / 2026-05-19] silent_text 也占独立全局 cooldown (Sir 凌晨 1 点 sleep silent→hydration silent 连推 BUG 治本)
+# 旧版 silent_text 不占 last_any_nudge_ts, 可连续推不同 concern silent → Sir 烦 + attribution 错
+SILENT_GLOBAL_COOLDOWN_S = 90.0
 # 同一 concern 至少 X 秒不重复
 PER_CONCERN_COOLDOWN_S = 1800.0
 # Sir 显式拒绝 ("别催了") 后 X 秒静默
@@ -893,6 +896,9 @@ class ProactiveCareEngine(threading.Thread):
         self._state_lock = threading.Lock()
 
         self.last_any_nudge_ts: float = 0.0
+        # [β.4.10 / 2026-05-19] silent_text 独立全局冷却时间戳
+        # voice 占用 last_any_nudge_ts, silent 占用 last_silent_global_ts, 两者独立 + 不重叠
+        self.last_silent_global_ts: float = 0.0
         # 🩹 [β.2.9.9 / 2026-05-18] 反馈骨架: 记最后 nudge 的 concern_id 用于关联 Sir 回应
         self.last_nudge_concern_id: str = ''
         self.explicit_reject_until: float = 0.0
@@ -1133,8 +1139,17 @@ class ProactiveCareEngine(threading.Thread):
         # 5. guard 判定
         with self._state_lock:
             last_any = self.last_any_nudge_ts
+            last_silent = self.last_silent_global_ts
             reject_until = self.explicit_reject_until
         ok, reason = self.guard.can_speak(top_c, top_u, now_ts, last_any, reject_until)
+        # [β.4.10 / 2026-05-19] silent_text 独立全局 cooldown (90s):
+        # voice gate 主用 last_any_nudge_ts (300s); silent 用独立 last_silent_global_ts (90s).
+        # 治 Sir 凌晨 1 点 sleep silent → 立刻 hydration silent 连推 BUG.
+        if ok and last_silent > 0:
+            _silent_age = now_ts - last_silent
+            if _silent_age < SILENT_GLOBAL_COOLDOWN_S:
+                ok = False
+                reason = f'silent_global_cooldown ({int(SILENT_GLOBAL_COOLDOWN_S - _silent_age)}s left)'
         if not ok:
             # 🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "skip 刷屏":
             # 旧版每 60s tick 同 cid+reason 都 bg_log 一遍, 30min cooldown 刷 30 次.
@@ -1173,11 +1188,13 @@ class ProactiveCareEngine(threading.Thread):
         sent = self.synth.push(self.worker, evi, dry_run=self.dry_run, channel=channel)
         if sent:
             with self._state_lock:
-                # voice 算"全局 nudge", silent_text 不占全局 cooldown 但占 per_concern
+                # voice 算"全局 voice nudge" (300s 冷却), silent_text 占独立 silent 全局 (90s)
                 if channel == 'voice':
                     self.last_any_nudge_ts = now_ts
                 else:
                     self.silent_history[top_c.id] = now_ts
+                    # [β.4.10 / 2026-05-19] silent 独立全局冷却 — 防 sleep silent → hydration silent 连推
+                    self.last_silent_global_ts = now_ts
                 # 🩹 [β.2.9.9] 记最后 nudge 的 concern_id, Sir 后续 2min 回应可关联
                 self.last_nudge_concern_id = top_c.id
             try:

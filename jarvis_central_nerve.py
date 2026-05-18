@@ -307,6 +307,31 @@ class CentralNerve:
         self._stm_importance_scores = {}
         self._stm_max_size = 30
         self._stm_compress_threshold = 20
+        # [β.4.10 / 2026-05-19] STM 持久化 — Sir 重启不忘上轮对话.
+        # 治本: short_term_memory 是 RAM list, 重启清空 → Sir 跟 Jarvis 聊涌现后
+        # 为找 wake BUG 重启 Jarvis, Jarvis 不记得刚才的话题 (准则 4 "懂我" 退步).
+        # 设计:
+        #   1. 启动时 _restore_stm_from_disk() 读 jsonl 最近 N 条恢复 short_term_memory
+        #   2. 后台 daemon 每 30s _persist_stm_to_disk() atomic dump 整 STM 到 jsonl
+        #   3. atexit 强制 dump 1 次 (Sir Ctrl+C 不丢)
+        # 准则 6.5: 路径 / max_persist_size 可在 vocab 里调 (β.4.10 暂硬常量).
+        self._stm_persist_path = os.path.join('memory_pool', 'stm_recent.jsonl')
+        self._stm_persist_max = 50  # 最近 50 条 (= ~25 对来回, 覆盖 1 小时聊天)
+        self._stm_persist_interval_s = 30.0
+        self._stm_dirty = False  # 标识 STM 改了, 下次 dump 该写
+        self._stm_persist_lock = threading.Lock()
+        try:
+            self._restore_stm_from_disk()
+        except Exception as _stm_e:
+            try:
+                from jarvis_utils import bg_log as _stm_bg
+                _stm_bg(f"⚠️ [STM/Persist] restore 失败 (容忍): {_stm_e}")
+            except Exception:
+                pass
+        try:
+            self._start_stm_persist_daemon()
+        except Exception:
+            pass
         self.interruption_queue = queue.Queue()
         # [R7-α/B1] is_active_task 改走 state；此处不再做老字段直接初始化
         # （property setter 会兼容 self.is_active_task = X 老写法，新代码请用 self.state.set_active_task）
@@ -915,6 +940,113 @@ class CentralNerve:
         self.short_term_memory.append(entry)
         self._stm_importance_scores[len(self.short_term_memory) - 1] = importance
         self._compress_stm_if_needed()
+        self._stm_dirty = True  # [β.4.10] 标记 STM 改了, daemon 下次 dump 该写
+
+    # ----------------------------------------------------------------------
+    # [β.4.10 / 2026-05-19] STM 持久化 (Sir 重启不忘) — 准则 4 "懂我" 治本
+    # ----------------------------------------------------------------------
+    def _restore_stm_from_disk(self) -> int:
+        """启动时读 jsonl 最近 N 条恢复 short_term_memory.
+
+        Returns:
+            恢复的条数 (0 = 文件不存在 / 损坏).
+        Fail-safe: 异常静默吞, 不影响启动.
+        """
+        path = getattr(self, '_stm_persist_path', '')
+        if not path or not os.path.exists(path):
+            return 0
+        restored: List[dict] = []
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if isinstance(entry, dict) and 'user' in entry and 'jarvis' in entry:
+                            restored.append(entry)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+        except OSError:
+            return 0
+        if not restored:
+            return 0
+        # 只取最后 _stm_persist_max 条 (jsonl 可能比 max 长, 历次 append)
+        restored = restored[-self._stm_persist_max:]
+        self.short_term_memory = list(restored)
+        # 恢复 importance scores (取自 entry 或默认 0.5)
+        self._stm_importance_scores = {
+            i: float(e.get('importance', 0.5))
+            for i, e in enumerate(restored)
+        }
+        try:
+            from jarvis_utils import bg_log as _stm_bg
+            _stm_bg(
+                f"📚 [STM/Persist] 恢复 {len(restored)} 条上次会话 STM "
+                f"(最早 {restored[0].get('time', '?')}, 最新 {restored[-1].get('time', '?')})"
+            )
+        except Exception:
+            pass
+        return len(restored)
+
+    def _persist_stm_to_disk(self) -> bool:
+        """atomic dump short_term_memory 到 jsonl.
+
+        Returns:
+            True = 成功写入. False = 跳过 / 失败.
+        Fail-safe: 任何 IO 异常静默吞.
+        策略: 写 .tmp 然后 os.replace, 防 Ctrl+C 损坏.
+        只取最后 _stm_persist_max 条 (truncate 旧的, 节省磁盘).
+        无 dirty check: 12+ 处 short_term_memory.append 散落, 不依赖 dirty flag.
+        50 行 jsonl ~50KB 每 30s 写一次, 性能 ok.
+        """
+        path = getattr(self, '_stm_persist_path', '')
+        if not path:
+            return False
+        try:
+            with self._stm_persist_lock:
+                if not self.short_term_memory:
+                    return False
+                snapshot = list(self.short_term_memory[-self._stm_persist_max:])
+                self._stm_dirty = False
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+            except OSError:
+                pass
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                for entry in snapshot:
+                    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            os.replace(tmp_path, path)
+            return True
+        except OSError:
+            return False
+        except Exception:
+            return False
+
+    def _start_stm_persist_daemon(self) -> None:
+        """启动后台 daemon 每 _stm_persist_interval_s 调 _persist_stm_to_disk.
+
+        + atexit 强制 dump 1 次 (Sir Ctrl+C 不丢上轮).
+        """
+        import atexit
+        def _persist_loop():
+            while True:
+                try:
+                    time.sleep(self._stm_persist_interval_s)
+                    self._persist_stm_to_disk()
+                except Exception:
+                    try:
+                        time.sleep(5)
+                    except Exception:
+                        pass
+        t = threading.Thread(target=_persist_loop, daemon=True, name='STMPersistDaemon')
+        t.start()
+        try:
+            atexit.register(lambda: self._persist_stm_to_disk())
+        except Exception:
+            pass
 
     def _assemble_prompt(self, user_input: str, stm_context: str = "", ltm_context: str = "",
                         chat_organs: str = "", ledger_data: dict = None, landmarks_str: str = "",
