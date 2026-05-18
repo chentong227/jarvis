@@ -3339,18 +3339,25 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             "afternoon": "It's the afternoon slump hours.",
             "flow_end": "Sir just finished a coding session and switched to something else.",
             "return_greeting": (
-                # 🩹 [β.2.8.10 / 2026-05-18] Sir 00:20 反馈 "furniture incidents" 编造.
-                # 准则 6 (不教句式) + 准则 5 (言出必行) 协同 — 不举具体反例 (那是硬编
-                # 码), 只给通用 truth anchor: 任何 specific narrative element 必须
-                # trace evidence. 不知道就不说.
+                # 🩹 [β.2.8.10 / 2026-05-18] Sir 00:20 "furniture incidents" 编造 → 加 truth anchor
+                # 🩹 [β.2.9.10 / 2026-05-18] Sir 11:54 "Welcome back, Sir" 客套 → 正向引导
+                #   准则 6: 不写 forbidden list (那是负向), 改告诉主脑 "用具体观察开场".
+                #   Sir 偏好 signal > 礼貌; 具体的窗口/活动/时段比 "Welcome back" 强 10 倍.
                 f"Sir just returned to his computer (was away for "
                 f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n"
-                f"Speak in your own voice.\n"
-                f"[准则 5 — truth anchor]: Every specific narrative element you "
-                f"introduce (objects, events, activities, people, locations) must "
-                f"correspond to something actually present in the context above. "
-                f"If the context doesn't show what Sir did during AFK, the honest "
-                f"move is to not speculate about it."
+                f"Speak in your own voice.\n\n"
+                f"[STYLE — concrete signal over polite opener]:\n"
+                f"Sir 准则 6: open with the most specific thing you actually "
+                f"observe in his current context (window title, last activity, "
+                f"elapsed AFK pattern, time of day). NOT with a generic social "
+                f"greeting ('Welcome back', '回来啦', 'Sir', 'Hi'). Sir reads "
+                f"every generic opener as a template — give him signal instead.\n\n"
+                f"[TRUTH ANCHOR — Sir 准则 5]:\n"
+                f"Every specific narrative element you introduce (objects, events, "
+                f"activities, people, locations) must correspond to something "
+                f"actually present in the context above. If the context doesn't "
+                f"show what Sir did during AFK, the honest move is to not "
+                f"speculate about it."
             ),
             "commitment_check": (
                 # 删句式锁 "Express gentle dry concern / sound like a friend not a parent".

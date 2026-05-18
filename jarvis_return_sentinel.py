@@ -360,27 +360,13 @@ class ReturnSentinel(threading.Thread):
             _log(f"📞 [ReturnSentinel/Sent] return_greeting NUDGE 已推 (afk={afk_min}min, hour={current_hour}, first_today_in_ctx={is_first_today})")
             return
 
-        if is_first_today:
-            greeting_en, greeting_zh = self._pick_return_greeting(afk_duration, current_hour, work_category, weekday, is_first_today=True)
-        else:
-            greeting_en, greeting_zh = self._pick_smart_greeting(snap, current_hour, work_category, weekday)
-            if not greeting_en:
-                greeting_en, greeting_zh = self._pick_return_greeting(afk_duration, current_hour, work_category, weekday, is_first_today=False)
-
-        if not greeting_en:
-            return
-
-        try:
-            if hasattr(self.worker, 'voice_thread'):
-                self.worker.voice_thread.awake_signal.emit(True)
-        except:
-            pass
-
-        self._pending_greeting = (greeting_en, greeting_zh)
-        self._glow_start_time = time.time()
-        self._greeting_phase = "glow"
-        self._last_greeting_time = time.time()
-        self.first_active_today = False
+        # 🩹 [β.2.9.10 / 2026-05-18] Sir 11:54 反馈 "还是这个固定句式".
+        # 模板兜底路径 (use_llm=False) 已死代码 — should_greet 时永远 use_llm=True.
+        # 删兜底防回退. 模板池 _pick_return_greeting / _pick_smart_greeting 整套
+        # (~280 行) 也跟着删, 仅 docs/TODO_ARCHIVE.md 提及历史. 净化 + 防回退诱惑.
+        # 这里走到说明上面 use_llm 路径未 return → 异常路径, 直接 log + 退.
+        _log(f"⚠️ [ReturnSentinel] should_greet=True 但 use_llm=False — 异常状态, 跳过")
+        return
 
     def open_soft_focus(self, duration_s: float = 60.0,
                           reason: str = 'external') -> None:
