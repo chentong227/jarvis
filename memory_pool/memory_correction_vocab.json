@@ -1,0 +1,64 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T16:50:00",
+    "purpose": "INTEGRITY_STACK L0.5 — memory_update_honesty directive trigger vocab (zhunze 6.5)",
+    "source_origin": "migrated from jarvis_directives.py:_MEMORY_CORRECTION_PATTERNS_ZH/EN (beta.2.9.9)",
+    "edit_via": "scripts/memory_correction_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector (future) propose new keyword to review",
+    "consumer": "jarvis_directives.py:_trigger_memory_update_honesty -> get_memory_correction_patterns()"
+  },
+  "patterns": [
+    {
+      "id": "correction_zh",
+      "category": "correction",
+      "keywords": [
+        "我没",
+        "我不是",
+        "我才不",
+        "不是的",
+        "其实",
+        "澄清",
+        "纠正",
+        "两码事",
+        "两个事",
+        "搞错了",
+        "错了",
+        "记错",
+        "不对",
+        "我说的是",
+        "我的意思是",
+        "不要混淆",
+        "不要搞混"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093000.0,
+      "note": "Chinese correction keywords"
+    },
+    {
+      "id": "correction_en",
+      "category": "correction",
+      "keywords": [
+        "i'm not",
+        "i am not",
+        "actually",
+        "clarify",
+        "correction",
+        "two different things",
+        "you got it wrong",
+        "you misunderstood",
+        "to be clear",
+        "let me clarify",
+        "let me correct",
+        "what i meant was",
+        "i meant",
+        "no that's not"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093000.0,
+      "note": "English correction keywords"
+    }
+  ]
+}

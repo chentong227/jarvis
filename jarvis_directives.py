@@ -634,17 +634,66 @@ def _trigger_correction_writepath(ctx: DirectiveContext) -> bool:
 # Jarvis 嘴上说"I've updated my records / 我已更新" 但底层根本没动 db.
 # 准则 5 (言出必行) 重大违反. 加新 directive 在 Sir 像在纠正/澄清记忆时
 # 强制 Jarvis 诚实 — 没真调 MEMORY_UPDATE 工具就别说"已更新".
-_MEMORY_CORRECTION_PATTERNS_ZH = (
+#
+# 🩹 [P0+20-β.3.4-vocab3 / 2026-05-18] Sir 准则 6.5: vocab 迁 json + CLI.
+# 范式照搬 β.3.0-vocab1 (tool_intent) — 详 commit 63611f3
+_SEED_MEMORY_CORRECTION_PATTERNS = (
+    # 中文 (17)
     '我没', '我不是', '我才不', '不是的', '其实', '澄清', '纠正',
     '两码事', '两个事', '搞错了', '错了', '记错', '不对',
     '我说的是', '我的意思是', '不要混淆', '不要搞混',
-)
-_MEMORY_CORRECTION_PATTERNS_EN = (
+    # 英文 (14)
     "i'm not", "i am not", "actually", "clarify", "correction",
     "two different things", "you got it wrong", "you misunderstood",
     "to be clear", "let me clarify", "let me correct",
     "what i meant was", "i meant", "no that's not",
 )
+
+_MEMORY_CORRECTION_VOCAB_PATH = os.path.join(
+    'memory_pool', 'memory_correction_vocab.json')
+_MEMORY_CORRECTION_CACHE: Optional[tuple] = None
+_MEMORY_CORRECTION_MTIME: float = 0.0
+
+
+def _load_memory_correction_from_json() -> Optional[tuple]:
+    """从 json 加载 active pattern keyword 扁平 tuple. 失败返 None."""
+    if not os.path.exists(_MEMORY_CORRECTION_VOCAB_PATH):
+        return None
+    try:
+        with open(_MEMORY_CORRECTION_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out: List[str] = []
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            for kw in (p.get('keywords') or []):
+                if isinstance(kw, str) and kw.strip():
+                    out.append(kw.lower().strip())
+        return tuple(out) if out else None
+    except Exception:
+        return None
+
+
+def get_memory_correction_patterns() -> tuple:
+    """🩹 [β.3.4-vocab3] mtime cache 自动 reload. Sir CLI 改 json → 即时生效."""
+    global _MEMORY_CORRECTION_CACHE, _MEMORY_CORRECTION_MTIME
+    try:
+        mtime = os.path.getmtime(_MEMORY_CORRECTION_VOCAB_PATH) if os.path.exists(
+            _MEMORY_CORRECTION_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _MEMORY_CORRECTION_CACHE is None or mtime > _MEMORY_CORRECTION_MTIME:
+        loaded = _load_memory_correction_from_json()
+        if loaded is not None:
+            _MEMORY_CORRECTION_CACHE = loaded
+        else:
+            _MEMORY_CORRECTION_CACHE = _SEED_MEMORY_CORRECTION_PATTERNS
+        _MEMORY_CORRECTION_MTIME = mtime
+    return _MEMORY_CORRECTION_CACHE
 
 
 def _trigger_memory_update_honesty(ctx: DirectiveContext) -> bool:
@@ -652,15 +701,12 @@ def _trigger_memory_update_honesty(ctx: DirectiveContext) -> bool:
 
     准则 6 (vocab 驱动, 不针对'职业考试'特定 case 硬编码):
       看 user_input 是否含 correction-class vocab. 命中 → 注入诚信 directive.
+    准则 6.5 持久化 — vocab 在 memory_pool/memory_correction_vocab.json.
     """
     if not ctx.user_input:
         return False
     t = ctx.user_input.lower().strip()
-    if any(w in t for w in _MEMORY_CORRECTION_PATTERNS_ZH):
-        return True
-    if any(w in t for w in _MEMORY_CORRECTION_PATTERNS_EN):
-        return True
-    return False
+    return any(w in t for w in get_memory_correction_patterns())
 
 
 # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09-11:11 实测痛点: 工具调用同步阻塞期间
