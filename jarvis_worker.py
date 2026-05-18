@@ -849,8 +849,13 @@ class VoiceListenThread(QThread):
                         for ow_res in ow_results:
                             if ow_res.detected:
                                 self._handle_acoustic_wake(ow_res)
-                                # 清下轮 避免重复触发
-                                self._acoustic_det.reset_accum()
+                                # [β.4.8 P2 / 2026-05-19] 启动 cooldown_s 静默期
+                                # 防 timeout 后立刻被环境音/键盘/Jarvis TTS 余音连击
+                                # 同时清 accum 防 Jarvis 自己说话期间污染下次唤醒
+                                try:
+                                    self._acoustic_det.mark_wake_triggered()
+                                except Exception:
+                                    self._acoustic_det.reset_accum()
                                 audio_frames = []
                                 is_speaking = False
                                 break

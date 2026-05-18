@@ -73,9 +73,11 @@ _SEED_THRESHOLDS: Dict[str, Any] = {
     'acoustic_wake_engine': 'openwakeword',
     'openwakeword_model': 'hey_jarvis_v0.1',
     'openwakeword_custom_model_path': '',
-    'openwakeword_threshold': 0.5,
+    'openwakeword_threshold': 0.85,  # [β.4.8 P2 / 2026-05-19] Sir 误唤醒治本: 0.5→0.85
     'openwakeword_frame_length': 1280,
     'openwakeword_inference_framework': 'onnx',
+    'openwakeword_vad_threshold': 0.5,  # [β.4.8 P2] 启用内置 VAD 过滤键盘/环境音
+    'acoustic_wake_cooldown_s': 30.0,   # [β.4.8 P2] wake 后 30s acoustic 通道关 (防 timeout 后立刻被环境音连击)
     'fallback_volume_entry': 180,
     'fallback_volume_exit': 100,
     'silence_limit_default': 1.5,
@@ -179,16 +181,20 @@ class AcousticWakeDetector:
         keyword_name: str,
         frame_length: int,
         sample_rate: int,
+        cooldown_s: float = 30.0,
     ):
         self._model = owmodel
         self.threshold = threshold
         self.keyword_name = keyword_name
         self.frame_length = frame_length
         self.sample_rate = sample_rate
+        self.cooldown_s = cooldown_s
         self._lock = threading.Lock()
         self._closed = False
         self._detection_count = 0
         self._last_detection_at: float = 0.0
+        # [β.4.8 P2] cooldown_until_ts: AuditoryCortex wake 后 set, 期间 process() 跳过
+        self._cooldown_until_ts: float = 0.0
         # accumulator: PyAudio 给 1024, openWakeWord 要 1280
         self._accum: List[int] = []
 
@@ -230,11 +236,25 @@ class AcousticWakeDetector:
             wakeword_args = {'wakeword_models': [builtin_name]}
             kw_name = builtin_name
 
+        # [β.4.8 P2] VAD threshold (>0 启用 silero VAD 过滤键盘/环境音)
+        vad_threshold = float(thr.get('openwakeword_vad_threshold', 0.0))
+        vad_threshold = max(0.0, min(1.0, vad_threshold))
+
         try:
-            owmodel = Model(
-                **wakeword_args,
-                inference_framework=framework,
-            )
+            model_kwargs = dict(wakeword_args)
+            model_kwargs['inference_framework'] = framework
+            if vad_threshold > 0.0:
+                model_kwargs['vad_threshold'] = vad_threshold
+            owmodel = Model(**model_kwargs)
+        except TypeError:
+            # 老版 openwakeword 不支持 vad_threshold → 退回不带 VAD
+            try:
+                owmodel = Model(
+                    **wakeword_args,
+                    inference_framework=framework,
+                )
+            except Exception as e:
+                return cls._make_disabled(f'openWakeWord Model 加载失败: {type(e).__name__}: {e}')
         except Exception as e:
             return cls._make_disabled(f'openWakeWord Model 加载失败: {type(e).__name__}: {e}')
 
@@ -246,9 +266,10 @@ class AcousticWakeDetector:
         except Exception:
             pass
 
-        threshold = float(thr.get('openwakeword_threshold', 0.5))
+        threshold = float(thr.get('openwakeword_threshold', 0.85))
         threshold = max(0.0, min(1.0, threshold))
         frame_length = int(thr.get('openwakeword_frame_length', 1280))
+        cooldown_s = float(thr.get('acoustic_wake_cooldown_s', 30.0))
 
         return cls(
             owmodel=owmodel,
@@ -256,6 +277,7 @@ class AcousticWakeDetector:
             keyword_name=kw_name,
             frame_length=frame_length,
             sample_rate=16000,
+            cooldown_s=cooldown_s,
         )
 
     @classmethod
@@ -267,10 +289,12 @@ class AcousticWakeDetector:
         instance.keyword_name = ''
         instance.frame_length = 1280
         instance.sample_rate = 16000
+        instance.cooldown_s = 0.0
         instance._lock = threading.Lock()
         instance._closed = True
         instance._detection_count = 0
         instance._last_detection_at = 0.0
+        instance._cooldown_until_ts = 0.0
         instance._accum = []
         instance._disable_reason = reason
         return instance
@@ -294,9 +318,18 @@ class AcousticWakeDetector:
         Returns:
             WakeDetectionResult.
             如果 detector 已 close 或 disabled, 永远返 detected=False.
+            [β.4.8 P2] cooldown 期间 (mark_wake_triggered 后 N 秒内) 永返 not detected.
         """
         if not self.is_available():
             return WakeDetectionResult(detected=False)
+        # [β.4.8 P2] cooldown gate: AuditoryCortex 上次 wake 后 N 秒内, acoustic 通道关
+        if self._cooldown_until_ts > 0.0 and time.time() < self._cooldown_until_ts:
+            return WakeDetectionResult(
+                detected=False,
+                score=0.0,
+                keyword=self.keyword_name,
+                raw_scores={'_cooldown_remaining_s': max(0.0, self._cooldown_until_ts - time.time())},
+            )
         try:
             import numpy as np
             if isinstance(pcm_int16_frame, bytes):
@@ -377,6 +410,25 @@ class AcousticWakeDetector:
         """清 accumulator (Jarvis 自己说话期间调, 避免缓冲污染)."""
         with self._lock:
             self._accum = []
+
+    def mark_wake_triggered(self) -> None:
+        """[β.4.8 P2 / 2026-05-19] AuditoryCortex 收到 wake 后调.
+
+        启动 cooldown_s 秒的 acoustic 通道静默期.
+        期间 process() 永返 not detected, 防 timeout 后立刻被环境音/键盘/Jarvis 自己 TTS 余音连击.
+        Sir 真说 wake 走 ASR string match fallback (parse_wake_word) 仍能触发.
+        """
+        with self._lock:
+            self._cooldown_until_ts = time.time() + max(0.0, self.cooldown_s)
+            self._accum = []  # 顺手清缓冲, Jarvis TTS 期间的音频不污染
+
+    def is_in_cooldown(self) -> bool:
+        return self._cooldown_until_ts > 0.0 and time.time() < self._cooldown_until_ts
+
+    def cooldown_remaining_s(self) -> float:
+        if self.is_in_cooldown():
+            return max(0.0, self._cooldown_until_ts - time.time())
+        return 0.0
 
     def get_detection_count(self) -> int:
         return self._detection_count
@@ -493,6 +545,11 @@ def _cmd_test_mic(duration_s: float, model_override: Optional[str]) -> int:
     last_print = 0.0
     detection_count = 0
     max_score_overall = 0.0
+    # [β.4.8 P2 / 2026-05-19] CLI debounce — 同次说话持续 0.5-1s = 6-12 帧 score>threshold,
+    # 生产 AuditoryCortex 第 1 帧 detected 即进 active 短路, 不会重复触发.
+    # CLI 测试无 active gate, 加 1s debounce 让显示等于"独立说话次数" (Sir 心里舒服).
+    last_detection_at = 0.0
+    CLI_DEBOUNCE_S = 1.0
     try:
         while time.time() - started < duration_s:
             try:
@@ -505,8 +562,13 @@ def _cmd_test_mic(duration_s: float, model_override: Optional[str]) -> int:
                 if res.score > max_score_overall:
                     max_score_overall = res.score
                 if res.detected:
+                    _now_t = time.time()
+                    # CLI debounce: 同次说话连续帧只算 1 次
+                    if _now_t - last_detection_at < CLI_DEBOUNCE_S:
+                        continue
+                    last_detection_at = _now_t
                     detection_count += 1
-                    print(f"\n  🔔 WAKE DETECTED #{detection_count}  score={res.score:.3f}  kw={res.keyword}  t={time.time()-started:.1f}s")
+                    print(f"\n  🔔 WAKE DETECTED #{detection_count}  score={res.score:.3f}  kw={res.keyword}  t={_now_t-started:.1f}s")
                 # 节流 print: 100ms 一次
                 now = time.time()
                 if now - last_print >= 0.1:

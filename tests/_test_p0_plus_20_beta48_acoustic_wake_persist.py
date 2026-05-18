@@ -326,10 +326,14 @@ class TestP0Plus20Beta48WorkerIntegration(unittest.TestCase):
         # 找 "feed_pyaudio_buffer" 前后看上下文
         idx = self.src.find('self._acoustic_det.feed_pyaudio_buffer(data)')
         self.assertGreater(idx, 0)
-        # 前 200 字符必有 try:, 后 500 字符必有 except
-        context = self.src[max(0, idx-200):idx+500]
+        # 前 200 字符必有 try:, 后 1200 字符必有 except (β.4.8 P2 加了 mark_wake_triggered + 注释扩展了块)
+        context = self.src[max(0, idx-200):idx+1200]
         self.assertIn('try:', context, 'feed_pyaudio_buffer 必须包在 try 内')
-        self.assertIn('except', context, '必须 except 兜底 (不阻塞主链)')
+        # 必须 ≥ 2 个 except (一个 inner mark_wake_triggered try/except, 一个 outer feed_buffer try/except)
+        except_count = context.count('except')
+        self.assertGreaterEqual(except_count, 2,
+            f'必须 ≥ 2 个 except 兜底 (β.4.8 P2 inner+outer), 实际 {except_count}')
+        self.assertIn('容忍', context, 'outer except 必须 bg_log "容忍" 提示 (不阻塞主链)')
 
     def test_does_not_break_legacy_wake(self):
         """β.4.8 不能删 parse_wake_word 或破坏老 ASR string match wake."""
@@ -397,6 +401,120 @@ class TestP0Plus20Beta48MicDiagCLI(unittest.TestCase):
             with open(self.vocab, 'w', encoding='utf-8') as f:
                 json.dump(original, f, ensure_ascii=False, indent=2)
                 f.write('\n')
+
+
+# ==========================================================================
+# β.4.8 P2: VAD + cooldown 误唤醒治本
+# ==========================================================================
+
+class TestP0Plus20Beta48P2VADAndCooldown(unittest.TestCase):
+    """β.4.8 P2: Sir 实测误唤醒 (键盘/环境音/timeout 后立刻被环境音连击) → 治本."""
+
+    def setUp(self):
+        from jarvis_acoustic_wake import reset_acoustic_wake_singleton, _MIC_VOCAB_CACHE
+        reset_acoustic_wake_singleton()
+        _MIC_VOCAB_CACHE['mtime'] = 0.0
+        _MIC_VOCAB_CACHE['data'] = None
+
+    def test_vocab_has_vad_and_cooldown_keys(self):
+        """β.4.8 P2: vocab 必须有 VAD threshold + cooldown_s."""
+        from jarvis_acoustic_wake import load_mic_safety_thresholds
+        thr = load_mic_safety_thresholds()
+        self.assertIn('openwakeword_vad_threshold', thr)
+        self.assertIn('acoustic_wake_cooldown_s', thr)
+        self.assertIsInstance(thr['openwakeword_vad_threshold'], float)
+        self.assertIsInstance(thr['acoustic_wake_cooldown_s'], float)
+        # VAD 默认 0.5 (启用)
+        self.assertGreaterEqual(thr['openwakeword_vad_threshold'], 0.0)
+        self.assertLessEqual(thr['openwakeword_vad_threshold'], 1.0)
+        # cooldown 默认 30s (合理范围 0-300)
+        self.assertGreater(thr['acoustic_wake_cooldown_s'], 0.0)
+        self.assertLess(thr['acoustic_wake_cooldown_s'], 600.0)
+
+    def test_threshold_default_raised_to_085(self):
+        """β.4.8 P2: 默认 threshold 从 0.5 提到 0.85 (Sir 误唤醒治本)."""
+        from jarvis_acoustic_wake import _SEED_THRESHOLDS
+        self.assertGreaterEqual(_SEED_THRESHOLDS['openwakeword_threshold'], 0.85,
+            'β.4.8 P2 SEED threshold 必须 ≥ 0.85')
+
+    def test_mark_wake_triggered_starts_cooldown(self):
+        """mark_wake_triggered() → is_in_cooldown()=True + remaining > 0."""
+        try:
+            import openwakeword  # noqa: F401
+        except ImportError:
+            self.skipTest('openwakeword 未安装')
+        from jarvis_acoustic_wake import AcousticWakeDetector
+        det = AcousticWakeDetector.create(force_enable=True)
+        try:
+            self.assertFalse(det.is_in_cooldown(), '初始无 cooldown')
+            self.assertEqual(det.cooldown_remaining_s(), 0.0)
+            det.mark_wake_triggered()
+            self.assertTrue(det.is_in_cooldown(), 'mark_wake_triggered 后应进 cooldown')
+            self.assertGreater(det.cooldown_remaining_s(), 0.0)
+            self.assertLessEqual(det.cooldown_remaining_s(), det.cooldown_s + 0.5)
+        finally:
+            det.close()
+
+    def test_process_blocked_during_cooldown(self):
+        """cooldown 期间 process() 永返 not detected (即使真有 wake 信号)."""
+        try:
+            import openwakeword  # noqa: F401
+            import numpy as np
+        except ImportError:
+            self.skipTest('openwakeword 未安装')
+        from jarvis_acoustic_wake import AcousticWakeDetector
+        det = AcousticWakeDetector.create(force_enable=True)
+        try:
+            det.mark_wake_triggered()
+            # 喂任何信号 → 应被 cooldown gate 拦
+            silent = np.zeros(det.frame_length, dtype=np.int16)
+            res = det.process(silent)
+            self.assertFalse(res.detected, 'cooldown 期间不应触发')
+            self.assertIn('_cooldown_remaining_s', res.raw_scores,
+                'cooldown 拦截应在 raw_scores 暴露剩余时间')
+        finally:
+            det.close()
+
+    def test_cooldown_clears_accum(self):
+        """mark_wake_triggered 顺手清 _accum (防 Jarvis TTS 期间音频污染)."""
+        try:
+            import openwakeword  # noqa: F401
+        except ImportError:
+            self.skipTest('openwakeword 未安装')
+        from jarvis_acoustic_wake import AcousticWakeDetector
+        det = AcousticWakeDetector.create(force_enable=True)
+        try:
+            det._accum = [1, 2, 3, 4, 5]
+            det.mark_wake_triggered()
+            self.assertEqual(det._accum, [], 'cooldown 应顺手清 _accum')
+        finally:
+            det.close()
+
+    def test_worker_calls_mark_wake_triggered(self):
+        """jarvis_worker.py wake handler 必须调 mark_wake_triggered() (启动 cooldown)."""
+        p = os.path.join(ROOT, 'jarvis_worker.py')
+        with open(p, 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('mark_wake_triggered', src,
+            'worker.py wake handler 必须调 mark_wake_triggered (β.4.8 P2 治本误唤醒)')
+
+    def test_create_loads_with_vad_threshold(self):
+        """create() 应把 vocab.vad_threshold 传给 openWakeWord.Model.
+
+        新版 openwakeword 接受 vad_threshold; 老版本不接受会 fallback (通过 TypeError catch).
+        两条路径都应得到 is_available() = True.
+        """
+        try:
+            import openwakeword  # noqa: F401
+        except ImportError:
+            self.skipTest('openwakeword 未安装')
+        from jarvis_acoustic_wake import AcousticWakeDetector
+        det = AcousticWakeDetector.create(force_enable=True)
+        try:
+            self.assertTrue(det.is_available(),
+                f'VAD 启用后 create 应仍 work (实际: {det.get_disable_reason()})')
+        finally:
+            det.close()
 
 
 if __name__ == '__main__':

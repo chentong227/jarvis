@@ -172,3 +172,10 @@ test_dummy.txt
 # === OS temp ===
 nul
 *.tmp
+
+# === [P0+20-β.4.8 / 2026-05-19] Wake word 模型文件 (Sir 自训 / Sir 拷贝, 各机不同) ===
+# Sir 自训 jarvis_v1.onnx 在 Colab 训, 各 machine 不同 sample/quality
+# 内置 hey_jarvis_v0.1 第一次启动 openWakeWord 自动下载到 site-packages
+# 不进 git: 模型 binary 大 (~200KB-1MB), 各 Sir 机器有自己版本
+memory_pool/wakeword_models/*.onnx
+memory_pool/wakeword_models/*.tflite
