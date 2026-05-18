@@ -274,6 +274,72 @@ class TestP0Plus20Beta48Principle65RedLines(unittest.TestCase):
         self.assertNotIn('pvporcupine.create', src)
 
 
+# ==========================================================================
+# Phase C: AuditoryCortex 集成 (verify worker.py 接 acoustic wake)
+# ==========================================================================
+
+class TestP0Plus20Beta48WorkerIntegration(unittest.TestCase):
+    """Phase C: AuditoryCortex 必须接 acoustic wake (init + check + handler)."""
+
+    def setUp(self):
+        self.worker_path = os.path.join(ROOT, 'jarvis_worker.py')
+        with open(self.worker_path, 'r', encoding='utf-8') as f:
+            self.src = f.read()
+
+    def test_init_imports_detector(self):
+        """AuditoryCortex.run init 必须 import + 创建 get_acoustic_wake_detector."""
+        self.assertIn('from jarvis_acoustic_wake import get_acoustic_wake_detector', self.src,
+            'AuditoryCortex.run 必须 import get_acoustic_wake_detector')
+        self.assertIn('self._acoustic_det = get_acoustic_wake_detector()', self.src,
+            'AuditoryCortex.run 必须 init self._acoustic_det 单例')
+
+    def test_main_loop_calls_feed_buffer(self):
+        """主循环 non-active 段必须 feed_pyaudio_buffer."""
+        self.assertIn('self._acoustic_det.feed_pyaudio_buffer(data)', self.src,
+            '主循环必须 feed PyAudio data 给 acoustic detector')
+
+    def test_main_loop_only_when_not_active(self):
+        """acoustic check 必须在 not self.in_active_conversation 才调."""
+        self.assertIn('not self.in_active_conversation', self.src)
+        # 完整契约: 至少一处 acoustic check 在 not in_active_conversation 守卫下
+        self.assertIn("getattr(self, '_acoustic_det', None) is not None", self.src,
+            'acoustic check 必须 None safe')
+
+    def test_handler_method_exists(self):
+        """_handle_acoustic_wake helper 必须存在."""
+        self.assertIn('def _handle_acoustic_wake(self, res:', self.src,
+            'AuditoryCortex 必须有 _handle_acoustic_wake helper')
+        # handler 必须 emit awake_signal + set_active + emit jarvis cmd
+        self.assertIn("source='acoustic_wake_word'", self.src,
+            'handler 必须用 source=acoustic_wake_word 区分原 ASR string match wake')
+        self.assertIn("self._emit_with_attention(\"jarvis\")", self.src,
+            'handler 必须 emit "jarvis" empty cmd 走默认 At your service 路径')
+
+    def test_jarvis_speaking_period_clears_accum(self):
+        """Jarvis 自己说话 / mute 期间必须 reset_accum 防污染."""
+        self.assertIn('self._acoustic_det.reset_accum()', self.src,
+            'is_jarvis_speaking guard 段必须 reset accumulator')
+
+    def test_acoustic_fallback_on_exception(self):
+        """acoustic feed 异常必须 try/except, 不阻塞主链."""
+        # 主循环 acoustic 调用必须有 try/except + bg_log 容忍
+        # 找 "feed_pyaudio_buffer" 前后看上下文
+        idx = self.src.find('self._acoustic_det.feed_pyaudio_buffer(data)')
+        self.assertGreater(idx, 0)
+        # 前 200 字符必有 try:, 后 500 字符必有 except
+        context = self.src[max(0, idx-200):idx+500]
+        self.assertIn('try:', context, 'feed_pyaudio_buffer 必须包在 try 内')
+        self.assertIn('except', context, '必须 except 兜底 (不阻塞主链)')
+
+    def test_does_not_break_legacy_wake(self):
+        """β.4.8 不能删 parse_wake_word 或破坏老 ASR string match wake."""
+        self.assertIn('def parse_wake_word(self, text):', self.src,
+            'parse_wake_word 老路径必须保留 (fallback)')
+        # 老 wake 处理 line ~1077 应仍 emit awake_signal/set_active source='wake_word_match'
+        self.assertIn("source='wake_word_match'", self.src,
+            "老 ASR string match wake 路径 (source='wake_word_match') 必保留")
+
+
 if __name__ == '__main__':
     runner = unittest.TextTestRunner(verbosity=2)
     suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])

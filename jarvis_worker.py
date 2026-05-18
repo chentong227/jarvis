@@ -676,6 +676,43 @@ class VoiceListenThread(QThread):
         score = max(0.0, min(1.0, score))
         return score, breakdown
 
+    def _handle_acoustic_wake(self, res: 'Any') -> None:
+        """[P0+20-β.4.8 / 2026-05-19] Acoustic wakeword 检测到 → 触发 wake.
+
+        复用 line 1077-1091 的 ASR string match wake 逻辑, 但 cmd 有限 (声学售醒不能告诉你
+        “售醒后说了什么”, 只能告诉你“被售醒了”). cmd=='jarvis' 走 默认 “At your service”.
+
+        Args:
+            res: WakeDetectionResult (含 score / keyword)
+        """
+        try:
+            from jarvis_utils import bg_log
+        except Exception:
+            bg_log = lambda m: print(f"║ {m}")
+        bg_log(
+            f"🔔 [Acoustic Wake / β.4.8] keyword={res.keyword!r} "
+            f"score={res.score:.3f} → 触发 wake (跳过 ASR string match)"
+        )
+        if not self.in_active_conversation:
+            self.awake_signal.emit(True)
+        if self.state is not None:
+            self.state.set_active_conversation(
+                True, reason='wake', source='acoustic_wake_word'
+            )
+        else:
+            self.in_active_conversation = True
+        self.last_interaction_time = time.time()
+        try:
+            set_browser_ducking(True)
+        except Exception:
+            pass
+        # 声学售醒 → 发 'jarvis' empty cmd 走 default “At your service” 路径
+        # Sir 接下来说话走 active_conversation 里的 ASR 转写链
+        try:
+            self._emit_with_attention("jarvis")
+        except Exception:
+            pass
+
     def _emit_with_attention(self, cmd: str):
         """[R7-α/AttentionContext] emit text_ready 之前先抓拍一份 attention 快照。
         slot 未挂上时不挂；抓拍异常吞掉不影响 emit 主路径。
@@ -722,6 +759,21 @@ class VoiceListenThread(QThread):
             return
 
         print("[AuditoryCortex] 24/7 物理环境音频监听已启动...")
+
+        # [P0+20-β.4.8 / 2026-05-19] Acoustic wakeword detector init (openWakeWord)
+        # vocab.acoustic_wake_enabled=false → stub (不动原 wake 链); =true → 真实例
+        # is_available() 差重, in_active_conversation 期间不调 (节省 CPU)
+        try:
+            from jarvis_acoustic_wake import get_acoustic_wake_detector
+            self._acoustic_det = get_acoustic_wake_detector()
+            if self._acoustic_det.is_available():
+                print(f"🔊[AcousticWake / β.4.8] 启用 → keyword={self._acoustic_det.keyword_name!r} "
+                      f"threshold={self._acoustic_det.threshold}")
+            else:
+                print(f"🔇[AcousticWake / β.4.8] 未启用 ({self._acoustic_det.get_disable_reason()[:80]})")
+        except Exception as _aw_e:
+            print(f"⚠️[AcousticWake / β.4.8] init 异常不启用: {_aw_e}")
+            self._acoustic_det = None
 
         VOLUME_THRESHOLD = 180
         SILENCE_LIMIT = 1.8
@@ -777,8 +829,39 @@ class VoiceListenThread(QThread):
                     frames_left = stream.get_read_available()
                     if frames_left > 0:
                         stream.read(frames_left, exception_on_overflow=False) # 抽干脏水
+                    # 清 acoustic accumulator (Jarvis 说话 / mute 期间不肯污染 wake 检测)
+                    if getattr(self, '_acoustic_det', None) is not None:
+                        try:
+                            self._acoustic_det.reset_accum()
+                        except Exception:
+                            pass
                     continue
-                    
+
+                # [P0+20-β.4.8 / 2026-05-19] Acoustic wakeword check (non-active only)
+                # 优点: 声学检测, 不依赖 ASR 转写质量; 远场扬声到不了 model 就不启, 近场 clipping 也能识
+                # in_active 期间不调 (节省 CPU, Sir 已售醒, 走 ASR 转写链)
+                # Fail-safe: 检测失败 → 继续走原 VAD + ASR + parse_wake_word 兰底
+                if not self.in_active_conversation \
+                        and getattr(self, '_acoustic_det', None) is not None \
+                        and self._acoustic_det.is_available():
+                    try:
+                        ow_results = self._acoustic_det.feed_pyaudio_buffer(data)
+                        for ow_res in ow_results:
+                            if ow_res.detected:
+                                self._handle_acoustic_wake(ow_res)
+                                # 清下轮 避免重复触发
+                                self._acoustic_det.reset_accum()
+                                audio_frames = []
+                                is_speaking = False
+                                break
+                    except Exception as _ow_e:
+                        # 声学检测出异常不能阻塞主链
+                        try:
+                            from jarvis_utils import bg_log as _ow_bg
+                            _ow_bg(f"⚠️ [Acoustic Wake] feed 异常 (容忍): {_ow_e}")
+                        except Exception:
+                            pass
+
                 # 🩹 [P0+20-β.2.2 / 2026-05-16] 滞后双阈值 VAD（治 Sir 21:43 反馈 ASR 不触发）
                 # 根因：Sir 后台 Premiere 视频导出让 volume 在 100-200 抖动 →
                 # 单一阈值 180 让某些帧进 if-high 分支刷新 silence_timer →
