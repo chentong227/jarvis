@@ -10,9 +10,35 @@
 
  工作板
 
-**更新时间**：2026-05-18 20:10（**🚀 P0+20-β.4.3 INTEGRITY_STACK Session 2 完工 — L1 Claim 分类器 + L2 Evidence Requirements + L4 trace_to_evidence 表驱重写**）。
+**更新时间**：2026-05-18 21:36（**🚀 P0+20-β.4.4 INTEGRITY_STACK Session 3 完工 — L6 dashboard 言出必行健康度宽卡**）。
 
-**今天累计 (5/18 09:00-20:10)**：35 commits / 92/92 testcase 全绿 / 新增 ~361 testcase / 9 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify`。
+**今天累计 (5/18 09:00-21:36)**：37 commits / 93/93 testcase 全绿 / 新增 ~388 testcase / 10 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity`。
+
+**🟢 β.4.4 INTEGRITY_STACK Session 3 完工 (准则 5 L6 Sir 一眼看 Jarvis 兑现率)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `scripts/jarvis_dashboard.py` `_safe_read_jsonl_tail` | file seek -512KB tail 防 jsonl > 100K 条全 load + partial 首行丢弃 | 1 cross-module |
+| `scripts/jarvis_dashboard.py` `read_integrity_stats` | 今日/7d 聚合 + kind 分布 + top 3 高频空头话 + 7d ASCII trend chart + verify_rate hook (Session 4 daemon 兼容) | 6 类 27 测 |
+| `scripts/jarvis_dashboard.py` `_render_integrity` + `card_integrity` | 宽卡跨 4 列 (group_obs row 1) + lbl_integrity 标题徽章 + `_make_card` 加 columnspan/height kwargs (兼容老 caller) | UI 渲染 + 中文文案准则 6 |
+| `scripts/jarvis_dashboard.py` `compute_overall_status` | 加 integrity 入参 + 阈值 (今日 unverified 0 绿 / 1-5 黄 / >5 红) → headline 直接说事 | 4 阈值测 |
+| `scripts/jarvis_dashboard.py` reader bucket-day bug fix | ts 不对齐 00:00 时偏移 1 天 (如 d-3 12:00 落到 d-2 桶), 修法: 先用 ts_day_start 对齐再算 day_offset | trend_7d 测覆盖 |
+| `tests/_test_p0_plus_20_beta44_dashboard_integrity_persist.py` | 6 TestClass / 27 测 — TestReadIntegrityStats / TestFailSafe / TestTimeWindow / TestThreshold / TestRenderUI / TestCrossModule | 27 测 |
+
+**设计准则**:
+- 准则 5 言出必行: dashboard 数据全 trace 到 jsonl 真实 evidence (`integrity_audit.jsonl`); compute_overall_status 阈值 crit/warn 直接量化 Jarvis 言出必行健康度
+- 准则 6: dashboard UI 文案是 Sir 看的事实陈述, 不教主脑句式 (TestRenderUI 锁 "你必须"/"立刻" 红线)
+- 准则 6.5: jsonl/stats.json 全部 fail-safe (文件不存在/损坏行/损坏 ts/损坏 stats 全返默认 dict 不 raise); verify_rate 缺 claim_stats.json 时 fallback None (Session 4 daemon 加后自动生效)
+- 防御 dual-track: TestCrossModule 显式验 ClaimTracer.write_audit_entry → dashboard reader 端到端协作 + file-seek 大文件 5000 条 fixture
+
+**Session 3 commit + tag**: `7bbd890` / `v0.33.0-dashboard-integrity`, 93/93 pass run_id `test_20260518_213535_4ad0`.
+
+**真机风险点清单 (Session 3 引入, Sir 黑箱测试看这些)**:
+1. **dashboard 卡片不出现 / 文案错位** — group_obs row 1 weight 改了 (0=2/1=1), 老卡片可能挤压. 真机看 dashboard 4 上+1 宽卡 layout 是否正常
+2. **跨夜 trend_7d 偏移** — Sir 中国本地时区 (UTC+8), `time.timezone` 偏移; 真机零点跨夜可能短暂出现今天 0 件但 d-1 突然 +N 的视觉抖动
+3. **0 字节 jsonl 文件** — 文件存在但 0 字节时显 "✅ 7 天 0 件" 而非 "📝 还没有任何 audit"; 这是设计决定 (文件存在 = ClaimTracer 跑过, 只是 0 unverified). Sir 若觉得迷糊 → 文案改
+4. **claim_stats.json 缺失** — verify_rate 卡片显 "兑现率 -- (Session 4 daemon 待加)"; Sir 看到此即知 Session 4 daemon 没起
+5. **大文件性能** — 5000 条 audit (~700KB) 测试通过 file seek -256KB; 真机 jsonl > 1MB 时无回归 (file seek 上限 512KB cap on memory)
 
 **🟢 β.4.3 INTEGRITY_STACK Session 2 完工 (准则 6.5 L1+L2 表驱替换硬编码 / L4 重写)**:
 

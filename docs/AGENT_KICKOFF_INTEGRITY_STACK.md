@@ -34,7 +34,7 @@
 5. docs/runtime_logs/latest.txt — 1 行 latest log path
    仅在 Sir 反馈 BUG 时用 Grep, 不要全文 Read
 
-═══ 当前进度快照 (截止 β.4.3 commit 0d62236 / tag v0.32.0-claim-classify) ═══
+═══ 当前进度快照 (截止 β.4.4 commit 7bbd890 / tag v0.33.0-dashboard-integrity) ═══
 
 L0   ✅ INTEGRITY ABSOLUTE 在 PERSONA (历史已有)
 L0.5 ✅ **Session 0 完工** — 7 vocab × ~330 keyword 全量 json + CLI + L7 入口就位
@@ -50,10 +50,11 @@ L4   ✅ **Session 1+2 完工** — ClaimTracer enforce + trace_to_evidence 表�
       Session 2: trace_to_evidence use_vocab=True 走 L1+L2; legacy 路径保 β.2.8.7 回归;
                  time claim 由 SYSTEM CLOCK ±2min 治本 β.4.2-hotfix 死循环 (commit 3ce27b3)
 L5   ✅ 闭环 A 完工 (β.2.9.11 commit 3a89168 + 19 testcase)
-L6   ⚠️ dashboard 信任审计卡有, 但 L4 ClaimTracer 数据未接入 (→ **Session 3 下一项**)
-L7   ❌ LLM-propose / WeeklyReflector 接 audit 未做 (→ **Session 4**)
+L6   ✅ **Session 3 完工** — dashboard 言出必行健康度宽卡 + reader + 阈值
+      (commit 7bbd890 / tag v0.33.0-dashboard-integrity)
+L7   ❌ LLM-propose / WeeklyReflector 接 audit 未做 (→ **Session 4 下一任务**)
 
-92/92 testcase pass (run_id test_20260518_200142_2154), 0 regression.
+93/93 testcase pass (run_id test_20260518_213535_4ad0), 0 regression.
 
 ═══ 你的工作顺序 (严格按此, 不跳序) ═══
 
@@ -130,56 +131,58 @@ L4 enforce ✅ (commit d36e9eb / tag v0.31.1-claim-enforce):
 5. vocab IO 损坏走 seed fallback
 
 ╔═══════════════════════════════════════════════════════════════╗
-║ Session 3 (下一任务) ── L6 dashboard 升级 + 兑现率趋势        ║
+║ Session 3 ✅ 已完工 ── L6 dashboard 言出必行健康度宽卡         ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-1. scripts/jarvis_dashboard.py 加 reader read_integrity_stats()
-   - 读 memory_pool/integrity_audit.jsonl tail (一天 / 七天)
-   - 聚合: 总 claim 数, unverified 数, 类型分布 (Past/Future/State/Recall/Social/Tool),
-           最高频被 ALERT 的话 top 3
-2. 信任审计卡升级显示:
-   - 现卡 (β.2.9.7) 只显 MEMORY_UPDATE 真写入, 新加 ClaimTracer 数据段
-   - 今日: claim N / verify M (M/N%) / unverify K
-   - 7d ASCII chart (mtime tail 多日聚合)
-   - 一键看 'integrity_audit.jsonl tail 20' 按钮
-3. compute_overall_status 加 "言出必行健康度" headline 一栏
-   - 阈值: < 80% verify → 黄 / < 60% → 红
-4. testcase _test_p0_plus_20_beta44_dashboard_integrity_persist.py:
-   - read_integrity_stats() jsonl 解析准确
-   - 损坏 jsonl 行不 crash (fail-safe)
-   - compute_overall_status 阈值边界
+✅ **完工状态 (commit 7bbd890 / tag v0.33.0-dashboard-integrity)**:
+- scripts/jarvis_dashboard.py:
+  - `_safe_read_jsonl_tail` (file seek -512KB 防大文件全 load)
+  - `read_integrity_stats(window, audit_path, stats_path, now_ts)` reader
+  - `_render_integrity` (诊断 + 总数 + kind 分布 + top 3 + 7d ASCII trend)
+  - `card_integrity` 跨 4 列宽卡 (group_obs row 1) + lbl_integrity 标题徽章
+  - `_make_card` 加 columnspan/height kwargs (兼容老 caller)
+  - `compute_overall_status` 加 integrity 入参 + 阈值 (今日 0 绿 / 1-5 黄 / >5 红)
+  - reader bucket-day bug fix (ts 不对齐 00:00 时偏移 1 天)
+  - `print_snapshot` CLI 加言出必行段
+- testcase: tests/_test_p0_plus_20_beta44_dashboard_integrity_persist.py
+            (6 TestClass / 27 测; reader 基本/fail-safe/时间窗/阈值/UI/cross-module)
+- 93/93 全测绿 (run_id test_20260518_213535_4ad0)
 
-预期工时: ~2h, tag v0.33.0-dashboard-integrity.
-
-真机风险点预判 (Sir 设计阶段就该想):
-- jsonl 文件可能 > 100K 条, tail 实现别全 load (用 file seek -N 行)
-- daily/weekly 聚合时区: Sir 在中国, 默认 local time, 不要 UTC
-- dashboard 加新卡片不能崩, 任一 reader 异常都 fail-safe 占位 'data unavailable'
+真机风险点 (Sir 黑箱测试看 TODO.md 头部清单 5 条):
+1. dashboard 卡片 layout 挤压 (group_obs row 1 weight 改了)
+2. 跨夜 trend_7d 偏移 (Sir UTC+8 / time.timezone)
+3. 0 字节 jsonl 文件诊断 (设计决定: 文件存在 = ClaimTracer 跑过)
+4. claim_stats.json 缺失 → verify_rate '--' (Session 4 daemon 待加 hook 留好)
+5. jsonl > 1MB 大文件无回归 (file seek -512KB cap on memory)
 
 ╔═══════════════════════════════════════════════════════════════╗
-║ Session 4 (灵魂级核心) ── L7 LLM-propose 自我修正            ║
+║ Session 4 (下一任务, 灵魂级核心) ── L7 LLM-propose 自我修正    ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-新文件 jarvis_integrity_reflector.py (daemon, 与 ConcernsReflector / WeeklyReflector 同 pattern):
+核心目标: 让 Jarvis 自己反思言行不一 + 提出 vocab/directive 升级建议给 Sir 拍板.
 
-1. _reflect_vocab_gaps()
-   - 扫 7d STM/LTM 找未命中现有 vocab 但语义重要的 token
-   - 用 Gemini-3-Flash LLM 提取候选 vocab → 写各 review queue
-     (response_classify_review.json / tool_intent_review.json / claim_classify_review.json / ...)
-   - Sir 用对应 CLI --review-list 看 → --activate / --reject
+1. 新文件 `jarvis_integrity_reflector.py` (daemon, 与 ConcernsReflector / WeeklyReflector 同 pattern)
+   - 触发: weekly (周日 03:00 idle 时) 或 audit jsonl 累积 > 50 条
+   - 输出: 各 review json (Sir 用对应 CLI --review-list 看 → --activate / --reject)
 
-2. _reflect_integrity_audit()
+2. `_reflect_integrity_audit()`:
    - 扫 7d memory_pool/integrity_audit.jsonl
    - 找 unverified claim 类型分布 + L2 evidence_requirements 漏配口
-   - LLM-propose 新 directive 入 directive_review.json
-   - LLM-propose 新 evidence_kind 入 evidence_req_review.json
-   - Sir scripts/registry_dump.py / evidence_req_dump.py --review-list 看 → 决定
+   - LLM (Gemini-3-Flash) propose:
+     * 新 directive 入 directive_review.json
+     * 新 evidence_kind 入 evidence_req_review.json
+     * 新 claim_classify keyword 入 claim_classify_review.json
 
-3. 触发: weekly (周日 03:00 idle 时) 或 audit 累积 > 50 条触发
+3. `_dump_claim_stats_periodic()`:
+   - 60s tick: dump `_CLAIM_STATS` (in-memory module counter) → memory_pool/claim_stats.json
+   - dashboard L6 verify_rate 从此自动生效 (hook 已留)
+
+4. testcase `_test_p0_plus_20_beta45_integrity_reflector_persist.py`:
+   - daemon tick / propose → review file 入队 / Sir CLI 激活/拒绝 / claim_stats.json 持久化
 
 核心契约: Sir 永远是仲裁人. propose 只入 review, 不自动激活. Sir 拍板才生效.
 
-预期工时: ~6h, tag v0.33.0-integrity-reflector (与 Session 3 合并 tag 或分开都可).
+预期工时: ~6h, tag v0.34.0-integrity-reflector.
 
 ═══ 执行准则 (跨所有 Session) ═══
 
@@ -199,36 +202,32 @@ L4 enforce ✅ (commit d36e9eb / tag v0.31.1-claim-enforce):
 6. 每完成 1 个 Session, 写 TODO.md 滚动 + tag (类似 v0.29.X-<feature>) +
    汇报 Sir (commit 链 + 可立测项).
 
-═══ Session 0 + 1 + 2 已完工 — Session 3 接手位置 ═══
+═══ Session 0 + 1 + 2 + 3 已完工 — Session 4 接手位置 ═══
 
-进窗口先读 AGENTS.md 全文, 然后读 TODO.md (看头部 Session 2 完工段 + 5 个真机风险点),
-然后读 docs/JARVIS_INTEGRITY_STACK.md (看 L6 dashboard 部分).
+进窗口先读 AGENTS.md 全文, 然后读 TODO.md (看头部 Session 3 完工段 + 5 个真机风险点),
+然后读 docs/JARVIS_INTEGRITY_STACK.md (看 L7 LLM-propose 部分).
 
-读完后从 **Session 3 L6 Dashboard 信任卡升级** 开始:
+读完后从 **Session 4 L7 IntegrityReflector daemon** 开始:
 
-1. scripts/jarvis_dashboard.py 加 reader `read_integrity_stats(window='today'|'7d')`:
-   - 读 memory_pool/integrity_audit.jsonl tail (避免全 load, file seek)
-   - 聚合 claim_type 分布 + unverify 率 + top 3 frequent unverified text
-   - 损坏行 fail-safe skip (有 testcase 验)
+1. 新文件 jarvis_integrity_reflector.py (与 ConcernsReflector / WeeklyReflector 同 pattern):
+   - daemon thread, weekly 触发 + audit > 50 累积触发
+   - `_reflect_integrity_audit()`: 扫 7d audit jsonl, LLM propose vocab/directive/evidence_kind
+   - `_dump_claim_stats_periodic()`: 60s tick dump _CLAIM_STATS 模块计数 → memory_pool/claim_stats.json
 
-2. 信任审计卡升级 (在 β.2.9.7 MEMORY_UPDATE 卡片下加新段):
-   - 标题: "言出必行健康度"
-   - 今日 claim/verify/unverify 数 + %
-   - 7d ASCII trend chart
-   - 类型分布 (Past N / Future N / State N / Recall N / Social N / Tool N)
+2. central_nerve 注册新 daemon (类似 ConcernsReflector 注册位置)
 
-3. compute_overall_status 加 headline:
-   - verify_rate >= 80% → "健康" 绿
-   - 60-80% → "留意" 黄
-   - < 60% → "问题" 红
+3. 接 review queue:
+   - directive_review.json (已存在, scripts/registry_dump.py)
+   - evidence_req_review.json (Session 2 已设计 schema)
+   - claim_classify_review.json (Session 2 已设计 schema)
 
-4. testcase: _test_p0_plus_20_beta44_dashboard_integrity_persist.py
-   - 6 类: jsonl 解析 / 损坏行 fail-safe / time window 边界 / 阈值 / 中文渲染 / cross-module
+4. testcase: _test_p0_plus_20_beta45_integrity_reflector_persist.py
+   - 6 类: daemon tick / propose 入队 / Sir CLI 激活拒绝 / claim_stats.json 持久化 / fail-safe / cross-module
 
-5. 跑全测 92+/92+ OK → commit + tag v0.33.0-dashboard-integrity
-6. 预期工时 ~2h.
+5. 跑全测 93+/93+ OK → commit + tag v0.34.0-integrity-reflector
+6. 预期工时 ~6h.
 
-完工后等 Sir 拍板进 Session 4 (L7 LLM-propose) 或实测反馈.
+完工后 INTEGRITY_STACK 7 层全立 (L0-L7), 等 Sir 真机黑箱测试反馈或进 SOUL_DRIVE 推进.
 ```
 
 ---
@@ -243,6 +242,8 @@ L4 enforce ✅ (commit d36e9eb / tag v0.31.1-claim-enforce):
 ## 📦 当前 commit 链 (Agent 接手前必看)
 
 ```
+7bbd890 feat(P0+20-β.4.4): INTEGRITY_STACK Session 3 - L6 dashboard 言出必行健康度宽卡
+012e1b3 docs(P0+20-β.4.3-session2): INTEGRITY_STACK Session 2 done - TODO + KICKOFF roll
 0d62236 feat(P0+20-β.4.3.4): INTEGRITY_STACK Session 2.4 - L1+L2+L4 cross-module testcase + classifier tighten
 3ce27b3 feat(P0+20-β.4.3.3): INTEGRITY_STACK L4 trace_to_evidence rewrite vocab+requirement table-driven
 2ea4504 feat(P0+20-β.4.3.2): INTEGRITY_STACK L2 Evidence Requirements - table + CLI
@@ -253,7 +254,7 @@ d36e9eb feat(P0+20-β.4.1): INTEGRITY_STACK Session 1 - L4 ClaimTracer enforce +
 ... (更早 commit 见 git log)
 ```
 
-## 🎯 验收标准 (Session 2 完工后跑)
+## 🎯 验收标准 (Session 3 完工后跑)
 
 Sir 跑下面 grep 命令应该 **0 命中** (说明所有 vocab 已迁离 .py):
 
