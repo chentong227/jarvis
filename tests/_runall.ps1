@@ -119,7 +119,8 @@ $tests = @(
     "_test_p0_plus_20_beta297_inconsistency_subject",
     "_test_p0_plus_20_beta297_timeanchor",
     "_test_p0_plus_20_beta297_care_live",
-    "_test_p0_plus_20_beta298_dashboard"
+    "_test_p0_plus_20_beta298_dashboard",
+    "_test_p0_plus_20_beta299_commit_confidence"
 )
 
 foreach ($t in $tests) {

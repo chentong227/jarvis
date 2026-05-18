@@ -598,6 +598,55 @@ class CommitmentWatcher(threading.Thread):
                 pass
             return
 
+        # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:43 实测痛点: "我剪辑完这个视频就行"
+        # 被注册成承诺 + 兜底 +1h (10:43 + 1h = 11:43 错误闹钟). 真问题: 这是个
+        # 未来动作陈述, 但**没有具体时间 + 没有 predicate**, 不应该走 hard
+        # Commitments DB (会到点真出声扰民).
+        # 准则 6 架构修 (不针对"就行/完了"这种关键词硬编码):
+        #   加 "时间确定性" 闸门 — 任何承诺必须有 EITHER:
+        #     (a) 可解析的 deadline_str (走 _smart_parse_deadline 出非 0)
+        #     (b) 不为空的 predicate (走 evaluate 路径)
+        #   都没 → 拒绝注册 hard, 转 PromiseLog soft 记一笔 (Sir 仍能看到, 不闹).
+        # 例外:
+        #   conditional_reminder 必带 predicate (上面已强校), 此处不重复.
+        #   is_future_task_confirmed = True 时信任上游 Time Hook (已解析过).
+        if commit_type != 'conditional_reminder' and not is_future_task_confirmed:
+            _has_time_anchor = False
+            if deadline_str:
+                try:
+                    _test_ts = self._smart_parse_deadline(
+                        deadline_str, description, user_text or '')
+                    _has_time_anchor = bool(_test_ts and _test_ts > 0)
+                except Exception:
+                    _has_time_anchor = False
+            _has_predicate = predicate is not None
+
+            if not _has_time_anchor and not _has_predicate:
+                # 转 PromiseLog soft (Sir 仍知道发生了, 不到点出声)
+                try:
+                    from jarvis_promise_log import get_default_log
+                    _log = get_default_log()
+                    _log.register(
+                        description=description,
+                        kind='soft',
+                        deadline_str='',
+                        jarvis_reply='',
+                        turn_id='',
+                        lang='zh' if re.search(r'[\u4e00-\u9fa5]', description) else 'en',
+                    )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import bg_log as _cw_bg_log
+                    _cw_bg_log(
+                        f"📝 [CommitmentWatcher] 🛡️ 时间确定性闸门: "
+                        f"'{description[:60]}' 无具体时间/predicate → "
+                        f"跳过 hard 注册, 转 PromiseLog soft (不到点闹)"
+                    )
+                except Exception:
+                    pass
+                return
+
         with self._lock:
             # 🩹 [β.2.9.1.1 / 2026-05-18] Sir 01:14 反馈: deadline='now' 被默认 +3600 注册.
             # 准则 6 (拒绝硬编码) 反例 — 默认 +1h 是凭空猜测.
