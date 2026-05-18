@@ -830,9 +830,16 @@ class ProactiveCareEngine(threading.Thread):
         # β.2.8 阶段已并行跑 dry_run ≥ 1d 验证 urgency 算法稳定 + cooldown 不刷屏
         # + 准则 6 主体判定 + InconsistencyWatcher 三道防御 (β.2.9.7) 都到位.
         # Sir 可通过 JARVIS_PROACTIVE_CARE_DRY_RUN=1 临时 opt-in dry 模式调试.
-        self.dry_run: bool = os.environ.get(
-            'JARVIS_PROACTIVE_CARE_DRY_RUN', '0'
-        ).strip() == '1'
+        # 向后兼容: 旧 env JARVIS_PROACTIVE_CARE_LIVE=1 也强制 LIVE (Sir .env 可能设过).
+        _live_env = os.environ.get('JARVIS_PROACTIVE_CARE_LIVE', '').strip()
+        _dry_env = os.environ.get('JARVIS_PROACTIVE_CARE_DRY_RUN', '').strip()
+        if _dry_env == '1':
+            self.dry_run = True
+        elif _live_env == '1':
+            self.dry_run = False
+        else:
+            # 默认: LIVE (β.2.9.7 切换)
+            self.dry_run = False
         self.start_ts: float = time.time()
         self._tick_count = 0
         self._last_tick_log_at = 0.0

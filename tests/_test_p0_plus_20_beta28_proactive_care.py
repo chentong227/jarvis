@@ -727,13 +727,32 @@ class TestBeta32ExtraSensorRules(unittest.TestCase):
 
 
 class TestDryRunDefault(unittest.TestCase):
-    def test_dry_run_default_when_env_unset(self):
+    def setUp(self):
+        # 🩹 [β.2.9.7 / 2026-05-18] dry_run 默认从 ON 改为 OFF (LIVE).
+        # 清两个 env 测真默认行为.
+        for key in ('JARVIS_PROACTIVE_CARE_LIVE',
+                    'JARVIS_PROACTIVE_CARE_DRY_RUN'):
+            os.environ.pop(key, None)
+
+    def test_live_by_default_when_no_env_set(self):
+        """β.2.9.7 切换: 默认 LIVE, env 都不设时 dry_run=False"""
         from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine
-        os.environ.pop('JARVIS_PROACTIVE_CARE_LIVE', None)
         reset_default_engine_for_test()
         w = MagicMock()
         e = get_default_engine(w, None)
-        self.assertTrue(e.dry_run, "默认必须 dry-run, 不污染生产")
+        self.assertFalse(
+            e.dry_run,
+            "β.2.9.7 起 ProactiveCare 默认 LIVE (env 都不设时 dry_run=False)"
+        )
+
+    def test_dry_run_opt_in_via_new_env(self):
+        """新 env JARVIS_PROACTIVE_CARE_DRY_RUN=1 强制 dry-run."""
+        from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine
+        os.environ['JARVIS_PROACTIVE_CARE_DRY_RUN'] = '1'
+        reset_default_engine_for_test()
+        w = MagicMock()
+        e = get_default_engine(w, None)
+        self.assertTrue(e.dry_run, "JARVIS_PROACTIVE_CARE_DRY_RUN=1 应进 dry")
 
     def test_live_mode_when_env_set(self):
         from jarvis_proactive_care import reset_default_engine_for_test, get_default_engine
