@@ -3229,11 +3229,22 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 _ttid = _TC.get_turn_id() or ''
             except Exception:
                 _ttid = ''
+            # 🩹 [β.4.3.3 / 2026-05-18] L1+L2 表驱接入: system_clock + ltm_context
+            # 治本 β.4.2-hotfix 教训: time claim 现可通过 SYSTEM CLOCK ±2min verify.
+            # ltm_context 只取本轮 prompt 注入的 LTM 段 (避免占内存).
+            _now_clock = time.time()
+            _ltm_ctx_str = ''
+            try:
+                _ltm_ctx_str = str(getattr(self, '_last_ltm_context', '') or '')[:2000]
+            except Exception:
+                _ltm_ctx_str = ''
             _claim_result = trace_reply(
                 jarvis_reply=final_reply,
                 tool_results=list(_tool_results) if '_tool_results' in dir() else [],
                 stm_recent=list(getattr(self.jarvis, 'short_term_memory', []) or []),
                 turn_id=_ttid,
+                system_clock=_now_clock,
+                ltm_context=_ltm_ctx_str,
             )
             update_stats(_claim_result)
         except Exception:

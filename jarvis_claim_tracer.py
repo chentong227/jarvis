@@ -168,21 +168,163 @@ def extract_claims(text: str) -> List[Claim]:
 # Trace evidence
 # ============================================================
 
-def trace_to_evidence(claim: Claim, tool_results: List[str],
-                       stm_recent: List[Dict]) -> bool:
-    """看 claim 是否能 trace 到 evidence. 返回 True = 找到 trace.
+# 🩹 [β.4.3.3 / 2026-05-18] PromiseLog 标签抽取 (Future tense claim evidence)
+# 主脑 emit <PROMISE>...</PROMISE> → PromiseLog 写入 → 当作 Future evidence.
+# 逻辑上完整 promise tag schema 在 jarvis_promise_log.py / jarvis_directives.py;
+# 这里只抽 inner text 供 L2 evidence_kind 'promise_log_recorded' 查表.
+_PAT_PROMISE_TAG = re.compile(r'<PROMISE[^>]*>(.*?)</PROMISE>',
+                                re.IGNORECASE | re.DOTALL)
 
-    优先级:
-      1. uncertainty marker — 已标
-      2. past_action 类: tool_results 必含 ✅ marker (β.3.0 BUG#4)
-      3. tool_results 含该字串
-      4. STM 含该字串 (Sir 原话或 jarvis 之前 reply)
+# 🩹 [β.4.3.3] time claim 解析 — 'HH:MM(:SS)?' / 'H:MM am/pm' 两种格式
+_PAT_TIME_PARSE_HHMM = re.compile(r'\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b')
+_PAT_TIME_PARSE_AMPM = re.compile(
+    r'\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)\b')
+
+
+def _extract_promise_tags(reply: str) -> List[str]:
+    """从 reply 里抽 <PROMISE>...</PROMISE> inner text list. 空/无返 []."""
+    if not reply:
+        return []
+    try:
+        return [m.group(1).strip() for m in _PAT_PROMISE_TAG.finditer(reply)
+                if m.group(1) and m.group(1).strip()]
+    except Exception:
+        return []
+
+
+def _parse_time_to_hm(text: str) -> Optional[tuple]:
+    """从 text 里抽第一个时间字段 → (hour, minute) 24h. 失败返 None.
+
+    支持:
+      - 'HH:MM' / 'HH:MM:SS' (24h)
+      - 'H[:MM] am/pm' (美式)
+      - 不合法范围 返 None (如 '99:99')
     """
-    if claim.has_uncertainty:
-        claim.trace_to = 'uncertainty'
-        return True
+    if not text:
+        return None
+    m = _PAT_TIME_PARSE_HHMM.search(text)
+    if m:
+        try:
+            h = int(m.group(1))
+            mn = int(m.group(2))
+        except (TypeError, ValueError):
+            return None
+        if 0 <= h < 24 and 0 <= mn < 60:
+            return (h, mn)
+        return None
+    m = _PAT_TIME_PARSE_AMPM.search(text)
+    if m:
+        try:
+            h = int(m.group(1))
+            mn = int(m.group(2) or '0')
+        except (TypeError, ValueError):
+            return None
+        if not (1 <= h <= 12 and 0 <= mn < 60):
+            return None
+        ampm = m.group(3).lower()
+        if ampm == 'pm' and h < 12:
+            h += 12
+        elif ampm == 'am' and h == 12:
+            h = 0
+        return (h, mn)
+    return None
 
-    # 🩹 [β.3.0 BUG#4 / 2026-05-18] past_action 必须 tool 真成功
+
+def _check_time_within_2min(claim: 'Claim',
+                              system_clock: Optional[float]) -> bool:
+    """time claim 与 system_clock (epoch float) 的 diff <= 2 min. midnight wrap 兼."""
+    if system_clock is None:
+        return False
+    hm = _parse_time_to_hm(claim.text or '')
+    if hm is None:
+        return False
+    try:
+        lt = time.localtime(float(system_clock))
+    except (TypeError, ValueError, OSError):
+        return False
+    cur_mins = lt.tm_hour * 60 + lt.tm_min
+    claim_mins = hm[0] * 60 + hm[1]
+    diff = abs(cur_mins - claim_mins)
+    diff = min(diff, 1440 - diff)  # midnight wrap
+    return diff <= 2
+
+
+# 🩹 [β.4.3.3 / 2026-05-18] 老 trace_to label alias 保 β.2.8.7 testcase 不破
+# β.2.8.7 testcase 直接 assert claim.trace_to == 'tool' / 'stm' / 'tool_success'.
+# 新 vocab 路径用 evidence_kind canonical 名 (tool_results_any / stm_match / ...).
+# 通过 alias 让 trace_to 继续返回老短名, evidence_kind 全名记到 trace_what 后缀.
+_LEGACY_TRACE_LABEL = {
+    'tool_results_success': 'tool_success',
+    'tool_results_any': 'tool',
+    'stm_match': 'stm',
+    'ltm_match': 'ltm',
+    'system_clock_within_2min': 'system_clock',
+    'promise_log_recorded': 'promise_log',
+    'uncertainty_marker_nearby': 'uncertainty',
+    'none': 'none',
+}
+
+
+def _check_evidence_kind(kind: str, claim: 'Claim',
+                           tool_results: List, stm_recent: List,
+                           system_clock: Optional[float],
+                           ltm_context: str,
+                           promise_log_tags: Optional[List[str]]) -> bool:
+    """单个 evidence_kind 查表 dispatcher. 未识别的 kind 返 False (fail-safe)."""
+    if kind == 'none':
+        return True
+    if kind == 'uncertainty_marker_nearby':
+        return bool(getattr(claim, 'has_uncertainty', False))
+    needle = (getattr(claim, 'text', '') or '').lower()
+    nc = re.sub(r'\s+', '', needle) if needle else ''
+    if kind == 'tool_results_success':
+        for tr in tool_results or []:
+            if '✅' in str(tr):
+                return True
+        return False
+    if kind == 'tool_results_any':
+        if not needle:
+            return False
+        for tr in tool_results or []:
+            tr_l = str(tr).lower()
+            if needle in tr_l or (nc and nc in re.sub(r'\s+', '', tr_l)):
+                return True
+        return False
+    if kind == 'stm_match':
+        if not needle:
+            return False
+        for entry in (stm_recent or [])[-10:]:
+            try:
+                blob = (str(entry.get('user', '')) + ' '
+                        + str(entry.get('jarvis', ''))).lower()
+            except AttributeError:
+                continue
+            if needle in blob or (nc and nc in re.sub(r'\s+', '', blob)):
+                return True
+        return False
+    if kind == 'ltm_match':
+        if not needle or not ltm_context:
+            return False
+        return needle in str(ltm_context).lower()
+    if kind == 'system_clock_within_2min':
+        return _check_time_within_2min(claim, system_clock)
+    if kind == 'promise_log_recorded':
+        if not promise_log_tags or not needle:
+            return False
+        for tag in promise_log_tags:
+            if needle in str(tag).lower():
+                return True
+        return False
+    return False  # 未识别 kind: fail-safe 返 False
+
+
+def _trace_via_legacy(claim: 'Claim', tool_results: List,
+                       stm_recent: List) -> bool:
+    """老硬编码路径 (β.2.8.7 + β.3.0 BUG#4 原逻辑). 仅 use_vocab=False 走.
+
+    保留预防回归: testcase 可显式调 use_vocab=False 验证老行为.
+    """
+    # past_action 必须 tool 真成功 (β.3.0 BUG#4)
     if claim.kind == 'past_action':
         for tr in tool_results or []:
             tr_s = str(tr)
@@ -190,30 +332,112 @@ def trace_to_evidence(claim: Claim, tool_results: List[str],
                 claim.trace_to = 'tool_success'
                 claim.trace_what = tr_s[:100]
                 return True
-        # past_action 没有 ✅ → 言行不一, 不 verify (不用 STM fallback)
         return False
-
-    needle = claim.text.lower()
+    needle = (claim.text or '').lower()
     needle_compact = re.sub(r'\s+', '', needle)
-
-    # tool result
     for tr in tool_results or []:
         tr_l = str(tr).lower()
         if needle in tr_l or needle_compact in re.sub(r'\s+', '', tr_l):
             claim.trace_to = 'tool'
             claim.trace_what = str(tr)[:100]
             return True
-
-    # STM (含 user + jarvis 历史 reply)
     for entry in (stm_recent or [])[-10:]:
-        blob = (str(entry.get('user', '')) + ' ' +
-                str(entry.get('jarvis', ''))).lower()
+        try:
+            blob = (str(entry.get('user', '')) + ' '
+                    + str(entry.get('jarvis', ''))).lower()
+        except AttributeError:
+            continue
         if needle in blob or needle_compact in re.sub(r'\s+', '', blob):
             claim.trace_to = 'stm'
             claim.trace_what = blob[:100]
             return True
-
     return False
+
+
+def _trace_via_vocab(claim: 'Claim', tool_results: List, stm_recent: List,
+                       system_clock: Optional[float], ltm_context: str,
+                       promise_log_tags: Optional[List[str]],
+                       classify_vocab_path: Optional[str] = None,
+                       evidence_vocab_path: Optional[str] = None) -> bool:
+    """新 L1+L2 表驱 evidence 路径 (β.4.3.3 默认).
+
+    1. L1 classify 出 claim_type
+    2. L2 get_requirements -> evidence_kinds list
+    3. 空 list (Unknown / 补不到) → fail-safe 返 True 不 audit
+    4. 逐 evidence_kind 调 _check_evidence_kind, 任一命中 → True
+    5. 全未命中 → False
+    """
+    try:
+        from jarvis_claim_classifier import classify as _classify
+        from jarvis_evidence_requirements import get_requirements as _get_req
+    except Exception:
+        # L1/L2 import 失败 → 退走老路径 (defense in depth)
+        return _trace_via_legacy(claim, tool_results, stm_recent)
+
+    try:
+        claim_type = _classify(claim.text or '', claim.kind,
+                                  vocab_path=classify_vocab_path)
+        required = _get_req(claim_type, vocab_path=evidence_vocab_path)
+    except Exception:
+        return _trace_via_legacy(claim, tool_results, stm_recent)
+
+    # fail-safe: Unknown / 空 requirements → 视为 verified (不 audit, 防死循环)
+    if not required:
+        claim.trace_to = 'no_requirement_failsafe'
+        claim.trace_what = f'claim_type={claim_type}'
+        return True
+
+    for ek in required:
+        try:
+            ok = _check_evidence_kind(ek, claim, tool_results, stm_recent,
+                                         system_clock, ltm_context,
+                                         promise_log_tags)
+        except Exception:
+            ok = False
+        if ok:
+            # β.4.3.3: 用 legacy alias 保 β.2.8.7 testcase 老断言不破
+            # canonical evidence_kind name 记到 trace_what 后缀 (诊断用)
+            claim.trace_to = _LEGACY_TRACE_LABEL.get(ek, ek)
+            claim.trace_what = f'claim_type={claim_type} evidence_kind={ek}'
+            return True
+    return False
+
+
+def trace_to_evidence(claim: 'Claim', tool_results: List,
+                       stm_recent: List,
+                       system_clock: Optional[float] = None,
+                       ltm_context: str = '',
+                       promise_log_tags: Optional[List[str]] = None,
+                       use_vocab: bool = True,
+                       classify_vocab_path: Optional[str] = None,
+                       evidence_vocab_path: Optional[str] = None) -> bool:
+    """看 claim 是否能 trace 到 evidence. 返 True = 找到 trace.
+
+    [β.4.3.3 / 2026-05-18] L1 + L2 表驱 默认 (use_vocab=True). Legacy 保留.
+
+    优先级:
+      1. uncertainty marker (已标) — 两路径都看
+      2. use_vocab=True → _trace_via_vocab (表驱)
+      3. use_vocab=False → _trace_via_legacy (老硬编码路径, 回归验证)
+
+    防恶性耦合 BUG (β.4.2-hotfix 教训):
+      - 新参默认值 → 老调用方 (传 3 positional) 零修改
+      - L1/L2 import 失败 → 退走 legacy
+      - L1/L2 vocab 损坏 → seed fallback (在 L1/L2 内部处理)
+      - Unknown 类 / 空 requirements → fail-safe verified (不 audit 不死循环)
+    """
+    if claim.has_uncertainty:
+        claim.trace_to = 'uncertainty'
+        return True
+    if use_vocab:
+        return _trace_via_vocab(
+            claim, tool_results, stm_recent,
+            system_clock=system_clock, ltm_context=ltm_context,
+            promise_log_tags=promise_log_tags,
+            classify_vocab_path=classify_vocab_path,
+            evidence_vocab_path=evidence_vocab_path,
+        )
+    return _trace_via_legacy(claim, tool_results, stm_recent)
 
 
 # ============================================================
@@ -223,7 +447,12 @@ def trace_to_evidence(claim: Claim, tool_results: List[str],
 def trace_reply(jarvis_reply: str,
                   tool_results: Optional[List[str]] = None,
                   stm_recent: Optional[List[Dict]] = None,
-                  turn_id: str = '') -> dict:
+                  turn_id: str = '',
+                  system_clock: Optional[float] = None,
+                  ltm_context: str = '',
+                  use_vocab: bool = True,
+                  classify_vocab_path: Optional[str] = None,
+                  evidence_vocab_path: Optional[str] = None) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -231,6 +460,10 @@ def trace_reply(jarvis_reply: str,
       tool_results: 当轮所有 fast_call 返回的 result strings (空 list 也 ok)
       stm_recent: 当前 STM (last ~10 entries) 含 user + jarvis 历史
       turn_id: trace id 给 log
+      system_clock: [β.4.3.3] 当前 epoch float, 供 time claim verify (None → time claim 走不了 SYSTEM CLOCK 路径)
+      ltm_context: [β.4.3.3] 本轮 prompt 注入的 LTM 串, 供 ltm_match
+      use_vocab: [β.4.3.3] True 默认 → L1+L2 表驱; False → legacy 老硬编码
+      classify_vocab_path / evidence_vocab_path: testcase 注入用, 默认走全局
 
     Returns:
       {n_claims, n_verified, n_unverified, unverified_examples}
@@ -245,12 +478,20 @@ def trace_reply(jarvis_reply: str,
 
     tool_results = tool_results or []
     stm_recent = stm_recent or []
+    # β.4.3.3: 抽 PromiseLog tags 一次 (per-reply, 不该每 claim 抽 1 次)
+    promise_log_tags = _extract_promise_tags(jarvis_reply) if use_vocab else None
 
     n_verified = 0
     n_unverified = 0
     unverified_examples: List[str] = []
     for c in claims:
-        ok = trace_to_evidence(c, tool_results, stm_recent)
+        ok = trace_to_evidence(
+            c, tool_results, stm_recent,
+            system_clock=system_clock, ltm_context=ltm_context,
+            promise_log_tags=promise_log_tags, use_vocab=use_vocab,
+            classify_vocab_path=classify_vocab_path,
+            evidence_vocab_path=evidence_vocab_path,
+        )
         if ok:
             n_verified += 1
         else:
