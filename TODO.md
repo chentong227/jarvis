@@ -10,9 +10,14 @@
 
  工作板
 
-**更新时间**：2026-05-18 12:25（**🚀 P0+20-β.2.9.10 完工 / FAST_CALL 异步治本工具卡顿 (Sir 11:09 痛点架构修)**）。
+**更新时间**：2026-05-18 12:50（**🚀 P0+20-β.2.9.11 完工 / 灵魂闭环 A + INTEGRITY_STACK 7 层架构立项**）。
 
-**今天累计 (5/18 09:00-12:25)**：15 commits / 79/79 testcase 全绿 / 新增 ~140 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async`。
+**今天累计 (5/18 09:00-12:50)**：18 commits / 80/80 testcase 全绿 / 新增 ~160 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop`(待打)。
+
+**β.2.9.11 三大成果**:
+- **L5 灵魂闭环 A**: 贾维斯关心 → 我承诺 → 履约/违约 → 反馈 concern.severity (准则 6 通用 vocab 驱动, 不针对 sleep 硬编码, 自动覆盖 reflector 任意新 concern)
+- **INTEGRITY_STACK 7 层架构立项**: `docs/JARVIS_INTEGRITY_STACK.md` — 与 INTEGRITY_ABSOLUTE + SOUL_DRIVE 并列第三条灵魂级模块. 推进路线 4 个 session.
+- **cosmetic 修**: "y co" 截断 + skip 刷屏 + ReturnSentinel 模板兜底删 + return_greeting 客套引导
 
 **最重大突破** — 诚信审计治本: Sir 10:51 发现 Jarvis "我已更新记录" 是空头话 (CorrectionMemory 表 84h 0 写入). 修法 5 件 (准则 5 言出必行 + 准则 6 不硬编码):
 - **A**: directive `memory_update_honesty` 拦"已更新"假话 (除非真 emit MEMORY_UPDATE)
@@ -45,6 +50,8 @@
 | bcaa650 | β.2.9.9-集成 | Phase D 焦点 + 诚信 ABCDE + 工具流不卡 + dashboard 集成主脑 |
 | 6c8df92 | β.2.9.10 | ReturnSentinel 模板兜底删 + return_greeting directive 正向引导避免 'Welcome back' 客套 |
 | 128d688 | β.2.9.10-async | FAST_CALL 软超时异步治本工具卡顿 — ThreadPool + 1.5s 超时 + drain pending 注入 |
+| 1e4b603 | β.2.9.11 | snippet "y co" 美化 + ProactiveCare skip 日志节流 |
+| 3a89168 | β.2.9.11 | 灵魂闭环 A 完工 + INTEGRITY_STACK 7 层架构立项 doc |
 
 **Sir 重启可立测 8 项**:
 1. `scripts\jarvis_dashboard.cmd` (双击) — 中文看板, 三大块 + 真按钮 + 信任审计卡
@@ -56,12 +63,18 @@
 7. 说"我剪辑完视频就行" — 时间确定性闸门应拒注册 hard commitment, 转 PromiseLog soft (不到点闹)
 8. 真启 24h 不重启 — InconsistencyWatcher/Curiosity/ProactiveCare 三个 daemon 健康
 
-**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → 看 Sir 实测反馈 → 优先级:
-- ✅ FAST_CALL 异步治本 (β.2.9.10 已完工)
-- 🟡 inside_joke dedup 失效修 (Sir 之前提"overbearing"3 次)
-- 🟡 LLM 二次判 correction (FeedbackTracker 升级 Phase 2)
-- 🟡 get_dynamic_wake_response 仍用模板 (Sir 喊 Jarvis 即时响应路径 — 升 LLM 较复杂, 留下轮)
-- 🟢 Skill Pack 应用控制 (Cursor/Premiere/Excel))
+**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → 看 Sir 实测反馈 → 优先级:
+
+🔴 **INTEGRITY_STACK Session 1 收尾** — L4 ClaimTracer 从 trace 升级 enforce:
+   - 把 unverified claim 记入 `memory_pool/integrity_audit.jsonl`
+   - 下一轮 `_assemble_prompt` 头部 prepend "[INTEGRITY ALERT] 上一轮 X claim 未 verify, 撤回或补 evidence"
+   - 主脑被强制 acknowledge 上轮 unverified
+
+🔴 INTEGRITY_STACK Session 2 — L1 Claim 分类器 + L2 Evidence 要求中央表
+
+🟡 dedup 失效 (overbearing 3 次重复)
+🟡 LLM 二次判 correction (FeedbackTracker Phase 2)
+🟢 Skill Pack 应用控制 (Cursor/Premiere/Excel))
 
 ---
 
