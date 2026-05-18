@@ -1,0 +1,106 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T13:15:00",
+    "purpose": "INTEGRITY_STACK L0.5 Dynamic Vocab Substrate — tool_overture directive 触发 vocab (准则 6.5)",
+    "source_origin": "迁自 jarvis_directives.py:_TOOL_INTENT_PATTERNS (β.2.9.9 项)",
+    "edit_via": "scripts/tool_intent_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector (未来) propose 新 keyword 入 review state",
+    "consumer": "jarvis_directives.py:_trigger_tool_overture → get_tool_intent_patterns()"
+  },
+  "patterns": [
+    {
+      "id": "device_control_zh",
+      "category": "device_control",
+      "keywords": [
+        "打开",
+        "关闭",
+        "启动",
+        "停止",
+        "播放",
+        "暂停",
+        "切换",
+        "调高",
+        "调低",
+        "调到",
+        "调整",
+        "设置",
+        "设为",
+        "改成",
+        "改为",
+        "静音",
+        "取消静音"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779080100.0,
+      "note": "设备控制中文动词 — 触发主脑在 FAST_CALL 前讲过渡句"
+    },
+    {
+      "id": "file_ops_zh",
+      "category": "file_ops",
+      "keywords": [
+        "保存",
+        "新建",
+        "删除",
+        "复制",
+        "移动",
+        "改名",
+        "打开文件"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779080100.0,
+      "note": "文件操作中文动词"
+    },
+    {
+      "id": "search_query_zh",
+      "category": "search_query",
+      "keywords": [
+        "搜",
+        "查",
+        "找",
+        "看一下",
+        "看看",
+        "帮我"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779080100.0,
+      "note": "搜索 / 查询中文动词"
+    },
+    {
+      "id": "actions_en",
+      "category": "actions",
+      "keywords": [
+        "open",
+        "close",
+        "launch",
+        "kill",
+        "play",
+        "pause",
+        "toggle",
+        "mute",
+        "unmute",
+        "turn off",
+        "turn on",
+        "set",
+        "adjust",
+        "save",
+        "create",
+        "delete",
+        "copy",
+        "move",
+        "rename",
+        "search",
+        "find",
+        "lookup",
+        "pull up"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779080100.0,
+      "note": "ASCII 工具动词 (en) — 同时兼应 EN/ZH 领域"
+    }
+  ]
+}

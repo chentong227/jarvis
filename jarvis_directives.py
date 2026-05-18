@@ -668,7 +668,13 @@ def _trigger_memory_update_honesty(ctx: DirectiveContext) -> bool:
 # 要求"全部走主脑". 改架构: 用 directive 教主脑在 FAST_CALL 前自然生成 1 句
 # 过渡话, 主脑生成的话被 splitter 切走 push 进 audio_queue → tool 执行期间
 # Sir 听到真自然话, 不卡顿. 准则 6 完全主脑自由发挥, 不写句式锁.
-_TOOL_INTENT_PATTERNS = (
+#
+# 🩹 [P0+20-β.3.0-vocab1 / 2026-05-18] Sir 准则 6.5 升级: vocab 不能硬编码 in py.
+# 迁 memory_pool/tool_intent_vocab.json + scripts/tool_intent_dump.py CLI:
+#   - py 仅留 _SEED_TOOL_INTENT_PATTERNS 作 fallback (json 损坏 / 首次启动)
+#   - get_tool_intent_patterns() 带 mtime cache, 文件变自动 reload
+#   - INTEGRITY_STACK L7 (未来) WeeklyReflector 可 propose 新 keyword 入 review
+_SEED_TOOL_INTENT_PATTERNS = (
     # 设备控制
     '打开', '关闭', '启动', '停止', '播放', '暂停', '切换', '调高', '调低',
     '调到', '调整', '设置', '设为', '改成', '改为', '静音', '取消静音',
@@ -683,17 +689,66 @@ _TOOL_INTENT_PATTERNS = (
     'search', 'find', 'lookup', 'pull up',
 )
 
+_TOOL_INTENT_VOCAB_PATH = os.path.join('memory_pool', 'tool_intent_vocab.json')
+_TOOL_INTENT_PATTERNS_CACHE: Optional[tuple] = None
+_TOOL_INTENT_PATTERNS_MTIME: float = 0.0
+
+
+def _load_tool_intent_patterns_from_json() -> Optional[tuple]:
+    """从持久化 json 加载 active pattern 的 keyword 扁平 tuple. 失败返 None 走 fallback."""
+    if not os.path.exists(_TOOL_INTENT_VOCAB_PATH):
+        return None
+    try:
+        with open(_TOOL_INTENT_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out: List[str] = []
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            kws = p.get('keywords') or []
+            for k in kws:
+                if isinstance(k, str) and k:
+                    out.append(k)
+        return tuple(out)
+    except Exception:
+        return None
+
+
+def get_tool_intent_patterns() -> tuple:
+    """🩹 [P0+20-β.3.0-vocab1] 带 file mtime cache, json 文件变了自动 reload.
+    Sir 用 scripts/tool_intent_dump.py 改 json → 下次 directive 装配即生效.
+    """
+    global _TOOL_INTENT_PATTERNS_CACHE, _TOOL_INTENT_PATTERNS_MTIME
+    try:
+        mtime = os.path.getmtime(_TOOL_INTENT_VOCAB_PATH) if os.path.exists(
+            _TOOL_INTENT_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _TOOL_INTENT_PATTERNS_CACHE is None or mtime > _TOOL_INTENT_PATTERNS_MTIME:
+        loaded = _load_tool_intent_patterns_from_json()
+        if loaded is not None:
+            _TOOL_INTENT_PATTERNS_CACHE = loaded
+        else:
+            _TOOL_INTENT_PATTERNS_CACHE = _SEED_TOOL_INTENT_PATTERNS
+        _TOOL_INTENT_PATTERNS_MTIME = mtime
+    return _TOOL_INTENT_PATTERNS_CACHE
+
 
 def _trigger_tool_overture(ctx: DirectiveContext) -> bool:
     """Sir 像在请求工具动作 → 注入"FAST_CALL 前先讲过渡句"指令.
 
     准则 6 vocab 驱动 — 不针对每种工具硬编码, 看 user_input 是否含
     action verb (打开/关闭/搜/查 等). 命中 → 主脑被提醒不要 silent execute.
+    准则 6.5 持久化 — vocab 在 memory_pool/tool_intent_vocab.json, 不在 py 写死.
     """
     if not ctx.user_input:
         return False
     t = ctx.user_input.lower().strip()
-    return any(w in t for w in _TOOL_INTENT_PATTERNS)
+    return any(w in t for w in get_tool_intent_patterns())
 
 
 # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09: dashboard 集成主脑 — 模糊语义启动
