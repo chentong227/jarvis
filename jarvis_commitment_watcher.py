@@ -261,6 +261,167 @@ class CommitmentWatcher(threading.Thread):
                             pass
                     return
 
+    # 🩹 [β.2.9.7 / 2026-05-18] Sir 08:43 实测痛点 (jarvis_20260518_084313.log):
+    # 4 条 "I will sleep at 11" / "我11点睡觉" / "I'll go to bed by midnight" /
+    # "I will go to sleep at 11" 全部 deadline_str='' 不可解析 → 兜底 +1h.
+    # 根因: 旧 _parse 只懂 hh:mm / tonight / tomorrow / in N min, 不懂:
+    #   - 单数字 + 上下文语义 ("11" + sleep → 23:00)
+    #   - 模糊时段词 ("midnight" / "noon" / "深夜" / "早上")
+    #   - "X pm" / "X am" 显式 AM/PM
+    # 修 (准则 6 — 不写关键词 if 链, 用 vocab 表 + 通用语义推断):
+    #   _FUZZY_TIME_VOCAB: 模糊词 → 默认 (h, m)
+    #   _SLEEP_VOCAB / _WAKE_VOCAB / _DAYTIME_VOCAB: 语义类别 → AM/PM 倾向
+    #   _infer_hour_from_context(): 单数字 hour + 上下文 → 24h hour
+    #   _smart_parse_deadline(): 主入口, 替代 add_commitment 里 4 段 if-elif
+
+    _FUZZY_TIME_VOCAB = {
+        'midnight': (0, 0), 'noon': (12, 0),
+        'tonight': (22, 0), 'late night': (23, 30),
+        'morning': (8, 0), 'afternoon': (15, 0),
+        'evening': (19, 0), 'night': (22, 0),
+        '半夜': (0, 0), '凌晨': (1, 30),
+        '中午': (12, 0), '今晚': (22, 0), '今夜': (22, 0),
+        '早上': (8, 0), '清晨': (6, 30), '一早': (7, 0),
+        '上午': (9, 0), '下午': (15, 0),
+        '傍晚': (18, 0), '黄昏': (18, 30),
+        '晚上': (20, 0), '深夜': (23, 30), '夜里': (22, 0),
+    }
+    _SLEEP_VOCAB = ('sleep', 'bed', 'bedtime', 'nap', 'rest', 'turn in',
+                    'crash', 'goodnight', 'tired',
+                    '睡', '上床', '关灯', '休息', '躺', '困', '歇会')
+    _WAKE_VOCAB = ('wake', 'up', 'morning', 'breakfast', 'rise', 'alarm',
+                   '起床', '早上', '早餐', '醒', '起来')
+    _DAYTIME_VOCAB = ('dinner', 'lunch', 'supper', 'meeting',
+                      '晚饭', '晚餐', '午饭', '午餐', '会议', '下午茶')
+
+    def _infer_hour_from_context(self, hour: int, ctx: str, now_ts: float) -> int:
+        """单数字 hour (0-23) + 上下文 → 24h hour. 准则 6: vocab 驱动, 不硬编码 if 链.
+
+        逻辑: 含 sleep 词 + hour 1-11 → +12 (晚 PM); 含 wake 词 → 保留 AM;
+        含 daytime 词 + hour 5-11 → +12 (下午饭); 默认看当前时段推断.
+        """
+        if hour < 0 or hour > 23:
+            return max(0, min(23, hour))
+        ctx_l = ctx.lower()
+        in_sleep = any(w in ctx_l for w in self._SLEEP_VOCAB)
+        in_wake = any(w in ctx_l for w in self._WAKE_VOCAB)
+        in_daytime = any(w in ctx_l for w in self._DAYTIME_VOCAB)
+
+        if in_sleep:
+            # sleep 语义: 1-11 → PM (晚上); 12 → 00:00; 13+ 已是 PM 24h
+            if 1 <= hour <= 11:
+                return hour + 12
+            if hour == 12:
+                return 0
+            return hour
+        if in_wake:
+            # wake 语义: 5-11 → AM 保留; 0-4 → AM (凌晨醒); 12 → 12 noon; 13+ 罕见保留
+            return hour
+        if in_daytime:
+            # 晚饭/下午茶语义: 5-11 → PM 下午; 12 → noon 12; 0-4 → AM (早餐?)
+            if 5 <= hour <= 11:
+                return hour + 12
+            return hour
+        # 默认: 看当前时段 — 白天 (6-18) 说小数字 (1-7) 倾向 PM
+        now_h = time.localtime(now_ts).tm_hour
+        if 6 <= now_h <= 18 and 1 <= hour <= 7:
+            return hour + 12
+        return hour
+
+    def _smart_parse_deadline(self, deadline_str: str,
+                                description: str = '', user_text: str = '') -> float:
+        """主入口: 把 LLM 给的 deadline_str (任意自然语言时间) 解析成 deadline_ts.
+
+        失败返回 0 (调用方走兜底). ctx = description + user_text 用于上下文推断.
+        """
+        if not deadline_str:
+            return 0
+        dl = str(deadline_str).lower().strip()
+        if not dl:
+            return 0
+        ctx = f"{description} {user_text}"
+        now_ts = time.time()
+
+        # 1. 显式 hh:mm (最强信号, 优先) — 旧 _to_24h 还有 AM/PM 推断, 给最大宽容
+        m = re.search(r'(\d{1,2})\s*[:：]\s*(\d{2})', dl)
+        if m:
+            return self._to_24h(int(m.group(1)), int(m.group(2)), None)
+
+        # 2. "in N min/hour" 相对时间
+        m = re.search(r'\bin\s+(\d+)\s*(min|minute|hour|hr)', dl)
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2)
+            return now_ts + (n * 60 if 'min' in unit else n * 3600)
+
+        # 3. "X am / X pm / X a.m. / X p.m." 显式 AM/PM (含可选分钟)
+        m = re.search(r'(\d{1,2})(?:\s*[:：]\s*(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b', dl)
+        if m:
+            h = int(m.group(1))
+            minute = int(m.group(2)) if m.group(2) else 0
+            tail = m.group(3).replace('.', '')
+            return self._to_24h(h, minute, tail)
+
+        # 4. 模糊时段词 (midnight / 早上 等) — 直接 24h, 跳过 _to_24h AM/PM 推断
+        # 否则 'midnight' (0, 0) 在上午会被推成 12:00 (因 _to_24h 看 hour<12 +12)
+        for kw, (h, mi) in self._FUZZY_TIME_VOCAB.items():
+            if kw in dl:
+                return self._build_deadline_from_24h(h, mi, now_ts)
+
+        # 5. tomorrow / next week / day after 等粗粒度相对日期
+        if 'next week' in dl:
+            return now_ts + 604800
+        if 'day after tomorrow' in dl or '后天' in dl:
+            return now_ts + 86400 * 2
+        if 'tomorrow' in dl or '明天' in dl or '明早' in dl or '明晚' in dl:
+            # tomorrow 必须是次日, 不能用 _build_deadline_from_24h (它会做"过 1h
+            # 推次日"逻辑导致双重 +86400). 直接构今天日期 + 86400.
+            if '晚' in dl or 'night' in dl or 'evening' in dl:
+                base_h = 22
+            else:
+                base_h = 8
+            now_local = time.localtime(now_ts)
+            today_ts = time.mktime((now_local.tm_year, now_local.tm_mon,
+                                      now_local.tm_mday, base_h, 0, 0,
+                                      now_local.tm_wday, now_local.tm_yday,
+                                      now_local.tm_isdst))
+            return today_ts + 86400
+
+        # 6. 单数字 + 语义 (准则 6 核心 — 治 "I will sleep at 11" 类 4 条样本)
+        m = re.search(r'(?:^|\s|at\s+)(\d{1,2})(?!\d)', dl)
+        if m:
+            h = int(m.group(1))
+            if 0 <= h <= 23:
+                inferred = self._infer_hour_from_context(h, ctx, now_ts)
+                return self._build_deadline_from_24h(inferred, 0, now_ts)
+
+        # 7. 中文数字 (一二三..十一十二) — 简单 lookup
+        _ZH_DIGITS = {'零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3,
+                      '四': 4, '五': 5, '六': 6, '七': 7, '八': 8,
+                      '九': 9, '十': 10, '十一': 11, '十二': 12}
+        for zh, n in sorted(_ZH_DIGITS.items(), key=lambda x: -len(x[0])):
+            if zh + '点' in dl:
+                inferred = self._infer_hour_from_context(n, ctx, now_ts)
+                return self._build_deadline_from_24h(inferred, 0, now_ts)
+
+        return 0  # 解析失败
+
+    def _build_deadline_from_24h(self, hour_24: int, minute: int,
+                                    now_ts: float) -> float:
+        """已知 24h hour + minute, 直接构 timestamp. 跳过 _to_24h 的 AM/PM 推断.
+
+        逻辑: 今天该时间已过 1h+ → 推到明天. 防 "8 am 推 23:00" → 已过 18h, 推次日.
+        """
+        h = max(0, min(23, int(hour_24)))
+        m = max(0, min(59, int(minute)))
+        now_local = time.localtime(now_ts)
+        ts = time.mktime((now_local.tm_year, now_local.tm_mon, now_local.tm_mday,
+                           h, m, 0, now_local.tm_wday, now_local.tm_yday,
+                           now_local.tm_isdst))
+        if ts < now_ts - 3600:  # 今天该时间已过 1h+ → 推到明天
+            ts += 86400
+        return ts
+
     def _to_24h(self, hour, minute, am_pm):
         # [P0-1 / 2026-05-15] 凌晨上下文修复：
         # 实测发现 Sir 在凌晨 1:24 说"两点睡觉"，此函数把 2 → 14（下午2点），
@@ -462,24 +623,10 @@ class CommitmentWatcher(threading.Thread):
             deadline_ts = 0  # 用 0 标记"未解析", 后面看是否真有效解析
             if deadline_str:
                 try:
-                    dl_lower = deadline_str.lower().strip()
-                    time_match = re.search(r'(\d{1,2})\s*:\s*(\d{2})', dl_lower)
-                    if time_match:
-                        h, m = int(time_match.group(1)), int(time_match.group(2))
-                        deadline_ts = self._to_24h(h, m, None)
-                    elif 'tonight' in dl_lower:
-                        deadline_ts = self._to_24h(22, 0, None)
-                    elif 'tomorrow' in dl_lower:
-                        deadline_ts = time.time() + 86400
-                    elif 'next week' in dl_lower:
-                        deadline_ts = time.time() + 604800
-                    elif 'in' in dl_lower:
-                        num_match = re.search(r'in\s+(\d+)\s*(min|hour|minute)', dl_lower)
-                        if num_match:
-                            n = int(num_match.group(1))
-                            unit = num_match.group(2)
-                            deadline_ts = time.time() + (n * 60 if 'min' in unit else n * 3600)
-                except:
+                    deadline_ts = self._smart_parse_deadline(
+                        deadline_str, description or '', user_text or ''
+                    )
+                except Exception:
                     pass
             # 🩹 [β.2.9.4 hotfix / 2026-05-18] 解析失败时:
             # - conditional_reminder + predicate → predicate 主导 (deadline 设 30 天)
