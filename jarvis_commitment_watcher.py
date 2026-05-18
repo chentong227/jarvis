@@ -481,21 +481,22 @@ class CommitmentWatcher(threading.Thread):
                             deadline_ts = time.time() + (n * 60 if 'min' in unit else n * 3600)
                 except:
                     pass
-            # 解析失败 (deadline_ts 仍 = 0) → 准则 6: 不强行 +1h
+            # 🩹 [β.2.9.4 hotfix / 2026-05-18] 解析失败时:
+            # - conditional_reminder + predicate → predicate 主导 (deadline 设 30 天)
+            # - 其他 → 兜底 +1h (legacy 行为保留; present-tense 已在上面 return 拦)
             if deadline_ts <= 0:
-                # 仍允许 conditional_reminder 走 predicate 路径; 否则不注册
-                if commit_type != 'conditional_reminder' or predicate is None:
+                if commit_type == 'conditional_reminder' and predicate is not None:
+                    deadline_ts = time.time() + 86400 * 30
+                else:
+                    deadline_ts = time.time() + 3600
                     try:
-                        from jarvis_utils import bg_log as _fail_bg
-                        _fail_bg(
-                            f"📝 [CommitmentWatcher] deadline_str='{deadline_str}' 无法解析为具体时间, "
-                            f"且无 predicate — 不注册 (准则 6: 不强行默认 +1h). desc='{description[:60]}'"
+                        from jarvis_utils import bg_log as _fb_bg
+                        _fb_bg(
+                            f"📝 [CommitmentWatcher] deadline_str='{deadline_str}' 不可解析, "
+                            f"兜底 +1h. desc='{description[:60]}'"
                         )
                     except Exception:
                         pass
-                    return
-                # conditional_reminder + predicate 时, deadline_ts 设很大 (predicate 主导)
-                deadline_ts = time.time() + 86400 * 30  # 30 天兜底, 实际 predicate 主导
 
             # [P0-1 bottom-guard / 2026-05-15] 凌晨上下文兜底：
             # 即便 LLM 把"两点"算成 14:00:00（凌晨 1 点说），这里再做一次 sanity check。

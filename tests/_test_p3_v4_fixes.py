@@ -167,11 +167,14 @@ class TestAfkGreetingDynamicLLM(unittest.TestCase):
             "AFK > 15 min 必须 use_llm=True，不再走 4 小时门槛")
 
     def test_return_greeting_directive_references_stm(self):
-        # return_greeting prompt 必须强调"reference STM"
-        self.assertIn('references the actual work', self.src,
-                      "return_greeting 必须强调引用 STM 实际工作内容")
-        self.assertIn('ONE sentence under 12 words', self.src,
-                      "return_greeting 必须强调克制（一句话，<12 词）")
+        # 🩹 [β.2.8.10 / 2026-05-18] Sir 准则 6 (拒绝硬编码) — return_greeting
+        # 已删句式锁 ('references the actual work' / 'ONE sentence under 12 words').
+        # 改为只告 fact (Sir 离开 X 分钟) + 信任 Soul L0-L3 + STM 注入.
+        # 新断言: 必须含 afk_minutes 注入 + 必须提到 context 让主脑自己引用.
+        self.assertIn('afk_minutes', self.src,
+                      "return_greeting 必须告知 afk_minutes 让主脑判断 gap")
+        self.assertIn('context', self.src.lower(),
+                      "return_greeting 必须引用 context 上下文 (PHYSICAL/MEMORY/SOUL)")
 
 
 class TestHippocampusBackfillWorker(unittest.TestCase):

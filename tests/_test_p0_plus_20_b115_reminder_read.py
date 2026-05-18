@@ -137,9 +137,12 @@ class TestPersonaHowToRespondSlimmed(unittest.TestCase):
     """β.1.15 验证 PERSONA + how_to_respond 总体瘦身"""
 
     def test_persona_under_3000_chars(self):
+        # 🩹 [β.2.9.6 / 2026-05-18] 上限 3000→5500. β.2.8.7 加 [INTEGRITY — CLAIM HONESTY]
+        # 通用反幻觉条款 (Sir 准则 5 通用化) + β.2.9.1 加 future-action honesty 段, 涨到 ~4862.
+        # 这些是必要的 integrity 防御不该裁. 仍 < 5500 防膨胀失控.
         from jarvis_central_nerve import JARVIS_CORE_PERSONA
-        self.assertLess(len(JARVIS_CORE_PERSONA), 3000,
-                        f"PERSONA 应 < 3000 chars (β.1.12 后)，实际 {len(JARVIS_CORE_PERSONA)}")
+        self.assertLess(len(JARVIS_CORE_PERSONA), 5500,
+                        f"PERSONA 应 < 5500 chars (β.2.9.6 后), 实际 {len(JARVIS_CORE_PERSONA)}")
 
     def test_how_to_respond_block_does_not_contain_search_routing(self):
         """SMART ROUTING / TOOL USE 段已搬 L2，不应再在 how_to_respond 源码里"""

@@ -153,9 +153,13 @@ class TestCareWindowGuard(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_ok_path(self):
-        now = _now() - 3 * 3600  # 用古早时间避开 cooldown
+        # 🩹 [β.2.9.6 hotfix] now 用确定的工作时段中午 12:00 避开 night_quiet (2-5h) 时段冲突.
+        # 原 _now() - 3*3600 在某些时段 (e.g. 当前 08:30 - 3h = 05:30) 会落入 night_quiet.
+        import time
+        lt = time.localtime()
+        now = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 12, 0, 0, 0, 0, -1))
         ok, reason = self.guard.can_speak(_mock_concern(), 0.7, now, 0, 0)
-        self.assertTrue(ok)
+        self.assertTrue(ok, f"expected ok, got reason={reason}")
 
 
 class TestCareSubjectSelector(unittest.TestCase):
