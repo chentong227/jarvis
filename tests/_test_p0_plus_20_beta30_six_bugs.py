@@ -167,6 +167,46 @@ class TestBUG3DashboardOpenCommand(unittest.TestCase):
         self.assertIn('proc.poll()', content,
                        "β.3.0 启动后 check 进程是否秒退")
 
+    def test_dashboard_open_in_both_paths(self):
+        """β.3.0-hotfix: Sir 16:08 实测 — 旧同步 fast_call 路径也必须有 dashboard_open"""
+        path = os.path.join(ROOT, 'jarvis_chat_bypass.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 新异步路径 (line ~1319) + 旧同步路径 (line ~2667 elif organ == 'ui_control')
+        # 两处都必须能识别 dashboard_open
+        count = content.count('dashboard_open')
+        # 至少 3 次: 注释 + 新路径 + 旧路径 + 关闭路径关联
+        self.assertGreaterEqual(count, 3,
+                                 f"两路径都需路由 dashboard_open, 当前命中 {count} 次")
+        # 验证旧路径有显式 elif/if ctrl_cmd in ("dashboard_open"...)
+        self.assertIn('dashboard_open", "dashboard_close"', content,
+                       "旧同步路径必须 elif ctrl_cmd in dashboard 元组")
+
+
+class TestBUG4ActivClaimDetection(unittest.TestCase):
+    """🩹 [β.3.0 BUG#4 / 2026-05-18] Sir 16:08 实测: 'active' 漏检 → 撒谎话漏出去"""
+
+    def test_active_in_done_claim_pattern(self):
+        """Sir 实测: 'The dashboard is active, Sir.' 必须被 _claim_pattern 捕获"""
+        import re as _re
+        # 复用 chat_bypass.py 同款 pattern
+        path = os.path.join(ROOT, 'jarvis_chat_bypass.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 验证 pattern 含 active
+        self.assertIn('active|running|launched', content,
+                       "β.3.0 pattern 必须含 active/running/launched 漏检词")
+
+    def test_zh_done_claim_pattern(self):
+        """中文也需要漏检词覆盖: '已激活/已启动/已开启'"""
+        path = os.path.join(ROOT, 'jarvis_chat_bypass.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('_claim_pattern_zh', content,
+                       "β.3.0 必须有中文 done_claim pattern")
+        self.assertIn('已激活', content)
+        self.assertIn('已启动', content)
+
 
 if __name__ == '__main__':
     unittest.main()

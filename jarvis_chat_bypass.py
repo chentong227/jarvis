@@ -2685,6 +2685,29 @@ Spoken English:"""
                                         self.key_router.release(_stream_key_name)
                                         _stream_key_name = None
                                     break
+                            # 🩹 [β.3.0 BUG#3 / 2026-05-18] Sir 16:08 实测痛点修:
+                            # 主同步 fast_call 旧路径缺 dashboard_open/close 路由 →
+                            # "未知指令" → Sir 听到主脑撒谎"已打开". 治本: 这里也加.
+                            elif ctrl_cmd in ("dashboard_open", "dashboard_close"):
+                                try:
+                                    _result = self._execute_fast_call(
+                                        organ_name='ui_control',
+                                        command=ctrl_cmd,
+                                        params=params,
+                                    )
+                                    _tool_results.append(_result)
+                                    # 工具成功也走 single_step Fast Path 干脆收尾,
+                                    # 避免主脑在没看 result 的情况下复读"已打开"
+                                    if isinstance(_result, str) and _result.startswith('✅'):
+                                        _circuit_broken_reason = "single_step_fast_path"
+                                        if '_stream_key_name' in dir() and _stream_key_name:
+                                            self.key_router.release(_stream_key_name)
+                                            _stream_key_name = None
+                                        break
+                                except Exception as _de:
+                                    _tool_results.append(
+                                        f"❌ ui_control.{ctrl_cmd}: {_de}"
+                                    )
                             else:
                                 _tool_results.append(f"❌ ui_control: 未知指令 {ctrl_cmd}")
                         else:
@@ -2844,12 +2867,27 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             # 工具结果全失败时，LLM 在 FAST_CALL 之后抢答的"Done/Adjusted/Set/Turned..."都属于幻觉收尾
             _all_tools_failed = bool(_tool_results) and all(r.startswith(("❌", "🛡️")) for r in _tool_results)
             _any_tool_ok = bool(_tool_results) and any(r.startswith("✅") for r in _tool_results)
+            # 🩹 [β.3.0 BUG#4 / 2026-05-18] Sir 16:08 实测: 工具 ❌ 但主脑说
+            # "The dashboard is active, Sir." — 'active' 不在旧 pattern 里 →
+            # 漏检 → 撒谎话漏出去. 扩 pattern 加 active/running/launched/up/live.
             _claim_pattern = re.compile(
-                r'\b(done|completed|finished|fixed|adjusted|set|turned|opened|closed|sorted|wrapped|handled|all\s+set|taken\s+care)\b',
+                r'\b(done|completed|finished|fixed|adjusted|set|turned|opened|closed|'
+                r'sorted|wrapped|handled|all\s+set|taken\s+care|'
+                # β.3.0 新增 — Sir 16:08 实测漏检词:
+                r'active|running|launched|started|live|up|loaded|ready|enabled|'
+                r'showing|displayed|pulled\s+up|brought\s+up)\b',
                 re.IGNORECASE
             )
+            # 🩹 [β.3.0 BUG#4 / 2026-05-18] 中文也扩 — "已激活/已启动/已开启/已开/已亮"等同义
+            _claim_pattern_zh = re.compile(
+                r'(已激活|已启动|已开启|已开|已亮|已点亮|已运行|已就绪|'
+                r'已显示|已弹出|已就位|已上线|正在显示|正在运行|跑起来了)'
+            )
             _en_part = _stripped_full.split("---ZH---")[0] if _stripped_full else ""
-            _has_done_claim = bool(_en_part) and bool(_claim_pattern.search(_en_part))
+            _zh_part = _stripped_full.split("---ZH---")[1] if "---ZH---" in _stripped_full else ""
+            _has_done_claim = (bool(_en_part) and bool(_claim_pattern.search(_en_part))) or \
+                              (bool(_zh_part) and bool(_claim_pattern_zh.search(_zh_part))) or \
+                              (bool(_en_part) and bool(_claim_pattern_zh.search(_en_part)))
 
             _need_synthesis = bool(
                 _circuit_broken_reason
