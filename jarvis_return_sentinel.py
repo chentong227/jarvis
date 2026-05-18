@@ -233,6 +233,12 @@ class ReturnSentinel(threading.Thread):
             time.sleep(1)
 
     def _on_return(self, afk_duration):
+        # 🩹 [β.2.9.6 / 2026-05-18] expose 给 AfterAfk predicate 用 (CommitmentWatcher
+        # _build_predicate_ctx 读 self._last_afk_minutes).
+        try:
+            self._last_afk_minutes = float(afk_duration / 60)
+        except Exception:
+            self._last_afk_minutes = 0
         # [P0+9 / 2026-05-15] 全链路 bg_log：每个 return 分支都打日志，让 Sir 实测时
         # 一眼看出"为什么 ReturnSentinel 触发了 / 为什么被挡了"。
         try:

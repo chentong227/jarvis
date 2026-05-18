@@ -159,6 +159,16 @@ class InconsistencyWatcher(threading.Thread):
             bg_log(f"⚠️ [InconsistencyWatcher] dispatch err: {e}")
 
     def _tick(self) -> None:
+        # 🩹 [β.2.9.6 audit] 清理过期 _fired_promises (cooldown 2 倍后清除, 防内存泄漏)
+        try:
+            now = time.time()
+            cutoff = now - COOLDOWN_PER_PROMISE_S * 2
+            self._fired_promises = {
+                pid: ts for pid, ts in self._fired_promises.items()
+                if ts > cutoff
+            }
+        except Exception:
+            pass
         try:
             from jarvis_promise_log import get_default_log
             log = get_default_log()

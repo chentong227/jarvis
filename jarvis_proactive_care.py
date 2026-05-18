@@ -126,6 +126,13 @@ class CareConcernSensor:
         self._cooldown_sec = 1800.0              # 30min 内同 rule 不重复
 
     def _can_signal(self, cid: str, rule_id: str) -> bool:
+        # 🩹 [β.2.9.6 audit] 顺带清理过期 entries 防内存泄漏
+        if len(self._recent_signal_cooldown) > 500:
+            cutoff = time.time() - self._cooldown_sec * 2
+            self._recent_signal_cooldown = {
+                k: ts for k, ts in self._recent_signal_cooldown.items()
+                if ts > cutoff
+            }
         key = (cid, rule_id)
         last = self._recent_signal_cooldown.get(key, 0)
         if time.time() - last < self._cooldown_sec:
