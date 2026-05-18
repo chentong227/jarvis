@@ -333,10 +333,28 @@ def _init_runtime_tee_log():
             pass
 
         # 同时维护 latest.log（直接复制路径写入文本，让 Agent 一行命令读最新）
+        # 🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测 BUG 治本: 测试运行 (pytest) 不
+        # 应该写 latest.txt 把 dashboard 引到测试 log. 检测策略:
+        #   - JARVIS_TEST_MODE env var (conftest 设置)
+        #   - sys.argv[0] 含 pytest
+        #   - JARVIS_TEST_MARKER env var 存在 (测试 marker)
         try:
-            latest_pointer = _os_for_log.path.join(log_dir, 'latest.txt')
-            with open(latest_pointer, 'w', encoding='utf-8') as fp:
-                fp.write(path)
+            import sys as _sys_for_test
+            is_test_run = (
+                os.environ.get('JARVIS_TEST_MODE') == '1'
+                or os.environ.get('JARVIS_TEST_MARKER')
+                or 'pytest' in (_sys_for_test.argv[0] if _sys_for_test.argv
+                                  else '')
+                or any('pytest' in a for a in _sys_for_test.argv[:3])
+            )
+        except Exception:
+            is_test_run = False
+
+        try:
+            if not is_test_run:
+                latest_pointer = _os_for_log.path.join(log_dir, 'latest.txt')
+                with open(latest_pointer, 'w', encoding='utf-8') as fp:
+                    fp.write(path)
         except Exception:
             pass
 

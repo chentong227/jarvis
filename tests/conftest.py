@@ -25,6 +25,10 @@ from pathlib import Path
 
 import pytest
 
+# 🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测 BUG 治本: 测试 fixture 不污染 latest.txt
+# (dashboard 误把测试 log 当主进程 log → 0/12 daemon 恐吓). bg_log 看此 env.
+os.environ.setdefault('JARVIS_TEST_MODE', '1')
+
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LAST_RUN_JSON = _REPO_ROOT / "tests" / "last_run.json"

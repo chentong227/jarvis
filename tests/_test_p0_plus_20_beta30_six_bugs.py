@@ -208,5 +208,39 @@ class TestBUG4ActivClaimDetection(unittest.TestCase):
         self.assertIn('已启动', content)
 
 
+class TestDashboardColdProcessDetection(unittest.TestCase):
+    """🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测: dashboard 0/12 daemon 恐吓告警.
+    真因: 测试 log 短小 (<2KB) 写了 latest.txt, dashboard 误读 → daemon 全 0.
+    """
+
+    def test_min_real_log_bytes_const(self):
+        """dashboard 跳过 < 5KB 测试 log"""
+        path = os.path.join(ROOT, 'scripts', 'jarvis_dashboard.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('_MIN_REAL_LOG_BYTES', content)
+        self.assertIn('main_process_cold', content,
+                       "dashboard 必须有主进程冷检测")
+
+    def test_conftest_sets_test_mode(self):
+        """conftest 必须 setdefault JARVIS_TEST_MODE"""
+        path = os.path.join(ROOT, 'tests', 'conftest.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn("JARVIS_TEST_MODE", content)
+        self.assertIn("setdefault", content,
+                       "conftest 用 setdefault 不覆盖已有 env")
+
+    def test_bg_log_skips_latest_in_test_mode(self):
+        """jarvis_utils.bg_log 看 JARVIS_TEST_MODE 跳过 latest.txt 写入"""
+        path = os.path.join(ROOT, 'jarvis_utils.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn("is_test_run", content)
+        self.assertIn("JARVIS_TEST_MODE", content)
+        self.assertIn("if not is_test_run", content,
+                       "bg_log 必须 if not is_test_run 才写 latest.txt")
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -624,17 +624,27 @@ def read_directives() -> Dict:
 
 # ---- Daemon 状态 ----
 
+# 🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测 BUG: dashboard 看到 0/12 daemon, 但 Sir
+# 主进程实际在跑. 真因: 测试 fixture (_runall.ps1) 写 latest.txt 短小测试 log,
+# dashboard 误把它当主进程 log → 找不到 daemon banner. 治本: 跳过 < 5KB 的 log.
+_MIN_REAL_LOG_BYTES = 5_000  # 测试 fixture log < 2KB, 主进程 log 通常 ≥ 50KB
+
+
 def _find_latest_log() -> str:
     pointer = os.path.join(LOG_DIR, 'latest.txt')
     if os.path.exists(pointer):
         try:
             with open(pointer, 'r', encoding='utf-8', errors='ignore') as f:
                 p = f.read().strip()
+                cand = None
                 if os.path.isabs(p) and os.path.exists(p):
-                    return p
-                cand = os.path.join(ROOT, p)
-                if os.path.exists(cand):
+                    cand = p
+                elif os.path.exists(os.path.join(ROOT, p)):
+                    cand = os.path.join(ROOT, p)
+                # 🩹 [β.3.0 Sir 16:18] verify 不是测试 log
+                if cand and os.path.getsize(cand) >= _MIN_REAL_LOG_BYTES:
                     return cand
+                # 测试 log 太小, 跳过 pointer 走兜底扫描
         except Exception:
             pass
     if not os.path.isdir(LOG_DIR):
@@ -644,6 +654,9 @@ def _find_latest_log() -> str:
         if f.startswith('jarvis_') and f.endswith('.log'):
             full = os.path.join(LOG_DIR, f)
             try:
+                # 🩹 [β.3.0 Sir 16:18] 跳过 < 5KB 测试 fixture log
+                if os.path.getsize(full) < _MIN_REAL_LOG_BYTES:
+                    continue
                 cands.append((os.path.getmtime(full), full))
             except OSError:
                 continue
@@ -718,6 +731,17 @@ def read_daemon_status() -> Dict:
             if d['id'] == 'ProactiveCare':
                 d['extra'] = ' [DRY-RUN]'
 
+    # 🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测 BUG: log 是冷的 (5min 前最后写入)
+    # → 主进程已退出 → daemon 全 0 是预期, 不应该恐吓 Sir "管家未启动".
+    # 治本: 看 log mtime 判主进程在不在跑.
+    try:
+        log_age_s = time.time() - os.path.getmtime(log)
+    except Exception:
+        log_age_s = 0
+    out['log_age_s'] = int(log_age_s)
+    is_cold = log_age_s > 300  # 5 min 没新写入 = 主进程已退或卡死
+    out['main_process_cold'] = is_cold
+
     # 📌 诊断
     live = sum(1 for x in out['daemons'] if x['live'])
     total = len(out['daemons'])
@@ -725,7 +749,15 @@ def read_daemon_status() -> Dict:
                      if not x['live'] and x['id'] in
                      ('ProactiveCare', 'Inconsistency', 'HealthProbe',
                       'Return', 'Commitment')]
-    if live == total:
+    if is_cold:
+        # 🩹 [β.3.0] 主进程冷 — 不恐吓"管家未启动", 报告真因
+        mins = int(log_age_s / 60)
+        out['diagnosis'] = (
+            f'💤 主进程未在跑 (日志已冷 {mins} 分钟) — '
+            f'daemon 0/{total} 是预期'
+        )
+        out['suggestion'] = '启动贾维斯主程序: python jarvis_nerve.py'
+    elif live == total:
         out['diagnosis'] = f'✅ 全部 {total} 个后台在跑'
         out['suggestion'] = '无需操作'
     elif crit_offline:
@@ -1092,17 +1124,26 @@ def compute_overall_status(concerns: dict, directive: dict, promise: dict,
             '重启贾维斯 / 看 OpenRouter 后台',
         ))
 
-    # critical daemon offline
-    crit_off = [x for x in daemon.get('daemons', [])
-                 if not x.get('live') and x.get('id') in
-                 ('ProactiveCare', 'Inconsistency', 'HealthProbe', 'Commitment')]
-    if crit_off:
-        names = '/'.join(x['id'] for x in crit_off[:3])
+    # 🩹 [β.3.0 / 2026-05-18] Sir 16:18 实测 BUG: 主进程冷时不恐吓"管家未启动"
+    if daemon.get('main_process_cold'):
+        mins = int(daemon.get('log_age_s', 0) / 60)
         issues.append((
-            'crit',
-            f'{len(crit_off)} 个关键管家未启动: {names}',
-            '重启贾维斯主程序',
+            'info',  # info 而非 crit, 不当紧急告警
+            f'主进程未在跑 (日志冷 {mins}min) — 后台全 0 是预期',
+            '启动贾维斯主程序: python jarvis_nerve.py',
         ))
+    else:
+        # 主进程在跑时才报 daemon offline
+        crit_off = [x for x in daemon.get('daemons', [])
+                     if not x.get('live') and x.get('id') in
+                     ('ProactiveCare', 'Inconsistency', 'HealthProbe', 'Commitment')]
+        if crit_off:
+            names = '/'.join(x['id'] for x in crit_off[:3])
+            issues.append((
+                'crit',
+                f'{len(crit_off)} 个关键管家未启动: {names}',
+                '重启贾维斯主程序; 或看 log 找启动报错',
+            ))
 
     # memory abnormal
     ws_mb = health.get('health_last', {}).get('ws_mb', 0)
