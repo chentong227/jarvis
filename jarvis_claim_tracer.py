@@ -341,6 +341,13 @@ def write_audit_entry(turn_id: str, claim: 'Claim', found: bool,
     """
     if found:
         return False  # 仅 incident 入表, 防文件膨胀
+    # 🩹 [β.4.2-hotfix / 2026-05-18] Sir 18:46 实测死循环治本:
+    # `time` kind claim verify 路径不看 prompt SYSTEM CLOCK 注入 → 永远 found=False →
+    # 每次主脑报时间都进 audit → ALERT 注入下轮 → 主脑道歉但又报时间 → 死循环.
+    # 临时止血: time kind 跳过 audit (诊断 bg_log 仍发, 不影响 trace).
+    # 真治本 (β.4.3+ TODO): 加 SYSTEM CLOCK ±2 min 比较 verify, 命中则 found=True.
+    if getattr(claim, 'kind', '') == 'time':
+        return False
     path = audit_path or _INTEGRITY_AUDIT_PATH
     try:
         _ensure_audit_dir(path)
