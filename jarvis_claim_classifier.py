@@ -94,24 +94,6 @@ _SEED_VOCAB: Dict[str, object] = {
             'state': 'active',
         },
         {
-            'id': 'state_time_default',
-            'claim_type': 'State',
-            'kinds_hard_map': ['time'],
-            'keywords': [],
-            'state': 'active',
-        },
-        {
-            'id': 'state_quant_default',
-            'claim_type': 'State',
-            'kinds_hard_map': ['percent', 'multiplier', 'count'],
-            'keywords': [
-                'is currently', 'currently', 'right now',
-                '正在', '处于', '当前', '目前', '现在',
-                '状态是', '数据显示', 'stats show',
-            ],
-            'state': 'active',
-        },
-        {
             'id': 'recall_default',
             'claim_type': 'Recall',
             'kinds_hard_map': ['quote'],
@@ -137,6 +119,7 @@ _SEED_VOCAB: Dict[str, object] = {
             'state': 'active',
         },
         {
+            # Tool 必须在 State_quant 之前 (β.4.3.4 教训: "正在" 过广吐后 State 抢)
             'id': 'tool_default',
             'claim_type': 'Tool',
             'kinds_hard_map': [],
@@ -146,6 +129,24 @@ _SEED_VOCAB: Dict[str, object] = {
                 '正在打开', '正在调用', '正在执行', '正在运行',
                 '正在查', '在打开', '在调用', '在查',
                 '帮您打开', '帮您查',
+            ],
+            'state': 'active',
+        },
+        {
+            'id': 'state_time_default',
+            'claim_type': 'State',
+            'kinds_hard_map': ['time'],
+            'keywords': [],
+            'state': 'active',
+        },
+        {
+            'id': 'state_quant_default',
+            'claim_type': 'State',
+            'kinds_hard_map': ['percent', 'multiplier', 'count'],
+            'keywords': [
+                'is currently', 'currently', 'right now',
+                '处于', '当前状态', '目前状态',
+                '状态是', '数据显示', 'stats show',
             ],
             'state': 'active',
         },

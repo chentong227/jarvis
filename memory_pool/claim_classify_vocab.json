@@ -45,30 +45,6 @@
       "note": "Future-tense claim: 主脑承诺将做某事 → PromiseLog/<PROMISE> tag 记录即 evidence"
     },
     {
-      "id": "state_time_default",
-      "claim_type": "State",
-      "kinds_hard_map": ["time"],
-      "keywords": [],
-      "state": "active",
-      "source": "seed",
-      "created_at": 1779999600.0,
-      "note": "Time claim (报当前时间) 归 State; evidence 路径 = prompt SYSTEM CLOCK ±2min (β.4.2 hotfix 治本)"
-    },
-    {
-      "id": "state_quant_default",
-      "claim_type": "State",
-      "kinds_hard_map": ["percent", "multiplier", "count"],
-      "keywords": [
-        "is currently", "currently", "right now",
-        "正在", "处于", "当前", "目前", "现在",
-        "状态是", "数据显示", "stats show"
-      ],
-      "state": "active",
-      "source": "seed",
-      "created_at": 1779999600.0,
-      "note": "State 量化类 (百分比/倍数/计数/状态描述); evidence = tool_results / STM / LTM 任一命中"
-    },
-    {
       "id": "recall_default",
       "claim_type": "Recall",
       "kinds_hard_map": ["quote"],
@@ -110,7 +86,31 @@
       "state": "active",
       "source": "seed",
       "created_at": 1779999600.0,
-      "note": "Tool 调用进行时 claim: evidence = 本轮 tool_results 任何命中"
+      "note": "Tool 调用进行时 claim: evidence = 本轮 tool_results 任何内容命中 (顺序必须在 State_quant 之前, 防 “正在” 过广吐后 State 拋)"
+    },
+    {
+      "id": "state_time_default",
+      "claim_type": "State",
+      "kinds_hard_map": ["time"],
+      "keywords": [],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Time claim (报当前时间) 归 State; evidence 路径 = prompt SYSTEM CLOCK ±2min (β.4.2 hotfix 治本)"
+    },
+    {
+      "id": "state_quant_default",
+      "claim_type": "State",
+      "kinds_hard_map": ["percent", "multiplier", "count"],
+      "keywords": [
+        "is currently", "currently", "right now",
+        "处于", "当前状态", "目前状态",
+        "状态是", "数据显示", "stats show"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "State 量化类 (百分比/倍数/计数/状态描述). β.4.3.4 移除 “正在/当前/目前/现在” 等过广 keyword (与 Tool 冲突), 只留明确状态描述"
     }
   ]
 }

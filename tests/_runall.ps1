@@ -135,7 +135,8 @@ $tests = @(
     "_test_p0_plus_20_beta34_vocab7_concern_keywords_persist",
     "_test_p0_plus_20_beta41_claim_enforce_persist",
     "_test_p0_plus_20_beta36_docs_references_valid",
-    "_test_p0_plus_20_beta42_time_claim_audit_skip"
+    "_test_p0_plus_20_beta42_time_claim_audit_skip",
+    "_test_p0_plus_20_beta434_claim_classify_evidence_persist"
 )
 
 foreach ($t in $tests) {
