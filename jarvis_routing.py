@@ -975,6 +975,27 @@ class CompanionCenter:
         except Exception as _hp_err:
             print(f"[CompanionCenter] HealthProbeDaemon 启动失败 (非致命): {_hp_err}")
 
+        # 🩹 [β.2.9.3 / 2026-05-18] 主动性 B — InconsistencyWatcher
+        # Sir 例子 "00:55 说睡 → 01:04 wake" 主动 callback. 每 60s tick 看 pending
+        # promise 和当前 Sir 行为是否反差.
+        try:
+            from jarvis_inconsistency_watcher import ensure_inconsistency_watcher_started
+            _nerve_ref = getattr(self.worker, 'jarvis', None)
+            ensure_inconsistency_watcher_started(self.worker, _nerve_ref)
+            print("[CompanionCenter] InconsistencyWatcher 就绪 (每 60s 查 promise-behavior 反差)")
+        except Exception as _iw_err:
+            print(f"[CompanionCenter] InconsistencyWatcher 启动失败 (非致命): {_iw_err}")
+
+        # 🩹 [β.2.9.4 / 2026-05-18] 主动性 D — CuriosityDaemon
+        # Sir 长时间 (>60min 同 process) 专注时 24h 内 1 次开放问题, 让 Sir 跳出工作模式.
+        try:
+            from jarvis_curiosity import ensure_curiosity_daemon_started
+            _nerve_ref = getattr(self.worker, 'jarvis', None)
+            ensure_curiosity_daemon_started(self.worker, _nerve_ref)
+            print("[CompanionCenter] CuriosityDaemon 就绪 (24h 内 1 次开放问题)")
+        except Exception as _cd_err:
+            print(f"[CompanionCenter] CuriosityDaemon 启动失败 (非致命): {_cd_err}")
+
         # 🩹 [β.2.8.12 / 2026-05-18] L2 库启动摘要 — Sir 00:25 痛点: 不知道 review 队列存在
         # 启动时 bg_log 总览: 当前 active joke / pending review, 让 Sir 一眼看清状态
         try:

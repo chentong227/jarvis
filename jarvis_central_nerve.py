@@ -1036,6 +1036,38 @@ class CentralNerve:
             _parts.append(relational_block)
         if attention_block:
             _parts.append(attention_block)
+        # 🩹 [β.2.9.4 / 2026-05-18] Mood Mirror (扩展 C): 给主脑 5 档 mood 估算.
+        # 准则 6: 只给信号让主脑判, 不强制主脑用某 tone.
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            _snap = P.get_sensor_snapshot() or {}
+            _br = float(_snap.get('backspace_ratio', 0) or 0)
+            _sw = int(_snap.get('switch_frequency_5min', 0) or 0)
+            _ev = bool(_snap.get('error_visible', False))
+            _undo = int(_snap.get('shortcut_undo_5min', 0) or 0)
+            _dur = float(_snap.get('session_duration_minutes', 0) or 0)
+            _h = time.localtime().tm_hour
+            _mood = 'neutral'
+            if _br > 0.18 or _undo > 5 or (_ev and _sw > 8):
+                _mood = 'frustrated'
+            elif _sw > 12:
+                _mood = 'scattered'
+            elif _dur > 90 and _sw < 4:
+                _mood = 'deep_focus'
+            elif _h >= 23 or _h < 5:
+                _mood = 'late_night_tired'
+            elif _dur > 25 and _sw < 6:
+                _mood = 'engaged'
+            _mood_line = (
+                f"[MOOD ESTIMATE — Sir 准则 6, hint only]\n"
+                f"  estimated: {_mood} (backspace={_br:.0%}, switches/5min={_sw}, "
+                f"err_visible={_ev}, undo={_undo}, session={_dur:.0f}min, hour={_h})\n"
+                f"  use this to subtly calibrate tone — never mention raw sensor numbers."
+            )
+            _parts.append(_mood_line)
+        except Exception:
+            pass
+
         # 🩹 [β.2.9.1.2 / 2026-05-18] Wake-time Callback context (扩展方向 A 落地):
         # Sir 例子 00:55 "去睡了" → 01:04 又 wake → 主脑该知道 "Sir 9min 前说要睡了
         # 现在又来了" 自己决定要不要打趣 (不教句式 — 准则 6, 不强制 callback — 准则 5).
@@ -1081,11 +1113,46 @@ class CentralNerve:
                             _wake_lines.append(f"- Sir's last words last time: \"{_last_sir}\"")
                         if _recent_promise:
                             _wake_lines.append(f"- pending self-commitment: {_recent_promise}")
+
+                        # 🩹 [β.2.9.5 / 2026-05-18] E: Cross-session callback — 加跨天主题
+                        try:
+                            _yesterday_topics = []
+                            _stm = getattr(self, 'short_term_memory', None) or []
+                            _yday_start = time.time() - 86400 - 12 * 3600
+                            _yday_end = time.time() - 12 * 3600
+                            for _e in _stm:
+                                _ts = float(_e.get('when', 0) or 0)
+                                if _yday_start < _ts < _yday_end:
+                                    _u = str(_e.get('user', '') or '').strip()
+                                    if _u and len(_u) > 8:
+                                        _yesterday_topics.append(_u[:80])
+                            if _yesterday_topics:
+                                _wake_lines.append(
+                                    f"- yesterday-ish topics ({len(_yesterday_topics)} items): "
+                                    f"\"{_yesterday_topics[-1][:60]}\""
+                                )
+                        except Exception:
+                            pass
+
+                        # 🩹 [β.2.9.6 / 2026-05-18] F: Self-aware Comeback — 上次 unverified claim
+                        try:
+                            from jarvis_claim_tracer import get_stats
+                            _stats = get_stats()
+                            _unv = int(_stats.get('total_unverified', 0))
+                            if _unv > 0:
+                                _wake_lines.append(
+                                    f"- your last sessions had {_unv} unverified claim(s) "
+                                    f"(per ClaimTracer). Be especially careful with specifics "
+                                    f"this turn."
+                                )
+                        except Exception:
+                            pass
+
                         _wake_lines.append(
                             "  → If Sir's current input contradicts what he said before "
-                            "(e.g. said sleep but woke up 9 min later), you may naturally "
-                            "callback it in your own voice. Not required — only if the "
-                            "contradiction is real and the moment fits."
+                            "(e.g. said sleep but woke up 9 min later), or echoes yesterday's "
+                            "thread, you may naturally callback in your own voice. Not "
+                            "required — only if real and the moment fits."
                         )
                         _parts.append('\n'.join(_wake_lines))
         except Exception:
@@ -2761,19 +2828,33 @@ User: {new_cmd}
         self._check_short_sleep(sleep_duration)
 
     def _check_short_sleep(self, sleep_duration: float):
-        # 🩹 [β.2.9.1.3 / 2026-05-18] Sir 07:57 反馈: "Sir 没说话但 Jarvis 主动发声".
-        # 准则 5 反面 — Sir 说了睡, 不该 second-guess + 主动 vocal.say "did you not
-        # fall asleep?". 改 bg_log 内部留痕, ProactiveCare 看了再决定要不要 nudge.
+        # 🩹 [β.2.9.1.4 / 2026-05-18] Sir 08:10 反馈: 主动质疑是 Jarvis 人设, 别删.
+        # 撤回 β.2.9.1.3 的"改 bg_log only". 恢复 vocal.say + 加去重 (1 次 sleep_intent
+        # 内只 fire 1 次, 不重复刷屏).
         if sleep_duration < 300:
+            # 去重: 1 次 sleep_intent 窗口内只发一次
+            if getattr(self, '_short_sleep_questioned_at', 0) > 0 and \
+               (time.time() - self._short_sleep_questioned_at) < 3600:
+                return
+            self._short_sleep_questioned_at = time.time()
+
             minutes = max(1, int(sleep_duration / 60))
+            msg_en = f"Sir, you were only in sleep mode for {minutes} minute(s). Did you not fall asleep?"
+            msg_zh = f"先生，睡眠模式只持续了{minutes}分钟。您没有入睡吗？"
+            print(f"\n║ 🌙 [SleepDetector] 睡眠时长过短 ({minutes}分钟)，询问用户...")
+            print(_box_newline(f"║ 🤖  [Jarvis] {msg_en}"))
+            print(_box_newline(f"║ 📺  [Subtitle] {msg_zh}"))
+            print("╚" + "═"*63 + "\n")
+
             try:
-                from jarvis_utils import bg_log
-                bg_log(
-                    f"🌙 [SleepDetector/Short] sleep_mode 持续 {minutes}min, < 5min. "
-                    f"内部信号; Sir 没说话不主动 vocal.say (准则 5)"
-                )
-            except Exception:
-                pass
+                if hasattr(self, 'chat_bypass') and hasattr(self.chat_bypass, 'subtitle_queue'):
+                    self.chat_bypass.subtitle_queue.put(("en", msg_en))
+                    self.chat_bypass.subtitle_queue.put(("zh", msg_zh))
+                if hasattr(self, 'vocal'):
+                    import threading
+                    threading.Thread(target=self.vocal.say, args=(msg_en,), daemon=True).start()
+            except Exception as e:
+                print(f"[CentralNerve] 短睡眠询问语音异常: {e}")
 
     def _trigger_end_of_day_archive(self):
         print("[CentralNerve] 开始休眠前数据归档...")

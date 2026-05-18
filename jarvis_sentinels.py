@@ -843,29 +843,11 @@ class NudgeGate:
             self._sleep_activated_at = time.time()
             print(f"[NudgeGate] 休眠模式已激活，抑制所有主动发言直到用户自然唤醒")
 
-    # 🩹 [β.2.9.1.3 / 2026-05-18] sleep_mode 最小持续 — Sir 反馈
-    # "鼠标键盘没动也判 Sir 醒着". 根因: 瞬时键鼠扰动 (deactivate by SmartNudge)
-    # 让 sleep_mode 频繁被假解. 加 30min 硬约束: activate 30min 内任何
-    # deactivate 调用静默忽略, 防 SleepDetector 误判.
-    MIN_SLEEP_DURATION_SEC = 30 * 60  # 30 分钟
-
+    # 🩹 [β.2.9.1.4 / 2026-05-18] 撤 30min 硬约束 (Sir 08:10 不喜欢这种粗暴).
+    # 保留 force 参数兼容 _detect_wake_up / ReturnSentinel 调用.
     def deactivate_sleep_mode(self, force: bool = False):
         with self._lock:
             was_sleeping = self._sleep_mode
-            if was_sleeping and not force:
-                duration = time.time() - self._sleep_activated_at
-                if duration < self.MIN_SLEEP_DURATION_SEC:
-                    # 30 分钟内不允许自动解 — Sir 还在真睡, 瞬时扰动不算"醒"
-                    try:
-                        from jarvis_utils import bg_log
-                        bg_log(
-                            f"🌙 [NudgeGate] 拒绝 deactivate_sleep_mode: "
-                            f"持续仅 {duration/60:.1f}min < {self.MIN_SLEEP_DURATION_SEC/60:.0f}min "
-                            f"硬约束. 用 force=True 才能强制解 (e.g. wake_word)."
-                        )
-                    except Exception:
-                        pass
-                    return
             self._sleep_mode = False
             if was_sleeping:
                 duration = time.time() - self._sleep_activated_at
