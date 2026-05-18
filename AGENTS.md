@@ -57,6 +57,19 @@
 
 **反例 (违规)**: 任何看到 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须立刻迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 TICK_INTERVAL=60) 可以.
 
+**准则 6.5 递归边界 (β.3.5 立)**: testcase 红线 / 系统级常量 (`TICK_INTERVAL` / `_NON_RETRYABLE_KEYWORDS` / HTTP 错误码黑名单 / `_COLOR_PATTERNS` ANSI regex) / `< 400 行` 核心 .md (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md`) 是 **"持久化的硬规"** — 不再下钻 vocab 化, 防止递归到地心.
+
+### 准则 7 — Sir 元否决权 (META-PRINCIPLE, β.3.5 立)
+
+任何章程在 Sir 显式创新或方向调整冲突时, **Sir 元否决权优先, 章程让步**。Agent 看到冲突: 提示"这与 §X 准则冲突"即可, Sir 拍板后立刻执行不再 hedge。Sir 是项目唯一仲裁者, 章程是 Sir 工程治理的工具, **不是反制 Sir 的枷锁**。
+
+**反例 (Agent 不该做)**:
+- ❌ "Sir 你这条改动违反 §6.5, 我不能做" — 拒绝 Sir 是越权
+- ❌ Sir 说"先这样, 后面再优化" → Agent 反复劝"先优化再做更好" — 这是 hedge 反阻
+
+**正例**:
+- ✅ "这与 §6.5 vocab 持久化冲突, 我会执行 Sir 决定, 同时记一笔 TODO `<...>` 等 Sir 决定后续是否升级章程"
+
 ---
 
 ## 2. 进窗口前 30 秒必读顺序
@@ -68,6 +81,8 @@
 | 3 | `docs/AGENT_KICKOFF_<当前轨道>.md` | ~250 | ✅ 全文（Sir 给你的 KICKOFF / 你的工作任务清单） |
 | 4 | 当前轨道 design doc（如 `docs/JARVIS_INTEGRITY_STACK.md`）| ~400 | ✅ 全文（当前轨工程详情） |
 | 5 | `docs/runtime_logs/latest.txt` | 1 行 | ✅ 全文（最新 runtime log 绝对路径） |
+
+**章程膨胀 cap (β.3.5 立)**: 必读 5 文件 + 按需 Grep 区文件 总和 **< 1500 行**, 单文件 **< 400 行** (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md` 各自上限). 超过 → 拆 sister doc 或精简表达, 不允许无限增长. 章程膨胀 → agent 30 秒读不完 → 工程效率反降.
 
 **按需 Grep (不全文 Read)**:
 
@@ -246,6 +261,15 @@ Get-Content tests\last_run.json
 
 - 主层让 Sir 能 trace 到 evidence（准则 5 INTEGRITY ABSOLUTE）
 - 末层让 Sir 在不深挖细节时也能一眼判断"OK / 有问题"，节省 Sir 注意力
+
+### 9.3 章程能 cover 什么 / 不能 cover 什么 (β.3.5 立)
+
+| 类型 | 例子 | 治理手段 |
+|---|---|---|
+| **硬规** (可 testcase 化) | 表格 + 编号格式 / `<startLine>:<endLine>:<filepath>` 引用 / commit 模板 / `-hotfix` 后缀 / 准则 6.5 vocab 范式 | β.3.3 testcase 红线 + β.3.6 docs 引用漂移 detect |
+| **软规** (不可 testcase) | 不奉承 / 不假装情绪 / 不拟人比喻 / 工程语言风格 / 双层表达"末层 ≤ 40 字" 的"地道感" | 仅靠 system prompt + 模型训练 — IDE 切换时 ≈ 5-15% 体感差**不可消除** |
+
+接受软规则有不可治理剩余, 不强求 cover 100%. 跨 IDE 时 Sir 应预期"风格微变"但**不影响"工程纪律"** — 后者由硬规 + testcase 锁定.
 
 ---
 

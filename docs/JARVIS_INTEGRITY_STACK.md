@@ -267,14 +267,34 @@
 
 | Session | 何时 | 内容 | 验收 |
 |---|---|---|---|
-| **0** | **下个 session 第一件事** | L0.5 vocab 全面迁移 (7 项 py-hardcoded → json + CLI) | py 不再含任何 `_XXX_PATTERNS = [...]`,审计 Grep 0 命中 |
-| 1 | 本周 | L5 闭环 (✅ β.2.9.11) + L4 enforce | Sir 实测看 reply 含"我已 X"未 verify 时主脑下一轮撤回 |
+| **0** | ✅ β.3.4 完工 | L0.5 vocab 全面迁移 (7 项 py-hardcoded → json + CLI) | py 不再含任何 Session 0 scope 内 `_XXX_PATTERNS = [...]`, 审计 Grep 范围内 0 命中, tag `v0.31.0-dynamic-vocab-substrate` |
+| 1 | ✅ β.4.1 完工 | L5 闭环 (✅ β.2.9.11) + L4 enforce (✅ β.4.1) | claim 未 verify 时 ALERT 注入下一轮 prompt, tag `v0.31.1-claim-enforce` |
 | 2 | 下周 | L1 Claim 分类器 + L2 Evidence 表 (都 json + CLI) | claim 自动分类 + evidence 要求中央化 |
 | 3 | 下周 | L6 dashboard 升级 + 趋势 | Sir 看 7d 兑现率 |
 | 4 | 下下周 | L7 WeeklyReflector LLM-propose + Sir review | 每周自动 propose 新 vocab/directive, Sir CLI 一键拍板 |
+| **5** (β.5+) | **章程治理升级** | **L8 章程合规 Reflector (水位 4)** — 扫每 agent commit / 双层报告, 自动 detect 违反 `AGENTS.md §9.X` 双层 / §1 准则 / `JARVIS_PYTHON_STYLE.md` 任何条款 → 写 `memory_pool/charter_compliance_review.json` queue → Sir `scripts/charter_compliance_dump.py --review` 看. **β.4 stress test 暴露真违章数据后启动**, 不空建 | 当 Windsurf/Cursor/其他 agent 累计被 detected ≥ 5 个 missable 违章时, 真实数据驱动设计 |
+
+### 8.1 Session 5 设计原则 (β.3.5 沉淀)
+
+- **Sir 章程治理已到水位 3** (β.3.3 testcase 红线 + β.3.6 docs 漂移 detect). 水位 4 是"自动监督"的 L8 Reflector
+- **不空建**: 等真实违章数据积累 (β.4 stress test 后) 再实施, 避免基于猜想设计 → 设计跑偏
+- **复用 L7 (WeeklyReflector) 基础设施**: 同步 daemon / 同 review queue / 同 CLI 模式, 不另起炉灶
+- **Sir 仲裁仍是唯一 ground truth**: Reflector 只 propose 不 enforce, 任何"违章" 都需 Sir `--accept` 才算
+- **递归终止**: Reflector 自己也是 `< 400 行` 单文件硬规, 不再下钻"Reflector 监督 Reflector" (准则 6.5 递归边界 / AGENTS.md §1 末)
+
+### 8.2 启动条件 (β.5 是否启动?)
+
+启动: **当下面任一条件满足**:
+
+1. β.4 完工后 Sir 跑 Windsurf/Cursor 实测累计 ≥ 5 个 "应该被章程挡住但 testcase 没挡住" 的 missable 违章
+2. Sir 主动决策"章程治理优先级 > 新功能"
+3. 章程膨胀超 cap (AGENTS.md > 400 / 必读总和 > 1500) 但精简效果有限, 需自动化辅助治理
+
+不启动条件: β.4 / β.5 任务挤压 + 实测违章率 < 1 个/周 → 推迟到 β.6+
 
 ---
 
 *文档作者: Sir 12:37 提出 + Claude 12:40 立项 / 2026-05-18*
+*β.3.5 路线升级: 加 Session 5 L8 章程合规 Reflector (水位 4 路线沉淀) / 2026-05-18.*
 *这是和 INTEGRITY ABSOLUTE + SOUL_DRIVE 并列的第三条灵魂级架构.*
 *下个 Agent 接手按 Session 顺序推进, 不要跳序.*
