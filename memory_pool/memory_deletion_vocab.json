@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T23:35:00",
+    "marker": "P0+20-beta.4.7",
+    "purpose": "INTEGRITY_STACK L0.5 - Memory Deletion safety vocab (\u51c6\u5219 6.5)",
+    "source_origin": "Sir 21:45 \u5b9e\u6d4b \u8bef\u5220 5 \u6761\u8bb0\u5fc6 (cmd='\u8bc6\u522b\u9519\u8bef\u554a' \u4f46 hint='you out\u4e86' \u6ed1\u8fc7 P0+16 \u4e94\u5c42\u9632\u5fa1)",
+    "edit_via": "scripts/memory_deletion_dump.py --add/--activate/--reject/--delete (\u5f85\u521b\u5efa) \u6216\u624b\u6539 JSON",
+    "auto_propose": "INTEGRITY_STACK L7 IntegrityReflector \u53ef\u9605\u5386\u53f2 \u8bef\u5220 case \u63d0 vocab",
+    "consumer": "jarvis_safety._user_intent_has_explicit_delete_verb / jarvis_worker delete_hint \u8def\u5f84\u9632\u5fa1 L6+L7",
+    "schema_note": "patterns[] \u7c7b\u4f3c\u5176\u4ed6 vocab. _meta.thresholds \u63d0\u4f9b L7 (top_k / sim) \u53ef\u8c03\u53c2\u6570, \u4e0d\u5728 .py \u5199\u6b7b. \u9879\u76ee\u91cd\u54cd: top_k_default=1 (\u4ee5\u524d 5 \u8def\u5f84\u4f1a\u540c\u65f6\u5220 5 \u6761), min_similarity=0.85 (\u4ee5\u524d 0.45 \u592a\u9707).",
+    "thresholds": {
+      "min_similarity": 0.85,
+      "top_k_default": 1,
+      "review_queue_path": "memory_pool/memory_deletion_review.json"
+    }
+  },
+  "patterns": [
+    {
+      "id": "deletion_verb_zh",
+      "category": "deletion_verb",
+      "keywords": [
+        "\u5220\u6389",
+        "\u5220\u9664",
+        "\u53bb\u6389",
+        "\u6e05\u9664",
+        "\u4e22\u6389",
+        "\u62b9\u6389",
+        "\u64e6\u6389",
+        "\u5fd8\u6389",
+        "\u5fd8\u8bb0",
+        "\u5fd8\u6e0e\u4e86",
+        "\u53d6\u6d88\u8bb0\u5fc6",
+        "\u6e05\u7a7a",
+        "\u5220\u4e86\u8fd9\u6761",
+        "\u5220\u90a3\u6761",
+        "\u628a\u8fd9\u4e2a\u5fd8\u8bb0"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779118500.0,
+      "note": "\u4e2d\u6587\u5220\u9664\u52a8\u8bcd \u2014 cmd \u6240\u542b\u4e4b\u4e00 \u624d\u80fd\u8d70 memory deletion"
+    },
+    {
+      "id": "deletion_verb_en",
+      "category": "deletion_verb",
+      "keywords": [
+        "delete",
+        "remove",
+        "forget",
+        "erase",
+        "wipe",
+        "discard",
+        "clear",
+        "drop",
+        "purge",
+        "scratch",
+        "scrub"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779118500.0,
+      "note": "\u82f1\u6587\u5220\u9664\u52a8\u8bcd"
+    }
+  ]
+}

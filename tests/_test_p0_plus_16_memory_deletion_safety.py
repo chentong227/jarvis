@@ -205,14 +205,15 @@ class TestP0Plus16Layer3DeletePreviewMarker(unittest.TestCase):
             "拒绝路径必须 publish 'memory_deletion_refused' 到 event_bus")
 
     def test_uses_min_similarity_in_delete_path(self):
-        # 直接 delete 路径
+        # 直接 delete 路径 必须传 min_similarity (β.4.7 改为从 vocab 读 _min_sim, 老路径 0.45 兼容)
         m = re.search(
             r"hippocampus\.search_memory\(\s*self\.jarvis\.gemini_key,\s*delete_hint,"
-            r".*?min_similarity\s*=\s*0\.45",
+            r".*?min_similarity\s*=\s*(0\.45|_min_sim)",
             self.src, re.DOTALL,
         )
         self.assertIsNotNone(m,
-            "直接 delete 路径必须用 min_similarity=0.45 调 search_memory")
+            "直接 delete 路径必须传 min_similarity 给 search_memory "
+            "(β.4.7 vocab _min_sim 或 legacy 0.45)")
 
     def test_correction_to_delete_path_also_uses_guard(self):
         """correction guard 转 delete 那条路径也必须套同样的 guard"""
@@ -292,6 +293,146 @@ class TestP0Plus16RealLifeRegression(unittest.TestCase):
                 f"正确消歧后的 hint {correct_hint!r} 应该通过")
 
 
+# ==========================================================================
+# [P0+20-β.4.7 / 2026-05-18] Layer 6/7/8: cmd 必含删除动词 + sim/top_k vocab + ASR 纠正拦截
+# Sir 21:45 实测: ASR 误识别 "you out了" + Gatekeeper LLM 错抽 hint, 5 层防御全失守.
+# 加 3 层守卫复用现有 vocab (准则 6.5 持久化 + CLI + L7 propose):
+#   L6: cmd 必含 memory_deletion_vocab.json deletion_verb (删/delete/forget 等)
+#   L7: top_k=1 + sim≥0.85 (vocab _meta.thresholds, 旧硬编码 5/0.45)
+#   L8: cmd 含 memory_correction_vocab.json patterns ('识别错误'/'我没'/'其实'/'搞错了')
+#       → Sir 在纠正 ASR, deletion 必拒
+# ==========================================================================
+
+class TestP0Plus20Beta47Layer6CmdMustHaveDeleteVerb(unittest.TestCase):
+    """L6: cmd 必含显式删除动词才允许 memory deletion (vocab-driven)."""
+
+    def test_sir_21_45_real_cmd_blocked(self):
+        """Sir 21:45 实测原话不含删除动词 → L6 必拒."""
+        from jarvis_safety import _user_intent_has_explicit_delete_verb
+        sir_real_cmd = '嗯哎,没有没有刚才说的这个什么 out的,这是这是识别错误啊。我没跟你讲这个话'
+        self.assertFalse(
+            _user_intent_has_explicit_delete_verb(sir_real_cmd),
+            "Sir 21:45 实测原话不含删除动词, L6 必须返 False (拒绝 deletion)")
+
+    def test_explicit_chinese_delete_verbs_pass(self):
+        from jarvis_safety import _user_intent_has_explicit_delete_verb
+        for cmd in ['把两点睡觉那条删掉', '帮我删除那个记忆', '去掉这条', '清除昨天的提醒',
+                     '忘掉两点睡觉那条', '丢掉这个']:
+            self.assertTrue(_user_intent_has_explicit_delete_verb(cmd),
+                f"含显式中文删除动词 {cmd!r} 应允许 deletion (L6 True)")
+
+    def test_explicit_english_delete_verbs_pass(self):
+        from jarvis_safety import _user_intent_has_explicit_delete_verb
+        for cmd in ['delete that 2am sleep memory', 'please remove the reminder',
+                     'forget about it', 'erase that record', 'discard the entry',
+                     'wipe out that note']:
+            self.assertTrue(_user_intent_has_explicit_delete_verb(cmd),
+                f"含显式英文删除动词 {cmd!r} 应允许 deletion (L6 True)")
+
+    def test_empty_cmd_blocked(self):
+        from jarvis_safety import _user_intent_has_explicit_delete_verb
+        self.assertFalse(_user_intent_has_explicit_delete_verb(''))
+        self.assertFalse(_user_intent_has_explicit_delete_verb(None))
+
+    def test_unrelated_chat_blocked(self):
+        from jarvis_safety import _user_intent_has_explicit_delete_verb
+        for cmd in ['今天天气怎么样', '帮我打开 Chrome', '你好 Jarvis',
+                     'what is the weather', "let's grab coffee"]:
+            self.assertFalse(_user_intent_has_explicit_delete_verb(cmd),
+                f"普通对话 {cmd!r} 不含删除动词, L6 必须 False")
+
+
+class TestP0Plus20Beta47Layer7ThresholdsFromVocab(unittest.TestCase):
+    """L7: top_k 和 min_similarity 阈值从 vocab _meta.thresholds 读 (不硬编码)."""
+
+    def test_load_thresholds_returns_canonical_keys(self):
+        from jarvis_safety import _load_deletion_safety_thresholds
+        thr = _load_deletion_safety_thresholds()
+        self.assertIn('min_similarity', thr)
+        self.assertIn('top_k_default', thr)
+        # 类型必须 float / int 不允许 str
+        self.assertIsInstance(thr['min_similarity'], float)
+        self.assertIsInstance(thr['top_k_default'], int)
+
+    def test_default_thresholds_tightened(self):
+        """β.4.7 默认阈值: sim=0.85 (旧 0.45), top_k=1 (旧 5)."""
+        from jarvis_safety import _load_deletion_safety_thresholds
+        thr = _load_deletion_safety_thresholds()
+        self.assertGreaterEqual(thr['min_similarity'], 0.80,
+            f"β.4.7 sim 必须 >= 0.80 (实际 {thr['min_similarity']}); "
+            f"老 0.45 太松导致误删")
+        self.assertLessEqual(thr['top_k_default'], 2,
+            f"β.4.7 top_k 必须 <= 2 (实际 {thr['top_k_default']}); "
+            f"老 5 一次删 5 条危险")
+
+    def test_vocab_file_exists_in_repo(self):
+        path = os.path.join(ROOT, 'memory_pool', 'memory_deletion_vocab.json')
+        self.assertTrue(os.path.exists(path),
+            "memory_pool/memory_deletion_vocab.json 必须存在 (β.4.7 seed)")
+
+
+class TestP0Plus20Beta47Layer8CorrectsAsrBlocked(unittest.TestCase):
+    """L8: cmd 含 memory_correction patterns (Sir 纠正 ASR) → 必拒 deletion.
+    复用 memory_correction_vocab.json (β.3.4-vocab3)."""
+
+    def test_sir_21_45_corrects_asr_caught(self):
+        """Sir 21:45 实测: '识别错误啊, 我没跟你讲这个话' → L8 必拦."""
+        from jarvis_safety import _user_intent_corrects_asr_or_denies
+        sir_real_cmd = '嗯哎,没有没有刚才说的这个什么 out的,这是这是识别错误啊。我没跟你讲这个话'
+        self.assertTrue(_user_intent_corrects_asr_or_denies(sir_real_cmd),
+            "Sir '识别错误啊, 我没跟你讲这个话' 是 ASR 纠正/否认, L8 必拦")
+
+    def test_other_correction_patterns_caught(self):
+        from jarvis_safety import _user_intent_corrects_asr_or_denies
+        for cmd in ['不对不对, 我说的是另一个事',
+                     '其实我意思是', '我搞错了',
+                     '两码事啊', '不要混淆',
+                     "actually I meant", "you got it wrong",
+                     "let me clarify"]:
+            self.assertTrue(_user_intent_corrects_asr_or_denies(cmd),
+                f"ASR 纠正模式 {cmd!r} L8 必拦")
+
+    def test_normal_delete_request_not_blocked_by_l8(self):
+        """正常删除请求不应被 L8 拦 (L8 只拦纠正/否认)."""
+        from jarvis_safety import _user_intent_corrects_asr_or_denies
+        for cmd in ['把两点睡觉那条删掉', 'delete that record',
+                     '清除昨天的提醒']:
+            self.assertFalse(_user_intent_corrects_asr_or_denies(cmd),
+                f"正常删除 {cmd!r} 不应被 L8 拦 (它没纠正/否认)")
+
+
+class TestP0Plus20Beta47CompoundEndToEnd(unittest.TestCase):
+    """L6+L7+L8 端到端契约: Sir 21:45 实测原话不能再误删."""
+
+    def test_sir_21_45_blocked_by_l6_or_l8(self):
+        """Sir 21:45 原话: L6 或 L8 至少一个拦 (实际两个都拦)."""
+        from jarvis_safety import (_user_intent_has_explicit_delete_verb,
+                                       _user_intent_corrects_asr_or_denies)
+        sir_real_cmd = '嗯哎,没有没有刚才说的这个什么 out的,这是这是识别错误啊。我没跟你讲这个话'
+        l6_allows = _user_intent_has_explicit_delete_verb(sir_real_cmd)
+        l8_blocks = _user_intent_corrects_asr_or_denies(sir_real_cmd)
+        self.assertFalse(l6_allows or not l8_blocks,
+            f"Sir 21:45 实测原话: L6_allows={l6_allows} L8_blocks={l8_blocks}; "
+            f"两层至少一层必须拦, 实际两层都该拦")
+
+    def test_worker_uses_new_guards(self):
+        """jarvis_worker.py delete_hint 路径必须调 L6 + L7 + L8 helper."""
+        worker_path = os.path.join(ROOT, 'jarvis_worker.py')
+        with open(worker_path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # L6 helper 必须被引用 in delete path
+        self.assertIn('_user_intent_has_explicit_delete_verb(cmd)', src,
+            "jarvis_worker.py 必须在 delete_hint 路径调 L6 helper")
+        self.assertIn('_user_intent_corrects_asr_or_denies(cmd)', src,
+            "jarvis_worker.py 必须在 delete_hint 路径调 L8 helper")
+        self.assertIn('_load_deletion_safety_thresholds()', src,
+            "jarvis_worker.py 必须用 _load_deletion_safety_thresholds 读 L7 阈值")
+        # 旧硬编码 top_k=5 + min_similarity=0.45 不应在 delete 路径剩余
+        # (其他 search_memory 调用点可能仍有 0.45, 但 deletion 路径必须用 vocab)
+        self.assertIn('β.4.7 L7 vocab', src,
+            "β.4.7 标记必须在 jarvis_worker.py delete 路径")
+
+
 if __name__ == '__main__':
     runner = unittest.TextTestRunner(verbosity=2)
     suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
@@ -299,7 +440,7 @@ if __name__ == '__main__':
     print()
     print("=" * 60)
     if result.wasSuccessful():
-        print("[OK] All P0+16 Memory Deletion safety tests passed.")
+        print("[OK] All P0+16 + β.4.7 Memory Deletion safety tests passed.")
     else:
         print(f"[FAIL] {len(result.failures)} failures, {len(result.errors)} errors")
     print("=" * 60)

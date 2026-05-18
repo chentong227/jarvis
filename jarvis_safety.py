@@ -54,6 +54,11 @@ __all__ = [
     # P0+18-a.5 物理文件删除意图识别
     '_PHYSICAL_FILE_DELETE_MARKERS',
     '_is_physical_file_delete_intent',
+    # P0+20-β.4.7 / 2026-05-18 Memory Deletion 第 6/7/8 层守卫 (Sir 21:45 实测 BUG 治本)
+    '_DELETION_VOCAB_PATH',
+    '_user_intent_has_explicit_delete_verb',
+    '_user_intent_corrects_asr_or_denies',
+    '_load_deletion_safety_thresholds',
     # P0+18-e.4 box + colorize
     '_box_newline',
     # P0+18-c.1 结构化标签剥离
@@ -172,6 +177,132 @@ def _is_physical_file_delete_intent(hint: str) -> bool:
         if marker in norm:
             return True
     return False
+
+
+# ==========================================
+# 🛡️ [P0+20-β.4.7 / 2026-05-18] Memory Deletion 第 6/7/8 层守卫 — Sir 21:45 实测 BUG 治本
+# ==========================================
+# 21:45 实测复发：Sir 实际说"嗯哎, 没有没有刚才说的这个什么 out的, 这是这是识别错误啊.
+# 我没跟你讲这个话" — 但 ASR 误识别前一轮为 "you out了", Gatekeeper LLM 误把
+# "识别错误啊" 解读成 "Sir 想删除关于 you out了 的记忆", 抽出 delete_memory_hint='you out了'.
+# 5 层 P0+16 防御依次失守: hint 不是纯指代词 (L1)/不是文件 (L5)/sim=0.67-0.78 过 0.45 (L2),
+# Gatekeeper prompt 规则 14 教不到 "识别错误" 这个新模式 (L4), preview 只 log 不阻塞 (L3).
+# 误删 5 条无关记忆 (ID 1088/972/1078/1035/821).
+#
+# 第 6/7/8 层守卫 (准则 6.5 全部 vocab 化, 不在 .py 写死 keyword):
+#   L6 (_user_intent_has_explicit_delete_verb): cmd 必含显式删除动词
+#       (memory_pool/memory_deletion_vocab.json deletion_verb category)
+#   L7 (_load_deletion_safety_thresholds): top_k=1 + sim≥0.85 (vocab _meta.thresholds)
+#   L8 (_user_intent_corrects_asr_or_denies): cmd 含 memory_correction patterns
+#       ('识别错误'/'我没'/'其实'/'搞错了' 等) → Sir 在纠正 ASR, deletion 必拒
+#       复用 jarvis_directives.get_memory_correction_patterns() (β.3.4-vocab3)
+
+_DELETION_VOCAB_PATH = os.path.join('memory_pool', 'memory_deletion_vocab.json')
+_DELETION_VOCAB_CACHE: Dict = {'mtime': 0.0, 'data': None}
+
+
+def _load_deletion_vocab() -> Dict:
+    """读 memory_deletion_vocab.json (mtime cache + fail-safe). 损坏返 seed defaults."""
+    seed = {
+        '_meta': {'thresholds': {'min_similarity': 0.85, 'top_k_default': 1}},
+        'patterns': [
+            {'category': 'deletion_verb', 'keywords':
+             ['删', 'delete', 'remove', 'forget', '去掉', '清除']},
+        ],
+    }
+    p = _DELETION_VOCAB_PATH
+    if not os.path.exists(p):
+        return seed
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return seed
+    if _DELETION_VOCAB_CACHE['mtime'] == mt and _DELETION_VOCAB_CACHE['data'] is not None:
+        return _DELETION_VOCAB_CACHE['data']
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or not isinstance(data.get('patterns'), list):
+            return seed
+        _DELETION_VOCAB_CACHE['mtime'] = mt
+        _DELETION_VOCAB_CACHE['data'] = data
+        return data
+    except (OSError, json.JSONDecodeError):
+        return seed
+
+
+def _user_intent_has_explicit_delete_verb(cmd: str) -> bool:
+    """[β.4.7 L6] cmd (用户原话) 是否含显式删除动词.
+
+    True → 允许走 memory deletion (但仍要 L1/L2/L3/L5/L7/L8 验)
+    False → cmd 没说"删/delete/remove/forget" 等 → 拒触发 deletion
+            (典型场景: ASR 误识别一个像意图的词 / Gatekeeper 错抽 hint)
+
+    keyword 来源: memory_pool/memory_deletion_vocab.json
+    fail-safe: vocab 损坏 → seed 6 词 fallback
+    """
+    if not cmd:
+        return False
+    norm = cmd.lower().strip()
+    vocab = _load_deletion_vocab()
+    for pat in vocab.get('patterns', []):
+        if not isinstance(pat, dict):
+            continue
+        if pat.get('category') != 'deletion_verb':
+            continue
+        if pat.get('state', 'active') != 'active':
+            continue
+        for kw in pat.get('keywords', []) or []:
+            if not kw:
+                continue
+            if kw.lower() in norm:
+                return True
+    return False
+
+
+def _user_intent_corrects_asr_or_denies(cmd: str) -> bool:
+    """[β.4.7 L8] cmd 是否在纠正 ASR / 否认 / 澄清 (典型 Sir 21:45 场景).
+
+    True → Sir 在说"识别错了 / 我没说过 / 其实是 X / 搞错了" 等 → memory deletion 必拒
+           (复用 memory_correction_vocab.json patterns, β.3.4-vocab3)
+    False → 普通对话, 不影响 deletion 判定
+
+    fail-safe: jarvis_directives import 失败 → 返 False (不影响主链)
+    """
+    if not cmd:
+        return False
+    norm = cmd.lower().strip()
+    try:
+        from jarvis_directives import get_memory_correction_patterns
+    except Exception:
+        return False
+    try:
+        patterns = get_memory_correction_patterns() or ()
+    except Exception:
+        return False
+    for kw in patterns:
+        if not kw:
+            continue
+        if kw.lower() in norm:
+            return True
+    return False
+
+
+def _load_deletion_safety_thresholds() -> Dict[str, float]:
+    """[β.4.7 L7] 读 memory_deletion_vocab.json _meta.thresholds.
+
+    返 {'min_similarity': float, 'top_k_default': int}.
+    fail-safe: vocab 缺失 / 损坏 → seed (sim=0.85, top_k=1).
+    """
+    vocab = _load_deletion_vocab()
+    meta = vocab.get('_meta') if isinstance(vocab, dict) else {}
+    thr = meta.get('thresholds') if isinstance(meta, dict) else {}
+    if not isinstance(thr, dict):
+        thr = {}
+    return {
+        'min_similarity': float(thr.get('min_similarity', 0.85) or 0.85),
+        'top_k_default': int(thr.get('top_k_default', 1) or 1),
+    }
 
 
 # ==========================================

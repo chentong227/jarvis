@@ -3373,13 +3373,67 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                     # 防御 4: Gatekeeper prompt 规则 14 [REFERENCE DISAMBIGUATION] — 上游 LLM 先把指代词消歧
                                     # [P0+18-a.5 / 2026-05-15] 防御 5: 物理文件删除意图直接拒触发 delete_memory，
                                     #                                  让主脑走 file_operator_hands.delete 正轨
+                                    # [P0+20-β.4.7 / 2026-05-18] Sir 21:45 实测 BUG 治本 — 加 3 层守卫:
+                                    # 防御 6 (_user_intent_has_explicit_delete_verb): cmd 必含显式删除动词
+                                    # 防御 7 (_load_deletion_safety_thresholds): top_k=1 + sim≥0.85 (旧 5/0.45)
+                                    # 防御 8 (_user_intent_corrects_asr_or_denies): cmd 含 ASR 纠正模式 → 拒
                                     try:
                                         from jarvis_utils import bg_log
                                     except Exception:
                                         bg_log = lambda m: print(f"║ {m}")
 
+                                    # 防御 6 (β.4.7 最优先拦): cmd 不含显式删除动词 → 拒
+                                    # 治本 Sir 21:45 实测: cmd='识别错误啊' 没说删, hint='you out了' 误抽
+                                    if not _user_intent_has_explicit_delete_verb(cmd):
+                                        bg_log(
+                                            f"🛡️ [Memory Deletion Guard L6 / β.4.7] "
+                                            f"cmd 不含显式删除动词 (vocab=memory_deletion_vocab.json deletion_verb), "
+                                            f"拒绝 delete_hint='{delete_hint[:60]}' (cmd='{cmd[:60]}')"
+                                        )
+                                        try:
+                                            bus = getattr(self.jarvis, 'event_bus', None)
+                                            if bus is not None:
+                                                bus.publish(
+                                                    etype='memory_deletion_refused',
+                                                    description=f"L6 refused: cmd lacks explicit delete verb",
+                                                    source='memory_deletion_guard_l6',
+                                                    metadata={'delete_hint': delete_hint, 'cmd': cmd[:200],
+                                                              'reason': 'no_explicit_delete_verb'},
+                                                )
+                                        except Exception:
+                                            pass
+                                        result['gate_result_text'] = (
+                                            f"Memory deletion REFUSED (L6): cmd '{cmd[:80]}' has no explicit "
+                                            f"delete verb. Hint '{delete_hint[:80]}' likely misextracted by gatekeeper. "
+                                            f"If Sir really wants to delete, please ask Sir to say '删/delete/forget/remove' explicitly."
+                                        )
+                                    # 防御 8 (β.4.7): cmd 含 ASR 纠正/否认模式 → 拒
+                                    # 治本 Sir 21:45 实测: cmd='识别错误啊'/'我没跟你讲这个话' = ASR 纠正
+                                    elif _user_intent_corrects_asr_or_denies(cmd):
+                                        bg_log(
+                                            f"🛡️ [Memory Deletion Guard L8 / β.4.7] "
+                                            f"cmd 含 ASR 纠正/否认模式 (复用 memory_correction_vocab patterns), "
+                                            f"拒绝 delete_hint='{delete_hint[:60]}'"
+                                        )
+                                        try:
+                                            bus = getattr(self.jarvis, 'event_bus', None)
+                                            if bus is not None:
+                                                bus.publish(
+                                                    etype='memory_deletion_refused',
+                                                    description=f"L8 refused: cmd corrects ASR / denies",
+                                                    source='memory_deletion_guard_l8',
+                                                    metadata={'delete_hint': delete_hint, 'cmd': cmd[:200],
+                                                              'reason': 'asr_correction_or_denial'},
+                                                )
+                                        except Exception:
+                                            pass
+                                        result['gate_result_text'] = (
+                                            f"Memory deletion REFUSED (L8): cmd '{cmd[:80]}' is correcting ASR "
+                                            f"or denying a previous statement. This is NOT a deletion request — "
+                                            f"do not interpret '识别错误' / 'I didn't say that' as 'delete that memory'."
+                                        )
                                     # 防御 5（最先拦，避免 hint 含 .txt/.md/D盘/桌面/文件 等触发 LTM 搜索）
-                                    if _is_physical_file_delete_intent(delete_hint):
+                                    elif _is_physical_file_delete_intent(delete_hint):
                                         bg_log(f"🛡️ [Memory Deletion Guard / Physical-File] hint='{delete_hint}' 含物理文件标识 (后缀/盘符/桌面/文件夹)，拒绝触发 delete_memory — 让主脑走 file_operator_hands.delete")
                                         try:
                                             bus = getattr(self.jarvis, 'event_bus', None)
@@ -3416,23 +3470,28 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                             f"Ask Sir to specify which memory (e.g., '删掉两点睡觉那条' / 'delete the 2am sleep entry')."
                                         )
                                     else:
-                                        bg_log(f"🗑️ [Memory Deletion] 搜索: hint='{delete_hint}' (min_sim=0.45)")
+                                        # 防御 7 (β.4.7): top_k + sim 从 vocab thresholds 读 (以前硬编码 5/0.45)
+                                        _del_thr = _load_deletion_safety_thresholds()
+                                        _top_k = _del_thr['top_k_default']
+                                        _min_sim = _del_thr['min_similarity']
+                                        bg_log(f"🗑️ [Memory Deletion] 搜索: hint='{delete_hint}' "
+                                                f"(top_k={_top_k} / min_sim={_min_sim:.2f} / β.4.7 L7 vocab)")
                                         try:
-                                            # 防御 2: 高阈值 search
+                                            # 防御 2+7: 高阈值低 top_k search
                                             ltm_results = self.jarvis.hippocampus.search_memory(
-                                                self.jarvis.gemini_key, delete_hint, top_k=5,
-                                                min_similarity=0.45,
+                                                self.jarvis.gemini_key, delete_hint, top_k=_top_k,
+                                                min_similarity=_min_sim,
                                             )
                                             if not ltm_results:
                                                 ltm_results = self.jarvis.hippocampus.search_memory(
-                                                    self.jarvis.gemini_key, cmd, top_k=5,
-                                                    min_similarity=0.45,
+                                                    self.jarvis.gemini_key, cmd, top_k=_top_k,
+                                                    min_similarity=_min_sim,
                                                 )
                                             if not ltm_results:
-                                                bg_log(f"⚠️ [Memory Deletion] 无候选 (相似度都 < 0.45 / hint='{delete_hint}')")
+                                                bg_log(f"⚠️ [Memory Deletion] 无候选 (相似度都 < {_min_sim:.2f} / hint='{delete_hint}')")
                                                 result['gate_result_text'] = (
                                                     f"Memory deletion: No matching records found for '{delete_hint}' "
-                                                    f"(similarity threshold 0.45). Nothing was deleted."
+                                                    f"(similarity threshold {_min_sim:.2f}). Nothing was deleted."
                                                 )
                                             else:
                                                 # 防御 3: candidates preview + event_bus
@@ -3489,8 +3548,52 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                             except Exception:
                                                 _del_bg = lambda m: print(f"║ {m}")
                                             _hint_for_guard = search_hint or old_val
+                                            # [P0+20-β.4.7 / 2026-05-18] 防御 6 + 8 (Sir 21:45 治本): 同 direct path
+                                            if not _user_intent_has_explicit_delete_verb(cmd):
+                                                _del_bg(
+                                                    f"🛡️ [Memory Deletion Guard L6 / via correction / β.4.7] "
+                                                    f"cmd 不含显式删除动词, 拒绝 hint='{_hint_for_guard[:60]}'"
+                                                )
+                                                try:
+                                                    bus = getattr(self.jarvis, 'event_bus', None)
+                                                    if bus is not None:
+                                                        bus.publish(
+                                                            etype='memory_deletion_refused',
+                                                            description="L6 refused (via correction): cmd lacks delete verb",
+                                                            source='memory_deletion_guard_l6_corr',
+                                                            metadata={'delete_hint': _hint_for_guard, 'cmd': cmd[:200],
+                                                                      'reason': 'no_explicit_delete_verb'},
+                                                        )
+                                                except Exception:
+                                                    pass
+                                                result['gate_result_text'] = (
+                                                    f"Memory deletion REFUSED (L6 via correction): cmd '{cmd[:80]}' "
+                                                    f"has no explicit delete verb. Hint '{_hint_for_guard[:80]}' "
+                                                    f"likely misextracted. Ask Sir to say '删/delete' explicitly."
+                                                )
+                                            elif _user_intent_corrects_asr_or_denies(cmd):
+                                                _del_bg(
+                                                    f"🛡️ [Memory Deletion Guard L8 / via correction / β.4.7] "
+                                                    f"cmd 含 ASR 纠正/否认模式, 拒绝 hint='{_hint_for_guard[:60]}'"
+                                                )
+                                                try:
+                                                    bus = getattr(self.jarvis, 'event_bus', None)
+                                                    if bus is not None:
+                                                        bus.publish(
+                                                            etype='memory_deletion_refused',
+                                                            description="L8 refused (via correction): cmd corrects ASR",
+                                                            source='memory_deletion_guard_l8_corr',
+                                                            metadata={'delete_hint': _hint_for_guard, 'cmd': cmd[:200],
+                                                                      'reason': 'asr_correction_or_denial'},
+                                                        )
+                                                except Exception:
+                                                    pass
+                                                result['gate_result_text'] = (
+                                                    f"Memory deletion REFUSED (L8 via correction): cmd '{cmd[:80]}' "
+                                                    f"is correcting ASR or denying. Not a deletion request."
+                                                )
                                             # [P0+18-a.5 / 2026-05-15] 防御 5: 物理文件意图先拦
-                                            if _is_physical_file_delete_intent(_hint_for_guard):
+                                            elif _is_physical_file_delete_intent(_hint_for_guard):
                                                 _del_bg(f"🛡️ [Memory Deletion Guard / via correction / Physical-File] hint='{_hint_for_guard}' 含物理文件标识，拒绝触发 delete_memory")
                                                 try:
                                                     bus = getattr(self.jarvis, 'event_bus', None)
@@ -3514,13 +3617,17 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                     f"Ask Sir to specify which memory."
                                                 )
                                             else:
+                                                # 防御 7 (β.4.7): vocab threshold (correction→delete 路径同样走)
+                                                _del_thr2 = _load_deletion_safety_thresholds()
+                                                _top_k2 = _del_thr2['top_k_default']
+                                                _min_sim2 = _del_thr2['min_similarity']
                                                 try:
                                                     ltm_results = self.jarvis.hippocampus.search_memory(
-                                                        self.jarvis.gemini_key, _hint_for_guard or cmd, top_k=5,
-                                                        min_similarity=0.45,
+                                                        self.jarvis.gemini_key, _hint_for_guard or cmd, top_k=_top_k2,
+                                                        min_similarity=_min_sim2,
                                                     )
                                                     if not ltm_results:
-                                                        _del_bg(f"⚠️ [Memory Deletion / via correction] 无候选 (sim < 0.45 / hint='{_hint_for_guard}')")
+                                                        _del_bg(f"⚠️ [Memory Deletion / via correction] 无候选 (sim < {_min_sim2:.2f} / hint='{_hint_for_guard}')")
                                                         result['gate_result_text'] = "Memory deletion: No matching records found. Nothing was deleted."
                                                     else:
                                                         # candidates preview + event_bus
