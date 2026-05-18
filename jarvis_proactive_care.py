@@ -876,6 +876,17 @@ class ProactiveCareEngine(threading.Thread):
             if cur > 0:
                 self.fatigue_map[concern_id] = max(0, cur - 1)
 
+    # 🩹 [β.2.9.11 / 2026-05-18] 闭环 — 暴露 last nudge 信息给 CommitmentWatcher
+    # 关联自动 concern_link: Sir 在 nudge 后 120s 内说出的承诺自动归属该 concern.
+    def get_last_nudge_info(self) -> Optional[tuple]:
+        """返回 (concern_id, last_nudge_ts) 或 None."""
+        with self._state_lock:
+            cid = self.last_nudge_concern_id
+            ts = self.last_any_nudge_ts
+        if not cid or not ts:
+            return None
+        return (cid, ts)
+
     # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:43 反馈: "贾维斯能不能通过后续承诺的执行
     # 来显式提高或降低这件事的关心度? 不仅睡眠, 后面贾维斯关心别的事情也会这样
     # 动态影响权重."

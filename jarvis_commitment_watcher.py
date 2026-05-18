@@ -37,6 +37,71 @@ except ImportError:
 import os
 import re
 import json
+
+
+# ============================================================
+# 🩹 [β.2.9.11 / 2026-05-18] 灵魂闭环 A — 通用 helper (准则 6 vocab 驱动)
+# ============================================================
+
+# expected_behavior 推断词典 — 按动作语义类别选验证方式 (不针对 sleep 硬编码)
+# 每条: (keyword_set, expected_behavior dict)
+_BEHAVIOR_PATTERNS = [
+    # 睡眠/休息类 — idle > 30min 视为履约 (Sir 真去睡了)
+    ({'睡', '上床', '关灯', '休息', '躺', 'sleep', 'bed', 'rest', 'nap',
+      'turn in', 'crash'},
+     {'kind': 'idle_min', 'threshold': 30}),
+    # 短休息类 — idle > 5min 视为履约
+    ({'歇会', '走两步', '休息一下', 'break', 'pause', 'breather', 'stretch'},
+     {'kind': 'idle_min', 'threshold': 5}),
+    # 任务完成类 — STM 含完成词视为履约
+    ({'刷题', '做题', '复习', '学习', '看完', '读完', '完成', '搞定',
+      'finish', 'done', 'complete', 'wrap up'},
+     {'kind': 'stm_contains',
+      'kws': ['完成', '搞定', '做完了', '看完了', 'done', 'finished', 'wrapped']}),
+    # 进程退出类 — 指定进程退视为履约 (用户提供 process name 时)
+    # 暂留 placeholder, 真用时配 process_exit 在 add_commitment 调用方手传
+]
+
+
+def infer_concern_link(description: str) -> Optional[str]:
+    """通用 — 复用 ConcernsReflector 的 CONCERN_KEYWORDS 反查 concern_link.
+
+    准则 6: 不写 concern → keyword 硬编码 if 链, 用 reflector vocab 反查.
+    任何新 concern 在 reflector 加 keyword → 此函数自动支持, 0 改动.
+    """
+    if not description:
+        return None
+    try:
+        from jarvis_soul_reflector import CONCERN_KEYWORDS
+    except Exception:
+        return None
+    t = description.lower()
+    best_cid = None
+    best_score = 0
+    for cid, kw_list in CONCERN_KEYWORDS.items():
+        score = 0
+        for kw, delta in kw_list:
+            if kw in t:
+                score += abs(float(delta))
+        if score > best_score:
+            best_score = score
+            best_cid = cid
+    return best_cid
+
+
+def infer_expected_behavior(description: str) -> Optional[dict]:
+    """通用 — 从 description vocab 推 fulfillment 验证方式.
+
+    准则 6: vocab 表驱动, 不针对 sleep/break 写专门 if 分支.
+    """
+    if not description:
+        return None
+    t = description.lower()
+    for kws, behavior in _BEHAVIOR_PATTERNS:
+        if any(k in t for k in kws):
+            return dict(behavior)  # 返副本防意外 mutate
+    return None
+
 import time
 import threading
 import queue
@@ -464,7 +529,24 @@ class CommitmentWatcher(threading.Thread):
                        predicate: 'Predicate' = None,
                        ttl_s: float = 86400.0,
                        action_executor: str = 'voice_nudge',
-                       action_target: str = 'sir'):
+                       action_target: str = 'sir',
+                       concern_link: str = None,
+                       expected_behavior: dict = None):
+        """🩹 [β.2.9.11 / 2026-05-18] 灵魂闭环 A — Sir 10:43 + 12:35 要求:
+          'Jarvis 关心 → 我承诺 → 履约/违约 → 动态影响关心值'
+
+        新参数 (准则 6 通用):
+          concern_link: 关联到哪个 concern (如 'sir_sleep_streak') — 履约后
+                        调 ledger.record_signal + notify_concern_aligned/rejected
+          expected_behavior: 怎么验证履约 (dict, kind 驱动):
+            {'kind': 'idle_min', 'threshold': 30}   # idle X min = 履约 (sleep/rest)
+            {'kind': 'process_exit', 'name': 'X'}   # 进程退出 = 履约 (剪完视频)
+            {'kind': 'stm_contains', 'kws': [...]}  # STM 含完成词 = 履约 (任务类)
+            None → 不检测履约 (老路径, 兼容)
+
+          调用方可手动传, 也可走 infer_concern_link / infer_expected_behavior
+          自动推断 (见 jarvis_commitment_watcher.py 模块级函数).
+        """
         """
         🩹 [β.2.8.7 / 2026-05-17] Sir 23:28 反馈承诺三角接口预留:
           action_executor: 谁执行 action 'voice_nudge' (默认, 走 stream_nudge 出声)
@@ -768,6 +850,13 @@ class CommitmentWatcher(threading.Thread):
                 # 🩹 β.2.8.7: 承诺三角接口预留 (Sir 23:28)
                 'action_executor': action_executor,
                 'action_target': action_target,
+                # 🩹 β.2.9.11: 灵魂闭环 A — 关联 concern + 验证方式
+                # 优先级: caller 传 > ProactiveCare nudge backfill (tick 时) >
+                #         infer_concern_link 反查 reflector CONCERN_KEYWORDS
+                'concern_link': concern_link or infer_concern_link(description),
+                'expected_behavior': expected_behavior or infer_expected_behavior(description),
+                'fulfillment_checked': False,  # 防重复检测
+                'concern_link_inferred_at': 0.0,  # 自动 backfill 时间戳
             })
             dl_str = time.strftime("%H:%M", time.localtime(deadline_ts))
             # [P0+18-c.8 / 2026-05-15] 改 bg_log 不漏到对话框
@@ -981,9 +1070,196 @@ class CommitmentWatcher(threading.Thread):
                             except:
                                 pass
 
+                        # 🩹 [β.2.9.11 / 2026-05-18] 灵魂闭环 A — 履约检测
+                        # 1. 自动 backfill concern_link (若 ProactiveCare nudge 后 120s 内创建)
+                        # 2. deadline + grace 5min 后看 sensor → fulfilled/broken
+                        # 3. 反馈调 ledger.record_signal + notify_concern_aligned/rejected
+                        try:
+                            self._backfill_concern_link(c, now)
+                            if (c.get('concern_link') and
+                                    not c.get('fulfillment_checked') and
+                                    now > c['deadline_ts'] + self._FULFILLMENT_GRACE_S):
+                                verdict = self._check_fulfillment(c, now)
+                                if verdict != 'unknown':
+                                    self._on_fulfillment(c, verdict)
+                                    c['fulfillment_checked'] = True
+                        except Exception as _fce:
+                            try:
+                                from jarvis_utils import bg_log
+                                bg_log(f"⚠️ [Closure/tick] {_fce}")
+                            except Exception:
+                                pass
+
                 time.sleep(30)
             except Exception:
                 time.sleep(30)
+
+    # ============================================================
+    # 🩹 [β.2.9.11 / 2026-05-18] 灵魂闭环 A — 履约/违约检测 + 反馈 concern
+    # Sir 10:43+12:35 要求: 'Jarvis 关心 → 我承诺 → 履约/违约 → 动态影响关心值'
+    # 通用化 (准则 6): 不针对 sleep 硬编码, expected_behavior 类型驱动.
+    # ============================================================
+
+    _FULFILLMENT_GRACE_S = 300.0  # deadline 后 5min 才检测 (Sir 真有时间去做)
+
+    def _check_fulfillment(self, c: dict, now_ts: float) -> Optional[str]:
+        """看 Sir 是否真兑现了 commitment. 返 'fulfilled' / 'broken' / 'unknown'.
+
+        准则 6: expected_behavior['kind'] 驱动, 不针对 sleep 硬编码:
+          idle_min       : Sir idle > threshold 分钟 = 履约 (适合 sleep/rest)
+          process_exit   : 指定进程已退 = 履约 (适合 '剪完视频后...')
+          stm_contains   : STM 最近含完成关键词 = 履约 (适合任务)
+          其他           : 'unknown' (不调反馈, 避免误判)
+        """
+        eb = c.get('expected_behavior')
+        if not eb or not isinstance(eb, dict):
+            return 'unknown'
+
+        kind = eb.get('kind', '')
+        try:
+            if kind == 'idle_min':
+                threshold = float(eb.get('threshold', 30))
+                # 看 sensor idle
+                if 'win32api' in globals() and win32api is not None:
+                    idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
+                else:
+                    return 'unknown'
+                idle_min = idle_ms / 1000 / 60
+                return 'fulfilled' if idle_min >= threshold else 'broken'
+
+            elif kind == 'process_exit':
+                exe = eb.get('name', '').lower()
+                if not exe:
+                    return 'unknown'
+                try:
+                    from jarvis_env_probe import PhysicalEnvironmentProbe as P
+                    events = getattr(P, 'process_died_events', []) or []
+                except Exception:
+                    events = []
+                # 最近 30min 内 exe 退过 = 履约
+                cutoff = now_ts - 1800
+                for ev in events:
+                    if ev.get('exe', '').lower() == exe and ev.get('when', 0) >= cutoff:
+                        return 'fulfilled'
+                return 'broken'
+
+            elif kind == 'stm_contains':
+                kws = eb.get('kws', []) or []
+                if not kws:
+                    return 'unknown'
+                try:
+                    stm = getattr(self.worker, 'short_term_memory', []) or []
+                except Exception:
+                    stm = []
+                # 最近 5 条 STM 看 user/jarvis 是否含 keyword
+                for entry in stm[-5:]:
+                    blob = f"{entry.get('user', '')} {entry.get('jarvis', '')}".lower()
+                    if any(k.lower() in blob for k in kws):
+                        return 'fulfilled'
+                return 'broken'
+        except Exception:
+            return 'unknown'
+        return 'unknown'
+
+    def _on_fulfillment(self, c: dict, verdict: str) -> None:
+        """履约 / 违约 → 反馈 concern severity + notify_aligned/rejected.
+
+        通用化: 任何 concern_link 都通过 ledger.record_signal 调.
+        """
+        cid = c.get('concern_link', '')
+        if not cid:
+            return
+        desc = (c.get('description') or '')[:80]
+
+        if verdict == 'fulfilled':
+            severity_delta = -0.2
+            evidence_what = f"Sir 兑现承诺: '{desc}'"
+        elif verdict == 'broken':
+            severity_delta = +0.1
+            evidence_what = f"Sir 违约: '{desc}'"
+        else:
+            return  # unknown 不调
+
+        # 1. 写 concern signal
+        try:
+            from jarvis_concerns import get_default_ledger
+            ledger = get_default_ledger()
+            if ledger is not None:
+                ledger.record_signal(cid, evidence_what,
+                                       severity_delta=severity_delta)
+        except Exception as e:
+            try:
+                from jarvis_utils import bg_log
+                bg_log(f"⚠️ [Closure/ledger] {e}")
+            except Exception:
+                pass
+
+        # 2. 通知 ProactiveCare 调 fatigue map
+        try:
+            from jarvis_proactive_care import get_default_engine
+            pce = get_default_engine()
+            if pce is not None:
+                if verdict == 'fulfilled':
+                    pce.notify_concern_aligned(cid)
+                else:
+                    pce.notify_concern_rejected(cid)
+        except Exception:
+            pass
+
+        # 3. PromiseLog 配对 evidence (Sir 兑现也是 Jarvis 言出必行的证据)
+        try:
+            from jarvis_promise_log import try_pair_evidence
+            try_pair_evidence(
+                evidence_kind='commitment_' + verdict,
+                evidence_what=evidence_what,
+            )
+        except Exception:
+            pass
+
+        try:
+            from jarvis_utils import bg_log
+            bg_log(
+                f"🎯 [Closure/{verdict}] concern={cid} severity_delta={severity_delta:+.2f} "
+                f"'{desc}'"
+            )
+        except Exception:
+            pass
+
+    def _backfill_concern_link(self, c: dict, now_ts: float) -> None:
+        """自动 backfill: 若 commitment 在 ProactiveCare nudge 后 120s 内 register
+        且无 concern_link → 自动关联到 last_nudge_concern_id.
+        """
+        if c.get('concern_link') or c.get('concern_link_inferred_at'):
+            return  # 已有或已尝试
+        c['concern_link_inferred_at'] = now_ts
+        try:
+            from jarvis_proactive_care import get_default_engine
+            pce = get_default_engine()
+            if pce is None:
+                return
+            info = pce.get_last_nudge_info()
+            if info is None:
+                return
+            cid, last_ts = info
+            created = float(c.get('created_at', 0) or 0)
+            if abs(created - last_ts) > 120:
+                return  # commitment 不在 nudge 后 120s 内
+            c['concern_link'] = cid
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"🔗 [Closure] auto-link commitment '{c['description'][:50]}' "
+                    f"→ concern={cid} (nudge 后 {int(created - last_ts)}s 内 register)"
+                )
+            except Exception:
+                pass
+            # 同时 infer expected_behavior (若没传)
+            if not c.get('expected_behavior'):
+                eb = infer_expected_behavior(c.get('description', ''))
+                if eb:
+                    c['expected_behavior'] = eb
+        except Exception:
+            pass
 
     def _build_predicate_ctx(self, now_ts: float) -> dict:
         """β.2.8.6: 每 tick 构造 predicate evaluation context.
