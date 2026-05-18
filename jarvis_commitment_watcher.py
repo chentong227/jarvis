@@ -1223,13 +1223,19 @@ class CommitmentWatcher(threading.Thread):
         desc = (c.get('description') or '')[:80]
 
         if verdict == 'fulfilled':
-            severity_delta = -0.2
             evidence_what = f"Sir 兑现承诺: '{desc}'"
         elif verdict == 'broken':
-            severity_delta = +0.1
             evidence_what = f"Sir 违约: '{desc}'"
         else:
             return  # unknown 不调
+
+        # [β.4.9] severity_delta 从 vocab 读 (准则 6.5)
+        # per_concern 覆盖优先, 没则 default (-0.20/+0.10)
+        try:
+            from jarvis_safety import _load_severity_delta
+            severity_delta = _load_severity_delta(cid, verdict)
+        except Exception:
+            severity_delta = -0.2 if verdict == 'fulfilled' else 0.1
 
         # 1. 写 concern signal
         try:
@@ -1266,6 +1272,58 @@ class CommitmentWatcher(threading.Thread):
             )
         except Exception:
             pass
+
+        # 4. [P0+20-β.4.9 / 2026-05-19] pending_ack 注入 concern.notes_for_self
+        # Sir 重设计 (2026-05-19): 不立刻 push (会吵醒 Sir / 多数 concern 没 sensor 验),
+        # 改写一条 [pending_ack] 标记到 notes_for_self → Sir 下次主动开口时主脑读到 →
+        # 自然致意 (反硬编码: 不写死句子, 信任主脑根据 evidence 涌现回答).
+        # L5 SoulAlignmentEvaluator 后续清 [pending_ack] (reply 引用了 → 已致意).
+        # 通用化: 任何 concern 都走同一管道, 新 concern 0 改动.
+        try:
+            from jarvis_concerns import get_default_ledger as _gdl
+            _ledger2 = _gdl()
+            if _ledger2 is not None:
+                _c_obj = _ledger2.get(cid) if hasattr(_ledger2, 'get') else None
+                if _c_obj is None and hasattr(_ledger2, 'concerns'):
+                    _c_obj = _ledger2.concerns.get(cid)
+                if _c_obj is not None:
+                    _existing = (getattr(_c_obj, 'notes_for_self', '') or '').strip()
+                    # 已含 [pending_ack ...] 不重复堆 (避免 N 次兑现 spam)
+                    if '[pending_ack' not in _existing:
+                        _hms = time.strftime('%H:%M', time.localtime(time.time()))
+                        if verdict == 'fulfilled':
+                            _ack_note = (
+                                f"[pending_ack {_hms} fulfilled] Sir 真兑现了 "
+                                f"'{desc[:60]}'. Sir 下次开口时, 自然致意一次 "
+                                f"(短句, 不说教不重复关心), 致意后此 tag 清除."
+                            )
+                        else:
+                            _ack_note = (
+                                f"[pending_ack {_hms} broken] Sir 未兑现 "
+                                f"'{desc[:60]}'. Sir 下次开口时, 温和提及一次 "
+                                f"(不指责不催促, 关心而非压力), 致意后清除."
+                            )
+                        _new_notes = (_existing + " | " + _ack_note) if _existing else _ack_note
+                        _c_obj.notes_for_self = _new_notes[:600]
+                        _c_obj.last_updated = time.time()
+                        try:
+                            _ledger2.persist()
+                        except Exception:
+                            pass
+                        try:
+                            from jarvis_utils import bg_log as _ack_bg
+                            _ack_bg(
+                                f"📝 [pending_ack/{verdict}] concern={cid} 写入 notes_for_self "
+                                f"(主脑下次自然致意)"
+                            )
+                        except Exception:
+                            pass
+        except Exception as _ack_e:
+            try:
+                from jarvis_utils import bg_log as _ack_err_bg
+                _ack_err_bg(f"⚠️ [pending_ack] 写 notes_for_self 失败 (容忍): {_ack_e}")
+            except Exception:
+                pass
 
         try:
             from jarvis_utils import bg_log

@@ -236,7 +236,13 @@ class ConcernsLedger:
         """[P0+20-β.2.6 / 2026-05-17] Layer 5 SoulAlignmentEvaluator 调。
         aligned=True → aligned_count++（Jarvis 本轮 honored 这条 concern）
         aligned=False → missed_count++（Jarvis 本轮 ignored 一条本应 reference 的 concern）
-        统计用于未来 ConcernsReflector 优先级排序 & Sir 监控 alignment health。"""
+        统计用于未来 ConcernsReflector 优先级排序 & Sir 监控 alignment health。
+
+        🩹 [P0+20-β.4.9 / 2026-05-19] aligned=True 时自动清 [pending_ack] tag.
+        Sir 兑现承诺后 CommitmentWatcher 写 [pending_ack] 到 notes_for_self,
+        主脑下次自然致意 → L5 评估 aligned → 此处清 tag, 防重复致意.
+        通用化: 任何 concern 都走此 pipeline, 新 concern 0 改动.
+        """
         with self._lock:
             c = self.concerns.get(concern_id)
             if c is None:
@@ -245,6 +251,16 @@ class ConcernsLedger:
             if aligned:
                 c.aligned_count += 1
                 c.last_aligned_at = now
+                # [β.4.9] 清 pending_ack tag (主脑已致意, 不再注入下轮)
+                _notes = (c.notes_for_self or '')
+                if '[pending_ack' in _notes:
+                    import re as _re
+                    _cleaned = _re.sub(
+                        r'\s*\|?\s*\[pending_ack[^\]]*\][^\|]*',
+                        '',
+                        _notes,
+                    ).strip(' |').strip()
+                    c.notes_for_self = _cleaned[:600]
             else:
                 c.missed_count += 1
                 c.last_missed_at = now

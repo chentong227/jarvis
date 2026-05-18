@@ -59,6 +59,10 @@ __all__ = [
     '_user_intent_has_explicit_delete_verb',
     '_user_intent_corrects_asr_or_denies',
     '_load_deletion_safety_thresholds',
+    # β.4.9 severity decay vocab
+    '_load_severity_vocab',
+    '_load_severity_delta',
+    '_SEVERITY_VOCAB_PATH',
     # P0+18-e.4 box + colorize
     '_box_newline',
     # P0+18-c.1 结构化标签剥离
@@ -306,7 +310,82 @@ def _load_deletion_safety_thresholds() -> Dict[str, float]:
 
 
 # ==========================================
-# 🎨 [P0+18-e.4 / 2026-05-15] 多行 box 边框 + ANSI 色彩
+# � [P0+20-β.4.9 / 2026-05-19] Severity Decay vocab 化 (准则 6.5)
+# ==========================================
+# Sir 反馈: 不同 concern 重要度差异大. 旧硬编码 ±0.2/0.1 不分 concern 类型.
+# 治本: memory_pool/severity_decay_vocab.json _meta.thresholds + per_concern.
+# fail-safe: vocab 缺/坏 → seed default (-0.20 fulfilled / +0.10 broken).
+# Sir CLI 改 vocab 即生效 (mtime cache reload).
+
+_SEVERITY_VOCAB_PATH = os.path.join('memory_pool', 'severity_decay_vocab.json')
+_SEVERITY_VOCAB_CACHE: Dict = {'mtime': 0.0, 'data': None}
+
+
+def _load_severity_vocab() -> Dict:
+    """读 severity_decay_vocab.json (mtime cache + fail-safe).
+    返 dict 含 _meta.thresholds + per_concern. 损坏返 seed default."""
+    seed = {
+        '_meta': {
+            'thresholds': {
+                'default_fulfilled_delta': -0.20,
+                'default_broken_delta': 0.10,
+            }
+        },
+        'per_concern': {},
+    }
+    p = _SEVERITY_VOCAB_PATH
+    if not os.path.exists(p):
+        return seed
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return seed
+    if _SEVERITY_VOCAB_CACHE['mtime'] == mt and _SEVERITY_VOCAB_CACHE['data'] is not None:
+        return _SEVERITY_VOCAB_CACHE['data']
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return seed
+        _SEVERITY_VOCAB_CACHE['mtime'] = mt
+        _SEVERITY_VOCAB_CACHE['data'] = data
+        return data
+    except (OSError, json.JSONDecodeError):
+        return seed
+
+
+def _load_severity_delta(concern_id: str, verdict: str) -> float:
+    """[β.4.9] 读 concern + verdict 对应的 severity delta.
+
+    Args:
+        concern_id: e.g. 'sir_sleep_streak'
+        verdict: 'fulfilled' / 'broken'
+
+    Returns:
+        float delta (fulfilled<0 / broken>0). per_concern 覆盖优先, 没则 default.
+        fail-safe: 任何异常 → 返默认 (-0.2 / +0.1).
+    """
+    default = -0.20 if verdict == 'fulfilled' else 0.10
+    if verdict not in ('fulfilled', 'broken'):
+        return 0.0
+    try:
+        vocab = _load_severity_vocab()
+        meta = vocab.get('_meta', {})
+        thr = meta.get('thresholds', {}) if isinstance(meta, dict) else {}
+        default_key = f'default_{verdict}_delta'
+        default = float(thr.get(default_key, default) or default)
+        per = vocab.get('per_concern', {})
+        if isinstance(per, dict) and concern_id in per:
+            concern_cfg = per[concern_id]
+            if isinstance(concern_cfg, dict) and verdict in concern_cfg:
+                return float(concern_cfg[verdict])
+    except Exception:
+        pass
+    return default
+
+
+# ==========================================
+# �� [P0+18-e.4 / 2026-05-15] 多行 box 边框 + ANSI 色彩
 # ==========================================
 def _box_newline(text: str) -> str:
     """确保多行文本的每一行都有 ║ 边框前缀。

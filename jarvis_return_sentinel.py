@@ -804,7 +804,23 @@ class ReturnSentinel(threading.Thread):
             self.soft_focus_active = False
             return True
 
-        is_offer_help = getattr(self, '_soft_focus_reason', '') == 'offer_help'
+        # [P0+20-β.4.9 / 2026-05-19] 主动关怀类 reason 宽松 validate
+        # Sir 反馈: ProactiveCare nudge 后 Sir 说短句 (e.g. "好"/"喝水"/"我去") 被判
+        # "背景音/非对话" 静默退出 → Sir 失去回应窗口被迫重 wake. 治本:
+        # Jarvis 主动开口 (proactive_care/commitment_check/inconsistency) 时, Sir
+        # 60s 内任何有意义 ASR (≥1 中文字 OR ≥2 字母英文词) 都接受为回应.
+        # Echo guard 已在 line ~795 拦, 此处不会把 Jarvis 自己回声当 Sir 回应.
+        _soft_reason = getattr(self, '_soft_focus_reason', '')
+        if _soft_reason in ('proactive_care', 'commitment_check', 'inconsistency'):
+            zh_chars_count = len(re.findall(r'[\u4e00-\u9fa5]', audio_text))
+            meaningful_en = [w for w in re.findall(r'[a-z]+', text_lower) if len(w) >= 2]
+            if zh_chars_count >= 1 or meaningful_en:
+                self.soft_focus_active = False
+                return True
+            # 纯符号 / 短到几乎空 → 继续保留 soft_focus 等下一句
+            return False
+
+        is_offer_help = _soft_reason == 'offer_help'
 
         if is_offer_help:
             if len(audio_text.split()) > 8:

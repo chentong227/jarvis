@@ -1,0 +1,38 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-19T00:59:00",
+    "marker": "P0+20-beta.4.9",
+    "purpose": "Severity decay 数值 vocab 化 (准则 6.5) — Sir 兑现/违约 → concern severity delta 不再硬编码",
+    "source_origin": "Sir 反馈: 不同 concern 重要度差异大. 睡眠兑现应大降, 喝水兑现小降; 违约升幅同样应区分.",
+    "edit_via": "手改此 JSON (scripts/severity_decay_dump.py 待加) — Sir 调权重不需改 .py + commit",
+    "consumer": "jarvis_commitment_watcher._on_fulfillment 通过 jarvis_safety._load_severity_delta() 读",
+    "schema_note": "default_* 是全局兜底; per_concern.<id> 覆盖. delta 必须 fulfilled<0 / broken>0 (绝对值越大变化越剧烈). |delta| 建议范围 0.05-0.30.",
+    "thresholds": {
+      "default_fulfilled_delta": -0.20,
+      "default_broken_delta": 0.10
+    }
+  },
+  "per_concern": {
+    "sir_sleep_streak": {
+      "fulfilled": -0.25,
+      "broken": 0.15,
+      "note": "睡眠 = 最重 concern, 兑现要明显感, 违约严肃"
+    },
+    "sir_hydration_habit": {
+      "fulfilled": -0.10,
+      "broken": 0.05,
+      "note": "喝水 = 轻度 concern, 兑现小降 (不会突然不关心), 违约不严苛"
+    },
+    "sir_pomodoro_compliance": {
+      "fulfilled": -0.15,
+      "broken": 0.08,
+      "note": "番茄钟 = 中等, 兑现适中"
+    },
+    "sir_cursor_payment": {
+      "fulfilled": -0.30,
+      "broken": 0.20,
+      "note": "付费 / 账单 = 一次性强 concern, 解决后大降; 没解决要紧"
+    }
+  }
+}

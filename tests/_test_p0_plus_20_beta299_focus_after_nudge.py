@@ -129,5 +129,83 @@ class TestChatBypassHookExists(unittest.TestCase):
                        'chat_bypass.py 必须接通 ProactiveCare 反馈 hook')
 
 
+# ==========================================================================
+# [P0+20-β.4.9 / 2026-05-19] validate_soft_focus 主动关怀类 reason 宽松 validate
+# Sir 终端反馈: ProactiveCare nudge 后短句被判背景音 → 失焦点 → 重 wake
+# ==========================================================================
+
+class TestSoftFocusValidateProactiveLenient(unittest.TestCase):
+    """β.4.9: _soft_focus_reason='proactive_care' 时, Sir 短句也要 verify."""
+
+    def _rs(self, reason: str):
+        from jarvis_return_sentinel import ReturnSentinel
+        worker = unittest.mock.MagicMock()
+        rs = ReturnSentinel(worker)
+        rs.open_soft_focus(duration_s=60.0, reason=reason)
+        return rs
+
+    def test_proactive_care_short_zh_passes(self):
+        """proactive_care + Sir 说 '好' / '嗯' / '喝' → verify True (β.4.9 治本)."""
+        for short_zh in ['好', '嗯', '喝', '行', '可以', '我去']:
+            with self.subTest(text=short_zh):
+                rs = self._rs('proactive_care')
+                self.assertTrue(rs.validate_soft_focus(short_zh),
+                    f"proactive_care + '{short_zh}' 必须 verify (β.4.9 短句治本)")
+
+    def test_proactive_care_short_en_passes(self):
+        """proactive_care + Sir 说 'ok' / 'yes' / 'sure' → verify True."""
+        for short_en in ['ok', 'yes', 'sure', 'right', 'thanks']:
+            with self.subTest(text=short_en):
+                rs = self._rs('proactive_care')
+                self.assertTrue(rs.validate_soft_focus(short_en),
+                    f"proactive_care + '{short_en}' 必须 verify")
+
+    def test_proactive_care_pure_symbol_keeps_focus(self):
+        """proactive_care + 纯符号/极短 → 仍返 False 但 soft_focus 保持 (等下一句)."""
+        rs = self._rs('proactive_care')
+        result = rs.validate_soft_focus('...')
+        self.assertFalse(result)
+        self.assertTrue(rs.soft_focus_active,
+            'proactive_care 纯符号不触发 close, 留时间等真说话')
+
+    def test_commitment_check_also_lenient(self):
+        rs = self._rs('commitment_check')
+        self.assertTrue(rs.validate_soft_focus('好'))
+
+    def test_inconsistency_also_lenient(self):
+        rs = self._rs('inconsistency')
+        self.assertTrue(rs.validate_soft_focus('对'))
+
+    def test_offer_help_strictness_unchanged(self):
+        """offer_help reason 仍走严格判 (Sir 可能不想被 offer 烦, 维持现状)."""
+        rs = self._rs('offer_help')
+        # 单字 '好' 不在 offer_help 严格表 → False (现状)
+        self.assertFalse(rs.validate_soft_focus('单字'),
+            'offer_help 维持严标 (现状不变)')
+
+    def test_external_reason_strictness_unchanged(self):
+        """external (非 Jarvis 主动) reason 走老路径."""
+        rs = self._rs('external')
+        # external 不在 proactive 列表 → 走老严标分支
+        # '喝' 单字 zh_chars=1 但 external 走 line 844 之后 zh_chars > 3 才 verify
+        self.assertFalse(rs.validate_soft_focus('喝'),
+            'external reason 维持现状 (zh_chars 必 > 3)')
+
+    def test_jarvis_alias_still_passes_in_proactive(self):
+        """proactive_care 内 'jarvis' 别名仍直通 (line 803 老逻辑保留)."""
+        rs = self._rs('proactive_care')
+        self.assertTrue(rs.validate_soft_focus('jarvis 我去'))
+
+    def test_echo_guard_still_works_in_proactive(self):
+        """proactive_care 仍走 echo guard (Jarvis 自己回声不当 Sir 回应)."""
+        from unittest.mock import patch
+        rs = self._rs('proactive_care')
+        with patch('jarvis_utils.is_recent_jarvis_echo', return_value=True):
+            self.assertFalse(rs.validate_soft_focus('好的'),
+                'echo guard 必须保留, 自己回声不能 verify')
+            # 不关闭 soft_focus, 等真用户
+            self.assertTrue(rs.soft_focus_active)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
