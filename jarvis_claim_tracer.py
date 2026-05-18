@@ -70,6 +70,20 @@ _UNCERTAINTY_MARKERS = (
     '我记得', '我猜', '左右',
 )
 
+# 🩹 [β.3.0 BUG#4 / 2026-05-18] past-action claim 提取
+# Sir 14:00 痛点: 主脑说"已打开看板"但实际工具失败 → 言行不一.
+# 此 regex 抓 reply 里"已 X / I've X / opened X / muted X"动作.
+# Trace 时需要 tool_results 至少有 ✅ 才算 verified, 否则 unverified action lie.
+_PAT_PAST_ACTION_ZH = re.compile(
+    r'(已经?|帮?你?)\s*(打开|开启|启动|关闭|关掉|静音|发送|发了|设置|设好|'
+    r'调好|调成|调到|更新|记下|存了|存好|保存|删除|删了|取消)\s*([了好])?'
+)
+_PAT_PAST_ACTION_EN = re.compile(
+    r"\b(?:i'?ve|i have|i)\s+(opened|launched|started|closed|muted|sent|"
+    r"set|updated|saved|deleted|cancelled)\b",
+    re.IGNORECASE
+)
+
 
 # ============================================================
 # Claim datatypes
@@ -131,6 +145,12 @@ def extract_claims(text: str) -> List[Claim]:
         for m in pat.finditer(text):
             claims.append(Claim('quote', m.group(0)[:80], m.span()))
 
+    # 🩹 [β.3.0 BUG#4] past-action claim — Sir 14:00 治本
+    for m in _PAT_PAST_ACTION_ZH.finditer(text):
+        claims.append(Claim('past_action', m.group(0), m.span()))
+    for m in _PAT_PAST_ACTION_EN.finditer(text):
+        claims.append(Claim('past_action', m.group(0), m.span()))
+
     # 标 uncertainty: 每个 claim 看附近 ±40 字符是否含 uncertainty marker
     text_l = text.lower()
     for c in claims:
@@ -152,12 +172,24 @@ def trace_to_evidence(claim: Claim, tool_results: List[str],
 
     优先级:
       1. uncertainty marker — 已标
-      2. tool_results 含该字串
-      3. STM 含该字串 (Sir 原话或 jarvis 之前 reply)
+      2. past_action 类: tool_results 必含 ✅ marker (β.3.0 BUG#4)
+      3. tool_results 含该字串
+      4. STM 含该字串 (Sir 原话或 jarvis 之前 reply)
     """
     if claim.has_uncertainty:
         claim.trace_to = 'uncertainty'
         return True
+
+    # 🩹 [β.3.0 BUG#4 / 2026-05-18] past_action 必须 tool 真成功
+    if claim.kind == 'past_action':
+        for tr in tool_results or []:
+            tr_s = str(tr)
+            if '✅' in tr_s:
+                claim.trace_to = 'tool_success'
+                claim.trace_what = tr_s[:100]
+                return True
+        # past_action 没有 ✅ → 言行不一, 不 verify (不用 STM fallback)
+        return False
 
     needle = claim.text.lower()
     needle_compact = re.sub(r'\s+', '', needle)

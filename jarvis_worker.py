@@ -1974,27 +1974,85 @@ class JarvisWorkerThread(QThread):
     _SLEEP_DEFAULT_DELAY_SEC = 1800  # 默认 30 分钟
     _SLEEP_GRACE_SEC = 900           # 目标时间到了还多给 15 分钟 grace
 
+    def _load_audio_ducking_targets(self) -> list:
+        """🩹 [β.3.0-vocab3 / 2026-05-18] Sir 14:00 反馈 WeChat 静音没生效 + 硬
+        编码 'WeChat' 违准则 6.5. 读 memory_pool/audio_ducking_targets.json
+        返 active state 的进程名 list. CLI: scripts/audio_ducking_dump.py.
+        """
+        import json as _json
+        import os as _os
+        path = _os.path.join('memory_pool', 'audio_ducking_targets.json')
+        if not _os.path.exists(path):
+            return ['WeChat']  # fallback seed
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            return [t['process_name'] for t in data.get('targets', [])
+                    if isinstance(t, dict) and t.get('state') == 'active'
+                    and t.get('process_name')]
+        except Exception:
+            return ['WeChat']
+
+    SLEEP_ROUTINE_MIN_DELAY_S = 30.0  # 🩹 [β.3.0 BUG#5] Sir 14:00 太快: 强制 30s 缓冲
+
+    def cancel_sleep_routine(self) -> bool:
+        """🩹 [β.3.0 / 2026-05-18] Sir 14:00 痛点: 说睡觉瞬间黑屏没缓冲.
+        Sir 30s 倒数期内说 '等等' / 'cancel' / '取消睡眠' → 调此撤回.
+        返 True 表示撤回成功, False 表示当前没活跃的 sleep routine.
+        """
+        if getattr(self, '_sleep_routine_cancelled', False):
+            return False
+        self._sleep_routine_cancelled = True
+        try:
+            from jarvis_utils import bg_log
+            bg_log("🛑 [SleepMode/Cancelled] Sir 撤回睡眠 routine")
+        except Exception:
+            pass
+        return True
+
     def _trigger_sleep_mode_routine(self, delay_sec: float) -> None:
         """🩹 [β.2.9.1 / 2026-05-18] Sir 准则 5 落地: 'I shall mute/dim' 真做.
 
         Sir 说 "睡觉" → 自动调:
-          1. audio_hands.mute_app(WeChat) — 不被消息吵
+          1. audio_hands.mute_app (循环静音 vocab 列表里所有 active 进程)
           2. display_hands.sleep_display — 屏幕休眠 (动鼠标自动唤醒)
           3. ASR mute (复用现有 mute_until) — Sir 翻身说梦话不触发 Jarvis
         delay_sec=0 立即, > 60 在 delay 后用 Timer 延迟.
         失败任一项不影响其他 (各自 try-except).
 
-        🩹 [β.2.9.1.1] 去重: 1h 内已触发过不重复 (Sir 反馈连续跳多个 sleep 提醒).
+        🩹 [β.2.9.1.1] 去重: 1h 内已触发过不重复.
+        🩹 [β.3.0-vocab3 / 2026-05-18] Sir 14:00 实测痛点修:
+          - mute 目标从硬编码 'WeChat' 改读 audio_ducking_targets.json (Sir 准则 6.5)
+          - 循环对所有 active 进程调 mute_app, 任一失败不影响其他
+        🩹 [β.3.0 BUG#5 / 2026-05-18] Sir 14:00 痛点 "说睡觉瞬间黑屏没缓冲":
+          - 强制最小 30s 倒数 (用 MIN_DELAY_S)
+          - 倒数期内 Sir 说 "等等" / "cancel" / "取消" 可调 cancel_sleep_routine() 撤回
+          - 这是单独的 timer 不阻塞主线程
         """
         # 去重: 1h 内已触发过 → skip
         _last = getattr(self, '_last_sleep_routine_ts', 0)
         if time.time() - _last < 3600:
             return
         self._last_sleep_routine_ts = time.time()
+        # 🩹 [β.3.0 BUG#5] 强制最小 30s 缓冲, Sir 可撤回
+        delay_sec = max(delay_sec, self.SLEEP_ROUTINE_MIN_DELAY_S)
+        self._sleep_routine_cancelled = False  # 重置撤回 flag
+        try:
+            from jarvis_utils import bg_log
+            bg_log(
+                f"😴 [SleepMode/Countdown] {int(delay_sec)}s 倒数 — Sir 期内"
+                f"说 '等等'/'取消睡眠' 可撤回 (worker.cancel_sleep_routine())"
+            )
+        except Exception:
+            pass
 
         def _do_routine():
             from jarvis_utils import bg_log
-            # 1. mute WeChat (单进程)
+            # 🩹 [β.3.0 BUG#5] 倒数到点先 check 撤回 flag
+            if getattr(self, '_sleep_routine_cancelled', False):
+                bg_log("🛑 [SleepMode] 倒数期 Sir 撤回, abort routine")
+                return
+            # 1. 循环 mute 所有 active 进程 (Sir 准则 6.5 vocab 驱动)
             try:
                 jarvis = getattr(self, 'jarvis', None)
                 if jarvis is None:
@@ -2003,12 +2061,31 @@ class JarvisWorkerThread(QThread):
                 if audio_cls:
                     inst = audio_cls()
                     from jarvis_blood import Action
-                    r = inst.execute(Action(command='mute_app',
-                                              params={'app_name': 'WeChat',
-                                                       'enable': True}))
-                    bg_log(f"😴 [SleepMode/MuteWeChat] {r.msg[:120]}")
+                    targets = self._load_audio_ducking_targets()
+                    hits = []
+                    misses = []
+                    for app in targets:
+                        try:
+                            r = inst.execute(Action(command='mute_app',
+                                                      params={'app_name': app,
+                                                               'enable': True}))
+                            if r.success:
+                                hits.append(app)
+                            else:
+                                misses.append(f"{app}({r.msg[:30]})")
+                        except Exception as _me:
+                            misses.append(f"{app}(err: {_me})")
+                    bg_log(
+                        f"😴 [SleepMode/MuteApps] hit={hits} miss={misses[:3]}"
+                    )
+                    if not hits and misses:
+                        bg_log(
+                            f"⚠️ [SleepMode/MuteApps] 0 命中 — 这些 app 可能没在播声音 "
+                            f"(无 audio session). Sir 用 scripts/audio_ducking_dump.py "
+                            f"调整目标."
+                        )
             except Exception as e:
-                bg_log(f"⚠️ [SleepMode/MuteWeChat] {e}")
+                bg_log(f"⚠️ [SleepMode/MuteApps] {e}")
             # 2. sleep_display
             try:
                 disp_cls = jarvis.hand_registry.get('display_hands')
@@ -2027,15 +2104,13 @@ class JarvisWorkerThread(QThread):
             except Exception:
                 pass
 
-        # 立即 (delay < 60s) or 延迟 (Timer)
-        if delay_sec < 60:
-            threading.Thread(target=_do_routine, daemon=True,
-                              name='SleepModeRoutine').start()
-        else:
-            timer = threading.Timer(delay_sec, _do_routine)
-            timer.daemon = True
-            timer.name = 'SleepModeRoutineTimer'
-            timer.start()
+        # 🩹 [β.3.0 BUG#5] 永远走 Timer (30s 缓冲), Sir 可撤回
+        timer = threading.Timer(delay_sec, _do_routine)
+        timer.daemon = True
+        timer.name = 'SleepModeRoutineTimer'
+        timer.start()
+        # 暴露 timer 让 cancel_sleep_routine 也能直接 cancel timer 本身
+        self._sleep_routine_timer = timer
 
     def _detect_sleep_intent(self, cmd: str):
         """[v5.1 / P0-2 expanded 2026-05-15 / P0+12 注] 检测 Sir 表态'X 分钟后睡'或'X 点睡' → 设置静默催睡窗口。
@@ -2235,6 +2310,61 @@ class JarvisWorkerThread(QThread):
         except Exception:
             pass
 
+    def _detect_sleep_cancel(self, cmd: str) -> bool:
+        """🩹 [β.3.0 BUG#5 / 2026-05-18] Sir 14:00 痛点 "瞬间黑屏没缓冲".
+        倒数期内 Sir 说 "等等/不睡了/取消睡眠/wait" → 撤回 routine.
+        准则 6.5: keyword 走 vocab json — memory_pool/sleep_cancel_vocab.json
+        fallback 用 seed list.
+        返 True 表示已撤回, False 表示没命中或没活跃 routine.
+        """
+        if not cmd:
+            return False
+        # 有 timer 才 check (没倒数中就别白扫词)
+        timer = getattr(self, '_sleep_routine_timer', None)
+        if timer is None or not timer.is_alive():
+            return False
+        # vocab 读取 (json + fallback seed)
+        kws = self._load_sleep_cancel_vocab()
+        t = cmd.lower().strip()
+        for kw in kws:
+            if kw in t:
+                if self.cancel_sleep_routine():
+                    try:
+                        timer.cancel()
+                    except Exception:
+                        pass
+                    try:
+                        from jarvis_utils import bg_log
+                        bg_log(
+                            f"🛑 [SleepMode] Sir 命中 '{kw}' 撤回倒数中的睡眠"
+                        )
+                    except Exception:
+                        pass
+                    return True
+        return False
+
+    def _load_sleep_cancel_vocab(self) -> list:
+        """🩹 [β.3.0 / 2026-05-18] Sir 准则 6.5: keyword 持久化."""
+        import json as _json
+        import os as _os
+        path = _os.path.join('memory_pool', 'sleep_cancel_vocab.json')
+        seed = ['等等', '不睡了', '取消睡眠', '撤回睡眠', '别睡了', '我不睡了',
+                'wait', 'cancel sleep', "don't sleep", 'no sleep']
+        if not _os.path.exists(path):
+            return seed
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            out = []
+            for p in data.get('patterns', []):
+                if isinstance(p, dict) and p.get('state') == 'active':
+                    for k in p.get('keywords', []):
+                        if isinstance(k, str):
+                            out.append(k.lower().strip())
+            return out or seed
+        except Exception:
+            return seed
+
     # [P0+12 / 2026-05-15] 语义清晰别名 — 与 CentralNerve._detect_deep_sleep_request 区分
     def _detect_sleep_window_intent(self, cmd: str):
         """语义别名：检测"Sir 表态 X 分钟后睡"软窗口（仅静默 sleep 类 nudge）。
@@ -2341,6 +2471,8 @@ class JarvisWorkerThread(QThread):
                     self._detect_help_refusal(cmd)
                     # [v5.1 / Sir-2026-05-15] 检测"我 X 分钟后睡"——设静默窗口防 Conductor 重复催睡
                     self._detect_sleep_intent(cmd)
+                    # 🩹 [β.3.0 BUG#5 / 2026-05-18] Sir 14:00 痛点: 倒数期可撤回睡眠
+                    self._detect_sleep_cancel(cmd)
 
                 matched_reflex = False
                 cmd_lower = cmd.lower().strip()

@@ -1317,26 +1317,36 @@ Spoken English:"""
             # "打开面板/看看状态" 模糊语义 → 主脑 emit FAST_CALL ui_control.dashboard_open
             # → 此处 subprocess 启动 jarvis_dashboard.py (pythonw, 无 console).
             if ctrl_cmd == "dashboard_open":
+                # 🩹 [β.2.9.13 / 2026-05-18] Sir 14:00 实测痛点修:
+                # 旧版用 pythonw.exe 静默失败 + return ✅ → 主脑说"已打开"但 Sir
+                # 没看到窗口 = 言行不一. 准则 5 修:
+                #   1. 优先 python.exe (有 console 看 error), 不用 pythonw 静默失败
+                #   2. 启动后 sleep 0.5s 检查进程 poll() — 活着才返 ✅, 死了返 ❌
                 try:
                     import subprocess as _sp
                     import sys as _sys
-                    # 用 pythonw.exe (无 console). fallback Windows 自带 cmd.
-                    py_w = _sys.executable.replace('python.exe', 'pythonw.exe')
-                    if not os.path.exists(py_w):
-                        py_w = _sys.executable
+                    import time as _t
+                    py_exe = _sys.executable  # 用主进程 python (有 console)
                     dash_script = os.path.join(
                         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'scripts', 'jarvis_dashboard.py')
                     if not os.path.exists(dash_script):
-                        # 兼容运行时 __file__ 在 jarvis_chat_bypass 同目录
                         dash_script = 'scripts/jarvis_dashboard.py'
-                    # detached 启动, 不阻塞主进程
-                    _sp.Popen(
-                        [py_w, dash_script],
-                        creationflags=getattr(_sp, 'DETACHED_PROCESS', 0x00000008),
+                    # CREATE_NEW_CONSOLE 让 dashboard 在新窗口 (Sir 能看启动 log)
+                    proc = _sp.Popen(
+                        [py_exe, dash_script],
+                        creationflags=getattr(_sp, 'CREATE_NEW_CONSOLE',
+                                               0x00000010),
                         close_fds=True,
                     )
-                    return f"✅ ui_control.dashboard_open: 看板已启动"
+                    # 启动健康检查 — 准则 5 不假装成功
+                    _t.sleep(0.6)
+                    if proc.poll() is not None:
+                        # 进程秒退 = 启动失败 (Tkinter / import error / etc)
+                        return (f"❌ ui_control.dashboard_open: 进程秒退 "
+                                f"(exit_code={proc.returncode}) — Sir 直接跑 "
+                                f"`scripts\\jarvis_dashboard.cmd` 看 console error")
+                    return f"✅ ui_control.dashboard_open: 看板已启动 (PID={proc.pid})"
                 except Exception as _de:
                     return f"❌ ui_control.dashboard_open: {_de}"
             if ctrl_cmd == "dashboard_close":

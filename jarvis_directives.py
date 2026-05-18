@@ -752,28 +752,82 @@ def _trigger_tool_overture(ctx: DirectiveContext) -> bool:
 
 
 # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09: dashboard 集成主脑 — 模糊语义启动
-_DASHBOARD_INTENT_PATTERNS_ZH = (
-    '面板', '看板', '总览', '仪表盘', '状态板', '监控',
-    '看看状态', '看下状态', '看一下状态', '给我看', '展示状态',
-    '查看你', '看一眼你', '看看你的', '现在啥状态',
+# 🩹 [β.3.0-vocab2 / 2026-05-18] Sir 14:00 反馈 BUG#2: "给我看" 过广误触发.
+#   Sir 准则 6.5 治本: vocab 迁 json + CLI, Sir 自删过广词
+#   照搬 β.3.0-vocab1 (tool_intent) 范式 — 详 commit 63611f3
+_SEED_DASHBOARD_INTENT_PATTERNS = (
+    '面板', '看板', '仪表盘', '状态板',
+    'dashboard', 'panel', 'status board',
+    'show me the dashboard', 'open the dashboard', 'pull up dashboard',
 )
-_DASHBOARD_INTENT_PATTERNS_EN = (
-    'dashboard', 'panel', 'overview', 'status board',
-    'show me status', 'show me the dashboard', 'open the dashboard',
-    'pull up dashboard', "what's going on inside",
-)
+
+_DASHBOARD_INTENT_VOCAB_PATH = os.path.join(
+    'memory_pool', 'dashboard_intent_vocab.json')
+_DASHBOARD_INTENT_CACHE: Optional[tuple] = None
+_DASHBOARD_INTENT_MTIME: float = 0.0
+
+
+def _load_dashboard_intent_from_json() -> Optional[tuple]:
+    """从 json 加载 active pattern keyword 扁平 tuple. 失败返 None."""
+    if not os.path.exists(_DASHBOARD_INTENT_VOCAB_PATH):
+        return None
+    try:
+        with open(_DASHBOARD_INTENT_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out = []
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            for kw in (p.get('keywords') or []):
+                if isinstance(kw, str) and kw.strip():
+                    out.append(kw.lower().strip())
+        return tuple(out) if out else None
+    except Exception:
+        return None
+
+
+def get_dashboard_intent_patterns() -> tuple:
+    """🩹 [β.3.0-vocab2] mtime cache 自动 reload. Sir CLI 改 json → 即时生效."""
+    global _DASHBOARD_INTENT_CACHE, _DASHBOARD_INTENT_MTIME
+    try:
+        mtime = os.path.getmtime(_DASHBOARD_INTENT_VOCAB_PATH) if os.path.exists(
+            _DASHBOARD_INTENT_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _DASHBOARD_INTENT_CACHE is None or mtime > _DASHBOARD_INTENT_MTIME:
+        loaded = _load_dashboard_intent_from_json()
+        if loaded is not None:
+            _DASHBOARD_INTENT_CACHE = loaded
+        else:
+            _DASHBOARD_INTENT_CACHE = _SEED_DASHBOARD_INTENT_PATTERNS
+        _DASHBOARD_INTENT_MTIME = mtime
+    return _DASHBOARD_INTENT_CACHE
 
 
 def _trigger_dashboard_intent(ctx: DirectiveContext) -> bool:
-    """Sir 说"打开面板/看看状态" 类模糊语义 → 提示主脑用 ui_control.dashboard_open"""
+    """Sir 说"打开面板/dashboard"等明确语义 → 主脑 emit FAST_CALL ui_control.dashboard_open.
+    🩹 [β.3.0-vocab2] vocab 持久化 — Sir 准则 6.5 + 删 '给我看' 等过广词治 14:00 BUG#2
+    """
     if not ctx.user_input:
         return False
     t = ctx.user_input.lower().strip()
-    if any(w in t for w in _DASHBOARD_INTENT_PATTERNS_ZH):
-        return True
-    if any(w in t for w in _DASHBOARD_INTENT_PATTERNS_EN):
-        return True
-    return False
+    return any(w in t for w in get_dashboard_intent_patterns())
+
+
+def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
+    """🩹 [β.3.0 BUG#4 / 2026-05-18] past-action 诚信 directive 触发.
+    Sir 输入像在请求一个动作 (与 tool_overture 同样 vocab) → 注入诚信约束,
+    主脑别在 tool result 来之前就说"已 X".
+    复用 tool intent vocab (action verb 命中 → 主脑会触发 FAST_CALL → 必须诚信).
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    return any(w in t for w in get_tool_intent_patterns())
 
 
 def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
@@ -1139,6 +1193,46 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
                   <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
             """).rstrip(),
             trigger=_trigger_dashboard_intent,
+        ),
+        # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
+        # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌
+        # 治本: 主脑不能在 tool result 来之前就说"已 X". 必须先等 tool result,
+        # 再根据 ✅ / ❌ 真实说话.
+        # ClaimTracer L4 已加 past_action 类 claim trace, 此 directive 教主脑.
+        Directive(
+            id='past_action_honesty',
+            source_marker='P0+20-β.3.0',
+            priority=10,  # 与 memory_update_honesty 同级, 顶级红线
+            ttl_days=180,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [PAST ACTION HONESTY] (强约束, 准则 5):
+                Sir 14:00 真实事件: 你说"已经打开 dashboard"但 ui_control.dashboard_open
+                工具真失败 (CREATE_NEW_CONSOLE flag 错). Sir 没看到窗口 → "言行不一".
+
+                ABSOLUTE RULE:
+                你绝不能在没看到 tool result 的情况下说"已 X / 打开了 / 设好了 /
+                opened / launched / sent / set". 这些是 past-action claim, 必须
+                有真 tool ✅ 才能讲.
+
+                正确流程:
+                  1. Sir 让你做 X → 你 emit <FAST_CALL>... 同时讲 lead-in
+                     ("好的, 在帮您打开. 请稍候.") — 这是**未来式/现在进行式**, OK
+                  2. tool 返回 result (✅ 或 ❌) → 注入 prompt 给你
+                  3. 你根据 result 真实讲:
+                     - 看到 ✅ → "打开了, Sir." 或 "Done, Sir."
+                     - 看到 ❌ → "出了点状况, Sir — {真实 error}. 要不我重试?"
+
+                FORBIDDEN (这些是言行不一):
+                  - <FAST_CALL>...<FAST_CALL> "已经打开了" 同一回合连写 (没等 result)
+                  - tool ❌ 但你说"已打开" (复读模板, 不看真实 result)
+                  - 主动说"我帮您做了 X" 但当轮根本没 emit 工具
+
+                ClaimTracer L4 会扫你的 reply, 任何 past_action claim 没 tool ✅
+                匹配 → log "⚠️ [ClaimTracer/Unverified past_action]" + 算 SOUL missed
+                → Sir 周末会看到统计.
+            """).rstrip(),
+            trigger=_trigger_past_action_honesty,
         ),
     ]
 

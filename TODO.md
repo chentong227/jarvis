@@ -10,9 +10,32 @@
 
  工作板
 
-**更新时间**：2026-05-18 13:10（**🚀 P0+20-β.2.9.12 完工 + INTEGRITY_STACK 立项完整 + 新窗口接手 prompt 就绪**）。
+**更新时间**：2026-05-18 16:00（**🚀 P0+20-β.3.0 六 BUG 实测修治本 + L0.5 横向贯通 + ClaimTracer L4 升级**）。
 
-**今天累计 (5/18 09:00-13:10)**：20 commits / 81/81 testcase 全绿 / 新增 ~170 testcase / 5 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate`(待打)。
+**今天累计 (5/18 09:00-16:00)**：22 commits / 82/82 testcase 全绿 / 新增 ~184 testcase / 6 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs`(待打)。
+
+**Sir 14:00 实测 6 BUG 全治本 (β.3.0)**:
+
+| # | BUG | 现象 | 治本 |
+|---|---|---|---|
+| 1 | `dashboard.cmd` 静默失败 | pythonw 隐藏 console, error 看不到 | cmd 默认 python.exe 拉 console + `--quiet` 选项保留 pythonw |
+| 2 | "给我看" 过广 | "烦打开给我看一下" 误触发 dashboard | vocab 迁 `memory_pool/dashboard_intent_vocab.json` + CLI + "给我看" archived |
+| 3 | `dashboard_open` 未知指令 | chat_bypass 重启没生效 | 端到端 testcase 防回归 + 进程 poll() 假成功修 |
+| 4 | 言行不一 "已打开" | tool 失败但主脑说"已打开" | ClaimTracer L4 加 `past_action` 类 + directive `past_action_honesty` (priority 10) |
+| 5 | 睡觉瞬间黑屏 | delay_sec=0 立即 sleep_display | 强制最小 30s 倒数 + `cancel_sleep_routine()` + Sir "等等/取消" vocab 触发 |
+| 6 | 微信静音没生效 | 硬编码 `'WeChat'` 单进程 + 进程名变体 (WeChatAppEx) 不匹配 | vocab 迁 `memory_pool/audio_ducking_targets.json` + 循环 mute 所有 active + CLI |
+
+**β.3.0 新增 vocab json + CLI (Sir 准则 6.5 治本, 3 个 vocab)**:
+- `memory_pool/dashboard_intent_vocab.json` + `scripts/dashboard_intent_dump.py` (Sir 自删过广词)
+- `memory_pool/audio_ducking_targets.json` + `scripts/audio_ducking_dump.py` (Sir 自加 sleep 静音目标)
+- `memory_pool/sleep_cancel_vocab.json` (Sir 自加撤回睡眠的关键词)
+- 全部走"mtime cache + active/review/archived 三态 + seed fallback" 范式 (同 β.3.0-vocab1 tool_intent)
+
+**β.3.0 ClaimTracer L4 升级 — 言行不一治本**:
+- 新增 `past_action` claim 类 (regex 抓"已打开/已发送/I've opened"等)
+- `trace_to_evidence` 加 past_action 专用路径: 必须 tool_results 含 `✅` 才算 verified
+- 没 ✅ → unverified → log + 将来 SoulAlignment missed
+- 新 directive `past_action_honesty` (priority 10) 教主脑: 不能在 tool result 来之前说"已 X"
 
 **β.2.9.12 灵魂级升级**:
 - **准则 6 升级**: AGENTS.md 加第 5 类反例 (vocab 写死 in py) + 准则 6.5 "动态架构必须 + LLM 兜底" (Sir 12:57 立)

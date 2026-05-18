@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T15:00:00",
+    "purpose": "dashboard_intent_directive 触发 vocab (Sir 准则 6.5)",
+    "edit_via": "scripts/dashboard_intent_dump.py --add/--activate/--reject",
+    "incident_ref": "Sir 14:00 实测 '烦打开给我看一下' 命中过广 '给我看' 误触发 dashboard"
+  },
+  "patterns": [
+    {
+      "id": "explicit_dashboard_zh",
+      "keywords": ["面板", "看板", "仪表盘", "状态板"],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779081600.0,
+      "note": "明确说面板/dashboard 才触发, 不模糊"
+    },
+    {
+      "id": "explicit_dashboard_en",
+      "keywords": ["dashboard", "panel", "status board"],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779081600.0,
+      "note": "英文明确词"
+    },
+    {
+      "id": "open_dashboard_phrase",
+      "keywords": ["show me the dashboard", "open the dashboard", "pull up dashboard"],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779081600.0,
+      "note": "组合短语 — 含 dashboard 才算"
+    },
+    {
+      "id": "ambiguous_zh_old",
+      "keywords": ["总览", "监控", "看看状态", "看下状态", "看一下状态", "展示状态", "查看你", "看一眼你", "看看你的", "现在啥状态"],
+      "state": "review",
+      "source": "seeded_too_broad",
+      "created_at": 1779081600.0,
+      "note": "旧 β.2.9.9 vocab — Sir 14:00 反馈过广. 暂置 review 让 Sir 决定哪些保留"
+    },
+    {
+      "id": "ambiguous_en_old",
+      "keywords": ["overview", "show me status", "what's going on inside"],
+      "state": "review",
+      "source": "seeded_too_broad",
+      "created_at": 1779081600.0,
+      "note": "旧 vocab — 视情况是否保留"
+    },
+    {
+      "id": "rejected_too_broad",
+      "keywords": ["给我看"],
+      "state": "archived",
+      "source": "sir_rejected",
+      "created_at": 1779081600.0,
+      "note": "Sir 14:00 实测 '烦打开给我看一下' 误触发. archived 不参与匹配."
+    }
+  ]
+}

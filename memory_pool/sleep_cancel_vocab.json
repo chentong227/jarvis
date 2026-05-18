@@ -1,0 +1,46 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T15:30:00",
+    "purpose": "30s 倒数期内 Sir 撤回睡眠的关键词 vocab (Sir 准则 6.5)",
+    "edit_via": "memory_pool/sleep_cancel_vocab.json 直接改",
+    "incident_ref": "Sir 14:00 BUG#5 '说睡觉瞬间黑屏没缓冲'"
+  },
+  "patterns": [
+    {
+      "id": "wait_zh",
+      "keywords": ["等等", "稍等", "等会"],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 突然反悔 — 最常用"
+    },
+    {
+      "id": "no_sleep_zh",
+      "keywords": ["不睡了", "我不睡了", "别睡了", "先不睡"],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 改主意"
+    },
+    {
+      "id": "cancel_zh",
+      "keywords": ["取消睡眠", "撤回睡眠", "取消睡觉"],
+      "state": "active",
+      "source": "seeded",
+      "note": "显式撤回"
+    },
+    {
+      "id": "wait_en",
+      "keywords": ["wait", "hold on"],
+      "state": "active",
+      "source": "seeded",
+      "note": "English"
+    },
+    {
+      "id": "cancel_en",
+      "keywords": ["cancel sleep", "don't sleep", "no sleep", "abort sleep"],
+      "state": "active",
+      "source": "seeded",
+      "note": "English explicit cancel"
+    }
+  ]
+}
