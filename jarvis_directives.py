@@ -876,14 +876,82 @@ def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     return any(w in t for w in get_tool_intent_patterns())
 
 
-def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
-    """一次性注册 12 条默认 directive。返回注册数。
-    
-    详 docs/PROMPT_REFACTOR_PLAN.md §5。
+# ============================================================
+# 🩹 [β.4.6 / 2026-05-18] L3 Directive vocab — text+metadata 提到 JSON
+#
+# 设计 (Sir Session 5 半化方案, 准则 6.5):
+#   - text/priority/state/tier_whitelist/ttl_days/source_marker/note 全在 JSON
+#   - trigger 函数仍在 .py (Python lambda 不能 JSON)
+#   - JSON 缺/损坏 → fallback 到 _SEED_DEFS list (本文件下方 bootstrap 内定义, 同步)
+#   - L7 IntegrityReflector propose 也走 vocab.json (state='review' / source='integrity_reflector')
+#   - Sir CLI scripts/registry_dump.py --show/--edit-text/--add/--archive
+#
+# 准则:
+#   - 准则 6.5: 持久化 (memory_pool/directives_vocab.json) + CLI + L7 propose
+#   - 准则 7 (Sir 元否决): state='review' 默认, 不自动 active. Sir CLI --activate 才生效
+# ============================================================
+
+_DIRECTIVES_VOCAB_PATH = os.path.join('memory_pool', 'directives_vocab.json')
+
+# trigger 函数 id 索引 — JSON 端 directive id 必须在此 dict 才能 register
+# (β.4.6 将所有 18 个 trigger 函数集中, 以便 bootstrap 用 id 索引)
+# 注: _TRIGGER_BY_ID 在 bootstrap 末尾才填好 (函数定义顺序限制), 这里只是占位
+_TRIGGER_BY_ID: dict = {}
+
+# vocab cache (mtime-based, 类 jarvis_claim_classifier._load_classify_vocab)
+_VOCAB_CACHE: dict = {'mtime': 0.0, 'data': None}
+
+
+def _load_directives_vocab(path: Optional[str] = None) -> Optional[dict]:
+    """读 directives_vocab.json (mtime cache + fail-safe).
+
+    Returns:
+      - dict (有效 JSON, 含 'directives' list) → 用此构造
+      - None (文件不存在 / 损坏 / 无 'directives' 字段) → 调用方 fallback 到 seed
+    """
+    p = path or _DIRECTIVES_VOCAB_PATH
+    if not os.path.exists(p):
+        return None
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return None
+    if _VOCAB_CACHE['mtime'] == mt and _VOCAB_CACHE['data'] is not None:
+        return _VOCAB_CACHE['data']
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('directives'), list):
+        return None
+    _VOCAB_CACHE['mtime'] = mt
+    _VOCAB_CACHE['data'] = data
+    return data
+
+
+def reload_directives_vocab() -> None:
+    """force reload (testcase / Sir 改完 JSON 立即生效用)."""
+    _VOCAB_CACHE['mtime'] = 0.0
+    _VOCAB_CACHE['data'] = None
+
+
+def bootstrap_default_registry(registry: DirectiveRegistry,
+                                  vocab_path: Optional[str] = None) -> int:
+    """一次性注册默认 directive (β.4.6: 优先读 JSON vocab + py trigger). 返回注册数.
+
+    流程:
+      1. 优先 _load_directives_vocab() 读 JSON
+      2. JSON 成功且 directives 非空 → 用 JSON metadata + py trigger 组装 Directive
+      3. JSON 缺/损坏 → fallback 到内嵌 _SEED_DEFS (现有 18 条 hardcoded)
+
+    准则 7: state='active' 才注册. state in ('review', 'dormant', 'archived') 跳过
+    (Sir 用 CLI --activate 才入主链, 防 LLM-proposed 未审就生效).
     """
     import textwrap as _tw
 
-    defs: List[Directive] = [
+    # 内嵌 seed defs (vocab 损坏 fallback)
+    seed_defs: List[Directive] = [
         # 1. NUDGE / AGENDA HONESTY — P0+18-f.2 治本
         Directive(
             id='nudge_agenda_honesty',
@@ -1282,9 +1350,94 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
         ),
     ]
 
-    for d in defs:
-        registry.register(d)
-    return len(defs)
+    # 填 _TRIGGER_BY_ID (id → trigger function) 给 vocab.json 加载用
+    global _TRIGGER_BY_ID
+    if not _TRIGGER_BY_ID:
+        for _d in seed_defs:
+            _TRIGGER_BY_ID[_d.id] = _d.trigger
+
+    # ---- 主流程: 优先 JSON vocab, 失败 fallback seed ----
+    vocab_data = _load_directives_vocab(vocab_path)
+
+    if vocab_data is None:
+        # JSON 不存在/损坏 → 用 seed (legacy 路径)
+        try:
+            from jarvis_utils import bg_log as _bg
+            _bg("⚠️ [DirectiveBootstrap] directives_vocab.json 不可用, "
+                f"fallback 到 {len(seed_defs)} 条 seed (py 内嵌)")
+        except Exception:
+            pass
+        for d in seed_defs:
+            registry.register(d)
+        return len(seed_defs)
+
+    # JSON 可用: 用 metadata + py trigger 组装 Directive, 只注册 active
+    valid_states = ('active', 'dormant', 'review', 'archived')
+    n_registered = 0
+    n_skipped_state = 0
+    n_skipped_no_trigger = 0
+    for entry in vocab_data.get('directives', []):
+        if not isinstance(entry, dict):
+            continue
+        did = str(entry.get('id') or '').strip()
+        if not did:
+            continue
+        state = str(entry.get('state') or 'active').strip()
+        if state not in valid_states:
+            state = 'review'  # 非法 state → 进 review 让 Sir 决定
+        # 只注册 active. dormant/review/archived 跳过, 等 Sir CLI 操作
+        if state != 'active':
+            n_skipped_state += 1
+            continue
+        trigger_fn = _TRIGGER_BY_ID.get(did)
+        if trigger_fn is None:
+            # JSON 端有 id 但 py 端无 trigger (Sir / LLM 加的 directive 还没 implement trigger)
+            n_skipped_no_trigger += 1
+            continue
+        try:
+            d = Directive(
+                id=did,
+                text=str(entry.get('text') or ''),
+                trigger=trigger_fn,
+                priority=int(entry.get('priority') or 5),
+                tier_whitelist=list(entry.get('tier_whitelist') or []),
+                ttl_days=int(entry.get('ttl_days') or DECAY_TTL_DAYS_DEFAULT),
+                source_marker=str(entry.get('source_marker') or ''),
+                state=state,  # 实际只走 active 分支, 但保留字段
+            )
+            registry.register(d)
+            n_registered += 1
+        except (ValueError, TypeError):
+            continue
+
+    if n_registered == 0:
+        # JSON 有数据但全部 skip → 当作 vocab 失败, fallback seed
+        try:
+            from jarvis_utils import bg_log as _bg
+            _bg(f"⚠️ [DirectiveBootstrap] JSON {len(vocab_data.get('directives', []))} "
+                f"directives 全部 skip (state/trigger), fallback seed")
+        except Exception:
+            pass
+        for d in seed_defs:
+            registry.register(d)
+        return len(seed_defs)
+
+    try:
+        from jarvis_utils import bg_log as _bg
+        _bg(f"📖 [DirectiveBootstrap] JSON vocab loaded: {n_registered} active "
+            f"(+{n_skipped_state} non-active state, {n_skipped_no_trigger} no-trigger)")
+    except Exception:
+        pass
+    return n_registered
+
+
+def _bootstrap_seed_only(registry: DirectiveRegistry) -> int:
+    """testcase / legacy 兜底: 强制只用 seed, 不读 JSON.
+
+    内部调 bootstrap_default_registry 但指向不存在路径, 强制走 fallback.
+    """
+    return bootstrap_default_registry(
+        registry, vocab_path='/__nonexistent_path__/dvocab.json')
 
 
 # ============================================================
