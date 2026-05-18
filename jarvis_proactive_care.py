@@ -785,6 +785,89 @@ class CareSpeechSynth:
 
 
 # ============================================================
+# 🩹 [P0+20-β.3.4-vocab5 / 2026-05-18] 准则 6.5 vocab 持久化
+# 原 ProactiveCareEngine class attrs _RESPONSE_POSITIVE / _RESPONSE_NEGATIVE
+# 迁 memory_pool/response_classify_vocab.json + scripts/response_classify_dump.py.
+# 范式照搬 β.3.0-vocab1 / β.3.4-vocab4.
+# ============================================================
+
+_SEED_RESPONSE_POSITIVE = (
+    '好的', '好', '行', '可以', '会去', '我会', '会做', '去做', '马上',
+    '现在去', '收到', '知道了', '了解', '明白', '听你的', '对的', '是的',
+    "ok", "okay", "sure", "yes", "yeah", "yep", "i'll", "i will",
+    "going to", "on it", "roger", "got it", "will do", "you're right",
+)
+_SEED_RESPONSE_NEGATIVE = (
+    '别催', '不要催', '不用了', '算了', '不要提', '别提了', '我不',
+    '不催了', '知道了别再说', '够了', '烦', '别管',
+    'no', 'stop', "don't", 'leave it', 'not now', 'knock it off',
+    'enough', 'shut up', 'stop pinging',
+)
+
+_RESPONSE_CLASSIFY_VOCAB_PATH = os.path.join(
+    'memory_pool', 'response_classify_vocab.json')
+_RESPONSE_CLASSIFY_CACHE: Optional[dict] = None
+_RESPONSE_CLASSIFY_MTIME: float = 0.0
+
+
+def _load_response_classify_from_json() -> Optional[dict]:
+    """从 json 加载 active pattern 分类. 失败返 None (任一类空也走 fallback)."""
+    if not os.path.exists(_RESPONSE_CLASSIFY_VOCAB_PATH):
+        return None
+    try:
+        with open(_RESPONSE_CLASSIFY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        by_cat = {'positive': [], 'negative': []}
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            cat = p.get('category', '')
+            if cat not in by_cat:
+                continue
+            for kw in (p.get('keywords') or []):
+                if isinstance(kw, str) and kw.strip():
+                    by_cat[cat].append(kw.lower().strip())
+        if not all(by_cat.values()):
+            return None
+        return {k: tuple(v) for k, v in by_cat.items()}
+    except Exception:
+        return None
+
+
+def _get_response_classify_vocab() -> dict:
+    """🩹 [β.3.4-vocab5] mtime cache. 文件变自动 reload."""
+    global _RESPONSE_CLASSIFY_CACHE, _RESPONSE_CLASSIFY_MTIME
+    try:
+        mtime = os.path.getmtime(_RESPONSE_CLASSIFY_VOCAB_PATH) if os.path.exists(
+            _RESPONSE_CLASSIFY_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _RESPONSE_CLASSIFY_CACHE is None or mtime > _RESPONSE_CLASSIFY_MTIME:
+        loaded = _load_response_classify_from_json()
+        if loaded is not None:
+            _RESPONSE_CLASSIFY_CACHE = loaded
+        else:
+            _RESPONSE_CLASSIFY_CACHE = {
+                'positive': _SEED_RESPONSE_POSITIVE,
+                'negative': _SEED_RESPONSE_NEGATIVE,
+            }
+        _RESPONSE_CLASSIFY_MTIME = mtime
+    return _RESPONSE_CLASSIFY_CACHE
+
+
+def get_response_positive_vocab() -> tuple:
+    return _get_response_classify_vocab().get('positive', _SEED_RESPONSE_POSITIVE)
+
+
+def get_response_negative_vocab() -> tuple:
+    return _get_response_classify_vocab().get('negative', _SEED_RESPONSE_NEGATIVE)
+
+
+# ============================================================
 # ProactiveCareEngine — daemon
 # ============================================================
 
@@ -893,35 +976,24 @@ class ProactiveCareEngine(threading.Thread):
     # 通用机制 (准则 6 不针对特定 concern 硬编码):
     #   ProactiveCare 发 nudge 时记 last_nudge_concern_id
     #   Sir 在 120s 内回应 → notify_sir_response_post_nudge(text) →
-    #     通用 vocab 判正面 (好的/会去/yes/I'll) → severity -= 0.1 + 衰减 fatigue
-    #     通用 vocab 判负面 (别催/不/no/stop)   → severity 不动 + fatigue +1
+    #     通用 vocab 判正面 → severity -= 0.1 + 衰减 fatigue
+    #     通用 vocab 判负面 → severity 不动 + fatigue +1
     #     中性 → 不操作, 仅记 signal 让 L4 reflector 看
-
-    _RESPONSE_POSITIVE = (
-        '好的', '好', '行', '可以', '会去', '我会', '会做', '去做', '马上',
-        '现在去', '收到', '知道了', '了解', '明白', '听你的', '对的', '是的',
-        "ok", "okay", "sure", "yes", "yeah", "yep", "i'll", "i will",
-        "going to", "on it", "roger", "got it", "will do", "you're right",
-    )
-    _RESPONSE_NEGATIVE = (
-        '别催', '不要催', '不用了', '算了', '不要提', '别提了', '我不',
-        '不催了', '知道了别再说', '够了', '烦', '别管',
-        'no', 'stop', "don't", 'leave it', 'not now', 'knock it off',
-        'enough', 'shut up', 'stop pinging',
-    )
-
+    # 🩹 [β.3.4-vocab5 / 2026-05-18] 准则 6.5 vocab 迁 module-level:
+    # 原 class attrs _RESPONSE_POSITIVE / _RESPONSE_NEGATIVE → memory_pool/
+    # response_classify_vocab.json. _classify_response 改用 module getter.
     @staticmethod
     def _classify_response(text: str) -> str:
-        """通用正面/负面/中性判. vocab driven (Sir 准则 6).
+        """通用正面/负面/中性判. vocab driven (Sir 准则 6 + 6.5).
         优先看负面 (因 '不会做' 含 '会做' 正面词应当判负).
         """
         if not text:
             return 'neutral'
         t = text.strip().lower()
-        for w in ProactiveCareEngine._RESPONSE_NEGATIVE:
+        for w in get_response_negative_vocab():
             if w in t:
                 return 'negative'
-        for w in ProactiveCareEngine._RESPONSE_POSITIVE:
+        for w in get_response_positive_vocab():
             if w in t:
                 return 'positive'
         return 'neutral'

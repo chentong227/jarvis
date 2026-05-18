@@ -129,7 +129,8 @@ $tests = @(
     "_test_p0_plus_20_beta30_tool_intent_vocab_persist",
     "_test_p0_plus_20_beta33_agent_discipline_red_lines",
     "_test_p0_plus_20_beta34_vocab3_memory_correction_persist",
-    "_test_p0_plus_20_beta34_vocab4_inconsistency_persist"
+    "_test_p0_plus_20_beta34_vocab4_inconsistency_persist",
+    "_test_p0_plus_20_beta34_vocab5_response_classify_persist"
 )
 
 foreach ($t in $tests) {
