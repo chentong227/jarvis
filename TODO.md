@@ -10,29 +10,55 @@
 
  工作板
 
-**更新时间**：2026-05-18 10:02（**🩹 P0+20-β.2.9.7 完工 / InconsistencyWatcher 反复刷 + timeanchor 启发式 + ProactiveCare LIVE + dashboard 三件套**。
+**更新时间**：2026-05-18 11:32（**🚀 P0+20-β.2.9.9 大集成完工 / Phase D 焦点 + 诚信 ABCDE + 工具流不卡 + dashboard 集成主脑**）。
 
-**今天累计 (5/18 09:00-10:02 一小时内)**：5 commits / 74/74 testcase 全绿 / 新增 57 testcase (β.2.9.7 inconsistency_subject 20 + timeanchor 29 + care_live 8) / 修 Sir 09:06 实测痛点 + 08:43 时间锚 BUG + ProactiveCare 切 LIVE + 启动 banner + scripts/proactive_care_tail.py.
+**今天累计 (5/18 09:00-11:32)**：13 commits / 78/78 testcase 全绿 / 新增 ~120 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact`(待打)。
 
-**β.2.9.7 本轮核心修 (5 commits)**：
+**最重大突破** — 诚信审计治本: Sir 10:51 发现 Jarvis "我已更新记录" 是空头话 (CorrectionMemory 表 84h 0 写入). 修法 5 件 (准则 5 言出必行 + 准则 6 不硬编码):
+- **A**: directive `memory_update_honesty` 拦"已更新"假话 (除非真 emit MEMORY_UPDATE)
+- **B**: ProfileCard.apply_correction 真持久化到 `memory_pool/profile_corrections.jsonl`
+- **C**: FeedbackTracker vocab 升级 — 中文 substring + 扩词典覆盖"其实/澄清/搞错/两码事/actually/i meant"
+- **D**: 新结构化标签 `<MEMORY_UPDATE field='X' old='A' new='B'/>` — 主脑要说"已更新"必须先发标签
+- **E**: dashboard 加"信任审计 (今天真改了什么)"卡片 — Sir 一眼看 jsonl 写入
+
+**Sir 11:09 工具流卡顿修** (反对占位语音 "没人味", 准则 6 主脑自由):
+- directive `tool_overture` 教主脑在 FAST_CALL 前自然过渡话 1 句
+- tool 执行期间 Sir 听到主脑真生成的话, 不是模板
+
+**Sir 11:09 dashboard 集成主脑** (模糊语义启动):
+- chat_bypass.ui_control 加 dashboard_open/close (pythonw.exe detached)
+- directive `dashboard_intent` 让"面板/总览/看看状态" 触发主脑 emit FAST_CALL
+
+**β.2.9.7-9 本轮 13 commits 链路**:
 
 | commit | marker | 主题 |
 |---|---|---|
-| 92c2a8f | β.2.9.7 | InconsistencyWatcher 反复 fire 旧承诺 + PromiseLog 测试污染 (3 道防御 + conftest autouse) |
-| c77c968 | β.2.9.7-α | CommitmentWatcher 时间锚启发式 — 治 "I will sleep at 11" 类 4 条 +1h 兜底 BUG |
+| 92c2a8f | β.2.9.7 | InconsistencyWatcher 反复 fire + PromiseLog 测试污染 (3 道防御) |
+| c77c968 | β.2.9.7-α | CommitmentWatcher 时间锚启发式 — 治"I will sleep at 11"+1h BUG |
 | c90a3a3 | β.2.9.7-β.1 | ProactiveCare LIVE 默认 + SmartNudge disable 开关 + 启动 banner |
-| ab5a396 | β.2.9.7-γ.2 | scripts/proactive_care_tail.py — 实时观察 ProactiveCare 决策 |
-| a4951c8 | β.2.9.7-β.1.1 | dry_run 默认切换的 test 回归修 + 旧 LIVE env 向后兼容 |
+| ab5a396 | β.2.9.7-γ.2 | scripts/proactive_care_tail.py 实时观察 |
+| a4951c8 | β.2.9.7-β.1.1 | dry_run 切换 test 回归修 |
+| 0aa5216 | β.2.9.7-docs | TODO 滚档 |
+| 617c428 | β.2.9.8 | dashboard v1 三大块 + 真按钮 + Directive 偏移信号 |
+| 7d13e0c | β.2.9.9-A | CommitmentWatcher 时间确定性闸门 — 治"剪辑完就行"误注册 |
+| 8d98b70 | β.2.9.9-B+C | dashboard pythonw + UI 美化 + concern 动态权重反馈骨架 |
+| bcaa650 | β.2.9.9-集成 | Phase D 焦点 + 诚信 ABCDE + 工具流不卡 + dashboard 集成主脑 |
 
-**Sir 重启可立测**：
-1. `python scripts/jarvis_daily_stats.py` — 看 24h dashboard (TTFT/Nudge/Commitment/Concerns)
-2. `python scripts/proactive_care_tail.py` — 实时看 ProactiveCare LIVE 决策
-3. `python scripts/promise_log_reset.py` — 清残留 promise (prod log 已手动清空备份)
-4. 启动后看终端 banner — 6 个 daemon 状态一目了然 (SmartNudge/ProactiveCare/PromiseSweep/HealthProbe/InconsistencyWatcher/CuriosityDaemon)
-5. 说 "我11点睡觉" — CommitmentWatcher log 应显示 deadline 23:00 不是 +1h 兜底
-6. 等 5min+ 看 InconsistencyWatcher 是否 startup_guard 内静默 (不刷屏)
+**Sir 重启可立测 8 项**:
+1. `scripts\jarvis_dashboard.cmd` (双击) — 中文看板, 三大块 + 真按钮 + 信任审计卡
+2. 跟 Jarvis 说"打开面板看看" — 主脑应 emit FAST_CALL ui_control.dashboard_open
+3. 说"打开 Chrome" — Jarvis 应先讲过渡话再 emit FAST_CALL (体感不卡)
+4. 纠正 Jarvis 一次记忆 (如"职业考试 vs 成绩") — directive memory_update_honesty 应拦"我已更新"假话, 要主脑老实
+5. 等 ProactiveCare 主动发声 nudge — Jarvis 出声后 60s 内你直接口头回应 (不喊 Jarvis), Phase D 焦点应接住
+6. dashboard 看"信任审计"卡片 — 今天若有 MEMORY_UPDATE 真写入应显示具体 field/old/new
+7. 说"我剪辑完视频就行" — 时间确定性闸门应拒注册 hard commitment, 转 PromiseLog soft (不到点闹)
+8. 真启 24h 不重启 — InconsistencyWatcher/Curiosity/ProactiveCare 三个 daemon 健康
 
-**下个 session Agent**: 进窗口读 `AGENTS.md` → `TODO.md` → 看 Sir 真机反馈 → 按 β.2.9.8 / β.2.10 / β.3.0 选路线 (详见路线候选)。)
+**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → 看 Sir 实测反馈 → 优先级:
+- 🔴 ProactiveCare 真异步执行 (FAST_CALL 不阻塞 stream) — 工具卡顿治本
+- 🟡 inside_joke dedup 失效修 (Sir 之前提"overbearing"3 次)
+- 🟡 LLM 二次判 correction (FeedbackTracker 升级 Phase 2)
+- 🟢 Skill Pack 应用控制 (Cursor/Premiere/Excel))
 
 ---
 
