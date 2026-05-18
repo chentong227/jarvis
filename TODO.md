@@ -10,9 +10,36 @@
 
  工作板
 
-**更新时间**：2026-05-18 22:40（**🚀 P0+20-β.4.5 INTEGRITY_STACK Session 4 完工 — L7 IntegrityReflector LLM-propose daemon + ClaimStatsDumper. 7 层架构 L0-L7 全立**）。
+**更新时间**：2026-05-18 23:23（**🚀 P0+20-β.4.6 L3 Directive vocab 半化 — text+metadata 提到 JSON. 18 directive vocab 化. 准则 6.5 完成度 → 95%+**）。
 
-**今天累计 (5/18 09:00-22:40)**：40 commits / 95/95 testcase 全绿 / 新增 ~434 testcase / 11 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity` + `v0.34.0-integrity-reflector`。
+**今天累计 (5/18 09:00-23:23)**：41 commits / 96/96 testcase 全绿 / 新增 ~461 testcase / 12 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity` + `v0.34.0-integrity-reflector` + `v0.35.0-directive-vocab`。
+
+**🟢 β.4.6 L3 Directive vocab 半化完工 (Sir Session 5 / 准则 6.5 完成度 → 95%+)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `memory_pool/directives_vocab.json` (新, 18 seed) | 18 directive 的 text+priority+state+tier_whitelist+ttl_days+source_marker 提到 JSON. _meta 含 schema_version/states_canonical/edit_via/auto_propose/consumer | 27 测 6 类 |
+| `jarvis_directives.py` 加 `_load_directives_vocab` + `_TRIGGER_BY_ID` + `_VOCAB_CACHE` | mtime cache + fail-safe 返 None / 损坏 / 无 directives 字段全 fallback | TestVocabLoad 6 测 |
+| `jarvis_directives.py` `bootstrap_default_registry` 改 | 优先读 JSON + py trigger 组装; JSON 缺/全 skip → fallback seed_defs (18 内嵌 hardcode 保留作 seed). state='active' 才注册 (review/dormant/archived 跳过, 准则 7) | TestBootstrap 4 测 |
+| `jarvis_directives.py` 加 `_bootstrap_seed_only` | testcase 强制 fallback 路径 | 复用 |
+| `scripts/registry_dump.py` 加 4 命令 | `--show <id>` (text 全文) / `--vocab-list` (按 state 分组) / `--edit-text <id> --new-text-file <path>` (替换 text + 加 note 时间戳) / `--archive <id>` (state → archived) + Windows stdout UTF-8 reconfigure | TestCLI 7 测 (用 contextlib.redirect_stdout 隔离) |
+| `tests/_test_p0_plus_20_beta46_directives_vocab_persist.py` (新) | 6 TestClass — TestVocabLoad / TestBootstrap / TestTriggerStillWorks / TestCLI / TestFailSafe / TestRedLines | 27 测 |
+| `tests/_runall.ps1` | 注册 β.4.6 testcase | - |
+
+**设计准则 (Sir 选 A 半化方案)**:
+- 准则 6.5 持久化 + CLI + L7 propose: text/metadata 全 vocab.json 化 (Sir 改 directive 不需要 .py + git commit + push, mtime cache 自动 reload). trigger 仍 py (Python lambda 不能 JSON, 完成度 95% 而非 100%)
+- 准则 7 Sir 元否决: 任何非 active state (review/dormant/archived) 跳过注册, 必须 Sir CLI --activate 才入主链. 非法 state → 强制 review (防 LLM 污染)
+- 兼容: directive_registry.json (runtime 计数 gitignored) + directive_review.json (legacy decay queue) 全部不动. _test_p0_plus_20_b01_directive_registry.py 旧 testcase 仍 pass (无 regression)
+- L7 IntegrityReflector `_propose_directive` 不改 (仍写 legacy directive_review.json), 暂不强求统一到 directives_vocab.json review state — 保留作 β.4.7 可选优化
+
+**Session 5 commit + tag**: `465ee18` / `v0.35.0-directive-vocab`, 96/96 pass run_id `test_20260518_231100_xxxx` (dur 361.79s).
+
+**真机风险点清单 (β.4.6 引入, Sir 黑箱测试看这些)**:
+1. **JSON 损坏导致 directive 失效** — _load_directives_vocab fail-safe 返 None → bootstrap fallback 到 seed_defs 18 条 hardcode. 真机 vocab 损坏 bg_log 会写 "directives_vocab.json 不可用, fallback 到 18 条 seed", Sir 看 latest.log 即可
+2. **mtime cache 缓存陈旧** — Sir 改 vocab 后 mtime 自动变化触发 reload. 但若 git checkout 还原文件, mtime 也变 → 自动 reload. 极端: NTFS 1s 精度若同秒多次改可能漏 reload
+3. **Sir CLI --edit-text 后未重启 Jarvis** — bootstrap 已注册的 Directive 实例不变. 重启或调 `jarvis_directives.reload_directives_vocab()` + `_DEFAULT_REGISTRY=None` + `get_default_registry()` 才能用新 text
+4. **_TRIGGER_BY_ID 字典未填** — bootstrap 第一次跑会自动填 (从 seed_defs 抽). 若 Sir 加新 directive id 但 .py 端无对应 trigger 函数 → bootstrap "no-trigger" skip + bg_log
+5. **state 字段非法** — 非 'active'/'review'/'dormant'/'archived' → 强制改 'review'. 若 Sir 误写 'enabled' 等 → 不会注册, Sir CLI --activate 才能修正
 
 **🟢 β.4.5 INTEGRITY_STACK Session 4 完工 (准则 7 Sir 仲裁 + 准则 6.5 Reflector 自我修正闭环)**:
 
@@ -220,13 +247,14 @@
 
 **下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 优先级:
 
-� **INTEGRITY_STACK Session 4** ✅ 完工 commit `d6b4247` (β.4.5.1) + `9f84743` (β.4.5.2) / tag `v0.34.0-integrity-reflector`. L7 IntegrityReflector LLM-propose daemon + ClaimStatsDumper 跨进程持久化. 7 层 L0-L7 全立.
+🟢 **β.4.6 L3 Directive vocab 半化** ✅ 完工 commit `465ee18` / tag `v0.35.0-directive-vocab`. 18 directive text+metadata 提到 JSON, trigger 留 py. 准则 6.5 完成度 95%+.
+🟢 **INTEGRITY_STACK Session 4** ✅ 完工 commit `d6b4247` (β.4.5.1) + `9f84743` (β.4.5.2) / tag `v0.34.0-integrity-reflector`. L7 IntegrityReflector LLM-propose daemon + ClaimStatsDumper 跨进程持久化. 7 层 L0-L7 全立.
 
 🔴 **下一任务 (Sir 拍板)**:
-   - 选项 A: **Sir 真机黑箱测** β.4.5.x 5 个风险点 (见上文真机风险点清单), 实机反馈后再 push / 修
-   - 选项 B: **L3 directive 17 条 json 化** (现散在 `jarvis_directives.py`, 部分已 json 化, Session 4 未触). 让所有 directive 也走 vocab + CLI + review pattern (准则 6.5 完成度提到 95%+)
-   - 选项 C: **进 SOUL_DRIVE 推进** (灵魂工程 Layer 4+: AlignmentEvaluator / RelationalState reflector 二阶段等), 详 `docs/JARVIS_SOUL_DRIVE.md`
-   - 选项 D: **Sir 想要的新功能 §1-3** (sleep 模式: 单进程 mute WeChat + dim 显示器 + 总调度), 准则 5 "真做不只说" 落地
+   - 选项 A: **Sir 真机黑箱测** β.4.5.x + β.4.6 风险点 (见上文真机风险点清单), 实机反馈后再 push / 修
+   - 选项 B: **进 SOUL_DRIVE 推进** (灵魂工程 Layer 4+: AlignmentEvaluator / RelationalState reflector 二阶段等), 详 `docs/JARVIS_SOUL_DRIVE.md`
+   - 选项 C: **Sir 想要的新功能 §1-3** (sleep 模式: 单进程 mute WeChat + dim 显示器 + 总调度), 准则 5 "真做不只说" 落地
+   - 选项 D: **β.4.7 directive trigger DSL 化** (从 95% → 98%+) — 把 trigger lambda 抽成 JSON DSL (regex_match / and / or / has_pattern), 17 trigger 重写. 风险高, 收益小 (Sir 改 trigger 概率低于改 text), Sir 三思
 
 🟢 **INTEGRITY_STACK Session 3** ✅ 完工 commit `7bbd890` / tag `v0.33.0-dashboard-integrity`
 🟢 **INTEGRITY_STACK Session 2** ✅ 完工 commit `0d62236` / tag `v0.32.0-claim-classify`

@@ -34,9 +34,9 @@
 5. docs/runtime_logs/latest.txt — 1 行 latest log path
    仅在 Sir 反馈 BUG 时用 Grep, 不要全文 Read
 
-═══ 当前进度快照 (截止 β.4.5.2 commit 9f84743 / tag v0.34.0-integrity-reflector) ═══
+═══ 当前进度快照 (截止 β.4.6 commit 465ee18 / tag v0.35.0-directive-vocab) ═══
 
-✨ **INTEGRITY_STACK 7 层架构 L0-L7 全立 ✨**
+✨ **INTEGRITY_STACK 7 层架构 L0-L7 全立 + L3 directive vocab 半化 ✨**
 
 L0   ✅ INTEGRITY ABSOLUTE 在 PERSONA (历史已有)
 L0.5 ✅ **Session 0 完工** — 7 vocab × ~330 keyword 全量 json + CLI + L7 入口就位
@@ -46,8 +46,11 @@ L1   ✅ **Session 2 完工** — Claim 分类器 7 类 vocab + CLI + kinds_hard
       (memory_pool/claim_classify_vocab.json + jarvis_claim_classifier.py)
 L2   ✅ **Session 2 完工** — Evidence Requirements 中央表 + CLI
       (memory_pool/evidence_requirements.json + jarvis_evidence_requirements.py)
-L3   ⚠️ 17 directive 散在 jarvis_directives.py (部分已 json 化) — 未来 Session 5 可选
-      (让 directive 也走 vocab+CLI+review pattern, 准则 6.5 完成度 → 95%+)
+L3   ✅ **β.4.6 完工** — 18 directive text/metadata 提到 memory_pool/directives_vocab.json,
+      trigger 留 py (半化方案). bootstrap 优先读 JSON + py trigger 组装;
+      JSON 损坏 → fallback seed_defs (18 内嵌 hardcode). state='active' 才注册.
+      Sir CLI: scripts/registry_dump.py --show / --vocab-list / --edit-text / --archive
+      (commit 465ee18 / tag v0.35.0-directive-vocab)
 L4   ✅ **Session 1+2 完工** — ClaimTracer enforce + trace_to_evidence 表驱重写
       Session 1: integrity_audit.jsonl 持久化 + ALERT 注入 (commit d36e9eb)
       Session 2: trace_to_evidence use_vocab=True 走 L1+L2; legacy 路径保 β.2.8.7 回归;
@@ -60,7 +63,7 @@ L7   ✅ **Session 4 完工** — IntegrityReflector LLM-propose daemon + ClaimS
       β.4.5.2: IntegrityReflector LLM (commit 9f84743) — 7d audit 反思 propose 3 类 review queue
       (tag v0.34.0-integrity-reflector)
 
-95/95 testcase pass (run_id test_20260518_223652_xxxx / dur 362.26s), 0 regression.
+96/96 testcase pass (run_id test_20260518_231100_xxxx / dur 361.79s), 0 regression.
 
 ═══ 你的工作顺序 (严格按此, 不跳序) ═══
 
@@ -226,11 +229,8 @@ Sir CLI `scripts/claim_classify_dump.py / evidence_req_dump.py / registry_dump.p
     `python -c "import jarvis_integrity_reflector as ir; r=ir.get_default_integrity_reflector(); print(r.force_run_now())"`
   - Sir CLI 试激活/拒绝: `scripts/claim_classify_dump.py --review-list` 看 queue
 
-选项 B: **L3 directive 17 条 json 化** (准则 6.5 完成度 → 95%+)
-  - 现状: 17 directive 散在 jarvis_directives.py + 部分已 json 化
-  - 目标: 让 directive 也走 memory_pool/directives.json + scripts/directives_dump.py + state=review pattern
-  - 点: 现有 directive_review.json 只是 review queue, 主 registry 在 directive_registry.json + jarvis_directives.py
-  - 预期工时: ~4h, tag v0.35.0-directive-vocab
+选项 B: **L3 directive vocab 半化** ✅ 已完工 (β.4.6 commit 465ee18 / tag v0.35.0-directive-vocab)
+  - 18 directive text/metadata 提到 directives_vocab.json + CLI 扩充
 
 选项 C: **进 SOUL_DRIVE Layer 4+** (灵魂工程续作)
   - 详 docs/JARVIS_SOUL_DRIVE.md (AlignmentEvaluator / RelationalState reflector 二阶段)
@@ -251,6 +251,8 @@ Sir CLI `scripts/claim_classify_dump.py / evidence_req_dump.py / registry_dump.p
 ## 📦 当前 commit 链 (Agent 接手前必看)
 
 ```
+465ee18 feat(P0+20-β.4.6): L3 directive vocab 半化 - text/metadata 提到 JSON, trigger 留 py
+c681d6b docs(P0+20-β.4.5-session4): INTEGRITY_STACK Session 4 done - TODO + KICKOFF roll
 9f84743 feat(P0+20-β.4.5.2): INTEGRITY_STACK Session 4 sub-step 2 - IntegrityReflector L7 LLM-propose daemon
 d6b4247 feat(P0+20-β.4.5.1): INTEGRITY_STACK Session 4 sub-step 1 - ClaimStatsDumper 跨进程持久化
 d5dafe0 docs(P0+20-β.4.4-session3): INTEGRITY_STACK Session 3 done - TODO + KICKOFF roll
