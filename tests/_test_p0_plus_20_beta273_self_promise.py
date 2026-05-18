@@ -8,10 +8,38 @@
 """
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# 🩹 [β.2.9.7 / 2026-05-18] Sir 09:06 实测痛点: prod promise_log.json 被本测试
+# 污染 (30+ "我会监督您 13:05" 残留) → InconsistencyWatcher 反复 fire.
+# 修: module-level isolate — 把 default log 切到临时文件, 测试期间不写 prod.
+_ISOLATED_LOG_PATH = None
+
+
+def setUpModule():
+    global _ISOLATED_LOG_PATH
+    _tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.json', delete=False, encoding='utf-8')
+    _tmp.write('{}\n')
+    _tmp.close()
+    _ISOLATED_LOG_PATH = _tmp.name
+    from jarvis_promise_log import reset_default_log_for_test
+    reset_default_log_for_test(persist_path=_ISOLATED_LOG_PATH)
+
+
+def tearDownModule():
+    from jarvis_promise_log import reset_default_log_for_test
+    reset_default_log_for_test()  # 恢复无单例, prod 路径首次调用时 lazy 建
+    try:
+        if _ISOLATED_LOG_PATH and os.path.exists(_ISOLATED_LOG_PATH):
+            os.remove(_ISOLATED_LOG_PATH)
+    except Exception:
+        pass
 
 
 # ============================================================

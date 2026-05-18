@@ -169,3 +169,33 @@ def trace_id(request) -> str:
     rid = secrets.token_hex(2)
     tid = f"test_{ts}_{rid}_{request.node.name[:20]}"
     return tid
+
+
+# ============================================================
+# 🩹 [β.2.9.7 / 2026-05-18] autouse: 隔离 prod 持久化路径, 防测试污染
+# ============================================================
+# Sir 09:06 实测痛点: tests/_test_p0_plus_20_beta273_self_promise.py 等不隔离
+# 生产 promise_log.json → 跑 _runall.ps1 后 28 条 "我会监督您 13:05" 残留 → 真生产
+# InconsistencyWatcher 反复 fire. 加 module-level autouse fixture 让任何 pytest
+# 测试都自动改写 jarvis_promise_log._DEFAULT_LOG 到 tmp 路径, 测完恢复.
+# unittest 风格脚本 (`python tests/_test_X.py`) 仍由 setUpModule 各自隔离.
+@pytest.fixture(autouse=True)
+def _autouse_isolate_prod_persistence(tmp_path, monkeypatch):
+    """所有 pytest 测试默认隔离 prod persistence 路径. 单独 test 不需要时也无害."""
+    tmp_promise_log = tmp_path / "jarvis_promise_log.json"
+    tmp_promise_log.write_text("{}\n", encoding="utf-8")
+    try:
+        import jarvis_promise_log as _jpl
+        # reset singleton + 切到 tmp path
+        _jpl.reset_default_log_for_test(persist_path=str(tmp_promise_log))
+    except Exception:
+        pass
+
+    yield
+
+    # 测试完: 重置单例 (next test / cleanup 用 prod path 再 lazy init)
+    try:
+        import jarvis_promise_log as _jpl
+        _jpl.reset_default_log_for_test()
+    except Exception:
+        pass

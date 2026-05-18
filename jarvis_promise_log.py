@@ -91,7 +91,43 @@ class PromiseExecutionLog:
     def register(self, description: str, kind: str = 'soft',
                   deadline_str: str = '', jarvis_reply: str = '',
                   turn_id: str = '', lang: str = '') -> str:
+        # 🩹 [β.2.9.7 / 2026-05-18] Sir 09:06 实测痛点: InconsistencyWatcher 反复
+        # 提醒同一旧承诺. 根因之一: register 没 dedup, 每次 startup / 测试 / 同
+        # session 内同 desc + deadline_str 重复 register 新 ID, 老的也仍 pending.
+        # 修: 同 (description, deadline_str) 在 1h 内已 pending → 返回老 ID, 不
+        # 重复 register. 准则 6 — 不写"特定关键词忽略", 用通用语义.
+        # 5min → 3600s: Sir 08:24/08:42/09:00 三次启动间隔 18-30min 超 5min 窗口,
+        # 真生产场景 Sir 也不会 1h 内重复说"我11点睡", 1h 是安全裕度.
+        # 同时加 jarvis_reply hash 旁路: 即便超 1h, 但 desc+deadline+reply 完全一致
+        # → 几乎必然是测试/启动重放, 也复用. 真实 Sir 重新表态 reply 不会逐字相同.
         with self._lock:
+            try:
+                _now = time.time()
+                _desc_key = (description or '')[:300].strip().lower()
+                _dl_key = (deadline_str or '').strip().lower()
+                _reply_key = (jarvis_reply or '')[:200].strip().lower()
+                for _existing in self.promises.values():
+                    if _existing.state != STATE_PENDING:
+                        continue
+                    if (_existing.description or '').strip().lower() != _desc_key:
+                        continue
+                    if (_existing.deadline_str or '').strip().lower() != _dl_key:
+                        continue
+                    _age = _now - _existing.registered_at
+                    _reply_same = (
+                        _reply_key and
+                        (_existing.jarvis_reply or '')[:200].strip().lower() == _reply_key
+                    )
+                    # 1h 内同 desc+deadline OR 任何 age 下 desc+deadline+reply 完全一致
+                    if _age < 3600.0 or _reply_same:
+                        bg_log(
+                            f"♻️ [PromiseLog] dedup reuse {_existing.id} "
+                            f"age={int(_age)}s reply_same={_reply_same} "
+                            f"'{description[:50]}'"
+                        )
+                        return _existing.id
+            except Exception:
+                pass
             pid = self._new_id()
             # 🩹 [β.2.8.6 / 2026-05-17] Sir 实测发现 jarvis_reply 200 截断让
             # context 匹配漏关键词. 扩到 1200 (大约 200 英文 word, 涵盖大多数 reply).
