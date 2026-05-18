@@ -26,15 +26,125 @@ Sir 例子 (00:55 → 01:04 reactivate):
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 try:
     from jarvis_utils import bg_log
 except Exception:
     def bg_log(msg: str) -> None:
         print(msg)
+
+
+# ============================================================
+# 🩹 [P0+20-β.3.4-vocab4 / 2026-05-18] 准则 6.5 vocab 持久化
+# 原 class attributes _SIR_SLEEP_VERBS / _SIR_BREAK_VERBS / _JARVIS_WRAPPER_MARKERS
+# 迁 memory_pool/inconsistency_vocab.json + scripts/inconsistency_vocab_dump.py.
+# 范式照搬 β.3.0-vocab1 (tool_intent) commit 63611f3.
+# ============================================================
+
+_SEED_SLEEP_COMMITMENT_VERBS: Tuple[str, ...] = (
+    # EN
+    'i will sleep', "i'll sleep", 'i shall sleep', 'i am going to bed',
+    "i'm going to bed", 'i need to sleep', 'going to bed now',
+    'i will rest', "i'll rest", 'i am off to bed', "i'm off to bed",
+    'going to crash', 'turning in', 'time for bed',
+    # ZH
+    '我去睡', '我要睡', '我先睡', '我睡了', '睡觉去', '我上床',
+    '我去休息', '我先休息', '休息一下', '准备睡', '该睡了',
+)
+_SEED_BREAK_COMMITMENT_VERBS: Tuple[str, ...] = (
+    'i will take a break', "i'll take a break", 'i need a break',
+    'i am going on break', "i'm taking a breather",
+    '我去休息一下', '我先歇会', '我去走两步', '我先停一下',
+)
+_SEED_WRAPPER_EXCLUSION_MARKERS: Tuple[str, ...] = (
+    '监督您', '监督你', '留意您', '留意你', '提醒您', '提醒你',
+    '盯着您', '盯着你', '看着您', '看着你', '在此时叫', '到时叫',
+    'i shall hold you', 'i will hold you', "i'll hold you",
+    'i shall remind', 'i will remind', "i'll remind",
+    'i shall watch', 'i will watch', "i'll watch",
+    'i shall keep an eye', "i'll keep an eye", 'i will keep an eye',
+    'i shall monitor', 'i will monitor', "i'll monitor",
+)
+
+_INCONSISTENCY_VOCAB_PATH = os.path.join(
+    'memory_pool', 'inconsistency_vocab.json')
+_INCONSISTENCY_CACHE: Optional[Dict[str, Tuple[str, ...]]] = None
+_INCONSISTENCY_MTIME: float = 0.0
+
+
+def _load_inconsistency_vocab_from_json() -> Optional[Dict[str, Tuple[str, ...]]]:
+    """从 json 加载 active pattern 分类 → keyword tuple. 失败返 None."""
+    if not os.path.exists(_INCONSISTENCY_VOCAB_PATH):
+        return None
+    try:
+        with open(_INCONSISTENCY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        by_cat: Dict[str, List[str]] = {
+            'sleep_commitment': [],
+            'break_commitment': [],
+            'wrapper_exclusion': [],
+        }
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            cat = p.get('category', '')
+            if cat not in by_cat:
+                continue
+            for kw in (p.get('keywords') or []):
+                if isinstance(kw, str) and kw.strip():
+                    by_cat[cat].append(kw.lower().strip())
+        # 任一类空就走 fallback (避免 json 只配了部分时 broken)
+        if not all(by_cat.values()):
+            return None
+        return {k: tuple(v) for k, v in by_cat.items()}
+    except Exception:
+        return None
+
+
+def _get_inconsistency_vocab() -> Dict[str, Tuple[str, ...]]:
+    """🩹 [β.3.4-vocab4] mtime cache. 文件变自动 reload."""
+    global _INCONSISTENCY_CACHE, _INCONSISTENCY_MTIME
+    try:
+        mtime = os.path.getmtime(_INCONSISTENCY_VOCAB_PATH) if os.path.exists(
+            _INCONSISTENCY_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _INCONSISTENCY_CACHE is None or mtime > _INCONSISTENCY_MTIME:
+        loaded = _load_inconsistency_vocab_from_json()
+        if loaded is not None:
+            _INCONSISTENCY_CACHE = loaded
+        else:
+            _INCONSISTENCY_CACHE = {
+                'sleep_commitment': _SEED_SLEEP_COMMITMENT_VERBS,
+                'break_commitment': _SEED_BREAK_COMMITMENT_VERBS,
+                'wrapper_exclusion': _SEED_WRAPPER_EXCLUSION_MARKERS,
+            }
+        _INCONSISTENCY_MTIME = mtime
+    return _INCONSISTENCY_CACHE
+
+
+def get_sir_sleep_verbs() -> Tuple[str, ...]:
+    return _get_inconsistency_vocab().get('sleep_commitment',
+                                            _SEED_SLEEP_COMMITMENT_VERBS)
+
+
+def get_sir_break_verbs() -> Tuple[str, ...]:
+    return _get_inconsistency_vocab().get('break_commitment',
+                                            _SEED_BREAK_COMMITMENT_VERBS)
+
+
+def get_jarvis_wrapper_markers() -> Tuple[str, ...]:
+    return _get_inconsistency_vocab().get('wrapper_exclusion',
+                                            _SEED_WRAPPER_EXCLUSION_MARKERS)
 
 
 TICK_INTERVAL_S = 60.0           # 每 60s 跑一次 check
@@ -87,54 +197,29 @@ class InconsistencyWatcher(threading.Thread):
 
     # 🩹 [β.2.9.7 / 2026-05-18] 准则 6 主体判定 — 正向 first-person + sleep verb,
     # 排除 wrapper. 治 Sir 09:06 实测痛点: "我会监督您在 13:05 准时休息" (Jarvis
-    # 监督 Sir, 不是 Sir 承诺睡) 被误判 is_sleep=True 反复 fire.
+    # 监督 Sir, 不是 Sir 自承诺) 被误判 is_sleep=True 反复 fire.
     #
-    # 反例 wrapper (Jarvis 代理人称, 不是 Sir 自承诺):
-    #   "我会监督您..." / "I shall hold you to..." / "I'll remind you..." /
-    #   "I shall watch over your sleep" / "我会留意您..."
-    # 正例 (Sir 自承诺 sleep):
-    #   "I'm going to bed" / "我去睡了" / "I'll sleep at 11" / "I'm about to rest"
-    _SIR_SLEEP_VERBS = (
-        'i will sleep', "i'll sleep", 'i shall sleep', 'i am going to bed',
-        "i'm going to bed", 'i need to sleep', 'going to bed now',
-        'i will rest', "i'll rest", 'i am off to bed', "i'm off to bed",
-        'going to crash', 'turning in', 'time for bed',
-        '我去睡', '我要睡', '我先睡', '我睡了', '睡觉去', '我上床',
-        '我去休息', '我先休息', '休息一下', '准备睡', '该睡了',
-    )
-    _JARVIS_WRAPPER_MARKERS = (
-        '监督您', '监督你', '留意您', '留意你', '提醒您', '提醒你', '盯着您', '盯着你',
-        '看着您', '看着你', '在此时叫', '到时叫',
-        'i shall hold you', 'i will hold you', "i'll hold you",
-        'i shall remind', 'i will remind', "i'll remind",
-        'i shall watch', 'i will watch', "i'll watch",
-        'i shall keep an eye', "i'll keep an eye", 'i will keep an eye',
-        'i shall monitor', 'i will monitor', "i'll monitor",
-    )
-
+    # 🩹 [β.3.4-vocab4 / 2026-05-18] 准则 6.5 vocab 迁 module-level:
+    # 原 class attributes _SIR_SLEEP_VERBS / _SIR_BREAK_VERBS /
+    # _JARVIS_WRAPPER_MARKERS → memory_pool/inconsistency_vocab.json.
+    # 改用 get_sir_sleep_verbs() / get_sir_break_verbs() / get_jarvis_wrapper_markers().
     def _is_sir_sleep_commitment(self, p) -> bool:
         """准则 6: 主体是 Sir + 动词是 sleep, 排除 Jarvis wrapper.
         看 description (优先 Sir 原话). 不看 jarvis_reply 整段, 那是 Jarvis 包装话."""
         desc_l = (p.description or '').lower().strip()
         if not desc_l:
             return False
-        if any(w in desc_l for w in self._JARVIS_WRAPPER_MARKERS):
+        if any(w in desc_l for w in get_jarvis_wrapper_markers()):
             return False
-        return any(v in desc_l for v in self._SIR_SLEEP_VERBS)
-
-    _SIR_BREAK_VERBS = (
-        'i will take a break', "i'll take a break", 'i need a break',
-        'i am going on break', "i'm taking a breather",
-        '我去休息一下', '我先歇会', '我去走两步', '我先停一下',
-    )
+        return any(v in desc_l for v in get_sir_sleep_verbs())
 
     def _is_sir_break_commitment(self, p) -> bool:
         desc_l = (p.description or '').lower().strip()
         if not desc_l:
             return False
-        if any(w in desc_l for w in self._JARVIS_WRAPPER_MARKERS):
+        if any(w in desc_l for w in get_jarvis_wrapper_markers()):
             return False
-        return any(v in desc_l for v in self._SIR_BREAK_VERBS)
+        return any(v in desc_l for v in get_sir_break_verbs())
 
     def _check_one_promise(self, p) -> Optional[str]:
         """检查一条 pending promise 是否和当前 Sir 状态反差.

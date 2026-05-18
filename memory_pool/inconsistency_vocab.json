@@ -1,0 +1,129 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T16:55:00",
+    "purpose": "INTEGRITY_STACK L0.5 — InconsistencyWatcher 主体判定 vocab (准则 6.5)",
+    "source_origin": "迁自 jarvis_inconsistency_watcher.py:_SIR_SLEEP_VERBS/_SIR_BREAK_VERBS/_JARVIS_WRAPPER_MARKERS (β.2.9.7)",
+    "edit_via": "scripts/inconsistency_vocab_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 扩展 sleep/break/wrapper 词汇",
+    "consumer": "jarvis_inconsistency_watcher.py:_is_sir_sleep_commitment / _is_sir_break_commitment",
+    "categories": {
+      "sleep_commitment": "Sir 自承诺 sleep 动词 — 命中 → 可能是 sleep promise",
+      "break_commitment": "Sir 自承诺 break 动词 — 命中 → 可能是 break promise",
+      "wrapper_exclusion": "Jarvis 代理人称包装句 — 命中 → 排除 (不是 Sir 自承诺)"
+    }
+  },
+  "patterns": [
+    {
+      "id": "sir_sleep_verbs_en",
+      "category": "sleep_commitment",
+      "keywords": [
+        "i will sleep",
+        "i'll sleep",
+        "i shall sleep",
+        "i am going to bed",
+        "i'm going to bed",
+        "i need to sleep",
+        "going to bed now",
+        "i will rest",
+        "i'll rest",
+        "i am off to bed",
+        "i'm off to bed",
+        "going to crash",
+        "turning in",
+        "time for bed"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093300.0,
+      "note": "English sleep commitment verbs"
+    },
+    {
+      "id": "sir_sleep_verbs_zh",
+      "category": "sleep_commitment",
+      "keywords": [
+        "我去睡",
+        "我要睡",
+        "我先睡",
+        "我睡了",
+        "睡觉去",
+        "我上床",
+        "我去休息",
+        "我先休息",
+        "休息一下",
+        "准备睡",
+        "该睡了"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093300.0,
+      "note": "Chinese sleep commitment verbs"
+    },
+    {
+      "id": "sir_break_verbs",
+      "category": "break_commitment",
+      "keywords": [
+        "i will take a break",
+        "i'll take a break",
+        "i need a break",
+        "i am going on break",
+        "i'm taking a breather",
+        "我去休息一下",
+        "我先歇会",
+        "我去走两步",
+        "我先停一下"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093300.0,
+      "note": "Sir break commitment verbs (合 EN+ZH)"
+    },
+    {
+      "id": "jarvis_wrapper_markers_zh",
+      "category": "wrapper_exclusion",
+      "keywords": [
+        "监督您",
+        "监督你",
+        "留意您",
+        "留意你",
+        "提醒您",
+        "提醒你",
+        "盯着您",
+        "盯着你",
+        "看着您",
+        "看着你",
+        "在此时叫",
+        "到时叫"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093300.0,
+      "note": "Jarvis 代理人称包装句 ZH"
+    },
+    {
+      "id": "jarvis_wrapper_markers_en",
+      "category": "wrapper_exclusion",
+      "keywords": [
+        "i shall hold you",
+        "i will hold you",
+        "i'll hold you",
+        "i shall remind",
+        "i will remind",
+        "i'll remind",
+        "i shall watch",
+        "i will watch",
+        "i'll watch",
+        "i shall keep an eye",
+        "i'll keep an eye",
+        "i will keep an eye",
+        "i shall monitor",
+        "i will monitor",
+        "i'll monitor"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093300.0,
+      "note": "Jarvis 代理人称包装句 EN"
+    }
+  ]
+}
