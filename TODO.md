@@ -10,21 +10,29 @@
 
  工作板
 
-**更新时间**：2026-05-16 21:45（**🌱 P0+20-β.2 灵魂工程 Layer 0+1 完工 / tag `v0.23.0-soul-foundation`**。
+**更新时间**：2026-05-18 10:02（**🩹 P0+20-β.2.9.7 完工 / InconsistencyWatcher 反复刷 + timeanchor 启发式 + ProactiveCare LIVE + dashboard 三件套**。
 
-**今天累计**：30+ commits / 8 tags / 55 testcase OK / β.0 prompt 重构全收尾 + β.1 救火 13 修 + β.2 灵魂工程启动。
+**今天累计 (5/18 09:00-10:02 一小时内)**：5 commits / 74/74 testcase 全绿 / 新增 57 testcase (β.2.9.7 inconsistency_subject 20 + timeanchor 29 + care_live 8) / 修 Sir 09:06 实测痛点 + 08:43 时间锚 BUG + ProactiveCare 切 LIVE + 启动 banner + scripts/proactive_care_tail.py.
 
-**β.2 灵魂工程进度（核心 — 与 INTEGRITY ABSOLUTE 并列的项目第二基本原则）**：
-- ✅ Layer 0 SelfAnchor（"我是谁"的认知锚点）— `jarvis_self_anchor.py` / 295 行
-- ✅ Layer 1 ConcernsLedger（"我关心什么" + 5 种子 + decay daemon）— `jarvis_concerns.py` / 401 行
-- ⏳ Layer 2 RelationalState（"我们之间" — 笑点 / 默契 / unfinished_business）— **下次 session 第一件事**
-- ⏳ Layer 3 Attention（注意力分配 helper）
-- ⏳ Layer 4 Reflectors（每 7d 自反思 propose 新 concerns + Sir review）
-- ⏳ Layer 5 Evaluator v2（升级评 alignment with self_model）
+**β.2.9.7 本轮核心修 (5 commits)**：
 
-**核心 design doc**：`docs/JARVIS_SOUL_DRIVE.md`（290 行 / 5 Layer 完整架构 + 实施计划 + 验收标准）。
+| commit | marker | 主题 |
+|---|---|---|
+| 92c2a8f | β.2.9.7 | InconsistencyWatcher 反复 fire 旧承诺 + PromiseLog 测试污染 (3 道防御 + conftest autouse) |
+| c77c968 | β.2.9.7-α | CommitmentWatcher 时间锚启发式 — 治 "I will sleep at 11" 类 4 条 +1h 兜底 BUG |
+| c90a3a3 | β.2.9.7-β.1 | ProactiveCare LIVE 默认 + SmartNudge disable 开关 + 启动 banner |
+| ab5a396 | β.2.9.7-γ.2 | scripts/proactive_care_tail.py — 实时观察 ProactiveCare 决策 |
+| a4951c8 | β.2.9.7-β.1.1 | dry_run 默认切换的 test 回归修 + 旧 LIVE env 向后兼容 |
 
-下个 session Agent 进窗口先读：`AGENTS.md` → `TODO.md`（本文件）→ `docs/JARVIS_SOUL_DRIVE.md`，然后从 Layer 2 RelationalState 接着做。）
+**Sir 重启可立测**：
+1. `python scripts/jarvis_daily_stats.py` — 看 24h dashboard (TTFT/Nudge/Commitment/Concerns)
+2. `python scripts/proactive_care_tail.py` — 实时看 ProactiveCare LIVE 决策
+3. `python scripts/promise_log_reset.py` — 清残留 promise (prod log 已手动清空备份)
+4. 启动后看终端 banner — 6 个 daemon 状态一目了然 (SmartNudge/ProactiveCare/PromiseSweep/HealthProbe/InconsistencyWatcher/CuriosityDaemon)
+5. 说 "我11点睡觉" — CommitmentWatcher log 应显示 deadline 23:00 不是 +1h 兜底
+6. 等 5min+ 看 InconsistencyWatcher 是否 startup_guard 内静默 (不刷屏)
+
+**下个 session Agent**: 进窗口读 `AGENTS.md` → `TODO.md` → 看 Sir 真机反馈 → 按 β.2.9.8 / β.2.10 / β.3.0 选路线 (详见路线候选)。)
 
 ---
 
