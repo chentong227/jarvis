@@ -1202,14 +1202,25 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
 
     try:
         default_font = tkfont.nametofont('TkDefaultFont')
-        default_font.configure(family='Microsoft YaHei UI', size=9)
+        default_font.configure(family='Microsoft YaHei UI', size=10)
+        # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:43 反馈"UI 美化". 字号 +1 / 加粗层次
         text_font = tkfont.Font(family='Microsoft YaHei UI', size=10)
-        h1_font = tkfont.Font(family='Microsoft YaHei UI', size=14, weight='bold')
-        h2_font = tkfont.Font(family='Microsoft YaHei UI', size=11, weight='bold')
-        h3_font = tkfont.Font(family='Microsoft YaHei UI', size=10, weight='bold')
-        btn_font = tkfont.Font(family='Microsoft YaHei UI', size=9)
+        h1_font = tkfont.Font(family='Microsoft YaHei UI', size=15, weight='bold')
+        h2_font = tkfont.Font(family='Microsoft YaHei UI', size=12, weight='bold')
+        h3_font = tkfont.Font(family='Microsoft YaHei UI', size=11, weight='bold')
+        btn_font = tkfont.Font(family='Microsoft YaHei UI', size=10)
+        dim_font = tkfont.Font(family='Microsoft YaHei UI', size=9)
     except Exception:
-        text_font = h1_font = h2_font = h3_font = btn_font = None
+        text_font = h1_font = h2_font = h3_font = btn_font = dim_font = None
+
+    # 🩹 [β.2.9.9 / 2026-05-18] ttk theme 改 clam — 比默认 Win Vista 风更现代
+    try:
+        from tkinter import ttk
+        style = ttk.Style()
+        if 'clam' in style.theme_names():
+            style.theme_use('clam')
+    except Exception:
+        pass
 
     bg = COLOR['bg'] if use_color else 'SystemButtonFace'
     fg = COLOR['fg'] if use_color else 'black'
@@ -1278,37 +1289,42 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     # ============ 大块工厂 ============
     def _make_group_frame(parent, title: str, color_key: str, row: int):
         gframe = tk.Frame(parent, bg=bg)
-        gframe.grid(row=row, column=0, sticky='nsew', padx=0, pady=(8, 0))
-        # 标题条
+        gframe.grid(row=row, column=0, sticky='nsew', padx=0, pady=(12, 0))
+        # 🩹 [β.2.9.9] 标题条加左侧色块 + 右侧细 separator 更分明
         title_bg = COLOR[color_key] if use_color else 'lightgray'
+        title_bar = tk.Frame(gframe, bg=title_bg, height=4)
+        title_bar.pack(side='top', fill='x')
         title_lbl = tk.Label(
-            gframe, text=f"  {title}",
-            bg=title_bg,
-            fg=COLOR['header_bg'] if use_color else 'black',
-            font=h3_font, anchor='w', padx=10, pady=3,
+            gframe, text=f"   {title}",
+            bg=COLOR['header_bg'] if use_color else 'SystemButtonFace',
+            fg=COLOR[color_key] if use_color else 'black',
+            font=h2_font, anchor='w', padx=14, pady=6,
         )
         title_lbl.pack(side='top', fill='x')
         # 内容区
         body = tk.Frame(gframe, bg=bg)
-        body.pack(side='top', fill='both', expand=True, padx=2, pady=2)
+        body.pack(side='top', fill='both', expand=True, padx=4, pady=4)
         return body
 
     def _make_card(parent, row, col, title, default_text='', sticky='nsew'):
         card_bg = COLOR['card_bg'] if use_color else 'SystemButtonFace'
-        frame = tk.Frame(parent, bg=card_bg, highlightthickness=1,
+        # 🩹 [β.2.9.9] 卡片间距 +1px / 边框 +1 / 标题 padding 加倍 — Sir 体感更呼吸
+        frame = tk.Frame(parent, bg=card_bg, highlightthickness=2,
                           highlightbackground=COLOR['card_border'] if use_color
                           else 'gray')
-        frame.grid(row=row, column=col, sticky=sticky, padx=3, pady=3)
+        frame.grid(row=row, column=col, sticky=sticky, padx=5, pady=5)
         title_lbl = tk.Label(frame, text=title, bg=card_bg,
                               fg=COLOR['header_fg'] if use_color else 'black',
-                              font=h2_font, anchor='w', padx=8, pady=4)
+                              font=h2_font, anchor='w', padx=12, pady=7)
         title_lbl.pack(side='top', fill='x')
         body = scrolledtext.ScrolledText(
-            frame, wrap='word', height=8, font=text_font,
+            frame, wrap='word', height=9, font=text_font,
             bg=card_bg, fg=COLOR['card_fg'] if use_color else 'black',
             insertbackground=fg, relief='flat', borderwidth=0,
+            spacing1=2, spacing3=2,  # 行间距 (top/bottom)
+            padx=8, pady=4,
         )
-        body.pack(side='top', fill='both', expand=True, padx=4, pady=(0, 4))
+        body.pack(side='top', fill='both', expand=True, padx=2, pady=(0, 6))
         body.config(state='disabled')
         return body, title_lbl
 
@@ -1368,8 +1384,9 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     overall_actions.config(state='disabled')
 
     # ============ 主容器 grid ============
+    # 🩹 [β.2.9.9] padding 加大让卡片更呼吸 (6→10)
     main = tk.Frame(root, bg=bg)
-    main.pack(side='top', fill='both', expand=True, padx=6, pady=4)
+    main.pack(side='top', fill='both', expand=True, padx=10, pady=6)
     main.columnconfigure(0, weight=1)
     main.rowconfigure(0, weight=2)  # 信息块
     main.rowconfigure(1, weight=2)  # 待处理块

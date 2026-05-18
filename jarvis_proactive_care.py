@@ -810,6 +810,8 @@ class ProactiveCareEngine(threading.Thread):
         self._state_lock = threading.Lock()
 
         self.last_any_nudge_ts: float = 0.0
+        # 🩹 [β.2.9.9 / 2026-05-18] 反馈骨架: 记最后 nudge 的 concern_id 用于关联 Sir 回应
+        self.last_nudge_concern_id: str = ''
         self.explicit_reject_until: float = 0.0
         self.fatigue_map: dict = {}      # concern_id → int rejection count
         # [β-3.1] concern_id → 上次 silent_text 推送时间. 用于决定下次升级 voice
@@ -873,6 +875,101 @@ class ProactiveCareEngine(threading.Thread):
             cur = self.fatigue_map.get(concern_id, 0)
             if cur > 0:
                 self.fatigue_map[concern_id] = max(0, cur - 1)
+
+    # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:43 反馈: "贾维斯能不能通过后续承诺的执行
+    # 来显式提高或降低这件事的关心度? 不仅睡眠, 后面贾维斯关心别的事情也会这样
+    # 动态影响权重."
+    # 通用机制 (准则 6 不针对特定 concern 硬编码):
+    #   ProactiveCare 发 nudge 时记 last_nudge_concern_id
+    #   Sir 在 120s 内回应 → notify_sir_response_post_nudge(text) →
+    #     通用 vocab 判正面 (好的/会去/yes/I'll) → severity -= 0.1 + 衰减 fatigue
+    #     通用 vocab 判负面 (别催/不/no/stop)   → severity 不动 + fatigue +1
+    #     中性 → 不操作, 仅记 signal 让 L4 reflector 看
+
+    _RESPONSE_POSITIVE = (
+        '好的', '好', '行', '可以', '会去', '我会', '会做', '去做', '马上',
+        '现在去', '收到', '知道了', '了解', '明白', '听你的', '对的', '是的',
+        "ok", "okay", "sure", "yes", "yeah", "yep", "i'll", "i will",
+        "going to", "on it", "roger", "got it", "will do", "you're right",
+    )
+    _RESPONSE_NEGATIVE = (
+        '别催', '不要催', '不用了', '算了', '不要提', '别提了', '我不',
+        '不催了', '知道了别再说', '够了', '烦', '别管',
+        'no', 'stop', "don't", 'leave it', 'not now', 'knock it off',
+        'enough', 'shut up', 'stop pinging',
+    )
+
+    @staticmethod
+    def _classify_response(text: str) -> str:
+        """通用正面/负面/中性判. vocab driven (Sir 准则 6).
+        优先看负面 (因 '不会做' 含 '会做' 正面词应当判负).
+        """
+        if not text:
+            return 'neutral'
+        t = text.strip().lower()
+        for w in ProactiveCareEngine._RESPONSE_NEGATIVE:
+            if w in t:
+                return 'negative'
+        for w in ProactiveCareEngine._RESPONSE_POSITIVE:
+            if w in t:
+                return 'positive'
+        return 'neutral'
+
+    def notify_sir_response_post_nudge(self, sir_text: str,
+                                          now_ts: float = None) -> Optional[str]:
+        """主对话路径调用: Sir 刚说了一段, 看是否在响应最近 nudge.
+
+        返回 'positive' / 'negative' / 'neutral' / None (不算回应 nudge).
+        自动调 ledger.record_signal + 调相应 notify_concern_* API.
+
+        chat_bypass / worker 在 Sir 文本到达后调一次即可, 不阻塞主路径.
+        """
+        if now_ts is None:
+            now_ts = time.time()
+        with self._state_lock:
+            cid = self.last_nudge_concern_id
+            last_at = self.last_any_nudge_ts
+        if not cid or not last_at:
+            return None
+        # Sir 必须在 nudge 后 2min 内回应才算 "关于这个 nudge"
+        if now_ts - last_at > 120.0:
+            return None
+
+        verdict = self._classify_response(sir_text)
+        try:
+            if verdict == 'positive':
+                # Sir 表态会做 → 信任先降 severity 0.1
+                if self.ledger is not None:
+                    self.ledger.record_signal(
+                        cid,
+                        f"Sir 听到 nudge 后正面回应: '{sir_text[:80]}'",
+                        severity_delta=-0.1,
+                    )
+                self.notify_concern_aligned(cid)
+            elif verdict == 'negative':
+                # Sir 拒绝 → fatigue +1, severity 不变 (避免误降)
+                if self.ledger is not None:
+                    self.ledger.record_signal(
+                        cid,
+                        f"Sir 听到 nudge 后拒绝: '{sir_text[:80]}'",
+                        severity_delta=0,
+                    )
+                self.notify_concern_rejected(cid)
+            else:
+                # 中性: 仅记 signal 让 L4 reflector 看, 不动 severity
+                if self.ledger is not None:
+                    self.ledger.record_signal(
+                        cid,
+                        f"Sir 听到 nudge 后中性回应: '{sir_text[:80]}'",
+                        severity_delta=0,
+                    )
+        except Exception as _e:
+            bg_log(f"⚠️ [ProactiveCare/PostNudge] record_signal fail: {_e}")
+        bg_log(
+            f"🎯 [ProactiveCare/PostNudge] concern={cid} verdict={verdict} "
+            f"sir='{sir_text[:50]}'"
+        )
+        return verdict
 
     def stop(self) -> None:
         self._stop.set()
@@ -977,6 +1074,8 @@ class ProactiveCareEngine(threading.Thread):
                     self.last_any_nudge_ts = now_ts
                 else:
                     self.silent_history[top_c.id] = now_ts
+                # 🩹 [β.2.9.9] 记最后 nudge 的 concern_id, Sir 后续 2min 回应可关联
+                self.last_nudge_concern_id = top_c.id
             try:
                 self.ledger.record_triggered(top_c.id)
             except Exception:
