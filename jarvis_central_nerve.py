@@ -620,6 +620,25 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.4.5.2 / 2026-05-18] Sir Session 4: IntegrityReflector L7 LLM-propose daemon
+        # 7d audit 反思 → propose 进 review queue (Sir 用 CLI --activate/--reject 仲裁)
+        # 触发: weekly (3d 兜底) 或 audit ≥ 50 + Sir idle > 4h
+        # 准则 7 Sir 元否决: propose 默认 state=review, 不自动激活
+        self.integrity_reflector = None
+        try:
+            from jarvis_integrity_reflector import get_default_integrity_reflector
+            self.integrity_reflector = get_default_integrity_reflector(
+                key_router=self.key_router,
+            )
+            if self.integrity_reflector is not None and not self.integrity_reflector.is_alive():
+                self.integrity_reflector.start()
+        except Exception as _ir_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntegrityReflector] 初始化失败（非致命）：{_ir_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
