@@ -113,6 +113,37 @@ def _safe_read_jsonl(path: str, tail: int = 100) -> List[dict]:
         return []
 
 
+# 🩹 [β.4.4 / 2026-05-18] Sir Session 3: file-seek tail 版 — 防 jsonl > 100K 条全 load.
+# 真机风险点预判 (KICKOFF Session 3 §): integrity_audit.jsonl 长跑后可能膨胀,
+# _safe_read_jsonl 的 f.readlines() 会一次性把整个文件读进内存.
+# 此函数用 seek -max_bytes 只读末尾段, 丢弃 partial 首行, 上限 tail_lines.
+# 损坏行 fail-safe skip (单行 json 解析错不影响其他行).
+def _safe_read_jsonl_tail(path: str, tail_lines: int = 2000,
+                           max_bytes: int = 512 * 1024) -> List[dict]:
+    """读 jsonl 文件末尾 N 行. 用 file seek -max_bytes 避免大文件全 load."""
+    if not os.path.exists(path):
+        return []
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                f.readline()  # 弃 partial 首行 (可能切到一半 json)
+            lines = f.readlines()
+        out = []
+        for line in lines[-tail_lines:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
 def _humanize_age_zh(ts: float) -> str:
     """中文时间差: '5 分钟前' / '2 小时前' / '3 天前' / '从没'"""
     if not ts:
@@ -924,6 +955,171 @@ def read_memory_mutations() -> Dict:
     return out
 
 
+# 🩹 [β.4.4 / 2026-05-18] Sir Session 3: INTEGRITY_STACK L6 dashboard 信任卡升级.
+# 读 memory_pool/integrity_audit.jsonl (L4 ClaimTracer 写入, 仅 unverified 入表) +
+# memory_pool/claim_stats.json (Session 4 daemon 未来加, 此处 fail-safe 兼容缺失).
+#
+# 真机风险点 (KICKOFF Session 3 §):
+#   1. jsonl 可能 > 100K 条 → 用 _safe_read_jsonl_tail (file seek -512KB) 防全 load
+#   2. daily/weekly 聚合 timezone: Sir 中国, 用 local time (time.timezone 偏移)
+#   3. 任何异常都 fail-safe (return out with err 字段, 不 raise)
+#   4. claim_stats.json 缺失 → verify_rate 为 None, 卡片显 '--' 不崩
+#   5. window='today' / '7d' 任一字符串异常 → 默认 today
+def read_integrity_stats(window: str = 'today',
+                          audit_path: Optional[str] = None,
+                          stats_path: Optional[str] = None,
+                          now_ts: Optional[float] = None) -> Dict:
+    """🔬 言出必行健康度 — Jarvis claim 未兑现情况
+
+    数据源:
+      - memory_pool/integrity_audit.jsonl: 仅 unverified claim 条目 (β.4.1+)
+      - memory_pool/claim_stats.json (Session 4 daemon hook, 可选)
+
+    返回 schema:
+      {
+        'window': 'today' / '7d',
+        'unverified_today': int,
+        'unverified_7d': int,
+        'kind_dist': {'time': N, 'past_action': N, 'recall': N, ...},
+        'top_unverified': [{'text': str, 'kind': str, 'count': N}, ...],  # top 3 (7d 窗)
+        'trend_7d': [d-6, d-5, d-4, d-3, d-2, d-1, today],  # 7 day buckets, 末位=今天
+        'verify_rate': None | float,  # 0.0-1.0, 仅当 claim_stats.json 存在
+        'diagnosis': str,
+        'suggestion': str,
+        'err': None | str,
+      }
+    """
+    out = {
+        'window': window if window in ('today', '7d') else 'today',
+        'unverified_today': 0,
+        'unverified_7d': 0,
+        'kind_dist': {},
+        'top_unverified': [],
+        'trend_7d': [0] * 7,
+        'verify_rate': None,
+        'diagnosis': '',
+        'suggestion': '',
+        'err': None,
+    }
+    path = audit_path or os.path.join(MEM, 'integrity_audit.jsonl')
+    if not os.path.exists(path):
+        out['diagnosis'] = '📝 还没有任何 claim audit 记录'
+        out['suggestion'] = (
+            '正常 — Jarvis 还没出过 unverified claim, 或 ClaimTracer 没启用. '
+            '说几句话给 Jarvis 听看后续会不会写入'
+        )
+        return out
+
+    now = float(now_ts) if now_ts is not None else time.time()
+    # 本地今日 00:00 (中国时区, 不要 UTC)
+    today_start = now - (now % 86400) - time.timezone
+    seven_d_start = today_start - 6 * 86400  # 7 天窗 (含今天)
+
+    try:
+        records = _safe_read_jsonl_tail(path, tail_lines=5000)
+    except Exception as e:
+        out['err'] = f'读取异常: {e}'
+        out['diagnosis'] = '⚠️ jsonl 读取失败'
+        out['suggestion'] = f'看 {path} 是否权限/编码异常'
+        return out
+
+    today_records = []
+    week_records = []
+    for r in records:
+        try:
+            ts = float(r.get('ts', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if ts >= today_start:
+            today_records.append(r)
+        if ts >= seven_d_start:
+            week_records.append(r)
+
+    out['unverified_today'] = len(today_records)
+    out['unverified_7d'] = len(week_records)
+
+    # kind 分布 (今日; 类型未填默认 '?')
+    kind_counter: Dict[str, int] = {}
+    for r in today_records:
+        k = (r.get('kind') or '?').strip() or '?'
+        kind_counter[k] = kind_counter.get(k, 0) + 1
+    out['kind_dist'] = kind_counter
+
+    # top 3 frequent unverified text (7d 窗, 同 text+kind 计 count)
+    text_counter: Dict[tuple, int] = {}
+    for r in week_records:
+        text = (r.get('claim') or '').strip()[:80]
+        kind = (r.get('kind') or '?').strip() or '?'
+        if not text:
+            continue
+        key = (text, kind)
+        text_counter[key] = text_counter.get(key, 0) + 1
+    top3 = sorted(text_counter.items(), key=lambda x: -x[1])[:3]
+    out['top_unverified'] = [
+        {'text': t, 'kind': k, 'count': c} for (t, k), c in top3
+    ]
+
+    # 7d trend (day buckets, 索引 6 = 今天, 0 = 6 天前)
+    # 🩹 [β.4.4 / 2026-05-18] bucket bug fix: ts 不在 00:00 时, 直接用 (today_start - ts) // 86400
+    # 会偏小一天 (如 d-3 12:00 → (3天-0.5天)//86400=2). 修法: 先把 ts 对齐到当天 00:00.
+    for r in week_records:
+        try:
+            ts = float(r.get('ts', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if ts < seven_d_start:
+            continue
+        ts_day_start = ts - (ts % 86400) - time.timezone  # ts 当天的本地午夜
+        day_offset = int((today_start - ts_day_start) // 86400)  # 0=今天 / 1=昨天
+        if day_offset < 0:
+            day_offset = 0  # 未来 ts (时间戳错乱) 算今天
+        if 0 <= day_offset < 7:
+            out['trend_7d'][6 - day_offset] += 1
+
+    # verify_rate hook (Session 4 daemon 写 claim_stats.json 后自动生效)
+    stats_p = stats_path or os.path.join(MEM, 'claim_stats.json')
+    if os.path.exists(stats_p):
+        try:
+            stats = _safe_read_json(stats_p, {})
+            total_claims = int(stats.get('total_claims', 0) or 0)
+            total_unverified = int(stats.get('total_unverified', 0) or 0)
+            if total_claims > 0:
+                rate = (total_claims - total_unverified) / float(total_claims)
+                out['verify_rate'] = max(0.0, min(1.0, rate))  # clamp
+        except Exception:
+            pass  # fail-safe: verify_rate 保持 None
+
+    # 诊断 (准则 6: 不教主脑句式, 这是 Sir 看的 UI 文案, 直接说事)
+    if out['unverified_today'] == 0:
+        if out['unverified_7d'] == 0:
+            out['diagnosis'] = '✅ 言出必行 — 7 天 0 件空头话'
+            out['suggestion'] = '正常 — 所有 claim 都 trace 到 evidence'
+        else:
+            out['diagnosis'] = (
+                f'✅ 今天 0 件 (7 天累计 {out["unverified_7d"]} 件)'
+            )
+            out['suggestion'] = '今天干净, 看下面 7d 趋势看历史走势'
+    elif out['unverified_today'] <= 5:
+        out['diagnosis'] = (
+            f'⚠️ 今天 {out["unverified_today"]} 件空头话'
+        )
+        out['suggestion'] = (
+            '少量正常 — 主脑会在下轮 [INTEGRITY ALERT] 自己撤回. '
+            '如重复多次同 text → 看是否 ClaimTracer 误报或 vocab 漏抓'
+        )
+    else:
+        out['diagnosis'] = (
+            f'❌ 今天 {out["unverified_today"]} 件空头话频发 — 言行不一信号'
+        )
+        out['suggestion'] = (
+            '可能 ClaimTracer 误报 / vocab 漏抓 / 主脑诚信问题. '
+            '看 memory_pool/integrity_audit.jsonl tail + '
+            'scripts/claim_classify_dump.py / evidence_req_dump.py 调 vocab'
+        )
+
+    return out
+
+
 def read_review_queues() -> Dict:
     """⚠️ 等你拍板的提案 — concerns/relational/directive review"""
     out = {'items': []}
@@ -1071,11 +1267,21 @@ def read_event_stream(limit: int = 30) -> Dict:
 def compute_overall_status(concerns: dict, directive: dict, promise: dict,
                              relation: dict, daemon: dict, health: dict,
                              review: dict, events: dict,
-                             mutations: dict = None) -> dict:
-    """🤖 整体一句话 — 综合所有 reader, 给 Sir 看就懂的 top-3 重点"""
+                             mutations: dict = None,
+                             integrity: dict = None) -> dict:
+    """🤖 整体一句话 — 综合所有 reader, 给 Sir 看就懂的 top-3 重点
+
+    🩹 [β.4.4 / 2026-05-18] Sir Session 3: 加 integrity 入参 — Jarvis 言出必行健康度.
+      阈值 (准则 5 言出必行优先级最高):
+        - 今日 unverified > 5  → crit (言行不一频发)
+        - 今日 unverified 1-5  → warn (少量空头话)
+        - 今日 unverified == 0 → 不入 issues (✅ 健康)
+    """
     out = {'level': 'ok', 'headline': '', 'top_actions': []}
     if mutations is None:
         mutations = {'today_n': 0, 'total_n': 0}
+    if integrity is None:
+        integrity = {'unverified_today': 0, 'unverified_7d': 0}
 
     issues = []  # [(severity, text, action), ...] severity: 'crit' / 'warn' / 'info'
 
@@ -1166,6 +1372,22 @@ def compute_overall_status(concerns: dict, directive: dict, promise: dict,
                 f'今天 Sir 纠正 {n_correction} 次但 0 真写入 — 可能在空头"我已更新"',
                 '看 dashboard 信任审计卡 + log 主对话纠正话语',
             ))
+
+    # 🩹 [β.4.4 / 2026-05-18] Sir Session 3: 言出必行健康度 — claim 未兑现条数阈值
+    # 准则 5 优先级最高: 今日 unverified > 5 = crit / 1-5 = warn / 0 = 不入 issues
+    unv_today = int(integrity.get('unverified_today', 0) or 0)
+    if unv_today > 5:
+        issues.append((
+            'crit',
+            f'今天 {unv_today} 件空头话频发 — 言行不一信号 (准则 5)',
+            '看 dashboard "言出必行" 卡 + integrity_audit.jsonl tail',
+        ))
+    elif unv_today > 0:
+        issues.append((
+            'warn',
+            f'今天 {unv_today} 件 unverified claim — 主脑下轮会自己撤回',
+            '看 dashboard "言出必行" 卡详情 + top 高频空头话',
+        ))
 
     # 综合 headline
     if not issues:
@@ -1437,19 +1659,23 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
         body.pack(side='top', fill='both', expand=True, padx=4, pady=4)
         return body
 
-    def _make_card(parent, row, col, title, default_text='', sticky='nsew'):
+    def _make_card(parent, row, col, title, default_text='', sticky='nsew',
+                    columnspan=1, height=9):
+        # 🩹 [β.4.4 / 2026-05-18] Sir Session 3: 加 columnspan / height kwargs
+        # 支持新加宽卡 (跨多列), 默认行为兼容老 caller (columnspan=1, height=9)
         card_bg = COLOR['card_bg'] if use_color else 'SystemButtonFace'
         # 🩹 [β.2.9.9] 卡片间距 +1px / 边框 +1 / 标题 padding 加倍 — Sir 体感更呼吸
         frame = tk.Frame(parent, bg=card_bg, highlightthickness=2,
                           highlightbackground=COLOR['card_border'] if use_color
                           else 'gray')
-        frame.grid(row=row, column=col, sticky=sticky, padx=5, pady=5)
+        frame.grid(row=row, column=col, sticky=sticky, padx=5, pady=5,
+                   columnspan=columnspan)
         title_lbl = tk.Label(frame, text=title, bg=card_bg,
                               fg=COLOR['header_fg'] if use_color else 'black',
                               font=h2_font, anchor='w', padx=12, pady=7)
         title_lbl.pack(side='top', fill='x')
         body = scrolledtext.ScrolledText(
-            frame, wrap='word', height=9, font=text_font,
+            frame, wrap='word', height=height, font=text_font,
             bg=card_bg, fg=COLOR['card_fg'] if use_color else 'black',
             insertbackground=fg, relief='flat', borderwidth=0,
             spacing1=2, spacing3=2,  # 行间距 (top/bottom)
@@ -1560,12 +1786,14 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
 
     # ===== 第 3 块: 观测 =====
     # 🩹 [β.2.9.9] 加第 4 列 "信任审计" — Sir 10:51 诚信审计治本卡片
+    # 🩹 [β.4.4 / 2026-05-18] Sir Session 3: 加 row 1 跨 4 列 "言出必行健康度" 宽卡
     group_obs = _make_group_frame(main, '▌ 观测 — 看贾维斯有没有偏轨', 'group_obs', 2)
     group_obs.columnconfigure(0, weight=2, uniform='g3')
     group_obs.columnconfigure(1, weight=2, uniform='g3')
     group_obs.columnconfigure(2, weight=2, uniform='g3')
     group_obs.columnconfigure(3, weight=2, uniform='g3')
-    group_obs.rowconfigure(0, weight=1)
+    group_obs.rowconfigure(0, weight=2)  # 上排 4 卡 (高)
+    group_obs.rowconfigure(1, weight=1)  # 下排 1 宽卡 (矮)
 
     card_directive, lbl_directive = _make_card(
         group_obs, 0, 0,
@@ -1582,6 +1810,14 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     card_mutations, lbl_mutations = _make_card(
         group_obs, 0, 3,
         '🔬  信任审计 (今天真改了什么)',
+    )
+    # 🩹 [β.4.4 / 2026-05-18] Sir Session 3 INTEGRITY_STACK L6: 言出必行健康度宽卡
+    # 跨 4 列 (columnspan=4) 显 unverified claim 趋势 + 类型分布 + top 高频
+    # 数据源: memory_pool/integrity_audit.jsonl + (可选) claim_stats.json
+    card_integrity, lbl_integrity = _make_card(
+        group_obs, 1, 0,
+        '💯  言出必行健康度 (今天 claim 兑现)',
+        columnspan=4, height=10,
     )
 
     # ============ 渲染函数 ============
@@ -1736,6 +1972,68 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                 else:
                     lines.append(f"    → {r['new'][:50]}")
                 lines.append(f"    ({r['age']}  conf={r['confidence']:.2f})")
+        return '\n'.join(lines) + '\n'
+
+    # 🩹 [β.4.4 / 2026-05-18] Sir Session 3 INTEGRITY_STACK L6: 言出必行卡渲染
+    # 渲染顺序: 诊断 → 总数行 → kind 分布 → top 3 高频 → 7d ASCII trend chart
+    # 不教主脑句式 (准则 6): Sir 看 UI 文案, 直接陈述事实
+    def _render_integrity(data):
+        if data.get('err'):
+            return f"读取失败: {data['err']}\n"
+        lines = [_diag_header(data)]
+        # 总数 + verify_rate (claim_stats.json hook)
+        head_line = (
+            f"今天 {data['unverified_today']} 件未兑现  /  "
+            f"7 天 {data['unverified_7d']} 件"
+        )
+        if data.get('verify_rate') is not None:
+            head_line += f"  /  兑现率 {data['verify_rate']*100:.1f}%"
+        else:
+            head_line += "  /  兑现率 -- (Session 4 daemon 待加)"
+        lines.append(head_line)
+        lines.append('')
+
+        if data['unverified_today'] == 0 and data['unverified_7d'] == 0:
+            lines.append('(干净 — 没有 unverified claim)')
+            return '\n'.join(lines) + '\n'
+
+        # kind 分布 (今日)
+        if data['kind_dist']:
+            kind_str = '  '.join(
+                f"{k}={v}" for k, v in
+                sorted(data['kind_dist'].items(), key=lambda x: -x[1])
+            )
+            lines.append(f"📊 今日类型分布:  {kind_str}")
+            lines.append('')
+
+        # top 3 高频空头话 (7d 窗)
+        if data['top_unverified']:
+            lines.append('🔁 7 天最常空头话 top 3:')
+            for r in data['top_unverified']:
+                text = (r['text'] or '')[:60]
+                lines.append(f"  [{r['kind']}] x{r['count']}  '{text}'")
+            lines.append('')
+
+        # 7d ASCII trend chart (5 行高条形图, 左 = 6 天前, 右 = 今天)
+        trend = data.get('trend_7d') or []
+        if trend and any(v > 0 for v in trend):
+            max_v = max(trend)
+            chart_h = 4  # 4 行高度 (含 0 行总 5 行渲染)
+            lines.append('📉 7 天趋势 (左 = 6 天前, 右 = 今天):')
+            # 每天一列, 每列宽 4 字符 (含 1 空格分隔)
+            for row in range(chart_h, 0, -1):
+                row_line = '   '
+                for v in trend:
+                    bar_h = int(v / max_v * chart_h) if max_v > 0 else 0
+                    row_line += ' █ ' if bar_h >= row else ' · '
+                lines.append(row_line)
+            # 数值行
+            num_line = '   ' + ''.join(f'{v:>3}' for v in trend)
+            lines.append(num_line)
+            # 标尺行 (相对今天的偏移)
+            scale_line = '   -6d-5d-4d-3d-2d-1d今天'
+            lines.append(scale_line)
+
         return '\n'.join(lines) + '\n'
 
     # ============ 待处理卡片 渲染 (带真按钮) ============
@@ -1956,10 +2254,11 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
             review = read_review_queues()
             events = read_event_stream(limit=25)
             mutations = read_memory_mutations()  # 🩹 [β.2.9.9] 信任审计
+            integrity = read_integrity_stats()  # 🩹 [β.4.4] L6 言出必行
             overall = compute_overall_status(
                 concerns, directive, promise, relation,
                 daemon, health, review, events,
-                mutations=mutations)
+                mutations=mutations, integrity=integrity)
             elapsed = (time.time() - t0) * 1000
 
             # Header 状态条
@@ -2005,6 +2304,7 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
             _set_text(card_daemon, _render_daemon(daemon))
             _set_text(card_event, _render_events(events))
             _set_text(card_mutations, _render_mutations(mutations))
+            _set_text(card_integrity, _render_integrity(integrity))  # 🩹 [β.4.4]
 
             _render_todo_buttons(todo)
             _render_review_buttons(review)
@@ -2032,6 +2332,14 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
             lbl_mutations.config(
                 text=f"🔬  信任审计 — 今天真改了什么  "
                      f"({mutations['today_n']}/{mutations['total_n']})")
+            # 🩹 [β.4.4 / 2026-05-18] Sir Session 3: 言出必行卡标题徽章
+            integ_t = integrity.get('unverified_today', 0)
+            integ_w = integrity.get('unverified_7d', 0)
+            integ_rate = integrity.get('verify_rate')
+            rate_str = f" · {integ_rate*100:.0f}%" if integ_rate is not None else ""
+            lbl_integrity.config(
+                text=f"💯  言出必行健康度  "
+                     f"(今日 {integ_t} · 7d {integ_w}{rate_str})")
 
             _set_status(f"刷新 {time.strftime('%H:%M:%S')}  ({elapsed:.0f}ms)", True)
         except Exception as e:
@@ -2072,6 +2380,7 @@ def print_snapshot() -> int:
         ('💡 后台管家 (Daemon)', read_daemon_status),
         ('🔔 实时事件流', lambda: read_event_stream(limit=15)),
         ('🔬 信任审计 (今天真改了什么)', read_memory_mutations),  # β.2.9.9
+        ('💯 言出必行健康度', read_integrity_stats),  # β.4.4 Session 3
     ]
     for title, reader in sections:
         print(f"\n--- {title} ---")
