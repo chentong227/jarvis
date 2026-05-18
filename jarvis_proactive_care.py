@@ -1053,10 +1053,31 @@ class ProactiveCareEngine(threading.Thread):
             reject_until = self.explicit_reject_until
         ok, reason = self.guard.can_speak(top_c, top_u, now_ts, last_any, reject_until)
         if not ok:
-            bg_log(
-                f"🛑 [ProactiveCare] skip concern={getattr(top_c, 'id', '?')} "
-                f"urgency={top_u:.2f} reason={reason}"
-            )
+            # 🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "skip 刷屏":
+            # 旧版每 60s tick 同 cid+reason 都 bg_log 一遍, 30min cooldown 刷 30 次.
+            # 准则 6 通用节流: 同 (cid, reason_prefix) 5min 内只 log 1 次.
+            try:
+                if not hasattr(self, '_skip_log_throttle'):
+                    self._skip_log_throttle = {}
+                _cid = getattr(top_c, 'id', '?')
+                _reason_prefix = reason.split('(')[0].strip()  # 去掉动态秒数
+                _key = (_cid, _reason_prefix)
+                _last_log = self._skip_log_throttle.get(_key, 0)
+                if now_ts - _last_log >= 300.0:  # 5min 节流
+                    bg_log(
+                        f"🛑 [ProactiveCare] skip concern={_cid} "
+                        f"urgency={top_u:.2f} reason={reason}"
+                    )
+                    self._skip_log_throttle[_key] = now_ts
+                    # 清过期 entries 防内存泄漏
+                    if len(self._skip_log_throttle) > 200:
+                        _cutoff = now_ts - 1800
+                        self._skip_log_throttle = {
+                            k: ts for k, ts in self._skip_log_throttle.items()
+                            if ts > _cutoff
+                        }
+            except Exception:
+                pass
             return
 
         # 6. build evidence + 选 channel + push

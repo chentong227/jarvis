@@ -156,8 +156,10 @@ class ConcernsReflector:
                 c = self.ledger.get(cid)
                 if c is None:
                     continue
-                # snippet：取触发关键字附近 ~60 字
-                snippet = self._extract_snippet(combined, cid)[:80]
+                # 🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "y co被截断":
+                # 旧版 snippet [:80] 截在半词 (如 'policy' → 'y co'). 提高到
+                # 120 字 + _extract_snippet 内部切到 word/标点边界, 防丑断词.
+                snippet = self._extract_snippet(combined, cid)[:120]
                 evidence = f"[reflect/{turn_id or '?'}] 检测到话题: {snippet}"
                 ok = self.ledger.record_signal(
                     cid, evidence,
@@ -179,16 +181,27 @@ class ConcernsReflector:
         return recorded
 
     def _extract_snippet(self, text: str, concern_id: str) -> str:
-        """从 text 取触发 keyword 附近的小片段，让 evidence 可读。"""
+        """从 text 取触发 keyword 附近的小片段，让 evidence 可读。
+
+        🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "y co被截断":
+          旧版固定字符截断在半词 → snippet 看起来像乱码 "y co".
+          准则 6 通用修: 取更长 (50 字两侧 = 100+ 字) + 切到空格/标点/CJK 边界.
+        """
         kw_list = CONCERN_KEYWORDS.get(concern_id, [])
         t = text.lower()
         for kw, _ in kw_list:
             idx = t.find(kw)
             if idx >= 0:
-                start = max(0, idx - 30)
-                end = min(len(text), idx + len(kw) + 30)
+                start = max(0, idx - 50)
+                end = min(len(text), idx + len(kw) + 50)
+                # 切到 word boundary — 向前找最近空格/标点不丢中文字符
+                while start > 0 and text[start] not in ' \t\n.,;!?，。；！？':
+                    start -= 1
+                while end < len(text) and text[end] not in ' \t\n.,;!?，。；！？':
+                    end += 1
                 return text[start:end].replace('\n', ' ').strip()
-        return text[:60]
+        # fallback: 取头 100 字
+        return text[:100].replace('\n', ' ').strip()
 
     def get_stats(self) -> Dict:
         with self._lock:
