@@ -10,9 +10,9 @@
 
  工作板
 
-**更新时间**：2026-05-18 11:32（**🚀 P0+20-β.2.9.9 大集成完工 / Phase D 焦点 + 诚信 ABCDE + 工具流不卡 + dashboard 集成主脑**）。
+**更新时间**：2026-05-18 12:25（**🚀 P0+20-β.2.9.10 完工 / FAST_CALL 异步治本工具卡顿 (Sir 11:09 痛点架构修)**）。
 
-**今天累计 (5/18 09:00-11:32)**：13 commits / 78/78 testcase 全绿 / 新增 ~120 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact`(待打)。
+**今天累计 (5/18 09:00-12:25)**：15 commits / 79/79 testcase 全绿 / 新增 ~140 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async`。
 
 **最重大突破** — 诚信审计治本: Sir 10:51 发现 Jarvis "我已更新记录" 是空头话 (CorrectionMemory 表 84h 0 写入). 修法 5 件 (准则 5 言出必行 + 准则 6 不硬编码):
 - **A**: directive `memory_update_honesty` 拦"已更新"假话 (除非真 emit MEMORY_UPDATE)
@@ -43,6 +43,8 @@
 | 7d13e0c | β.2.9.9-A | CommitmentWatcher 时间确定性闸门 — 治"剪辑完就行"误注册 |
 | 8d98b70 | β.2.9.9-B+C | dashboard pythonw + UI 美化 + concern 动态权重反馈骨架 |
 | bcaa650 | β.2.9.9-集成 | Phase D 焦点 + 诚信 ABCDE + 工具流不卡 + dashboard 集成主脑 |
+| 6c8df92 | β.2.9.10 | ReturnSentinel 模板兜底删 + return_greeting directive 正向引导避免 'Welcome back' 客套 |
+| 128d688 | β.2.9.10-async | FAST_CALL 软超时异步治本工具卡顿 — ThreadPool + 1.5s 超时 + drain pending 注入 |
 
 **Sir 重启可立测 8 项**:
 1. `scripts\jarvis_dashboard.cmd` (双击) — 中文看板, 三大块 + 真按钮 + 信任审计卡
@@ -55,9 +57,10 @@
 8. 真启 24h 不重启 — InconsistencyWatcher/Curiosity/ProactiveCare 三个 daemon 健康
 
 **下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → 看 Sir 实测反馈 → 优先级:
-- 🔴 ProactiveCare 真异步执行 (FAST_CALL 不阻塞 stream) — 工具卡顿治本
+- ✅ FAST_CALL 异步治本 (β.2.9.10 已完工)
 - 🟡 inside_joke dedup 失效修 (Sir 之前提"overbearing"3 次)
 - 🟡 LLM 二次判 correction (FeedbackTracker 升级 Phase 2)
+- 🟡 get_dynamic_wake_response 仍用模板 (Sir 喊 Jarvis 即时响应路径 — 升 LLM 较复杂, 留下轮)
 - 🟢 Skill Pack 应用控制 (Cursor/Premiere/Excel))
 
 ---
