@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T19:30:00",
+    "marker": "P0+20-β.4.3.2",
+    "purpose": "INTEGRITY_STACK L2 — Evidence Requirements table (准则 6.5)",
+    "source_origin": "seed from Sir KICKOFF Session 2 design + β.4.2-hotfix lesson (time -> SYSTEM CLOCK)",
+    "edit_via": "scripts/evidence_req_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 看 audit unverify 率反推 evidence path 缺漏",
+    "consumer": "jarvis_claim_tracer.trace_to_evidence (β.4.3.3 改 vocab+requirement 表驱动)",
+    "schema_note": "每条 pattern = 1 个 (claim_type, accepted_evidence_kinds[]) 二元组. 多 pattern 同 claim_type 会 union 合并. accepted_evidence_kinds 任一命中即 verified. 空 list → 不 verify 也不 audit (fail-safe).",
+    "evidence_kinds_canonical": [
+      "tool_results_success",
+      "tool_results_any",
+      "stm_match",
+      "ltm_match",
+      "system_clock_within_2min",
+      "promise_log_recorded",
+      "uncertainty_marker_nearby",
+      "none"
+    ],
+    "evidence_kinds_doc": {
+      "tool_results_success": "tool_results 列表中任一 str 含 '✅' marker (β.3.0 BUG#4: Past-action 必须真 ✅)",
+      "tool_results_any": "tool_results 列表中任一 str 含 claim text 子串 (不限 ✅)",
+      "stm_match": "STM recent entries 任一 user/jarvis 字段含 claim text 子串",
+      "ltm_match": "ltm_context 字串含 claim text 子串",
+      "system_clock_within_2min": "claim text 解析为 HH:MM, 与 system_clock 注入的当前时间 abs diff <= 2 min (β.4.2 治本: time claim 不再永远 unverified)",
+      "promise_log_recorded": "jarvis_reply 含 <PROMISE>...</PROMISE> 标签 (Future tense 主脑显式承诺 → 记入 PromiseLog 即 evidence)",
+      "uncertainty_marker_nearby": "claim 附近 ±40 字含 'about/maybe/大约/我估计' 等 hedge (β.2.8.7 已有)",
+      "none": "永远 pass (不需要 evidence, 仅 record). 给 Unknown 类型用."
+    }
+  },
+  "patterns": [
+    {
+      "id": "past_default",
+      "claim_type": "Past",
+      "accepted_evidence_kinds": [
+        "tool_results_success",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Past-action: 必须 tool ✅ 真返成功 (β.3.0 BUG#4 治本)"
+    },
+    {
+      "id": "future_default",
+      "claim_type": "Future",
+      "accepted_evidence_kinds": [
+        "promise_log_recorded",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Future tense: 主脑 emit <PROMISE> 标签 → PromiseLog 写入 → 当作 evidence"
+    },
+    {
+      "id": "state_default",
+      "claim_type": "State",
+      "accepted_evidence_kinds": [
+        "system_clock_within_2min",
+        "tool_results_any",
+        "stm_match",
+        "ltm_match",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "State (含 time + 状态 + 量化): SYSTEM CLOCK 或 tool/STM/LTM 任一命中. β.4.2 hotfix 治本路径在此."
+    },
+    {
+      "id": "recall_default",
+      "claim_type": "Recall",
+      "accepted_evidence_kinds": [
+        "stm_match",
+        "ltm_match",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Recall (引用 Sir 原话): STM/LTM 必须命中"
+    },
+    {
+      "id": "social_default",
+      "claim_type": "Social",
+      "accepted_evidence_kinds": [
+        "ltm_match",
+        "stm_match",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Social (Sir 喜好/偏好): sir_profile (LTM) 优先, STM fallback"
+    },
+    {
+      "id": "tool_default",
+      "claim_type": "Tool",
+      "accepted_evidence_kinds": [
+        "tool_results_any",
+        "uncertainty_marker_nearby"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Tool (调用进行时): 本轮 tool_results 任何内容含命中即可"
+    },
+    {
+      "id": "unknown_failsafe",
+      "claim_type": "Unknown",
+      "accepted_evidence_kinds": [],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Unknown (L1 没分到任何类): 空 list → 不 verify 也不 audit. Fail-safe 防 ALERT 死循环 (β.4.2-hotfix 教训内化)."
+    }
+  ]
+}
