@@ -10,9 +10,33 @@
 
  工作板
 
-**更新时间**：2026-05-18 17:32（**🚀 P0+20-β.4.1 INTEGRITY_STACK Session 1 完工 — L4 ClaimTracer enforce + ALERT 注入**）。
+**更新时间**：2026-05-18 20:10（**🚀 P0+20-β.4.3 INTEGRITY_STACK Session 2 完工 — L1 Claim 分类器 + L2 Evidence Requirements + L4 trace_to_evidence 表驱重写**）。
 
-**今天累计 (5/18 09:00-17:32)**：31 commits / 89/89 testcase 全绿 / 新增 ~307 testcase / 8 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce`。
+**今天累计 (5/18 09:00-20:10)**：35 commits / 92/92 testcase 全绿 / 新增 ~361 testcase / 9 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify`。
+
+**🟢 β.4.3 INTEGRITY_STACK Session 2 完工 (准则 6.5 L1+L2 表驱替换硬编码 / L4 重写)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `jarvis_claim_classifier.py` + `memory_pool/claim_classify_vocab.json` + `scripts/claim_classify_dump.py` | L1 7 类 (Past/Future/State/Recall/Social/Tool/Unknown) keyword + kinds_hard_map + mtime cache + seed fallback | β.4.3.4 covers |
+| `jarvis_evidence_requirements.py` + `memory_pool/evidence_requirements.json` + `scripts/evidence_req_dump.py` | L2 evidence kinds: tool_results_success/any / stm_match / ltm_match / system_clock_within_2min / promise_log_recorded / uncertainty_marker_nearby | β.4.3.4 covers |
+| `jarvis_claim_tracer.py:trace_to_evidence` | `use_vocab=True` 默认走 L1+L2; 老路径 `_trace_via_legacy` 保 β.2.8.7 回归; `_LEGACY_TRACE_LABEL` alias 老短名 | β.4.3.4 + β.2.8.7 双绿 |
+| `jarvis_chat_bypass.py` trace_reply 调用点 | 加 `system_clock=time.time()` + `ltm_context` 入参, 治本 β.4.2-hotfix `time` claim 死循环 | bg_log diag |
+| `tests/_test_p0_plus_20_beta434_claim_classify_evidence_persist.py` | 9 TestClass — L1+L2+L4 + cross-coupling + 红线 + CLI + dual-track 真机风险口 | 54 测 |
+
+**设计准则**:
+- 准则 6.5: L0/L1/L2 全部 vocab + CLI + L7 待 (Session 3); 任一层缺失/损坏均 fail-safe 回退 (legacy / 视为 verified)
+- 防御 dual-track: TestCrossModuleCoupling 显式验 vocab_path=bogus 时不 raise 不阻塞主链
+- β.4.2-hotfix 治本: time claim 现 SYSTEM CLOCK ±2min verify, 取代 audit_skip (skip 保留 defense-in-depth)
+
+**Session 2 commit + tag**: `0d62236` / `v0.32.0-claim-classify`, 92/92 pass run_id `test_20260518_200142_2154`.
+
+**真机风险点清单 (Session 2 引入, Sir 黑箱测试看这些)**:
+1. **L1 关键词冲突边界** — "open notepad" 现归 Tool 而非 State (State `正在/当前/现在` 已删). 若 Sir 看到 "现在" 被分错 → grep `claim_classify_vocab.json` 看 keyword 顺序
+2. **L2 evidence_kind 漏匹配** — Past 类必须 tool_results 含 ✅ 才算 verified; 若 Jarvis 真做了事但 tool 没回 ✅ → 会被判 unverified 反复 ALERT, 走 `memory_pool/evidence_requirements.json` CLI 加 evidence kind 或下调 strictness
+3. **time claim 系统时钟漂移** — `system_clock_within_2min` 是 ±120s; 跨夜 / Sir 改系统时间 → 可能误判. 真机如出现 → 看 `jarvis_claim_tracer._parse_time_to_hm` 时区/24h 兼容
+4. **ltm_context 截断 2000 字** — `jarvis_chat_bypass.py:3238` 上限; LTM 段超长 → 尾部 Recall claim 可能误判 unverified
+5. **vocab 文件 IO 故障** — 任一 json 损坏均走 seed fallback (`_SEED_VOCAB`); Sir 看 bg_log `[ClaimClassifier] vocab load failed` / `[EvidenceReq] vocab load failed` 诊断
 
 **🟢 β.4.1 INTEGRITY_STACK Session 1 完工 (准则 5 言出必行 — L4 ClaimTracer 从 trace 升级 enforce)**:
 
@@ -132,16 +156,17 @@
 
 **下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 优先级:
 
-🔴 **INTEGRITY_STACK Session 2 (下一任务)** — L1 Claim 分类器 + L2 Evidence 要求中央表:
-   - `jarvis_claim_classifier.py` + `memory_pool/claim_classify_vocab.json` + `scripts/claim_classify_dump.py` (准则 6.5)
-     - 6 类: Past / Future / State / Recall / Social / Tool
-     - vocab 表驱 (Past = past_action verb + perfect aspect, Future = will/I'll, ...)
-   - `jarvis_evidence_requirements.py` + `memory_pool/evidence_requirements.json` + CLI
-     - schema: `{claim_kind: required_evidence_kinds}` (e.g. Past → tool_results / Future → nothing yet, just record / State → ltm / Recall → stm)
-   - L4 `trace_to_evidence` 接 L1 + L2 → unverified 判定从硬编码 (现 past_action / regex) 变 vocab + requirement 表驱动
-   - 预期工时 ~5h, tag `v0.32.0-claim-classify`
+🔴 **INTEGRITY_STACK Session 3 (下一任务)** — L6 Dashboard 信任审计卡 + L7 LLM-propose / WeeklyReflector:
+   - **L6 dashboard 信任卡升级**: 现 dashboard 已有"信任审计 (今天真改了什么)"卡 (β.2.9.7), 加入 L4 ClaimTracer 数据 — 今天 unverified claim 数 / 类型分布 / 最高频"被 ALERT 的话" + 一键看 `integrity_audit.jsonl` tail
+   - **L7 LLM-propose / WeeklyReflector**: vocab/evidence 治理闭环
+     - `jarvis_integrity_reflector.py` daemon — 看一周 audit / trace 数据, LLM 提议 vocab keyword 漏抓 / evidence_kind 漏配 / kinds_hard_map 漏映射
+     - 写 review queue (类 `concerns_review.json`) 等 Sir CLI 拍板
+     - 跑频率: weekly (周日 03:00) 或 audit 累积 > 50 条触发
+   - 预期工时 ~4h, tag `v0.33.0-integrity-reflector`
 
-🟡 **INTEGRITY_STACK Session 3** — L6 dashboard 信任审计卡升级 + L7 LLM-propose / WeeklyReflector
+🟢 **INTEGRITY_STACK Session 2** — L1 Claim 分类器 + L2 Evidence 要求 ✅ 完工 commit `0d62236` / tag `v0.32.0-claim-classify`
+🟢 **INTEGRITY_STACK Session 1** — L4 ClaimTracer enforce ✅ 完工 commit `d36e9eb` / tag `v0.31.1-claim-enforce`
+� **INTEGRITY_STACK Session 0** — L0.5 Dynamic Vocab Substrate (7 vocab) ✅ 完工 tag `v0.31.0-dynamic-vocab-substrate`
 
 🟡 dedup 失效 (overbearing 3 次重复)
 🟡 LLM 二次判 correction (FeedbackTracker Phase 2)
