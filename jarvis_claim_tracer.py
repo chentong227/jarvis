@@ -26,6 +26,8 @@ ClaimTracer 抽 Jarvis reply 里的 specific factual claim:
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import time
 from typing import Dict, List, Optional, Tuple
@@ -254,6 +256,17 @@ def trace_reply(jarvis_reply: str,
         else:
             n_unverified += 1
             unverified_examples.append(f"[{c.kind}] '{c.text}'")
+            # 🩹 [β.3.5 INTEGRITY_STACK L4 enforce / 2026-05-18]
+            # 仅 unverified 入 audit jsonl (防文件膨胀; verified 由 _CLAIM_STATS 计总量)
+            try:
+                _audit_reason = (
+                    'no ✅ marker in tool_results' if c.kind == 'past_action'
+                    else 'no match in tool_results or STM'
+                )
+                write_audit_entry(turn_id, c, found=False,
+                                    reason=_audit_reason)
+            except Exception:
+                pass
 
     if n_unverified > 0:
         try:
@@ -292,3 +305,133 @@ def update_stats(result: dict) -> None:
     _CLAIM_STATS['total_replies_traced'] += 1
     _CLAIM_STATS['total_claims'] += result.get('n_claims', 0)
     _CLAIM_STATS['total_unverified'] += result.get('n_unverified', 0)
+
+
+# ============================================================
+# 🩹 [β.3.5 / 2026-05-18] INTEGRITY_STACK L4 enforce —
+#   integrity_audit.jsonl 持久化 + [INTEGRITY ALERT] 注入下一轮 prompt
+#
+# 设计准则:
+#   - 准则 5 (言出必行): unverified factual claim 必须 trace 到 evidence;
+#     上轮未在 evidence 里的 claim 要在下轮 “主动撤回 或 补 evidence”.
+#   - 准则 6 (不硬编码): ALERT 只 trace 事实 (turn_id / kind / claim text),
+#     不教主脑具体中文句式 — 主脑自己决定怎么措辞.
+#   - 准则 6.5 (动态 schema): audit file 路径可注入 (testcase 隔离),
+#     entries jsonl 追写, 仅 unverified 入表 (verified 由 _CLAIM_STATS 计趋势).
+# ============================================================
+
+_INTEGRITY_AUDIT_PATH = os.path.join('memory_pool', 'integrity_audit.jsonl')
+
+
+def _ensure_audit_dir(path: str) -> None:
+    d = os.path.dirname(path)
+    if d and not os.path.exists(d):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+
+
+def write_audit_entry(turn_id: str, claim: 'Claim', found: bool,
+                       reason: str = '', evidence_kind: str = '',
+                       audit_path: Optional[str] = None) -> bool:
+    """Append 1 行 audit jsonl. 仅 unverified (found=False) 入表; 失败返 False 不 raise.
+
+    schema (per line): ts / iso / turn_id / claim / kind / evidence_kind / found / reason
+    """
+    if found:
+        return False  # 仅 incident 入表, 防文件膨胀
+    path = audit_path or _INTEGRITY_AUDIT_PATH
+    try:
+        _ensure_audit_dir(path)
+        entry = {
+            'ts': time.time(),
+            'iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'turn_id': turn_id or '',
+            'claim': (getattr(claim, 'text', '') or '')[:200],
+            'kind': getattr(claim, 'kind', ''),
+            'evidence_kind': evidence_kind or (getattr(claim, 'trace_to', '') or ''),
+            'found': bool(found),
+            'reason': (reason or '')[:200],
+        }
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        return True
+    except OSError:
+        return False
+
+
+def read_recent_unverified(limit: int = 50,
+                            exclude_turn_id: str = '',
+                            audit_path: Optional[str] = None) -> List[dict]:
+    """读 audit jsonl 尾 limit 行, 返回 found=False 且 turn_id != exclude_turn_id 的条目.
+
+    失败 / 文件不存在 / 损坏 都返 [] 不 raise. limit 防读海量 jsonl.
+    """
+    path = audit_path or _INTEGRITY_AUDIT_PATH
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    entries: List[dict] = []
+    for line in lines[-limit:]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if e.get('found'):
+            continue
+        if exclude_turn_id and e.get('turn_id') == exclude_turn_id:
+            continue
+        entries.append(e)
+    return entries
+
+
+def build_integrity_alert(current_turn_id: str = '',
+                            limit: int = 20,
+                            audit_path: Optional[str] = None) -> str:
+    """构造 [INTEGRITY ALERT] 提示串, 供 _assemble_prompt prepend 到 system_alert_text.
+
+    仅访问 immediate previous turn 的 unverified entries (按 ts 分 turn-group 取最新).
+    无则返 ''. 任何异常返 '' 不 raise (保主路径).
+
+    准则 5 / 准则 6 设计:
+      - 只述说上轮的 claim 未 verify 事实, 两个选项 (withdraw / supply evidence)
+      - 不写上中文句式 / 不指定使用 '其实/I'm sorry/On reflection' 等 wording
+    """
+    try:
+        unv = read_recent_unverified(limit=limit,
+                                       exclude_turn_id=current_turn_id,
+                                       audit_path=audit_path)
+    except Exception:
+        return ''
+    if not unv:
+        return ''
+    # 按 turn_id group, 取 ts 最大的 turn (immediate prior turn)
+    by_turn: Dict[str, List[dict]] = {}
+    for e in unv:
+        by_turn.setdefault(e.get('turn_id') or '?', []).append(e)
+    if not by_turn:
+        return ''
+    latest_turn = max(by_turn.keys(),
+                       key=lambda k: max(float(e.get('ts', 0)) for e in by_turn[k]))
+    prior = by_turn[latest_turn]
+    n = len(prior)
+    examples = ' / '.join(
+        f"[{e.get('kind')}] \"{e.get('claim')}\""
+        for e in prior[:3]
+    )
+    if n > 3:
+        examples += f" / ... (+{n - 3} more)"
+    return (
+        f"[INTEGRITY ALERT] Your previous turn ({latest_turn}) had {n} "
+        f"unverified factual claim(s): {examples}. In THIS reply, either "
+        f"acknowledge and withdraw plainly, or supply the missing evidence. "
+        f"Do not pretend it was never said. (准则 5 言出必行)"
+    )

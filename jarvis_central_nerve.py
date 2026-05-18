@@ -897,6 +897,32 @@ class CentralNerve:
         current_time = time.strftime('%Y-%m-%d %H:%M:%S %A')
         current_hour = int(time.strftime('%H'))
 
+        # 🩹 [β.3.5 INTEGRITY_STACK L4 enforce / 2026-05-18]
+        # 上轮 unverified factual claim → prepend [INTEGRITY ALERT] 到 system_alert_text.
+        # 准则 5: 主脑被强制 acknowledge 上轮未 verify 的 claim, 撤回 或 补 evidence.
+        # 准则 6: ALERT 只 trace 事实 (turn_id/kind/claim text), 不教主脑措辞.
+        # 时序: 本 _assemble_prompt 在 reply 前调; trace_reply 在 reply 后调.
+        # 所以 audit jsonl 里只可能有 prior turn 的 unverified entries, 但 defensively
+        # 仍传 current_turn_id 排除 (e.g. 重试 / dry-run 场景).
+        try:
+            from jarvis_claim_tracer import build_integrity_alert
+            from jarvis_utils import TraceContext as _TC_int
+            _curr_tid_int = _TC_int.get_turn_id() or ''
+            _integrity_alert = build_integrity_alert(current_turn_id=_curr_tid_int)
+            if _integrity_alert:
+                system_alert_text = (
+                    _integrity_alert + '\n\n' + system_alert_text
+                    if system_alert_text else _integrity_alert
+                )
+                try:
+                    from jarvis_utils import bg_log as _bg_int
+                    _bg_int(f"🩹 [INTEGRITY/Alert inject] turn={_curr_tid_int} "
+                            f"prepended {len(_integrity_alert)} chars")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # [P0+20-β.0.2 / 2026-05-16] L2 Directive Registry dry-run
         # 不真切注入，只采 fired 信号 + bg_log 暴露"新机制本应注入哪些 directive"。
         # β.0.3 会切真注入并删除内联 directive；β.0.2 阶段只验证 trigger 命中率。
