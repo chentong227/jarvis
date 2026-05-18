@@ -266,7 +266,8 @@ class ReturnSentinel(threading.Thread):
             return
 
         if self.gate and self.gate.is_sleep_mode():
-            self.gate.deactivate_sleep_mode()
+            # 🩹 [β.2.9.1.3] ReturnSentinel = Sir AFK >5min 回来, 算真醒 force=True
+            self.gate.deactivate_sleep_mode(force=True)
             print(f"[ReturnSentinel] 用户回归，自动解除休眠模式 (AFK {afk_duration/60:.0f}分钟)")
 
         if hasattr(self.worker, 'voice_thread'):

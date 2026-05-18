@@ -1204,24 +1204,18 @@ class SleepIntentDetector:
         print(f"[SleepDetector] 休眠后监控结束 (未检测到活动)")
 
     def _dispatch_reminder(self, elapsed_sec: float):
-        """发出睡后活动提醒: 先生你说要睡的怎么还在动"""
+        """🩹 [β.2.9.1.3 / 2026-05-18] Sir 07:57 反馈: '我没说话但 Jarvis 主动发声'.
+        准则 5: Sir 表态睡了, Jarvis 不该 second-guess + 主动开口质疑.
+        改 bg_log 留痕, ProactiveCare 看了自己 weight 是否 fire."""
         minutes = int(elapsed_sec / 60)
-        msg_en = f"Sir, you said you were going to sleep {minutes} minutes ago, but I detect you are still active. Perhaps it is time to rest?"
-        msg_zh = f"先生，{minutes}分钟前您说要睡觉了，但我检测到您还在活动。也许该休息了？"
-        print(f"\n║ 🌙 [SleepDetector] 休眠后检测到活动，发送提醒...")
-        print(_box_newline(f"║ 🤖  [Jarvis] {msg_en}"))
-        print(_box_newline(f"║ 📺  [Subtitle] {msg_zh}"))
-        print("╚" + "═"*63 + "\n")
-
         try:
-            if hasattr(self.nerve, 'chat_bypass') and hasattr(self.nerve.chat_bypass, 'subtitle_queue'):
-                self.nerve.chat_bypass.subtitle_queue.put(("en", msg_en))
-                self.nerve.chat_bypass.subtitle_queue.put(("zh", msg_zh))
-            if hasattr(self.nerve, 'vocal'):
-                import threading
-                threading.Thread(target=self.nerve.vocal.say, args=(msg_en,), daemon=True).start()
-        except Exception as e:
-            print(f"[SleepDetector] 提醒语音异常: {e}")
+            from jarvis_utils import bg_log
+            bg_log(
+                f"🌙 [SleepDetector/PostSleep] Sir 说睡 {minutes}min 后检测到键鼠活动. "
+                f"内部信号; 准则 5 不主动 vocal.say (Sir 自己处理)"
+            )
+        except Exception:
+            pass
 
     @property
     def is_pending_confirmation(self) -> bool:

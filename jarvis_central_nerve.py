@@ -2745,7 +2745,8 @@ User: {new_cmd}
         if not gate or not gate.is_sleep_mode():
             return False
         sleep_duration = gate.sleep_duration_seconds()
-        gate.deactivate_sleep_mode()
+        # 🩹 [β.2.9.1.3] _detect_wake_up = Sir 真主动唤醒 (wake_word/对话开始), force=True
+        gate.deactivate_sleep_mode(force=True)
         gap = time.time() - self._last_user_active
         print(f"[CentralNerve] 检测到用户唤醒 (静默 {gap/60:.1f}分钟, 睡眠模式持续 {sleep_duration/60:.1f}分钟)，恢复主动发言")
         self._check_short_sleep(sleep_duration)
@@ -2760,24 +2761,19 @@ User: {new_cmd}
         self._check_short_sleep(sleep_duration)
 
     def _check_short_sleep(self, sleep_duration: float):
+        # 🩹 [β.2.9.1.3 / 2026-05-18] Sir 07:57 反馈: "Sir 没说话但 Jarvis 主动发声".
+        # 准则 5 反面 — Sir 说了睡, 不该 second-guess + 主动 vocal.say "did you not
+        # fall asleep?". 改 bg_log 内部留痕, ProactiveCare 看了再决定要不要 nudge.
         if sleep_duration < 300:
             minutes = max(1, int(sleep_duration / 60))
-            msg_en = f"Sir, you were only in sleep mode for {minutes} minute(s). Did you not fall asleep?"
-            msg_zh = f"先生，睡眠模式只持续了{minutes}分钟。您没有入睡吗？"
-            print(f"\n║ 🌙 [SleepDetector] 睡眠时长过短 ({minutes}分钟)，询问用户...")
-            print(_box_newline(f"║ 🤖  [Jarvis] {msg_en}"))
-            print(_box_newline(f"║ 📺  [Subtitle] {msg_zh}"))
-            print("╚" + "═"*63 + "\n")
-
             try:
-                if hasattr(self, 'chat_bypass') and hasattr(self.chat_bypass, 'subtitle_queue'):
-                    self.chat_bypass.subtitle_queue.put(("en", msg_en))
-                    self.chat_bypass.subtitle_queue.put(("zh", msg_zh))
-                if hasattr(self, 'vocal'):
-                    import threading
-                    threading.Thread(target=self.vocal.say, args=(msg_en,), daemon=True).start()
-            except Exception as e:
-                print(f"[CentralNerve] 短睡眠询问语音异常: {e}")
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"🌙 [SleepDetector/Short] sleep_mode 持续 {minutes}min, < 5min. "
+                    f"内部信号; Sir 没说话不主动 vocal.say (准则 5)"
+                )
+            except Exception:
+                pass
 
     def _trigger_end_of_day_archive(self):
         print("[CentralNerve] 开始休眠前数据归档...")
