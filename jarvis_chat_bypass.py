@@ -211,6 +211,16 @@ class ChatBypass:
         # —— 即使 _tool_results 有内容（含失败），也可能 LLM 实际没成功完成动作而仍声称"已搞定"
         self._last_circuit_broken_reason = None
 
+        # 🩹 [β.2.9.10 / 2026-05-18] Sir 11:09 工具卡顿治本: FAST_CALL 异步执行.
+        # 旧版 _execute_fast_call 同步阻塞 1-5s, splitter 卡停, Sir 听不到声 → 体感"卡顿".
+        # 治本: 短超时 (1.5s) 同步等, 超时 → 主 stream 立刻继续, tool 后台跑完
+        # 把 result 写入 _pending_tool_results, 下一轮 prompt 注入让主脑看到.
+        self._tool_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=3, thread_name_prefix='FastCallAsync')
+        self._pending_tool_results = []   # [{organ, command, result, ts}, ...]
+        self._pending_tool_lock = threading.Lock()
+        self.TOOL_SOFT_TIMEOUT_S = 1.5    # 超过此值放手, 主 stream 不卡
+
         # [R7/Screenshot] 之前的 60s 缓存已废弃 —— JPEG quality=50 + 1280x720 已经很小，
         # 实时截屏（~30-80ms）的代价远低于"看见的不是用户正在指的画面"的代价。
         # 仅 WAKE_ONLY 档（只喊名字）跳过截图，其余档全部实时截。
@@ -1170,6 +1180,109 @@ Spoken English:"""
             return None, True, False
 
     # ==========================================
+    # 🩹 [β.2.9.10 / 2026-05-18] Sir 11:09 工具卡顿治本 — 异步软超时 wrapper
+    # 设计:
+    #   submit 到 ThreadPoolExecutor
+    #   try result(timeout=1.5s):
+    #     ≤1.5s 完成 (开窗口/简单 cmd) → 同步返 result, 体验跟旧版无差
+    #     >1.5s (慢工具 hg/build/网络) → TimeoutError → 主 stream 立刻继续
+    #       后台 callback 把 result append 到 self._pending_tool_results
+    #       下一轮 _drain_pending_tool_results 注入 prompt 让主脑看到
+    #   Sir 不再听到 1-5s 静默 = 体感不卡顿 (准则 1+2 高效反应)
+    # ==========================================
+    def _execute_fast_call_with_soft_timeout(self, organ_name: str,
+                                              command: str, params: dict,
+                                              timeout: float = 1.5):
+        """同步语义 wrapper + 异步软超时. 返回 (result, was_sync)."""
+        try:
+            fut = self._tool_executor.submit(
+                self._execute_fast_call, organ_name, command, params)
+        except Exception as _se:
+            # ThreadPool 关了 or 满了 → fallback 同步
+            try:
+                from jarvis_utils import bg_log as _fbg
+                _fbg(f"⚠️ [FastCall/Submit] {_se} — fallback sync")
+            except Exception:
+                pass
+            return self._execute_fast_call(organ_name, command, params), True
+
+        try:
+            result = fut.result(timeout=timeout)
+            return result, True
+        except concurrent.futures.TimeoutError:
+            # 后台续跑, 完成 callback 写 _pending_tool_results
+            def _on_done(_fut):
+                try:
+                    r = _fut.result()
+                    with self._pending_tool_lock:
+                        self._pending_tool_results.append({
+                            'organ': organ_name, 'command': command,
+                            'result': r, 'ts': time.time(),
+                        })
+                        # 防爆: 最多保 20 条 (跨多轮累积)
+                        if len(self._pending_tool_results) > 20:
+                            self._pending_tool_results = \
+                                self._pending_tool_results[-20:]
+                    try:
+                        from jarvis_utils import bg_log as _abg
+                        _abg(
+                            f"⚡ [FastCall/Async] {organ_name}.{command} "
+                            f"后台完成: {str(r)[:80]}"
+                        )
+                    except Exception:
+                        pass
+                    # subtitle 通知 Sir 工具已完成 (字幕飘过 + 不打断主脑当前讲话)
+                    try:
+                        self.subtitle_queue.put(
+                            ("en", f"[tool done] {organ_name}.{command}: "
+                                    f"{str(r)[:60]}")
+                        )
+                    except Exception:
+                        pass
+                except Exception as _ace:
+                    try:
+                        from jarvis_utils import bg_log as _aebg
+                        _aebg(
+                            f"⚠️ [FastCall/Async] {organ_name}.{command} "
+                            f"后台失败: {_ace}"
+                        )
+                    except Exception:
+                        pass
+            try:
+                fut.add_done_callback(_on_done)
+            except Exception:
+                pass
+            placeholder = (
+                f"⏳ {organ_name}.{command}: 工具异步执行中 "
+                f"(主脑可继续讲话, 结果稍后到达)"
+            )
+            return placeholder, False
+
+    def drain_pending_tool_results(self) -> str:
+        """🩹 [β.2.9.10] 取走 pending 工具结果, 拼成 prompt 注入文本.
+
+        由 _assemble_prompt / stream_chat 入口调用, 让主脑看到上轮异步工具
+        的真实 result, 可在新一轮 LLM stream 自然讲解.
+        """
+        with self._pending_tool_lock:
+            items = self._pending_tool_results[:]
+            self._pending_tool_results.clear()
+        if not items:
+            return ''
+        lines = [
+            "[RECENT BACKGROUND TOOL RESULTS — 上一轮 FAST_CALL 已异步完成]:"
+        ]
+        for it in items:
+            age = max(0, int(time.time() - it['ts']))
+            lines.append(
+                f"  - {it['organ']}.{it['command']} "
+                f"({age}s ago): {str(it['result'])[:140]}"
+            )
+        lines.append(
+            "若 Sir 询问这些工具结果, 你可基于上述事实回答 (不要编造)."
+        )
+        return '\n'.join(lines) + '\n'
+
     def _execute_fast_call(self, organ_name: str, command: str, params: dict):
         import contextlib
         import re as _re_safety
@@ -1287,6 +1400,13 @@ Spoken English:"""
         云端补答：在本地首答之后，调用 Gemini 提供深度回答。
         继续使用同一个边框，追加显示。
         """
+        # 🩹 [β.2.9.10] 异步工具结果也注入云端补答路径
+        try:
+            _drain_text = self.drain_pending_tool_results()
+            if _drain_text:
+                prompt = _drain_text + "\n" + (prompt or '')
+        except Exception:
+            pass
         import re
         self.is_interrupted = False
         self._has_routed_this_turn = False
@@ -1483,10 +1603,15 @@ Spoken English:"""
                         command = fc.get("command", "")
                         params = fc.get("params", {})
                         print(f"\n║ ⚡ [FAST_CALL] {organ}.{command}")
-                        result = self._execute_fast_call(organ, command, params)
+                        # 🩹 [β.2.9.10] 软超时异步: 短工具同步等(无感), 长工具放手
+                        # 让主 stream 立刻继续, tool 后台跑完写 _pending_tool_results
+                        result, was_sync = self._execute_fast_call_with_soft_timeout(
+                            organ, command, params,
+                            timeout=self.TOOL_SOFT_TIMEOUT_S)
                         if result is not None:
                             _tool_results.append(result)
-                            print(f"║ ✅ [Result] {str(result)[:120]}")
+                            mark = '✅' if was_sync else '⏳'
+                            print(f"║ {mark} [Result] {str(result)[:120]}")
                     except Exception as fce:
                         print(f"║ ❌ [FAST_CALL Failed] {fce}")
 
@@ -1669,7 +1794,17 @@ Spoken English:"""
                     gate_future=None, prompt_tier: str = None):
         self.last_stm_context = stm_context
         self.last_ltm_context = ltm_context
-        import re 
+
+        # 🩹 [β.2.9.10 / 2026-05-18] 异步工具结果注入: 上轮 FAST_CALL 后台完成的
+        # result 在此 prepend 到 prompt, 主脑能看到真实工具反馈, 不再凭空说话.
+        try:
+            _drain_text = self.drain_pending_tool_results()
+            if _drain_text:
+                prompt = _drain_text + "\n" + (prompt or '')
+        except Exception:
+            pass
+
+        import re
         print(f"\n" + "╔" + "═"*63)
         clean_user_input = user_input.replace(": ", "", 1) if user_input.startswith(": ") else user_input
         display_input = re.sub(r'^\[(?:WAKE_ONLY|WORK_MODE|RELAX_MODE)(?:\|(?:WAKE_ONLY|WORK_MODE|RELAX_MODE))*\]\s*', '', clean_user_input)
