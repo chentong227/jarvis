@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-19T00:15:00",
+    "marker": "P0+20-beta.4.8",
+    "purpose": "Acoustic Wakeword (openWakeWord MIT) + VAD safety thresholds (准则 6.5)",
+    "source_origin": "Sir 23:50 实测反馈: 房间外说话被误拾 + 近距离唤醒难. 加 openWakeWord (MIT 开源) 声学唤醒替代 ASR 字符串模糊匹配, 保留 VAD 音量阈值作 fallback.",
+    "edit_via": "scripts/mic_diag.py --vocab-show / --vocab-set <key>=<value> 或手改 JSON",
+    "auto_propose": "暂不接 L7 reflector (低频量, 由 Sir 实测调)",
+    "consumer": "jarvis_acoustic_wake.AcousticWakeDetector / jarvis_worker.AuditoryCortex.run",
+    "schema_note": "_meta.thresholds 提供所有可调参数. openwakeword_model='hey_jarvis_v0.1' 用内置预训; 自训 jarvis_v1 后改 openwakeword_custom_model_path='memory_pool/wakeword_models/jarvis_v1.onnx'. openwakeword_frame_length=1280 (16kHz 80ms, openWakeWord 固定). patterns[] 留作未来扩展.",
+    "thresholds": {
+      "acoustic_wake_enabled": false,
+      "acoustic_wake_engine": "openwakeword",
+      "openwakeword_model": "hey_jarvis_v0.1",
+      "openwakeword_custom_model_path": "",
+      "openwakeword_threshold": 0.5,
+      "openwakeword_frame_length": 1280,
+      "openwakeword_inference_framework": "onnx",
+      "fallback_volume_entry": 180,
+      "fallback_volume_exit": 100,
+      "silence_limit_default": 1.5,
+      "silence_limit_active_long": 2.0,
+      "active_speak_long_threshold_s": 3.0,
+      "active_timeout_s": 30.0,
+      "max_record_time_active_s": 60.0,
+      "max_record_time_idle_s": 4.0,
+      "frames_per_buffer": 1024,
+      "sample_rate": 16000
+    }
+  },
+  "patterns": []
+}
