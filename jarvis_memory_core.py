@@ -673,39 +673,102 @@ except ImportError:
 
 
 
+# ============================================================
+# 🩹 [P0+20-β.3.4-vocab6 / 2026-05-18] 准则 6.5 vocab 持久化
+# 原 FeedbackTracker.__init__._correction_patterns (10 regex × signal_type)
+# 迁 memory_pool/feedback_vocab.json + scripts/feedback_vocab_dump.py.
+# 范式同 β.3.0-vocab1 但 entry 是 (compiled regex, signal_type), 不是 keyword.
+# ============================================================
+
+# Fallback seed — 与 json 完全一致, 仅 json 损坏/不存在时用. 顺序敏感 (first match wins).
+_SEED_FEEDBACK_PATTERNS: List[Tuple[str, str]] = [
+    (r"(?:不对|不是|错了|搞错|记错|出错|两码事|两个事|其实|"
+     r"澄清|纠正|没那么|不是的|不要混淆|搞混)", "correction"),
+    (r"\b(?:no|nope|not|don't|doesn't|isn't|actually|clarify|"
+     r"correction|i meant|i'm not|you got it wrong|that's not)\b", "correction"),
+    (r"\b(?:what\?|huh\?|pardon|excuse me\?)\b", "confusion"),
+    (r"(?:啥|什么意思|没听明白|没明白)", "confusion"),
+    (r"\b(?:thanks|thank you|perfect|exactly|great|good|nice)\b", "positive"),
+    (r"(?:谢谢|对了|完美|不错|很好|挺好)", "positive"),
+    (r"\b(?:go on|continue|and then|what else)\b", "follow_up"),
+    (r"(?:然后|接着)", "follow_up"),
+    (r"\b(?:ignore|skip|never mind)\b", "dismiss"),
+    (r"(?:算了|不管|别管)", "dismiss"),
+]
+
+_FEEDBACK_VOCAB_PATH = os.path.join('memory_pool', 'feedback_vocab.json')
+_FEEDBACK_PATTERNS_CACHE: Optional[List[Tuple[Any, str]]] = None
+_FEEDBACK_PATTERNS_MTIME: float = 0.0
+
+
+def _load_feedback_patterns_from_json() -> Optional[List[Tuple[Any, str]]]:
+    """从 json 加载 active pattern (regex, signal_type). 顺序保留 (first match wins).
+    失败返 None 走 fallback seed."""
+    if not os.path.exists(_FEEDBACK_VOCAB_PATH):
+        return None
+    try:
+        with open(_FEEDBACK_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out: List[Tuple[Any, str]] = []
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            regex_str = p.get('regex')
+            sig_type = p.get('signal_type')
+            if not regex_str or not sig_type:
+                continue
+            try:
+                compiled = re.compile(regex_str)
+            except re.error:
+                # 坏 regex 跳过, 不污染整体
+                continue
+            out.append((compiled, sig_type))
+        return out if out else None
+    except Exception:
+        return None
+
+
+def get_feedback_patterns() -> List[Tuple[Any, str]]:
+    """🩹 [β.3.4-vocab6] mtime cache 自动 reload. 返 compiled regex 列表."""
+    global _FEEDBACK_PATTERNS_CACHE, _FEEDBACK_PATTERNS_MTIME
+    try:
+        mtime = os.path.getmtime(_FEEDBACK_VOCAB_PATH) if os.path.exists(
+            _FEEDBACK_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _FEEDBACK_PATTERNS_CACHE is None or mtime > _FEEDBACK_PATTERNS_MTIME:
+        loaded = _load_feedback_patterns_from_json()
+        if loaded is not None:
+            _FEEDBACK_PATTERNS_CACHE = loaded
+        else:
+            # fallback: 用 seed (compile)
+            _FEEDBACK_PATTERNS_CACHE = [
+                (re.compile(rx), st) for rx, st in _SEED_FEEDBACK_PATTERNS
+            ]
+        _FEEDBACK_PATTERNS_MTIME = mtime
+    return _FEEDBACK_PATTERNS_CACHE
+
+
 class FeedbackTracker:
+    # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计 — 中英 regex 修
+    # 🩹 [β.3.4-vocab6 / 2026-05-18] 准则 6.5 vocab 迁 module-level:
+    # 原 self._correction_patterns (10 regex × signal_type) → memory_pool/
+    # feedback_vocab.json + scripts/feedback_vocab_dump.py.
+    # analyze_interaction 改用 get_feedback_patterns() (module helper).
     def __init__(self):
         self.signals = collections.deque(maxlen=200)
-        self._correction_patterns = [
-            # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计: 旧 regex `\b` 对中文不可靠
-            # (中文无 ASCII boundary), Sir 自然中文"出错/澄清/两码事/忌讳"全漏 →
-            # CorrectionMemory 0 写入 → 主脑大言不惭"我已更新".
-            # 修 (准则 6 vocab 驱动, 不针对特定 case 硬编码):
-            #   中文 — 直接 substring (中文词无空格)
-            #   ASCII — 保留 \b 防 "not" 误命中 "another"
-            #   扩词表覆盖"其实/澄清/纠正/搞错/记错/出错/两码事/I meant/actually" 等
-            (r"(?:不对|不是|错了|搞错|记错|出错|两码事|两个事|其实|"
-             r"澄清|纠正|没那么|不是的|不要混淆|搞混)", "correction"),
-            (r"\b(?:no|nope|not|don't|doesn't|isn't|actually|clarify|"
-             r"correction|i meant|i'm not|you got it wrong|that's not)\b",
-             "correction"),
-            (r"\b(?:what\?|huh\?|pardon|excuse me\?)\b", "confusion"),
-            (r"(?:啥|什么意思|没听明白|没明白)", "confusion"),
-            (r"\b(?:thanks|thank you|perfect|exactly|great|good|nice)\b", "positive"),
-            (r"(?:谢谢|对了|完美|不错|很好|挺好)", "positive"),
-            (r"\b(?:go on|continue|and then|what else)\b", "follow_up"),
-            (r"(?:然后|接着)", "follow_up"),
-            (r"\b(?:ignore|skip|never mind)\b", "dismiss"),
-            (r"(?:算了|不管|别管)", "dismiss"),
-        ]
         self._response_quality_scores = collections.deque(maxlen=100)
 
     def analyze_interaction(self, user_input: str, jarvis_response: str, stm_context: str = "") -> FeedbackSignal:
         signal_type = "neutral"
         input_lower = user_input.lower().strip()
 
-        for pattern, sig_type in self._correction_patterns:
-            if re.search(pattern, input_lower):
+        for pattern, sig_type in get_feedback_patterns():
+            if pattern.search(input_lower):
                 signal_type = sig_type
                 break
 

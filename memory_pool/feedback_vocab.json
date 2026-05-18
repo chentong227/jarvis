@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T17:05:00",
+    "purpose": "INTEGRITY_STACK L0.5 — FeedbackTracker.analyze_interaction regex × signal_type vocab (准则 6.5)",
+    "source_origin": "迁自 jarvis_memory_core.FeedbackTracker._correction_patterns (β.2.9.9)",
+    "edit_via": "scripts/feedback_vocab_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 扩展 feedback regex",
+    "consumer": "jarvis_memory_core.FeedbackTracker.analyze_interaction",
+    "schema_note": "与其他 vocab 不同: 每条 pattern 是 (regex, signal_type) 而非平 keyword list. regex 需为纯文本 (未编译), loader 会 re.compile().",
+    "valid_signal_types": [
+      "correction",
+      "confusion",
+      "positive",
+      "follow_up",
+      "dismiss"
+    ]
+  },
+  "patterns": [
+    {
+      "id": "correction_zh",
+      "category": "correction",
+      "signal_type": "correction",
+      "regex": "(?:不对|不是|错了|搞错|记错|出错|两码事|两个事|其实|澄清|纠正|没那么|不是的|不要混淆|搞混)",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "Chinese correction (substring 中文无词边界, 不用 \\b)"
+    },
+    {
+      "id": "correction_en",
+      "category": "correction",
+      "signal_type": "correction",
+      "regex": "\\b(?:no|nope|not|don't|doesn't|isn't|actually|clarify|correction|i meant|i'm not|you got it wrong|that's not)\\b",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "English correction (\\b boundary required)"
+    },
+    {
+      "id": "confusion_en",
+      "category": "confusion",
+      "signal_type": "confusion",
+      "regex": "\\b(?:what\\?|huh\\?|pardon|excuse me\\?)\\b",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "English confusion markers"
+    },
+    {
+      "id": "confusion_zh",
+      "category": "confusion",
+      "signal_type": "confusion",
+      "regex": "(?:啥|什么意思|没听明白|没明白)",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "Chinese confusion markers"
+    },
+    {
+      "id": "positive_en",
+      "category": "positive",
+      "signal_type": "positive",
+      "regex": "\\b(?:thanks|thank you|perfect|exactly|great|good|nice)\\b",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "English positive feedback"
+    },
+    {
+      "id": "positive_zh",
+      "category": "positive",
+      "signal_type": "positive",
+      "regex": "(?:谢谢|对了|完美|不错|很好|挺好)",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "Chinese positive feedback"
+    },
+    {
+      "id": "follow_up_en",
+      "category": "follow_up",
+      "signal_type": "follow_up",
+      "regex": "\\b(?:go on|continue|and then|what else)\\b",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "English follow-up requests"
+    },
+    {
+      "id": "follow_up_zh",
+      "category": "follow_up",
+      "signal_type": "follow_up",
+      "regex": "(?:然后|接着)",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "Chinese follow-up requests"
+    },
+    {
+      "id": "dismiss_en",
+      "category": "dismiss",
+      "signal_type": "dismiss",
+      "regex": "\\b(?:ignore|skip|never mind)\\b",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "English dismiss / drop-it"
+    },
+    {
+      "id": "dismiss_zh",
+      "category": "dismiss",
+      "signal_type": "dismiss",
+      "regex": "(?:算了|不管|别管)",
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779093900.0,
+      "note": "Chinese dismiss"
+    }
+  ]
+}
