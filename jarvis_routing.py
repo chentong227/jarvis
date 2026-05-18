@@ -934,24 +934,34 @@ class CompanionCenter:
     def start_all(self):
         _ensure_centers_deps()
         # [P0+14 / 2026-05-15] 把共享 humor_memory 注入 SmartNudge，避免双实例状态不同步
-        self.smart_nudge = SmartNudgeSentinel(
-            self.worker,
-            nudge_gate=self.gate,
-            humor_memory=self.humor_memory,
-        )
-        self.smart_nudge.start()
+        # 🩹 [β.2.9.7 / 2026-05-18] 加 disable 开关. 准则 6 — 旧 8 类硬阈值是反例,
+        # ProactiveCare LIVE 后 SmartNudge 应能 opt-out. env JARVIS_SMARTNUDGE_DISABLE=1
+        # 跳过 SmartNudge 启动 (适合纯 ProactiveCare 实测验证).
+        _sn_disabled = os.environ.get('JARVIS_SMARTNUDGE_DISABLE', '0').strip() == '1'
+        if _sn_disabled:
+            print("[CompanionCenter] SmartNudgeSentinel 已 DISABLED (env JARVIS_SMARTNUDGE_DISABLE=1)")
+            self.smart_nudge = None
+        else:
+            self.smart_nudge = SmartNudgeSentinel(
+                self.worker,
+                nudge_gate=self.gate,
+                humor_memory=self.humor_memory,
+            )
+            self.smart_nudge.start()
 
         # [P0+20-β.2.8 / 2026-05-17] ProactiveCareEngine 并行跑, 默认 dry-run
-        # 启动失败不影响 SmartNudge 主路径 (try-except 包裹)
+        # 🩹 [β.2.9.7] 默认改 LIVE (env JARVIS_PROACTIVE_CARE_DRY_RUN=1 才进 dry).
+        # 启动失败不影响 SmartNudge 主路径 (try-except 包裹).
         try:
             from jarvis_proactive_care import get_default_engine
             nerve_ref = getattr(self.worker, 'jarvis', None)
             self.proactive_care = get_default_engine(self.worker, nerve_ref)
             if self.proactive_care is not None:
                 self.proactive_care.start()
+                _mode = 'DRY-RUN' if self.proactive_care.dry_run else 'LIVE'
                 print(
                     f"[CompanionCenter] ProactiveCareEngine 就绪 "
-                    f"(dry_run={self.proactive_care.dry_run})"
+                    f"(mode={_mode}, threshold={self.proactive_care.threshold:.2f})"
                 )
         except Exception as _pce_err:
             print(f"[CompanionCenter] ProactiveCareEngine 启动失败 (非致命): {_pce_err}")
@@ -1024,7 +1034,42 @@ class CompanionCenter:
         except Exception as _l2_err:
             print(f"[CompanionCenter] L2 启动摘要失败 (非致命): {_l2_err}")
 
-        print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel + ProactiveCareEngine)")
+        # 🩹 [β.2.9.7 / 2026-05-18] 启动汇总 banner — Sir 一眼看清各 daemon 状态
+        # (LIVE/DRY/DISABLED), 决定是否真启动 nudge 发声路径.
+        try:
+            _sn_state = 'DISABLED' if self.smart_nudge is None else 'LIVE'
+            _pc_state = 'OFFLINE'
+            if self.proactive_care is not None:
+                _pc_state = 'DRY-RUN' if self.proactive_care.dry_run else 'LIVE'
+            _banner = (
+                "\n"
+                "╔══════════════════════════════════════════════════════════════╗\n"
+                "║  CompanionCenter 主动性 daemon 状态                          ║\n"
+                "╠══════════════════════════════════════════════════════════════╣\n"
+                f"║  SmartNudgeSentinel       : {_sn_state:<32}║\n"
+                f"║  ProactiveCareEngine      : {_pc_state:<32}║\n"
+                "║  PromiseSweepDaemon       : LIVE                             ║\n"
+                "║  HealthProbeDaemon        : LIVE                             ║\n"
+                "║  InconsistencyWatcher     : LIVE (5min startup guard)        ║\n"
+                "║  CuriosityDaemon          : LIVE (24h cooldown)              ║\n"
+                "╠══════════════════════════════════════════════════════════════╣\n"
+                "║  env opt-out:                                                ║\n"
+                "║   JARVIS_SMARTNUDGE_DISABLE=1  → 关旧 8 类硬触发              ║\n"
+                "║   JARVIS_PROACTIVE_CARE_DRY_RUN=1 → ProactiveCare 不发声      ║\n"
+                "║   JARVIS_PROACTIVE_CARE_LEVEL=silent/low/normal/high          ║\n"
+                "╚══════════════════════════════════════════════════════════════╝\n"
+            )
+            print(_banner)
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"[CompanionCenter] daemon banner: sn={_sn_state} "
+                    f"pc={_pc_state} (β.2.9.7 LIVE 默认)"
+                )
+            except Exception:
+                pass
+        except Exception:
+            print("[CompanionCenter] 日常陪伴中心就绪 (SmartNudgeSentinel + ProactiveCareEngine)")
 
 
 # [P0+19-final fix 5 / 2026-05-16] 全量跨模块类引用兜底（try/except 防循环依赖）
