@@ -10,14 +10,15 @@
 
  工作板
 
-**更新时间**：2026-05-18 12:50（**🚀 P0+20-β.2.9.11 完工 / 灵魂闭环 A + INTEGRITY_STACK 7 层架构立项**）。
+**更新时间**：2026-05-18 13:10（**🚀 P0+20-β.2.9.12 完工 + INTEGRITY_STACK 立项完整 + 新窗口接手 prompt 就绪**）。
 
-**今天累计 (5/18 09:00-12:50)**：18 commits / 80/80 testcase 全绿 / 新增 ~160 testcase / tag `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop`(待打)。
+**今天累计 (5/18 09:00-13:10)**：20 commits / 81/81 testcase 全绿 / 新增 ~170 testcase / 5 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate`(待打)。
 
-**β.2.9.11 三大成果**:
-- **L5 灵魂闭环 A**: 贾维斯关心 → 我承诺 → 履约/违约 → 反馈 concern.severity (准则 6 通用 vocab 驱动, 不针对 sleep 硬编码, 自动覆盖 reflector 任意新 concern)
-- **INTEGRITY_STACK 7 层架构立项**: `docs/JARVIS_INTEGRITY_STACK.md` — 与 INTEGRITY_ABSOLUTE + SOUL_DRIVE 并列第三条灵魂级模块. 推进路线 4 个 session.
-- **cosmetic 修**: "y co" 截断 + skip 刷屏 + ReturnSentinel 模板兜底删 + return_greeting 客套引导
+**β.2.9.12 灵魂级升级**:
+- **准则 6 升级**: AGENTS.md 加第 5 类反例 (vocab 写死 in py) + 准则 6.5 "动态架构必须 + LLM 兜底" (Sir 12:57 立)
+- **L0.5 立项**: INTEGRITY_STACK v1.1 加横向贯通层 Dynamic Vocab Substrate, 所有 7 层共享 3 硬规
+- **β.2.9.12 vocab 治本**: `_BEHAVIOR_PATTERNS` 从 py 迁 `memory_pool/behavior_inference_vocab.json` + `scripts/behavior_vocab_dump.py` CLI + mtime cache 自动 reload + 6 testcase 验证
+- **新窗口接手 prompt**: `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` 完整一次性复制版, Sir 开新窗口贴即用
 
 **最重大突破** — 诚信审计治本: Sir 10:51 发现 Jarvis "我已更新记录" 是空头话 (CorrectionMemory 表 84h 0 写入). 修法 5 件 (准则 5 言出必行 + 准则 6 不硬编码):
 - **A**: directive `memory_update_honesty` 拦"已更新"假话 (除非真 emit MEMORY_UPDATE)
@@ -52,6 +53,7 @@
 | 128d688 | β.2.9.10-async | FAST_CALL 软超时异步治本工具卡顿 — ThreadPool + 1.5s 超时 + drain pending 注入 |
 | 1e4b603 | β.2.9.11 | snippet "y co" 美化 + ProactiveCare skip 日志节流 |
 | 3a89168 | β.2.9.11 | 灵魂闭环 A 完工 + INTEGRITY_STACK 7 层架构立项 doc |
+| 043af31 | β.2.9.12 | vocab 持久化治本 + 准则 6.5 升级 + INTEGRITY_STACK v1.1 + 新窗口 prompt |
 
 **Sir 重启可立测 8 项**:
 1. `scripts\jarvis_dashboard.cmd` (双击) — 中文看板, 三大块 + 真按钮 + 信任审计卡
