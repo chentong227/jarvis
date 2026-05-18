@@ -10,9 +10,26 @@
 
  工作板
 
-**更新时间**：2026-05-18 17:11（**🚀 P0+20-β.3.4 INTEGRITY_STACK Session 0 完工 — L0.5 Dynamic Vocab Substrate 全量迁移**）。
+**更新时间**：2026-05-18 17:32（**🚀 P0+20-β.4.1 INTEGRITY_STACK Session 1 完工 — L4 ClaimTracer enforce + ALERT 注入**）。
 
-**今天累计 (5/18 09:00-17:11)**：29 commits / 88/88 testcase 全绿 / 新增 ~277 testcase / 7 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate`。
+**今天累计 (5/18 09:00-17:32)**：31 commits / 89/89 testcase 全绿 / 新增 ~307 testcase / 8 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce`。
+
+**🟢 β.4.1 INTEGRITY_STACK Session 1 完工 (准则 5 言出必行 — L4 ClaimTracer 从 trace 升级 enforce)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `jarvis_claim_tracer.py` | + `write_audit_entry()` / `read_recent_unverified()` / `build_integrity_alert()` / `_INTEGRITY_AUDIT_PATH`; `trace_reply` unverified 分支 hook 入 jsonl | 5 类 30 测 |
+| `jarvis_central_nerve.py:_assemble_prompt` | 入口调 `build_integrity_alert(current_turn_id)` → prepend 到 `system_alert_text` (5 template auto-pick up) + bg_log 诊断 | grep test |
+| `memory_pool/integrity_audit.jsonl` | 新 incident log (.gitignore 已 cover `memory_pool/*.jsonl`) | red line test |
+
+**设计准则**:
+- 准则 5: ALERT 包含 prior_turn_id + count + claim text + 2 选项 (withdraw / supply evidence)
+- 准则 6: ALERT 不教具体中文/英文句式 (`test_alert_does_not_prescribe_chinese_phrasing` 锁红线)
+- 准则 6.5: `audit_path` 可注入 (testcase 隔离); jsonl append-only; 仅 unverified 入表 (防膨胀)
+
+**Session 1 commit + tag**: `d36e9eb` / `v0.31.1-claim-enforce`, 89/89 pass run_id `test_20260518_172619_fa3d`.
+
+---
 
 **🟢 β.3.4 INTEGRITY_STACK Session 0 完工 (准则 6.5 L0.5 横向贯通层全量落地, 7 vocab × ~330 keyword)**:
 
@@ -113,20 +130,18 @@
 7. 说"我剪辑完视频就行" — 时间确定性闸门应拒注册 hard commitment, 转 PromiseLog soft (不到点闹)
 8. 真启 24h 不重启 — InconsistencyWatcher/Curiosity/ProactiveCare 三个 daemon 健康
 
-**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 看 Sir 实测反馈 → 优先级:
+**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 优先级:
 
-🔴 **INTEGRITY_STACK Session 1 (起点)** — L4 ClaimTracer 从 trace 升级 enforce:
-   - jarvis_chat_bypass.py 找现有 ClaimTracer (β.2.8.7 加的)
-   - 把 unverified claim 写 `memory_pool/integrity_audit.jsonl` (字段: ts/iso/claim/category/evidence_kind/found)
-   - jarvis_central_nerve.py `_assemble_prompt` 头部 prepend "[INTEGRITY ALERT] 上一轮你 X claim 未 verify (evidence missing), 在本轮 reply 中要么主动撤回, 要么补 evidence"
-   - testcase: mock unverified claim → 验证下一轮 prompt 含 ALERT
-   - commit + tag v0.31.1-claim-enforce
-   - 预期工时 ~3h
+🔴 **INTEGRITY_STACK Session 2 (下一任务)** — L1 Claim 分类器 + L2 Evidence 要求中央表:
+   - `jarvis_claim_classifier.py` + `memory_pool/claim_classify_vocab.json` + `scripts/claim_classify_dump.py` (准则 6.5)
+     - 6 类: Past / Future / State / Recall / Social / Tool
+     - vocab 表驱 (Past = past_action verb + perfect aspect, Future = will/I'll, ...)
+   - `jarvis_evidence_requirements.py` + `memory_pool/evidence_requirements.json` + CLI
+     - schema: `{claim_kind: required_evidence_kinds}` (e.g. Past → tool_results / Future → nothing yet, just record / State → ltm / Recall → stm)
+   - L4 `trace_to_evidence` 接 L1 + L2 → unverified 判定从硬编码 (现 past_action / regex) 变 vocab + requirement 表驱动
+   - 预期工时 ~5h, tag `v0.32.0-claim-classify`
 
-🔴 **INTEGRITY_STACK Session 2** — L1 Claim 分类器 (6 类: Past/Future/State/Recall/Social/Tool) + L2 Evidence 要求中央表
-   - `jarvis_claim_classifier.py` + `claim_classify_vocab.json` + `claim_classify_dump.py` (准则 6.5)
-   - `jarvis_evidence_requirements.py` + `evidence_requirements.json` + CLI
-   - L4 ClaimTracer 接 L1 + L2 → unverified 判定从硬编码变 vocab 表驱动
+🟡 **INTEGRITY_STACK Session 3** — L6 dashboard 信任审计卡升级 + L7 LLM-propose / WeeklyReflector
 
 🟡 dedup 失效 (overbearing 3 次重复)
 🟡 LLM 二次判 correction (FeedbackTracker Phase 2)
