@@ -666,6 +666,65 @@ class CommitmentWatcher(threading.Thread):
                     pass
                 return
 
+        # 🛡️ [β.4.11 / 2026-05-19] Conditional / status-description vocab gate
+        # Sir 01:07 原话: "呃呃，现在先不睡，今晚有重要工作，模块推进完成了再睡觉。今晚稍微熬一下"
+        # → Gatekeeper LLM 误抓成 commitment + 幻觉 deadline=08:00 (Sir 完全没说 8 点) → 险些 8:00 闹 Sir.
+        # 修法 (准则 6.5 vocab 持久化 + L7 reflector 明日做):
+        #   memory_pool/commitment_conditional_vocab.json 含 3 类 markers:
+        #   - markers_conditional: "完成…再睡" / "做完…再睡" / "等…完…睡" — 条件性, 没 deadline
+        #   - markers_intent_vague: "今晚熬" / "稍微熬" / "晚点睡" — 模糊意图, LLM 易猜时间
+        #   - markers_negation_status: "先不睡" / "暂时不睡" — 状态否定, 不是承诺
+        #   命中任一 → 转 PromiseLog soft (Sir 仍知道发生了, 不到点闹), 不注册 hard.
+        # 对照 user_text 原话 + description (Gatekeeper 抽象后) 双查.
+        try:
+            import json as _cw_json
+            import os as _cw_os
+            _vocab_path = _cw_os.path.join('memory_pool', 'commitment_conditional_vocab.json')
+            if _cw_os.path.exists(_vocab_path):
+                with open(_vocab_path, 'r', encoding='utf-8') as _vf:
+                    _vocab = _cw_json.load(_vf)
+                _all_markers = (
+                    list(_vocab.get('markers_conditional', [])) +
+                    list(_vocab.get('markers_intent_vague', [])) +
+                    list(_vocab.get('markers_negation_status', []))
+                )
+                _check_text = (user_text or '') + ' || ' + (description or '')
+                _hit_marker = None
+                for _mp in _all_markers:
+                    try:
+                        if re.search(_mp, _check_text):
+                            _hit_marker = _mp
+                            break
+                    except re.error:
+                        continue
+                if _hit_marker and not is_future_task_confirmed:
+                    # 转 PromiseLog soft (Sir 知道发生了, 不闹)
+                    try:
+                        from jarvis_promise_log import get_default_log as _gpl
+                        _log = _gpl()
+                        _log.register(
+                            description=description,
+                            kind='soft',
+                            deadline_str=deadline_str or '',
+                            jarvis_reply='',
+                            turn_id='',
+                            lang='zh' if re.search(r'[\u4e00-\u9fa5]', description) else 'en',
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        from jarvis_utils import bg_log as _cw_bg_log
+                        _cw_bg_log(
+                            f"📝 [CommitmentWatcher] 🛡️ Conditional vocab 命中 (marker='{_hit_marker}'): "
+                            f"'{description[:60]}' → 转 PromiseLog soft (不到点闹). "
+                            f"原话: '{(user_text or '')[:60]}'"
+                        )
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
+
         # 🩹 [β.2.8.6 / 2026-05-17] conditional_reminder 类型跳过 first_person 检查
         # Sir 澄清: "等我导出完视频提醒我喝水" — Sir 没承诺自己做啥, 是托付 Jarvis
         # 监视 predicate. 这种 commit 必须有 predicate 字段才允许 (兜底安全).

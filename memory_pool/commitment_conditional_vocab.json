@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-19T02:21:00+08:00",
+  "description": "[β.4.11] Conditional / status-description markers — 命中 → 拒绝注册 hard commitment 转 PromiseLog soft (避免 LLM 幻觉 deadline 闹 Sir).",
+  "design_principle": "Sir 准则 6.5: 持久化 + CLI 可改 + L7 reflector LLM-propose (后续). 此 vocab 治: Sir 说 conditional status ('先不睡, 等做完再睡, 今晚熬夜') → LLM 抓成 commitment + 幻觉 deadline=8:00.",
+  "markers_conditional": [
+    "完成.*?(再|然后|之后).*?(睡|休息|歇)",
+    "做完.*?(再|然后|之后).*?(睡|休息|歇)",
+    "等.*?完.*?(再|然后).*?(睡|休息|歇)",
+    "弄完.*?(再|然后).*?(睡|休息|歇)",
+    "推进完成.*?(再|然后).*?(睡|休息)",
+    "搞完.*?(再|然后).*?(睡|休息)",
+    "结束.*?(再|然后).*?(睡|休息)"
+  ],
+  "markers_intent_vague": [
+    "今晚.*?熬",
+    "今天晚上.*?熬",
+    "稍微熬",
+    "熬一下",
+    "熬一会",
+    "熬通宵",
+    "熬夜",
+    "晚一点睡",
+    "晚点睡",
+    "可能.*?要.*?熬",
+    "差不多.*?才.*?睡"
+  ],
+  "markers_negation_status": [
+    "先不睡",
+    "暂时不睡",
+    "现在不睡",
+    "还不想睡",
+    "不睡先"
+  ],
+  "test_examples": [
+    "呃呃，现在现在先不睡，今天晚上有一个比较重要的工作，我们把整个模块推进完成了再睡觉。今天晚上稍微熬一下"
+  ],
+  "test_negative_examples_should_still_commit": [
+    "我两点睡觉",
+    "我十一点睡觉",
+    "我十二点准时睡觉"
+  ]
+}
