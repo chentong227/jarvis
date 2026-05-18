@@ -126,7 +126,8 @@ $tests = @(
     "_test_p0_plus_20_beta2910_fastcall_async",
     "_test_p0_plus_20_beta2911_closure_loop",
     "_test_p0_plus_20_beta2912_vocab_persist",
-    "_test_p0_plus_20_beta30_tool_intent_vocab_persist"
+    "_test_p0_plus_20_beta30_tool_intent_vocab_persist",
+    "_test_p0_plus_20_beta33_agent_discipline_red_lines"
 )
 
 foreach ($t in $tests) {
