@@ -340,6 +340,65 @@ class TestP0Plus20Beta48WorkerIntegration(unittest.TestCase):
             "老 ASR string match wake 路径 (source='wake_word_match') 必保留")
 
 
+# ==========================================================================
+# scripts/mic_diag.py CLI (准则 6.5 "Sir 不需改 .py")
+# ==========================================================================
+
+class TestP0Plus20Beta48MicDiagCLI(unittest.TestCase):
+    """mic_diag.py CLI 验证: vocab-show / set / use-model / use-builtin / rms / test-wake."""
+
+    def setUp(self):
+        self.script = os.path.join(ROOT, 'scripts', 'mic_diag.py')
+        self.vocab = os.path.join(ROOT, 'memory_pool', 'mic_safety_vocab.json')
+
+    def test_script_exists(self):
+        self.assertTrue(os.path.exists(self.script),
+            'scripts/mic_diag.py 必须存在 (β.4.8 准则 6.5 CLI)')
+
+    def test_script_has_all_commands(self):
+        with open(self.script, 'r', encoding='utf-8') as f:
+            src = f.read()
+        for cmd in ['--vocab-show', '--set', '--use-model', '--use-builtin',
+                     '--rms', '--test-wake']:
+            self.assertIn(cmd, src, f'mic_diag.py 必须有 {cmd} 命令')
+
+    def test_parse_value_helper(self):
+        """_parse_value: true→True / false→False / 0.5→float / 100→int / "abc"→str."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mic_diag_mod", self.script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertIs(mod._parse_value('true'), True)
+        self.assertIs(mod._parse_value('False'), False)
+        self.assertEqual(mod._parse_value('0.5'), 0.5)
+        self.assertEqual(mod._parse_value('100'), 100)
+        self.assertEqual(mod._parse_value('some_string'), 'some_string')
+
+    def test_set_persists_to_vocab(self):
+        """--set 必须落盘 vocab. test cycle: save → read → restore."""
+        import subprocess
+        # 备份
+        with open(self.vocab, 'r', encoding='utf-8') as f:
+            original = json.load(f)
+        try:
+            # 改 threshold 到 0.99
+            result = subprocess.run(
+                [sys.executable, self.script, '--set', 'openwakeword_threshold=0.99'],
+                cwd=ROOT, capture_output=True, text=True, encoding='utf-8',
+            )
+            self.assertEqual(result.returncode, 0, f'--set 失败: {result.stderr}')
+            # 读 vocab 验
+            with open(self.vocab, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            thr = data['_meta']['thresholds']
+            self.assertEqual(thr['openwakeword_threshold'], 0.99)
+        finally:
+            # 还原 (含 trailing newline 保持 git diff 干净)
+            with open(self.vocab, 'w', encoding='utf-8') as f:
+                json.dump(original, f, ensure_ascii=False, indent=2)
+                f.write('\n')
+
+
 if __name__ == '__main__':
     runner = unittest.TextTestRunner(verbosity=2)
     suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])

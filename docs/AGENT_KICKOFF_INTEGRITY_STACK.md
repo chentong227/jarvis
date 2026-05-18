@@ -34,9 +34,9 @@
 5. docs/runtime_logs/latest.txt — 1 行 latest log path
    仅在 Sir 反馈 BUG 时用 Grep, 不要全文 Read
 
-═══ 当前进度快照 (截止 β.4.6 commit 465ee18 / tag v0.35.0-directive-vocab) ═══
+═══ 当前进度快照 (截止 β.4.8-PhaseC commit f9378be / β.4.7 commit 2c0730c / β.4.6 commit 465ee18) ═══
 
-✨ **INTEGRITY_STACK 7 层架构 L0-L7 全立 + L3 directive vocab 半化 ✨**
+✨ **INTEGRITY_STACK 7 层 + Memory Deletion 8 层 + Acoustic Wake (openWakeWord) framework ✨**
 
 L0   ✅ INTEGRITY ABSOLUTE 在 PERSONA (历史已有)
 L0.5 ✅ **Session 0 完工** — 7 vocab × ~330 keyword 全量 json + CLI + L7 入口就位
@@ -63,7 +63,20 @@ L7   ✅ **Session 4 完工** — IntegrityReflector LLM-propose daemon + ClaimS
       β.4.5.2: IntegrityReflector LLM (commit 9f84743) — 7d audit 反思 propose 3 类 review queue
       (tag v0.34.0-integrity-reflector)
 
-96/96 testcase pass (run_id test_20260518_231100_xxxx / dur 361.79s), 0 regression.
+96/96 + β.4.7 14 测 + β.4.8 33 测 = 大约 143 测 (sanity 4/4 pass), 0 regression.
+
+🆕 **β.4.7 Memory Deletion 第 6/7/8 层守卫 (Sir 21:45 实测 BUG 治本)**:
+- L6 cmd 必含显式删除动词 (memory_deletion_vocab.json deletion_verb) + L8 cmd 含 ASR 纠正 (复用 memory_correction_vocab) + L7 vocab thresholds (top_k=1, sim=0.85, 旧 5/0.45 太松).
+- 改 jarvis_safety.py 4 helper, jarvis_worker.py direct + correction→delete 两路径都加守卫.
+- commit 2c0730c, 测 37/37 (β.4.7 14 + 老 P0+16 23) pass.
+
+🆕 **β.4.8 Acoustic Wakeword (openWakeWord MIT) — P1+PhaseC 完工, Sir Colab 自训中**:
+- jarvis_acoustic_wake.py (470 行) AcousticWakeDetector 包装 openWakeWord + vocab + CLI.
+- AuditoryCortex.run 接入 _handle_acoustic_wake + non-active feed_pyaudio_buffer.
+- vocab.acoustic_wake_enabled=false 默认 (灰度开关), 不破坏现有 parse_wake_word 老路径.
+- scripts/mic_diag.py: --vocab-show / --set / --use-model / --use-builtin / --rms / --test-wake.
+- commits: 4ecf17d (P1) + f9378be (PhaseC), 测 33/33 (29 + 4 mic_diag CLI) pass.
+- ⏳ P2 等 Sir Colab 自训 jarvis_v1.onnx (~1h), 然后 --use-model + 真机调 sensitivity + tag v0.37.0.
 
 ═══ 你的工作顺序 (严格按此, 不跳序) ═══
 
@@ -219,18 +232,21 @@ Sir CLI `scripts/claim_classify_dump.py / evidence_req_dump.py / registry_dump.p
 6. 每完成 1 个 Session, 写 TODO.md 滚动 + tag (类似 v0.29.X-<feature>) +
    汇报 Sir (commit 链 + 可立测项).
 
-═══ Session 0+1+2+3+4 全部完工 — INTEGRITY_STACK L0-L7 全立 ═══
+═══ Session 0+1+2+3+4+5+β.4.7+β.4.8 全部完工/进行中 — INTEGRITY_STACK + Mem Del 8 层 + Acoustic Wake ═══
 
 本 KICKOFF 使命已达成. 后续 Agent 进窗口, 优先选项 (Sir 拍板):
 
-选项 A: **Sir 真机黑箱验收** β.4.5.x 5 个风险点 (见 TODO.md 头部 "真机风险点清单")
-  - 启 Jarvis 后看 dashboard L6 "言出必行健康度" 卡 verify_rate 是否出现真数 (不是 '--')
-  - CLI 试试 force_run_now 看 LLM 提议:
-    `python -c "import jarvis_integrity_reflector as ir; r=ir.get_default_integrity_reflector(); print(r.force_run_now())"`
-  - Sir CLI 试激活/拒绝: `scripts/claim_classify_dump.py --review-list` 看 queue
+选项 A: **β.4.8-P2 完工** (β.4.8 收尾) — Sir Colab 训练完 jarvis_v1.onnx 后接手
+  - Sir 把 onnx 放 memory_pool/wakeword_models/jarvis_v1.onnx
+  - `python scripts/mic_diag.py --use-model memory_pool/wakeword_models/jarvis_v1.onnx`
+  - Sir 真机调 sensitivity: `python scripts/mic_diag.py --test-wake 30` 看 max score
+  - 调 threshold: `python scripts/mic_diag.py --set openwakeword_threshold=0.4` (或 0.6)
+  - 全测 _runall.ps1 + tag v0.37.0-acoustic-wake + commit β.4.8-P2 完工
 
-选项 B: **L3 directive vocab 半化** ✅ 已完工 (β.4.6 commit 465ee18 / tag v0.35.0-directive-vocab)
-  - 18 directive text/metadata 提到 directives_vocab.json + CLI 扩充
+选项 B: **Sir 真机黑箱验收** β.4.5.x/β.4.6/β.4.7/β.4.8 风险点 (TODO.md 头部 "真机风险点清单")
+  - β.4.7: 重启 Jarvis 后再试 "识别错误啊" 看 L8 拦截 bg_log
+  - β.4.8: AuditoryCortex 启动看 print "🔊[AcousticWake / β.4.8] 启用 → keyword=..." 或 "🔇 未启用"
+  - dashboard L6 "言出必行健康度" verify_rate 应出真数
 
 选项 C: **进 SOUL_DRIVE Layer 4+** (灵魂工程续作)
   - 详 docs/JARVIS_SOUL_DRIVE.md (AlignmentEvaluator / RelationalState reflector 二阶段)
@@ -251,6 +267,9 @@ Sir CLI `scripts/claim_classify_dump.py / evidence_req_dump.py / registry_dump.p
 ## 📦 当前 commit 链 (Agent 接手前必看)
 
 ```
+f9378be feat(P0+20-β.4.8-PhaseC): AuditoryCortex 接 Acoustic Wakeword (openWakeWord 集成)
+4ecf17d feat(P0+20-β.4.8-P1): Acoustic Wakeword Framework (openWakeWord MIT) - 治 23:50 麦克风误拾/难唤醒 BUG
+2c0730c fix(P0+20-β.4.7): Memory Deletion 第 6/7/8 层防御 - Sir 21:45 实测误删 5 条治本
 465ee18 feat(P0+20-β.4.6): L3 directive vocab 半化 - text/metadata 提到 JSON, trigger 留 py
 c681d6b docs(P0+20-β.4.5-session4): INTEGRITY_STACK Session 4 done - TODO + KICKOFF roll
 9f84743 feat(P0+20-β.4.5.2): INTEGRITY_STACK Session 4 sub-step 2 - IntegrityReflector L7 LLM-propose daemon

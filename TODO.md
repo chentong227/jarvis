@@ -10,9 +10,46 @@
 
  工作板
 
-**更新时间**：2026-05-18 23:23（**🚀 P0+20-β.4.6 L3 Directive vocab 半化 — text+metadata 提到 JSON. 18 directive vocab 化. 准则 6.5 完成度 → 95%+**）。
+**更新时间**：2026-05-19 00:30（**🚀 P0+20-β.4.8 Acoustic Wake (openWakeWord MIT) — P1 framework + PhaseC AuditoryCortex 集成完工, Sir 走 Colab 自训 jarvis_v1.onnx 中**）。
 
-**今天累计 (5/18 09:00-23:23)**：41 commits / 96/96 testcase 全绿 / 新增 ~461 testcase / 12 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity` + `v0.34.0-integrity-reflector` + `v0.35.0-directive-vocab`。
+**今天累计 (5/18 09:00 → 5/19 00:30)**：43 commits / 96/96 → 跨 β.4.7 + β.4.8 共 ~118 测全绿 / 12 tags 同上 (β.4.7 + β.4.8 等真机测试通过后合并 tag v0.37.0-acoustic-wake)。
+
+**🟢 β.4.8 Acoustic Wakeword (openWakeWord MIT, P1 + PhaseC, Sir 23:50 BUG 治本)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `jarvis_acoustic_wake.py` (新, ~470 行) | AcousticWakeDetector class (factory create + process + feed_pyaudio_buffer 1024→1280 accumulator + 单例) + CLI `--vocab-show / --test-mic / --model`. Fail-safe 3 层 (openwakeword 未装 / vocab.enabled=false / model load 失败 → disabled stub) | 22 测 5 类 |
+| `memory_pool/mic_safety_vocab.json` (新, β.4.8 seed) | _meta + 17 thresholds: acoustic_wake_enabled=false (灰度开关) / openwakeword_model='hey_jarvis_v0.1' / custom_model_path (P2 Sir 自训填) / threshold=0.5 / frame_length=1280 + VAD fallback 参数 | TestVocabLoader 7 测 |
+| `memory_pool/wakeword_models/` (新目录 + README.md) | Sir 自训 ONNX 放此 (P2 jarvis_v1.onnx) | - |
+| `jarvis_worker.py` `AuditoryCortex` Phase C 集成 | 1) run() init `self._acoustic_det = get_acoustic_wake_detector()` 2) 主循环 non-active 段 feed_pyaudio_buffer 检测唤醒 3) jarvis_speaking guard 段 reset_accum 防污染 4) 新 helper `_handle_acoustic_wake` (source='acoustic_wake_word' 区分原 'wake_word_match' string match wake) | TestWorkerIntegration 7 测 |
+| `tests/_test_p0_plus_20_beta48_acoustic_wake_persist.py` (新) | 6 TestClass — VocabLoader / DetectorCreate / DetectorRuntime / Singleton / Principle65RedLines / **WorkerIntegration** | 29 测 |
+| `tests/_runall.ps1` | 注册 β.4.8 testcase (43→44 suite) | - |
+
+**设计原则 (准则 6.5 复用 + 准则 7 不破现有)**:
+- 准则 6.5: thresholds 全 vocab.json (Sir 改 sensitivity / model 路径不需 .py + commit); seed_defaults py 内嵌作 fail-safe fallback
+- 准则 7 Sir 元否决: vocab.enabled=false 默认灰度开关, Sir 真机调通才 true; parse_wake_word 老 ASR string match 路径全保留作 fallback (双源 wake, dashboard 可统计两路触发比例)
+- 兼容: source 字段区分 'acoustic_wake_word' (β.4.8) vs 'wake_word_match' (旧). 老 testcase 全 pass
+
+**🟢 β.4.7 Memory Deletion 第 6/7/8 层守卫 (Sir 21:45 实测 BUG 治本, 已 commit `2c0730c`)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `memory_pool/memory_deletion_vocab.json` (新, β.4.7 seed) | _meta.thresholds (sim=0.85 / top_k=1, 旧 0.45/5 太松); deletion_verb_zh 15 词 + deletion_verb_en 11 词 | TestLayer6 5 测 |
+| `jarvis_safety.py` 加 4 helper | `_load_deletion_vocab` (mtime cache + seed) / `_user_intent_has_explicit_delete_verb` (L6) / `_user_intent_corrects_asr_or_denies` (L8 复用 memory_correction_vocab β.3.4-vocab3) / `_load_deletion_safety_thresholds` (L7) | TestLayer6 + 7 + 8 |
+| `jarvis_worker.py` direct delete + correction→delete 两路径都加 L6/L7/L8 | 优先级 L6 > L8 > 旧 L5/L1/L3, top_k/sim 从 vocab 读 | TestCompoundEndToEnd 2 测 |
+| `tests/_test_p0_plus_16_memory_deletion_safety.py` 加 4 TestClass / 14 测 | Layer6 (5) / Layer7 (3) / Layer8 (3) / CompoundEndToEnd (2) + 修老 testcase 接受 vocab _min_sim | 37 测 (旧 23 + 新 14) |
+
+**Sir 21:45 实测原话 (β.4.7 验证)**:
+> '嗯哎,没有没有刚才说的这个什么 out的, 这是这是识别错误啊。我没跟你讲这个话'
+
+L6 cmd 不含删除动词 → False (拒). L8 含 '识别错误' + '我没' → True (拒). 两层都拦下错误 deletion. 老 5 层 + 新 3 层 = 8 层综合防御.
+
+**β.4.7 + β.4.8 commits 累计**:
+- `2c0730c` (β.4.7) - Memory Deletion L6+L7+L8
+- `4ecf17d` (β.4.8-P1) - Acoustic Wake framework + vocab + 22 测
+- `f9378be` (β.4.8-PhaseC) - AuditoryCortex 集成 + 7 测
+
+**今天累计 tags**：`v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity` + `v0.34.0-integrity-reflector` + `v0.35.0-directive-vocab`。
 
 **🟢 β.4.6 L3 Directive vocab 半化完工 (Sir Session 5 / 准则 6.5 完成度 → 95%+)**:
 
