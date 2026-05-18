@@ -34,26 +34,33 @@
 5. docs/runtime_logs/latest.txt — 1 行 latest log path
    仅在 Sir 反馈 BUG 时用 Grep, 不要全文 Read
 
-═══ 当前进度快照 (截止 β.2.9.12 commit ??) ═══
+═══ 当前进度快照 (截止 β.3.4 commit 0c663e6 / tag v0.31.0-dynamic-vocab-substrate) ═══
 
 L0   ✅ INTEGRITY ABSOLUTE 在 PERSONA (历史已有)
-L0.5 ⚠️ 立此规范 + behavior_inference_vocab.json 完成 (β.2.9.12 本轮)
-L1   ❌ Claim 分类器未做
-L2   ❌ Evidence 中央表未做
+L0.5 ✅ **Session 0 完工** — 7 vocab × ~330 keyword 全量 json + CLI + L7 入口就位
+      (tool_intent / dashboard_intent / memory_correction / inconsistency /
+       response_classify / feedback / concern_keywords). 88/88 testcase pass.
+L1   ❌ Claim 分类器未做 (→ Session 2)
+L2   ❌ Evidence 中央表未做 (→ Session 2)
 L3   ⚠️ 17 directive 散在 jarvis_directives.py (部分已 json 化)
-L4   ⚠️ ClaimTracer 已抓但只 trace 不 enforce
+L4   ⚠️ ClaimTracer 已抓但只 trace 不 enforce (→ **Session 1 下一项**)
 L5   ✅ 闭环 A 完工 (β.2.9.11 commit 3a89168 + 19 testcase)
-L6   ⚠️ dashboard 信任审计卡有, 统计粒度浅
-L7   ❌ LLM-propose / WeeklyReflector 接 audit 未做
+L6   ⚠️ dashboard 信任审计卡有, 统计粒度浅 (→ Session 3)
+L7   ❌ LLM-propose / WeeklyReflector 接 audit 未做 (→ Session 4)
 
 ═══ 你的工作顺序 (严格按此, 不跳序) ═══
 
-╔═══════════════════════════════════════════════════════════════╗
-║ Session 0 (优先做) ── L0.5 Dynamic Vocab Substrate 全面迁移   ║
-╚═══════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════╗
+║ Session 0 ✅ 已完工 ── L0.5 Dynamic Vocab Substrate 全面迁移       ║
+╚════════════════════════════════════════════════════════════════╝
 
 目标: 把所有 py-hardcoded vocab 迁到 memory_pool/*.json + CLI 工具, 按 AGENTS.md
 准则 6.5 三硬规 (持久化 + CLI + 预留 L7 LLM-propose).
+
+✅ **完工状态 (commit 0c663e6 / tag v0.31.0-dynamic-vocab-substrate)**:
+- 7/7 vocab 迁完, 共 ~330 keyword, 77 新 testcase, 88/88 全测绿 (run_id test_20260518_170331_756d)
+- 验收 grep 在 7 vocab 范围内 0 命中 (剩余命中都是后续 session scope)
+- 下一任务接 Session 1
 
 审计现有 py 文件, 找所有 _XXX_PATTERNS = [...] / _XXX_KEYWORDS = (...):
 
@@ -77,19 +84,19 @@ L7   ❌ LLM-propose / WeeklyReflector 接 audit 未做
 
 预期工时: ~6h. 每项 ~45min (json 设计 + .py 改 + CLI + test + commit).
 
-╔═══════════════════════════════════════════════════════════════╗
-║ Session 1 ── L5 收尾 + L4 enforce 升级                        ║
-╚═══════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════╗
+║ Session 1 (下一任务) ── L5 收尾 + L4 enforce 升级              ║
+╚════════════════════════════════════════════════════════════════╝
 
 L5: 已完工 (β.2.9.11 commit 3a89168). 实测可能发现小 BUG 再修.
 
 L4 enforce 升级:
-1. jarvis_chat_bypass.py 找 ClaimTracer (现有, β.2.8.7 加的)
-2. 把 unverified claim 写 memory_pool/integrity_audit.jsonl (字段: ts/iso/claim/category/evidence_kind/found)
+1. jarvis_chat_bypass.py 找现有 ClaimTracer (β.2.8.7 / β.3.0 加的, past_action 类也在 β.3.0)
+2. 把 unverified claim 写 memory_pool/integrity_audit.jsonl (字段: ts/iso/turn_id/claim/category/evidence_kind/found/reason)
 3. jarvis_central_nerve.py: _assemble_prompt 头部 prepend "[INTEGRITY ALERT] 上一轮你 X claim 未 verify (evidence missing), 在本轮 reply 中要么主动撤回, 要么补 evidence"
-4. 主脑 STM 头部能看到 → 强制 acknowledge
-5. testcase: mock unverified claim → 验证下一轮 prompt 含 ALERT
-6. commit + tag v0.29.1-claim-enforce
+4. 主脑 STM 头部能看到 → 强制 acknowledge (准则 5: 只 trace 事实, 不教主脑措辞)
+5. testcase: mock unverified claim → 验证下一轮 prompt 含 ALERT; mock 0 unverified → 验证不加
+6. commit + tag v0.31.1-claim-enforce
 
 预期工时: ~3h.
 
@@ -164,25 +171,32 @@ WeeklyReflector (jarvis_soul_reflector.py) 加 2 个新方法:
 6. 每完成 1 个 Session, 写 TODO.md 滚动 + tag (类似 v0.29.X-<feature>) +
    汇报 Sir (commit 链 + 可立测项).
 
-═══ 第 1 个 sub-step 开始 ═══
+═══ Session 0 已完工 — 下一项接手位置 ═══
 
-进窗口先读 AGENTS.md 全文, 然后读 TODO.md, 然后读 docs/JARVIS_INTEGRITY_STACK.md.
+进窗口先读 AGENTS.md 全文, 然后读 TODO.md (看头部 Session 0 完工段),
+然后读 docs/JARVIS_INTEGRITY_STACK.md (看 L0.5 现状 + L4 enforce 设计).
 
-读完后立刻开始 Session 0 的第 1 个迁移 (tool_intent_vocab):
-1. 设计 memory_pool/tool_intent_vocab.json schema
-2. 从 jarvis_directives.py:_TOOL_INTENT_PATTERNS 把现有 vocab 迁过去
-3. 改 jarvis_directives.py:_trigger_tool_overture 用 get_tool_intent_patterns() (新 helper)
-4. 写 scripts/tool_intent_dump.py (照搬 scripts/behavior_vocab_dump.py 结构)
-5. 写 testcase 验证 (照搬 _test_p0_plus_20_beta2912_vocab_persist.py 结构)
-6. 跑全测 (tests\_runall.ps1) — 必须 80+ / 80+ OK 0 FAIL
-7. commit: "feat(P0+20-β.3.0-vocab1): tool_intent vocab 迁 json + CLI + reflector 准备"
+读完后从 **Session 1 L4 ClaimTracer enforce 升级** 开始:
 
-然后接着做下一个迁移 (dashboard_intent_vocab), 顺序按 Session 0 表格.
+1. 读现有 ClaimTracer 实现: `Grep claim_tracer|ClaimTracer` 在 jarvis_chat_bypass.py +
+   jarvis_utils.py (β.2.8.7 / β.3.0 加的, past_action 类也在 β.3.0 加).
+2. 新增 `memory_pool/integrity_audit.jsonl` writer:
+   - 字段: ts, iso, turn_id, claim (原句), category (past/future/state/recall/...),
+     evidence_kind (tool_results / stm / ltm / ...), found (true/false), reason
+3. 改 jarvis_central_nerve.py `_assemble_prompt`:
+   - 读上一轮 (turn_id-1) 的 audit jsonl 尾
+   - 若有 found=false 的 unverified claim → prompt 头部 prepend:
+     `[INTEGRITY ALERT] 上一轮你 claim "{X}" 未 verify (evidence missing).
+      本轮 reply 中要么主动撤回, 要么补上 evidence. 不能装作没说过.`
+4. testcase: `_test_p0_plus_20_beta41_claim_enforce_persist.py`
+   - mock 1 轮 unverified claim → 验证 next prompt 头部启 ALERT
+   - mock 0 unverified → 验证不加 ALERT
+   - audit jsonl 读/写 round-trip
+   - 准则 5: ALERT 只 trace 事实, 不教主脑怎么措辞
+5. 跑全测 88+/88+ OK → commit + tag v0.31.1-claim-enforce
+6. 预期工时 ~3h. Sir 反馈后再进 Session 2.
 
-═══ 第 1 个 step 完工 stop ═══
-
-完成 tool_intent_vocab 迁移后 stop, 把 commit hash + 全测结果 + 下一步打算
-报告给 Sir, 让 Sir 决定继续推进还是先实测.
+完工后报 Sir + tag, 等 Sir 拍板进 Session 2 或实测反馈.
 ```
 
 ---

@@ -10,9 +10,34 @@
 
  工作板
 
-**更新时间**：2026-05-18 16:00（**🚀 P0+20-β.3.0 六 BUG 实测修治本 + L0.5 横向贯通 + ClaimTracer L4 升级**）。
+**更新时间**：2026-05-18 17:11（**🚀 P0+20-β.3.4 INTEGRITY_STACK Session 0 完工 — L0.5 Dynamic Vocab Substrate 全量迁移**）。
 
-**今天累计 (5/18 09:00-16:00)**：22 commits / 82/82 testcase 全绿 / 新增 ~184 testcase / 6 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs`(待打)。
+**今天累计 (5/18 09:00-17:11)**：29 commits / 88/88 testcase 全绿 / 新增 ~277 testcase / 7 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate`。
+
+**🟢 β.3.4 INTEGRITY_STACK Session 0 完工 (准则 6.5 L0.5 横向贯通层全量落地, 7 vocab × ~330 keyword)**:
+
+| # | vocab | 迁出位置 | json + CLI | testcase | commit |
+|---|---|---|---|---|---|
+| 1 | tool_intent | jarvis_directives | `tool_intent_vocab.json` + `tool_intent_dump.py` | 15 | β.3.0-vocab1 |
+| 2 | dashboard_intent | jarvis_directives | `dashboard_intent_vocab.json` + `dashboard_intent_dump.py` | 已并入 #1 | β.3.0 |
+| 3 | memory_correction | jarvis_directives | `memory_correction_vocab.json` + `memory_correction_dump.py` | 11 | d748f1a |
+| 4 | inconsistency | jarvis_inconsistency_watcher | `inconsistency_vocab.json` + `inconsistency_vocab_dump.py` | 10 | bdfb377 |
+| 5 | response_classify | jarvis_proactive_care | `response_classify_vocab.json` + `response_classify_dump.py` | 13 | b3905aa |
+| 6 | feedback (regex) | jarvis_memory_core.FeedbackTracker | `feedback_vocab.json` + `feedback_vocab_dump.py` | 12 | 9922564 |
+| 7 | concern_keywords | jarvis_soul_reflector | `concern_keywords_vocab.json` + `concern_keywords_dump.py` | 16 | 0c663e6 |
+
+**Session 0 范式 (7 vocab 全部一致, Sir CLI 改 json + 不必重启)**:
+- `_SEED_<X>` fallback (py 源码仅写 seed, json 损坏/不存在 → 走 seed)
+- `_load_<X>_from_json()` + `get_<X>()` mtime cache loader (Sir 改 json → 下一次调用即生效)
+- `scripts/<X>_dump.py` CLI list/add/activate/reject/delete + active/review/archived 三态
+- `_test_p0_plus_20_beta34_vocab<N>_<X>_persist.py` 7 测覆盖 fallback / mtime reload / 损坏 json / CLI / 兼容 / 红线 (旧名 must be gone)
+- 兼容垫层 (concern_keywords): `CONCERN_KEYWORDS` module-level snapshot 保留, 老 import 不破
+
+**Session 0 验收**: kickoff doc §210-218 三条 grep (`_PATTERNS=[\|(`, `_KEYWORDS=[\|(`, `_VOCAB=[\|(`) 在 7 vocab 范围内全清干净, 剩余命中均为非 Session 0 scope (worker tier router / refusal classifier / ANSI color / commitment parser regex / predicate heuristic — 待后续 session 治).
+
+**Session 0 v0.31.0-dynamic-vocab-substrate tag**: commit 0c663e6 (vocab7) 处, 88/88 pass run_id `test_20260518_170331_756d`.
+
+---
 
 **Sir 14:00 实测 6 BUG 全治本 (β.3.0)**:
 
@@ -88,14 +113,20 @@
 7. 说"我剪辑完视频就行" — 时间确定性闸门应拒注册 hard commitment, 转 PromiseLog soft (不到点闹)
 8. 真启 24h 不重启 — InconsistencyWatcher/Curiosity/ProactiveCare 三个 daemon 健康
 
-**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → 看 Sir 实测反馈 → 优先级:
+**下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 看 Sir 实测反馈 → 优先级:
 
-🔴 **INTEGRITY_STACK Session 1 收尾** — L4 ClaimTracer 从 trace 升级 enforce:
-   - 把 unverified claim 记入 `memory_pool/integrity_audit.jsonl`
-   - 下一轮 `_assemble_prompt` 头部 prepend "[INTEGRITY ALERT] 上一轮 X claim 未 verify, 撤回或补 evidence"
-   - 主脑被强制 acknowledge 上轮 unverified
+🔴 **INTEGRITY_STACK Session 1 (起点)** — L4 ClaimTracer 从 trace 升级 enforce:
+   - jarvis_chat_bypass.py 找现有 ClaimTracer (β.2.8.7 加的)
+   - 把 unverified claim 写 `memory_pool/integrity_audit.jsonl` (字段: ts/iso/claim/category/evidence_kind/found)
+   - jarvis_central_nerve.py `_assemble_prompt` 头部 prepend "[INTEGRITY ALERT] 上一轮你 X claim 未 verify (evidence missing), 在本轮 reply 中要么主动撤回, 要么补 evidence"
+   - testcase: mock unverified claim → 验证下一轮 prompt 含 ALERT
+   - commit + tag v0.31.1-claim-enforce
+   - 预期工时 ~3h
 
-🔴 INTEGRITY_STACK Session 2 — L1 Claim 分类器 + L2 Evidence 要求中央表
+🔴 **INTEGRITY_STACK Session 2** — L1 Claim 分类器 (6 类: Past/Future/State/Recall/Social/Tool) + L2 Evidence 要求中央表
+   - `jarvis_claim_classifier.py` + `claim_classify_vocab.json` + `claim_classify_dump.py` (准则 6.5)
+   - `jarvis_evidence_requirements.py` + `evidence_requirements.json` + CLI
+   - L4 ClaimTracer 接 L1 + L2 → unverified 判定从硬编码变 vocab 表驱动
 
 🟡 dedup 失效 (overbearing 3 次重复)
 🟡 LLM 二次判 correction (FeedbackTracker Phase 2)
