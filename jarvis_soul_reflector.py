@@ -30,10 +30,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # [P0+20-β.2.5 / 2026-05-17] 顶部 import 暴露 safe_openrouter_call 到本模块命名空间，
 # 让 testcase 能 mock。失败时占位 None，运行时 fallback 到 from jarvis_utils import。
@@ -45,10 +46,19 @@ except Exception:
 
 # ============================================================
 # 启发式 keyword 表（中英双语）
+#
+# 🩹 [P0+20-β.3.4-vocab7 / 2026-05-18] 准则 6.5 vocab 持久化:
+#   旧 CONCERN_KEYWORDS = {dict 写死} → memory_pool/concern_keywords_vocab.json
+#   + scripts/concern_keywords_dump.py CLI.
+#   兼容垫层: CONCERN_KEYWORDS 仍是 module-level dict snapshot (load 时一次性初始化),
+#   保护现有 `from jarvis_soul_reflector import CONCERN_KEYWORDS` 的调用方
+#   (commitment_watcher.infer_concern_link / 2 个 testcase). production hot path
+#   (ConcernsReflector._scan_text + _extract_snippet) 改用 get_concern_keywords()
+#   享 mtime cache reload (Sir CLI 改 json 不必重启).
 # ============================================================
 
-# 每条 concern_id → list of (lowercase keywords / regex pattern, severity_delta)
-CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
+# Fallback seed — json 不存在/损坏时用. 真正 vocab 在 json.
+_SEED_CONCERN_KEYWORDS: Dict[str, List[Tuple[str, float]]] = {
     'sir_sleep_streak': [
         # 睡眠相关
         ('sleep', 0.05), ('bed', 0.05), ('tired', 0.05), ('exhausted', 0.08),
@@ -67,7 +77,6 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
         # "帮我打开 cursor"，但移除会破 test_multi_concern_hits（"熬夜赶 cursor"
         # 期望同时触发）。这是单 keyword 匹配的固有歧义，不是 bug。
         # 保留 'cursor': 0.03 接受 1 个 FP，换 P/R 平衡。
-        # 同时加复合词加大支付场景信号（叠加效果，不替代）。
         ('cursor pro', 0.05), ('cursor plan', 0.05), ('cursor subscription', 0.10),
         ('cursor renewal', 0.10), ('cursor billing', 0.08), ('cursor payment', 0.10),
         ('cursor 订阅', 0.10), ('cursor 续费', 0.10), ('cursor 付费', 0.08),
@@ -76,9 +85,6 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
         ('billing', 0.04), ('订阅', 0.05), ('续费', 0.06), ('付费', 0.04),
         ('账单', 0.04), ('支付失败', 0.10),
     ],
-    # 🩹 [β.2.7.8 / 2026-05-17] Sir 18:46 实测：要求 Jarvis 主动提醒喝水
-    # 之前 keyword 表没含 hydration → reflector 不触发 → severity 没累计
-    # 治：加水/水分/hydration/drink 等中英 keyword
     'sir_hydration_habit': [
         ('water', 0.06), ('hydration', 0.08), ('hydrate', 0.06),
         ('drink water', 0.10), ('drink some water', 0.10),
@@ -98,9 +104,76 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = {
         ('keyrouter', 0.05), ('permission_denied', 0.10), ('403', 0.06),
         ('quota', 0.05), ('rate limit', 0.05), ('api key', 0.04),
         ('配额', 0.05), ('权限', 0.04), ('挂', 0.03),
-        # Jarvis 自己抱怨自己时（"my own keyrouter is..."）也算 signal
     ],
 }
+
+_CONCERN_KEYWORDS_VOCAB_PATH = os.path.join(
+    'memory_pool', 'concern_keywords_vocab.json')
+_CONCERN_KEYWORDS_CACHE: Optional[Dict[str, List[Tuple[str, float]]]] = None
+_CONCERN_KEYWORDS_MTIME: float = 0.0
+
+
+def _load_concern_keywords_from_json() -> Optional[Dict[str, List[Tuple[str, float]]]]:
+    """从 json 加载 active pattern. 同 concern_id 多 entry 合并 keywords_weighted.
+    失败返 None 走 fallback."""
+    if not os.path.exists(_CONCERN_KEYWORDS_VOCAB_PATH):
+        return None
+    try:
+        with open(_CONCERN_KEYWORDS_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out: Dict[str, List[Tuple[str, float]]] = {}
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            cid = p.get('concern_id')
+            if not cid or not isinstance(cid, str):
+                continue
+            kw_list = p.get('keywords_weighted') or []
+            if not isinstance(kw_list, list):
+                continue
+            bucket = out.setdefault(cid, [])
+            for item in kw_list:
+                if not isinstance(item, dict):
+                    continue
+                kw = item.get('kw')
+                delta = item.get('severity_delta')
+                if isinstance(kw, str) and kw.strip() and isinstance(delta, (int, float)):
+                    bucket.append((kw.lower().strip(), float(delta)))
+        return out if out else None
+    except Exception:
+        return None
+
+
+def get_concern_keywords() -> Dict[str, List[Tuple[str, float]]]:
+    """🩹 [β.3.4-vocab7] mtime cache 自动 reload. production hot path 用此 helper.
+    Sir CLI 改 json → 下一轮 reflect 即生效."""
+    global _CONCERN_KEYWORDS_CACHE, _CONCERN_KEYWORDS_MTIME
+    try:
+        mtime = os.path.getmtime(_CONCERN_KEYWORDS_VOCAB_PATH) if os.path.exists(
+            _CONCERN_KEYWORDS_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _CONCERN_KEYWORDS_CACHE is None or mtime > _CONCERN_KEYWORDS_MTIME:
+        loaded = _load_concern_keywords_from_json()
+        if loaded is not None:
+            _CONCERN_KEYWORDS_CACHE = loaded
+        else:
+            _CONCERN_KEYWORDS_CACHE = _SEED_CONCERN_KEYWORDS
+        _CONCERN_KEYWORDS_MTIME = mtime
+    return _CONCERN_KEYWORDS_CACHE
+
+
+# 🩹 [β.3.4-vocab7] 兼容垫层: CONCERN_KEYWORDS module-level snapshot, 一次性初始化.
+#   - 保护 `from jarvis_soul_reflector import CONCERN_KEYWORDS` 现有调用方
+#     (jarvis_commitment_watcher.infer_concern_link + 2 testcase)
+#   - production hot path 改用 get_concern_keywords() 享 mtime reload
+#   - 重启后 snapshot 重新读 json (Sir 改 json + 重启 → 一定生效)
+#   - 不重启时 hot path (_scan_text) 仍 reload (Sir 改 json + 不重启 → reflector 即生效)
+CONCERN_KEYWORDS: Dict[str, List[tuple]] = get_concern_keywords()
 
 
 # ============================================================
@@ -126,7 +199,8 @@ class ConcernsReflector:
         if not text:
             return hits
         t = text.lower()
-        for concern_id, kw_list in CONCERN_KEYWORDS.items():
+        # 🩹 [β.3.4-vocab7] production hot path 用 get_concern_keywords() 享 reload
+        for concern_id, kw_list in get_concern_keywords().items():
             total_delta = 0.0
             for kw, delta in kw_list:
                 if kw in t:
@@ -187,7 +261,8 @@ class ConcernsReflector:
           旧版固定字符截断在半词 → snippet 看起来像乱码 "y co".
           准则 6 通用修: 取更长 (50 字两侧 = 100+ 字) + 切到空格/标点/CJK 边界.
         """
-        kw_list = CONCERN_KEYWORDS.get(concern_id, [])
+        # 🩹 [β.3.4-vocab7] 用动态 helper, 享 reload
+        kw_list = get_concern_keywords().get(concern_id, [])
         t = text.lower()
         for kw, _ in kw_list:
             idx = t.find(kw)

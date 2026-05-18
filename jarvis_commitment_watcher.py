@@ -112,21 +112,22 @@ def get_behavior_patterns() -> List[Tuple[set, dict]]:
 
 
 def infer_concern_link(description: str) -> Optional[str]:
-    """通用 — 复用 ConcernsReflector 的 CONCERN_KEYWORDS 反查 concern_link.
+    """通用 — 复用 ConcernsReflector 的 concern_keywords vocab 反查 concern_link.
 
     准则 6: 不写 concern → keyword 硬编码 if 链, 用 reflector vocab 反查.
     任何新 concern 在 reflector 加 keyword → 此函数自动支持, 0 改动.
+    🩹 [β.3.4-vocab7] 改用 get_concern_keywords() 享 mtime reload (Sir CLI 改 json 即生效).
     """
     if not description:
         return None
     try:
-        from jarvis_soul_reflector import CONCERN_KEYWORDS
+        from jarvis_soul_reflector import get_concern_keywords
     except Exception:
         return None
     t = description.lower()
     best_cid = None
     best_score = 0
-    for cid, kw_list in CONCERN_KEYWORDS.items():
+    for cid, kw_list in get_concern_keywords().items():
         score = 0
         for kw, delta in kw_list:
             if kw in t:

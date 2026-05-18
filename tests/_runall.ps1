@@ -131,7 +131,8 @@ $tests = @(
     "_test_p0_plus_20_beta34_vocab3_memory_correction_persist",
     "_test_p0_plus_20_beta34_vocab4_inconsistency_persist",
     "_test_p0_plus_20_beta34_vocab5_response_classify_persist",
-    "_test_p0_plus_20_beta34_vocab6_feedback_persist"
+    "_test_p0_plus_20_beta34_vocab6_feedback_persist",
+    "_test_p0_plus_20_beta34_vocab7_concern_keywords_persist"
 )
 
 foreach ($t in $tests) {

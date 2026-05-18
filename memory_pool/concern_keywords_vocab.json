@@ -1,0 +1,429 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T17:10:00",
+    "purpose": "INTEGRITY_STACK L0.5 — ConcernsReflector keyword-×-severity_delta vocab (准则 6.5)",
+    "source_origin": "迁自 jarvis_soul_reflector.CONCERN_KEYWORDS (β.2.7.8 / β.2.9.11)",
+    "edit_via": "scripts/concern_keywords_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 扩展 concern 词汇",
+    "consumer": "jarvis_soul_reflector.ConcernsReflector._scan_text",
+    "schema_note": "每条 entry = 1 个 concern_id 的 keywords_weighted list; 多 entry 同 concern_id 会在 loader 合并",
+    "weight_semantics": "单轮 cap 0.15 (避免同一 concern 某轮多词命中环升太狠)"
+  },
+  "patterns": [
+    {
+      "id": "sir_sleep_streak_default",
+      "concern_id": "sir_sleep_streak",
+      "category": "sleep",
+      "keywords_weighted": [
+        {
+          "kw": "sleep",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "bed",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "tired",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "exhausted",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "all-nighter",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "late night",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "熬夜",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "睡",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "困",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "累",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "凌晨",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "点睡",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "睡眠",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "失眠",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "几点起",
+          "severity_delta": 0.04
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Sir sleep streak — 15 keyword"
+    },
+    {
+      "id": "sir_pomodoro_compliance_default",
+      "concern_id": "sir_pomodoro_compliance",
+      "category": "pomodoro",
+      "keywords_weighted": [
+        {
+          "kw": "break",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "rest",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "pomodoro",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "stretch",
+          "severity_delta": 0.03
+        },
+        {
+          "kw": "eyes hurt",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "back hurt",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "neck hurt",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "休息",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "久坐",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "盯",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "一直坐",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "颈椎",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "腰",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "眼睛累",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "番茄钟",
+          "severity_delta": 0.05
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Sir pomodoro / 久坐 — 15 keyword"
+    },
+    {
+      "id": "sir_cursor_payment_default",
+      "concern_id": "sir_cursor_payment",
+      "category": "billing",
+      "keywords_weighted": [
+        {
+          "kw": "cursor pro",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "cursor plan",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "cursor subscription",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "cursor renewal",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "cursor billing",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "cursor payment",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "cursor 订阅",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "cursor 续费",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "cursor 付费",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "cursor 账单",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "cursor",
+          "severity_delta": 0.03
+        },
+        {
+          "kw": "subscription",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "payment failed",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "billing",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "订阅",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "续费",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "付费",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "账单",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "支付失败",
+          "severity_delta": 0.1
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Sir cursor 订阅/续费 — 19 keyword. 'cursor' 单词容差 0.03 (会被 FP, 但 P/R 平衡需要)"
+    },
+    {
+      "id": "sir_hydration_habit_default",
+      "concern_id": "sir_hydration_habit",
+      "category": "hydration",
+      "keywords_weighted": [
+        {
+          "kw": "water",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "hydration",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "hydrate",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "drink water",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "drink some water",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "dehydrated",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "thirsty",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "water intake",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "liters",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "喝水",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "喝点水",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "喝水了",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "补水",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "水分",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "口渴",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "多喝水",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "喝杯水",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "3 升",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "3.5 升",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "八杯水",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "8 杯",
+          "severity_delta": 0.06
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Sir hydration habit — 21 keyword"
+    },
+    {
+      "id": "unfinished_jiazhao_ke1_default",
+      "concern_id": "unfinished_jiazhao_ke1",
+      "category": "driving",
+      "keywords_weighted": [
+        {
+          "kw": "driving",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "license",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "jiazhao",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "科一",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "驾照",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "练车",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "驾考",
+          "severity_delta": 0.08
+        },
+        {
+          "kw": "考试",
+          "severity_delta": 0.03
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Sir 未完驾照科一 — 8 keyword"
+    },
+    {
+      "id": "jarvis_keyrouter_health_default",
+      "concern_id": "jarvis_keyrouter_health",
+      "category": "keyrouter",
+      "keywords_weighted": [
+        {
+          "kw": "keyrouter",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "permission_denied",
+          "severity_delta": 0.1
+        },
+        {
+          "kw": "403",
+          "severity_delta": 0.06
+        },
+        {
+          "kw": "quota",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "rate limit",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "api key",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "配额",
+          "severity_delta": 0.05
+        },
+        {
+          "kw": "权限",
+          "severity_delta": 0.04
+        },
+        {
+          "kw": "挂",
+          "severity_delta": 0.03
+        }
+      ],
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779094200.0,
+      "note": "Jarvis KeyRouter 自健康监督 — 9 keyword"
+    }
+  ]
+}
