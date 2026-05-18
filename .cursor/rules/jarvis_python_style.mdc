@@ -1,58 +1,26 @@
 ---
-description: Jarvis Python coding style and import conventions
+description: Cursor mirror of docs/JARVIS_PYTHON_STYLE.md. Source of truth is the markdown.
 globs: jarvis_*.py
 alwaysApply: false
 ---
 
-# Jarvis Python Style
+# Jarvis Python Style (mirror)
 
-## Imports
+> **真理源**: `docs/JARVIS_PYTHON_STYLE.md` — 必须读那里, 本文件是 Cursor 触发器.
+> 非 Cursor agent (Windsurf / Codex / Claude Code) 走 `AGENTS.md §2` 必读表的引用读 doc.
 
-Every new `jarvis_*.py` file MUST have at the top (after docstring):
+改 `jarvis_*.py` 之前 Grep `docs/JARVIS_PYTHON_STYLE.md`, 看:
 
-```python
-from __future__ import annotations
+- §1 **Imports safety net** — `from __future__ import annotations` + `import numpy as np  # if any np.* used` + json/os/sys/re/time/threading/collections 全预 import 带 `# noqa: F401`
+- §2 **Marker 三处一致** — `[<commit-marker> / <ISO date>]` 三处同步 (代码注释 / commit / TODO)
+- §3 **bg_log vs print 选择树** — daemon 用 bg_log, 启动 print OK, dialog 渲染路径禁 print
+- §4 **Forbidden anti-patterns** — `from jarvis_nerve import *` / `time.sleep(0.0X)` 主线程 busy-loop / raw `sqlite3.connect("memory_pool/...")` / `logging.info` / 硬编码 `_<X>_PATTERNS`
+- §5 **Type hints** — 新代码必须, 老代码可选
+- §6 **准则 6.5 vocab 持久化三件套** — `memory_pool/<x>_vocab.json` + `scripts/<x>_dump.py` CLI + py `_SEED_<X>_PATTERNS` fallback + `get_<x>_patterns()` mtime cache
+- §7 **Sensitive data 访问** — `sir_profile.json` 读 OK 但 NEVER print to chat reply; `memory_pool/*.db` 走 Hippocampus API
 
-# [P0+X / 2026-XX-XX] one-line import audit comment if needed
-import os  # noqa: F401
-import sys  # noqa: F401
-import io  # noqa: F401
-import re  # noqa: F401
-import time  # noqa: F401
-import json  # noqa: F401
-import threading  # noqa: F401
-import collections  # noqa: F401
-# ... actual used imports without noqa
-import numpy as np  # if any np.* in file
-```
+## 变更协议
 
-This safety net catches "name 'np' is not defined" / "name 'json' is not defined" NameErrors that P0+19 split exposed in production.
+**只改 `docs/JARVIS_PYTHON_STYLE.md`**, 不在本 mdc 加 doc 没有的规则。本 mdc outline 跟着 doc 章节顺序同步。
 
-## Markers in Comments
-
-Every meaningful change in source MUST be tagged:
-
-```python
-# [P0+20-α.3 / 2026-05-16] Integrity Check pre-filter for declarative sentences
-def is_action_claim(text: str) -> bool:
-    ...
-```
-
-Marker = `[<commit-marker> / <ISO date>]`. Grep-friendly for archeology.
-
-## Logging
-
-- Background threads / sentinels / daemons → `bg_log(...)` (auto trace_id prefix)
-- One-off startup print → `print(...)` is OK (won't pollute dialog box)
-- NEVER `logging.info(...)` (project doesn't use stdlib logging)
-
-## Forbidden Anti-patterns
-
-- `from jarvis_nerve import *` — breaks split forwarding shim
-- `time.sleep(0.01)` busy-loop in main thread — use `QTimer` or `threading.Timer`
-- Raw `sqlite3.connect("memory_pool/...")` from new code — go through `Hippocampus` / `CommitmentWatcher` etc.
-- `print(...)` inside Sir's dialog box rendering path — use the dialog box API directly
-
-## Type Hints
-
-Encouraged but not enforced (some pre-split code lacks them). For NEW code in new files: yes, type-hint at least public methods.
+违反: 任何"只在 mdc 写, doc 没有"的规则 → 非 Cursor agent 看不到 → 跨 IDE 可携带性破。

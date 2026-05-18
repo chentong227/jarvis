@@ -1,8 +1,9 @@
 # AGENTS.md — Jarvis AI Agent 入口章程
 
-> **本文件由所有 AI Agent（Cursor / Codex CLI / Claude / Cline / Aider 等）在进入此仓库时自动读取。**
+> **本文件由所有 AI Agent（Cursor / Codex CLI / Claude / Cline / Aider / Windsurf 等）在进入此仓库时自动读取。**
 >
-> 它是极简入口（< 250 行）。所有详细规则在 `docs/JARVIS_WORKFLOW_PROTOCOL.md`。
+> 它是入口章程（< 400 行）。所有详细规则在 `docs/JARVIS_WORKFLOW_PROTOCOL.md`。
+> 跨 agent 硬规在 `docs/JARVIS_PYTHON_STYLE.md` + `docs/AGENT_HANDOFF_PROTOCOL.md`。
 > 出现冲突以 PROTOCOL doc 为准。
 
 ---
@@ -62,11 +63,20 @@
 
 | 顺序 | 文件 | 行数上限 | 是否全文 |
 |---|---|---|---|
-| 1 | **本文件 `AGENTS.md`** | < 250 | ✅ 全文 |
+| 1 | **本文件 `AGENTS.md`** | < 400 | ✅ 全文 |
 | 2 | `TODO.md` | < 300 | ✅ 全文（当前迭代 + 已知 BUG + 路线） |
-| 3 | `docs/JARVIS_WORKFLOW_PROTOCOL.md` | < 500 | ❌ 按需 Grep（规范唯一源，需要查规范时打开）|
-| 4 | 当前迭代 design doc（如 `docs/PROMPT_REFACTOR_PLAN.md`）| ~400 | ✅ 全文（当前轮工程详情） |
+| 3 | `docs/AGENT_KICKOFF_<当前轨道>.md` | ~250 | ✅ 全文（Sir 给你的 KICKOFF / 你的工作任务清单） |
+| 4 | 当前轨道 design doc（如 `docs/JARVIS_INTEGRITY_STACK.md`）| ~400 | ✅ 全文（当前轨工程详情） |
 | 5 | `docs/runtime_logs/latest.txt` | 1 行 | ✅ 全文（最新 runtime log 绝对路径） |
+
+**按需 Grep (不全文 Read)**:
+
+| 触发 | 看什么 |
+|---|---|
+| 查规范 (commit / push / 测试 / trace_id) | `docs/JARVIS_WORKFLOW_PROTOCOL.md` |
+| 改 `jarvis_*.py` | `docs/JARVIS_PYTHON_STYLE.md` (imports / marker / forbidden / 准则 6.5 vocab 范式) |
+| 完工要交接给下一 agent | `docs/AGENT_HANDOFF_PROTOCOL.md` + `docs/AGENT_KICKOFF_TEMPLATE.md` |
+| Sir 提"上次/上轮某 marker" | 先 `Grep TODO.md`, 再 `Grep docs/TODO_ARCHIVE.md` |
 
 **反例**（禁止）：
 - ❌ 一进窗口就 `Read jarvis_chat_bypass.py`（3003 行 / 浪费 token）
@@ -197,12 +207,45 @@ Get-Content tests\last_run.json
 
 ## 9. 沟通风格（对 Sir）
 
+### 9.1 硬规（内核）
+
 - 用**表格 + 编号** 回复，不大段散文
 - 引用代码用 `<startLine>:<endLine>:<filepath>` 格式（每条回复最多 1-2 处）
 - **不使用 emoji** 除非 Sir 先用过
 - **不奉承 / 不假装情绪 / 不滥用"完美""卓越"等词**
-- 提"建议"之前**先报"事实"**（数据 / 日志 / 行号）
+- 提"建议"之前**先报"事实"**（数据 / commit hash / file:line / run_id）
 - Sir 提到"上次/上轮/某 marker" → 先 `Grep TODO.md`，再 `Grep docs/TODO_ARCHIVE.md`，**不要全文 Read archive**
+- **工程语言为主，不用拟人比喻** — Sir 是工程师，能直接读 `commit 63611f3` / `jarvis_directives.py:677-751` / `run_id=test_20260518_152128_f9e1`，不要换成"修了那个东西"这种生活化替代
+
+### 9.2 双层表达 = 工程报告 + 一句话翻译（β.3.0 起强制）
+
+每次给 Sir 报告完工 / 评估 / 决策建议，**必须双层**：
+
+| 层 | 内容 | 长度上限 |
+|---|---|---|
+| 主层（工程） | 数据 / commit / run_id / file:line / 表格 / 决策矩阵 | 不限 |
+| 末层（翻译） | 给 Sir 体感的大白话总结，前缀 `→ 一句话:` | **≤ 40 字** |
+
+**反例**：
+
+- ❌ 纯白话："我把那个词表也修了，挺顺利" — 失 trace，违反准则 5
+- ❌ 纯工程不翻译："commit 63611f3 / +412 / -3 / 82 pass" — Sir 切脑负担重
+- ❌ 翻译塞 emoji / 拟人 / 撒娇："Sir 你看, 多漂亮~ / 跑通啦" — 违反 9.1 不奉承
+- ❌ 翻译超 40 字 / 含技术 jargon — 失"翻译"意义
+
+**正例**（一段完整答复的末尾）：
+
+> | 选项 | 评估 |
+> |---|---|
+> | A | 工程正确，体感无变化 |
+> | C | ✅ mtime cache 在 long-running 进程未验过，先真机测 |
+>
+> → 一句话: 选 C 真机测 15 分钟，没问题再推进 A。
+
+**为什么是双层**：
+
+- 主层让 Sir 能 trace 到 evidence（准则 5 INTEGRITY ABSOLUTE）
+- 末层让 Sir 在不深挖细节时也能一眼判断"OK / 有问题"，节省 Sir 注意力
 
 ---
 
