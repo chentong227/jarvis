@@ -10,9 +10,47 @@
 
  工作板
 
-**更新时间**：2026-05-18 21:36（**🚀 P0+20-β.4.4 INTEGRITY_STACK Session 3 完工 — L6 dashboard 言出必行健康度宽卡**）。
+**更新时间**：2026-05-18 22:40（**🚀 P0+20-β.4.5 INTEGRITY_STACK Session 4 完工 — L7 IntegrityReflector LLM-propose daemon + ClaimStatsDumper. 7 层架构 L0-L7 全立**）。
 
-**今天累计 (5/18 09:00-21:36)**：37 commits / 93/93 testcase 全绿 / 新增 ~388 testcase / 10 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity`。
+**今天累计 (5/18 09:00-22:40)**：40 commits / 95/95 testcase 全绿 / 新增 ~434 testcase / 11 tags: `v0.27.0-dashboard` + `v0.28.0-integrity-pact` + `v0.28.1-fastcall-async` + `v0.28.2-closure-loop` + `v0.28.3-vocab-substrate` + `v0.30.0-six-bugs` + `v0.31.0-dynamic-vocab-substrate` + `v0.31.1-claim-enforce` + `v0.32.0-claim-classify` + `v0.33.0-dashboard-integrity` + `v0.34.0-integrity-reflector`。
+
+**🟢 β.4.5 INTEGRITY_STACK Session 4 完工 (准则 7 Sir 仲裁 + 准则 6.5 Reflector 自我修正闭环)**:
+
+| 项 | 变化 | testcase |
+|---|---|---|
+| `jarvis_integrity_reflector.py` `dump_claim_stats` + `ClaimStatsDumper(Thread)` | 60s tick daemon dump `_CLAIM_STATS` → `memory_pool/claim_stats.json` 跨进程 (β.4.4 dashboard verify_rate hook 至此生效); `_stop_event` 避 Python 3.9 Thread._stop 冲突 | 16 测 5 类 |
+| `jarvis_integrity_reflector.py` `IntegrityReflector(Thread)` | L7 LLM-propose daemon. 7d audit + LLM (Gemini-3.1-pro/2.5-flash-lite fallback) → propose 3 类 review queue: claim_classify keyword / evidence_kind requirement / directive. 触发: weekly 3d 兜底 OR audit≥50 + Sir idle>4h. max_propose=5/run | 30 测 6 类 |
+| `jarvis_integrity_reflector.py` `_propose_claim_classify/evreq/directive` | 三类 propose 应用器: dedup (同 id / 同 type+kind) + canonical 列表强制 (claim_type 6 类 / evidence_kind 7 类) + state=review + source=integrity_reflector + atomic write | 准则 7 强制覆盖 |
+| `jarvis_central_nerve.py` daemon 注册 | ClaimStatsDumper (β.4.5.1) + IntegrityReflector (β.4.5.2 注入 key_router) 在 Reflectors block 之后启动; 任一失败 fail-safe 静默 | smoke + cross-module |
+| `.gitignore` 加 `memory_pool/claim_stats.json` + `memory_pool/*.bak` | runtime 残留 防入库 | - |
+| `tests/_test_p0_plus_20_beta451_claim_stats_dump_persist.py` | 5 TestClass / 16 测 — TestDumpStatsToDisk / TestFailSafe / TestClaimStatsDumper / TestCrossModule / TestRedLines | 16 测 |
+| `tests/_test_p0_plus_20_beta452_integrity_reflector_persist.py` | 6 TestClass / 30 测 — TestReflectorInit / TestShouldReflectNow / TestReflectIntegrityAudit (LLM mock) / TestProposeWriters / TestFailSafe / TestRedLines | 30 测 |
+
+**设计准则**:
+- 准则 5 言出必行: ClaimStatsDumper 让 dashboard 兑现率从 in-memory counter 跨进程兑现 (β.4.4 hook 真接通); IntegrityReflector 反思 audit 提建议给 Sir 而非"已优化"空话
+- 准则 6 反硬编码: INTEGRITY_REFLECTOR_PROMPT 只约束 schema, 不教 LLM 具体中文/英文措辞 (TestRedLines 锁"已经/完成了"等不入 prompt)
+- 准则 6.5 持久化+CLI+L7 自我修正: 三类 propose 全 review 入 `memory_pool/*.json` (state=review), Sir 用既有 CLI `scripts/claim_classify_dump.py / evidence_req_dump.py / registry_dump.py --review-list` 看 + `--activate <id>` / `--reject <id>` 仲裁
+- 准则 7 Sir 元否决: propose 默认 state=review 永不自动 active. dedup + canonical 双校验防 LLM 污染. INTEGRITY_STACK L7 至此闭环
+
+**INTEGRITY_STACK 7 层架构现状 (L0-L7 全立)**:
+- L0 ✅ PERSONA INTEGRITY ABSOLUTE
+- L0.5 ✅ Dynamic Vocab Substrate (7 vocab Session 0)
+- L1 ✅ Claim Classifier (β.4.3.1 Session 2)
+- L2 ✅ Evidence Requirements (β.4.3.2 Session 2)
+- L3 ⚠️ 17 directive (部分 json 化)
+- L4 ✅ ClaimTracer enforce + audit jsonl (β.4.1+β.4.3.3+β.4.2-hotfix Session 1+2)
+- L5 ✅ 闭环 A (β.2.9.11)
+- L6 ✅ Dashboard 言出必行健康度 (β.4.4 Session 3)
+- L7 ✅ IntegrityReflector LLM-propose (β.4.5.2 Session 4 本轮) ← NEW
+
+**Session 4 commit + tag**: `d6b4247` (β.4.5.1) + `9f84743` (β.4.5.2) / `v0.34.0-integrity-reflector`, 95/95 pass run_id `test_20260518_223652_xxxx` (dur 362.26s).
+
+**真机风险点清单 (Session 4 引入, Sir 黑箱测试看这些)**:
+1. **ClaimStatsDumper 启动失败** — central_nerve init 异常时 daemon 不起, dashboard verify_rate 仍 "--"; bg_log 会写 `[ClaimStatsDumper] 初始化失败` Sir 看 latest.log 即可定位
+2. **IntegrityReflector LLM 调用风险** — audit ≥ 50 触发, 走 key_router 取 openrouter_key 调 Gemini-3.1-pro/fallback. timeout 15s + fail-safe 静默. 没 LLM key 时 `_call_llm` 返 '' 不 raise
+3. **propose 重复 / dedup 失效** — 同一 keyword 已 review 但 LLM 又生成 → dedup `same-id skip`; 但若 LLM 改 id 而 keyword 内容一样, dedup 漏抓. β.4.6 可考虑 keyword set 重叠 fuzzy dedup
+4. **vocab json 损坏自愈** — `_load_vocab_atomic` 损坏文件 fail-safe 返 `{'patterns': []}`, 但这会让 propose 写入"空 vocab" 即覆盖原数据. 慎重: testcase 已锁此场景, 但 prod 时若 vocab 真损坏建议 Sir 先 git checkout 还原
+5. **触发条件 Sir 视感差** — daemon 反思频率 3d 兜底 + audit≥50, Sir 觉得"太慢看不到效果". CLI `python -c "import jarvis_integrity_reflector as ir; r=ir.get_default_integrity_reflector(); print(r.force_run_now())"` 强制跑一次
 
 **🟢 β.4.4 INTEGRITY_STACK Session 3 完工 (准则 5 L6 Sir 一眼看 Jarvis 兑现率)**:
 
@@ -182,17 +220,18 @@
 
 **下个 session Agent**: 读 `AGENTS.md` → `TODO.md` → `docs/JARVIS_INTEGRITY_STACK.md` → `docs/AGENT_KICKOFF_INTEGRITY_STACK.md` → 优先级:
 
-🔴 **INTEGRITY_STACK Session 3 (下一任务)** — L6 Dashboard 信任审计卡 + L7 LLM-propose / WeeklyReflector:
-   - **L6 dashboard 信任卡升级**: 现 dashboard 已有"信任审计 (今天真改了什么)"卡 (β.2.9.7), 加入 L4 ClaimTracer 数据 — 今天 unverified claim 数 / 类型分布 / 最高频"被 ALERT 的话" + 一键看 `integrity_audit.jsonl` tail
-   - **L7 LLM-propose / WeeklyReflector**: vocab/evidence 治理闭环
-     - `jarvis_integrity_reflector.py` daemon — 看一周 audit / trace 数据, LLM 提议 vocab keyword 漏抓 / evidence_kind 漏配 / kinds_hard_map 漏映射
-     - 写 review queue (类 `concerns_review.json`) 等 Sir CLI 拍板
-     - 跑频率: weekly (周日 03:00) 或 audit 累积 > 50 条触发
-   - 预期工时 ~4h, tag `v0.33.0-integrity-reflector`
+� **INTEGRITY_STACK Session 4** ✅ 完工 commit `d6b4247` (β.4.5.1) + `9f84743` (β.4.5.2) / tag `v0.34.0-integrity-reflector`. L7 IntegrityReflector LLM-propose daemon + ClaimStatsDumper 跨进程持久化. 7 层 L0-L7 全立.
 
-🟢 **INTEGRITY_STACK Session 2** — L1 Claim 分类器 + L2 Evidence 要求 ✅ 完工 commit `0d62236` / tag `v0.32.0-claim-classify`
-🟢 **INTEGRITY_STACK Session 1** — L4 ClaimTracer enforce ✅ 完工 commit `d36e9eb` / tag `v0.31.1-claim-enforce`
-� **INTEGRITY_STACK Session 0** — L0.5 Dynamic Vocab Substrate (7 vocab) ✅ 完工 tag `v0.31.0-dynamic-vocab-substrate`
+🔴 **下一任务 (Sir 拍板)**:
+   - 选项 A: **Sir 真机黑箱测** β.4.5.x 5 个风险点 (见上文真机风险点清单), 实机反馈后再 push / 修
+   - 选项 B: **L3 directive 17 条 json 化** (现散在 `jarvis_directives.py`, 部分已 json 化, Session 4 未触). 让所有 directive 也走 vocab + CLI + review pattern (准则 6.5 完成度提到 95%+)
+   - 选项 C: **进 SOUL_DRIVE 推进** (灵魂工程 Layer 4+: AlignmentEvaluator / RelationalState reflector 二阶段等), 详 `docs/JARVIS_SOUL_DRIVE.md`
+   - 选项 D: **Sir 想要的新功能 §1-3** (sleep 模式: 单进程 mute WeChat + dim 显示器 + 总调度), 准则 5 "真做不只说" 落地
+
+🟢 **INTEGRITY_STACK Session 3** ✅ 完工 commit `7bbd890` / tag `v0.33.0-dashboard-integrity`
+🟢 **INTEGRITY_STACK Session 2** ✅ 完工 commit `0d62236` / tag `v0.32.0-claim-classify`
+🟢 **INTEGRITY_STACK Session 1** ✅ 完工 commit `d36e9eb` / tag `v0.31.1-claim-enforce`
+🟢 **INTEGRITY_STACK Session 0** ✅ 完工 tag `v0.31.0-dynamic-vocab-substrate`
 
 🟡 dedup 失效 (overbearing 3 次重复)
 🟡 LLM 二次判 correction (FeedbackTracker Phase 2)
