@@ -41,26 +41,74 @@ import json
 
 # ============================================================
 # 🩹 [β.2.9.11 / 2026-05-18] 灵魂闭环 A — 通用 helper (准则 6 vocab 驱动)
+# 🩹 [β.2.9.12 / 2026-05-18] Sir 12:53 反馈: vocab 不能硬编码 in py, 必须可加/改/删
+# vocab 持久化到 memory_pool/behavior_inference_vocab.json:
+#   - Sir 用 scripts/behavior_vocab_dump.py 看/加/改 (类 concerns_dump CLI 风格)
+#   - INTEGRITY_STACK L7 (未来) WeeklyReflector 自动 propose 新 pattern 入 review
+#   - py 里只留 _SEED_BEHAVIOR_PATTERNS 作 fallback (json 损坏 / 首次启动)
 # ============================================================
 
-# expected_behavior 推断词典 — 按动作语义类别选验证方式 (不针对 sleep 硬编码)
-# 每条: (keyword_set, expected_behavior dict)
-_BEHAVIOR_PATTERNS = [
-    # 睡眠/休息类 — idle > 30min 视为履约 (Sir 真去睡了)
-    ({'睡', '上床', '关灯', '休息', '躺', 'sleep', 'bed', 'rest', 'nap',
-      'turn in', 'crash'},
+# Fallback seed — 仅 json 不存在/损坏时用. 真正 vocab 在 json.
+_SEED_BEHAVIOR_PATTERNS = [
+    ({'睡', '上床', '关灯', '休息', '躺', '困', 'sleep', 'bed', 'rest', 'nap',
+      'turn in', 'crash', 'goodnight'},
      {'kind': 'idle_min', 'threshold': 30}),
-    # 短休息类 — idle > 5min 视为履约
     ({'歇会', '走两步', '休息一下', 'break', 'pause', 'breather', 'stretch'},
      {'kind': 'idle_min', 'threshold': 5}),
-    # 任务完成类 — STM 含完成词视为履约
     ({'刷题', '做题', '复习', '学习', '看完', '读完', '完成', '搞定',
       'finish', 'done', 'complete', 'wrap up'},
      {'kind': 'stm_contains',
       'kws': ['完成', '搞定', '做完了', '看完了', 'done', 'finished', 'wrapped']}),
-    # 进程退出类 — 指定进程退视为履约 (用户提供 process name 时)
-    # 暂留 placeholder, 真用时配 process_exit 在 add_commitment 调用方手传
 ]
+
+_BEHAVIOR_VOCAB_PATH = os.path.join('memory_pool', 'behavior_inference_vocab.json')
+_BEHAVIOR_PATTERNS_CACHE: Optional[List[Tuple[set, dict]]] = None
+_BEHAVIOR_PATTERNS_MTIME: float = 0.0
+
+
+def _load_behavior_patterns_from_json() -> Optional[List[Tuple[set, dict]]]:
+    """从持久化 json 加载 active pattern. 失败返 None 走 fallback."""
+    if not os.path.exists(_BEHAVIOR_VOCAB_PATH):
+        return None
+    try:
+        with open(_BEHAVIOR_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out: List[Tuple[set, dict]] = []
+        for p in data.get('patterns', []):
+            if not isinstance(p, dict):
+                continue
+            if p.get('state') != 'active':
+                continue
+            kws = p.get('keywords') or []
+            eb = p.get('expected_behavior') or {}
+            if not kws or not eb or not eb.get('kind'):
+                continue
+            out.append((set(kws), dict(eb)))
+        return out
+    except Exception:
+        return None
+
+
+def get_behavior_patterns() -> List[Tuple[set, dict]]:
+    """🩹 [β.2.9.12] 带 file mtime cache, json 文件变了自动 reload, 不必重启 Jarvis.
+    Sir 用 scripts/behavior_vocab_dump.py 改 json → 下次 add_commitment 即生效.
+    """
+    global _BEHAVIOR_PATTERNS_CACHE, _BEHAVIOR_PATTERNS_MTIME
+    try:
+        mtime = os.path.getmtime(_BEHAVIOR_VOCAB_PATH) if os.path.exists(
+            _BEHAVIOR_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _BEHAVIOR_PATTERNS_CACHE is None or mtime > _BEHAVIOR_PATTERNS_MTIME:
+        loaded = _load_behavior_patterns_from_json()
+        if loaded is not None:
+            _BEHAVIOR_PATTERNS_CACHE = loaded
+        else:
+            _BEHAVIOR_PATTERNS_CACHE = _SEED_BEHAVIOR_PATTERNS
+        _BEHAVIOR_PATTERNS_MTIME = mtime
+    return _BEHAVIOR_PATTERNS_CACHE
 
 
 def infer_concern_link(description: str) -> Optional[str]:
@@ -93,11 +141,13 @@ def infer_expected_behavior(description: str) -> Optional[dict]:
     """通用 — 从 description vocab 推 fulfillment 验证方式.
 
     准则 6: vocab 表驱动, 不针对 sleep/break 写专门 if 分支.
+    🩹 [β.2.9.12] vocab 来源动态: memory_pool/behavior_inference_vocab.json,
+    Sir 改 json 后下次调本函数即生效 (mtime cache 自动 reload).
     """
     if not description:
         return None
     t = description.lower()
-    for kws, behavior in _BEHAVIOR_PATTERNS:
+    for kws, behavior in get_behavior_patterns():
         if any(k in t for k in kws):
             return dict(behavior)  # 返副本防意外 mutate
     return None

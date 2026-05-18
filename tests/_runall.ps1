@@ -124,7 +124,8 @@ $tests = @(
     "_test_p0_plus_20_beta299_concern_feedback",
     "_test_p0_plus_20_beta299_focus_after_nudge",
     "_test_p0_plus_20_beta2910_fastcall_async",
-    "_test_p0_plus_20_beta2911_closure_loop"
+    "_test_p0_plus_20_beta2911_closure_loop",
+    "_test_p0_plus_20_beta2912_vocab_persist"
 )
 
 foreach ($t in $tests) {

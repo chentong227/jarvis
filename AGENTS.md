@@ -26,7 +26,7 @@
 
 任何改动让这 6 项退步，**Sir 真机实测会立刻打回**。
 
-### 准则 6 —"拒绝硬编码" 4 类反例 + 替代方案
+### 准则 6 —"拒绝硬编码" 5 类反例 + 替代方案
 
 | 硬编码反例 | 等价替代 |
 |---|---|
@@ -34,8 +34,27 @@
 | **类型硬编码**: 加 `if commit_type == 'wake'` / `if nudge_type in (...)` 写死 8 类 | 抽象成 Predicate / Concern / 通用 schema (predicate.evaluate(ctx) 让 LLM 翻译) |
 | **关键词硬编码**: 反幻觉只 cover "timestamp" 单一 case | 通用条款 (任何 specific factual claim → trace evidence) + 运行时 ClaimTracer 检测 |
 | **风格 forbidden list**: "禁止 'Welcome back / 回来了'" 这类负面 list | 删 list, 加正向 evidence + Soul 注入让主脑自由 |
+| **vocab 表写死 in py**: `_BEHAVIOR_PATTERNS = [...]` 在源码 list | 持久化到 `memory_pool/*.json` + CLI 工具看/加/激活/拒绝 + L7 Reflector LLM-propose 新 vocab 入 review |
 
 **判别**: 写新 directive/prompt 时, 自问"如果 Sir 看到这段会不会说'怎么和模板一样'?". 凡是 prescribe 句式/词汇/动作步骤的 → 大概率硬编码 → 改成 evidence-only.
+
+### 准则 6.5 — 动态架构必须 + LLM 兜底 (Sir 2026-05-18 12:57 升级)
+
+> "一切层级架构都要有动态修正的能力，并且不写死任何死编码，应该动态从对话中提取，python 规则无法覆盖的部分引入 LLM。"
+
+**任何层级架构 (Concern / Directive / Vocab / Predicate / Pattern / ...) 必须满足 3 个硬规**:
+
+1. **持久化** — 数据持久化到 `memory_pool/*.json|jsonl|db`, NOT 在 `.py` source 文件里写死 list/dict
+2. **CLI 可改** — 必须有 `scripts/<thing>_dump.py` 工具让 Sir list/add/activate/reject/delete (类 `scripts/concerns_dump.py` 风格), Sir 操作不需要改源码 + git commit
+3. **L7 Reflector LLM-propose** — 配套 reflector daemon 看对话/事件流, LLM 提取新 keyword/pattern → 写 review queue → Sir 拍板. python regex 命中不到的复杂中文/语义场景 → LLM 二次判 + propose 加 vocab
+
+**示例 (已立此规范)**:
+- `concerns.json` + `concerns_review.json` + `scripts/concerns_dump.py` + `ConcernsReflector / WeeklyReflector` ✅
+- `directive_registry.json` + `directive_review.json` + `scripts/registry_dump.py` + Sir 手动 (L7 待做) ⚠️
+- `behavior_inference_vocab.json` + `scripts/behavior_vocab_dump.py` + L7 待做 (β.2.9.12 本轮立) ⚠️
+- `relational_state.json` + `relational_review.json` + `scripts/relational_dump.py` + L4 Reflector ✅
+
+**反例 (违规)**: 任何看到 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须立刻迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 TICK_INTERVAL=60) 可以.
 
 ---
 

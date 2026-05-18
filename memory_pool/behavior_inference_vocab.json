@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T12:53:00",
+    "purpose": "灵魂闭环 A — infer_expected_behavior 用的 vocab 表 (准则 6 不硬编码 in py)",
+    "edit_via": "scripts/behavior_vocab_dump.py --add/--activate/--reject",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 未来 propose 新 pattern 到 review state"
+  },
+  "patterns": [
+    {
+      "id": "sleep_idle_30",
+      "keywords": ["睡", "上床", "关灯", "休息", "躺", "困", "sleep", "bed", "rest", "nap", "turn in", "crash", "goodnight"],
+      "expected_behavior": {"kind": "idle_min", "threshold": 30},
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779079980.0,
+      "note": "睡眠/休息 — Sir 真去睡 idle >= 30min 视为履约"
+    },
+    {
+      "id": "break_idle_5",
+      "keywords": ["歇会", "走两步", "休息一下", "break", "pause", "breather", "stretch"],
+      "expected_behavior": {"kind": "idle_min", "threshold": 5},
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779079980.0,
+      "note": "短休息 — idle >= 5min 视为履约"
+    },
+    {
+      "id": "task_done_stm",
+      "keywords": ["刷题", "做题", "复习", "学习", "看完", "读完", "完成", "搞定", "finish", "done", "complete", "wrap up"],
+      "expected_behavior": {
+        "kind": "stm_contains",
+        "kws": ["完成", "搞定", "做完了", "看完了", "done", "finished", "wrapped"]
+      },
+      "state": "active",
+      "source": "seeded",
+      "created_at": 1779079980.0,
+      "note": "任务完成 — STM 最近 5 条含完成关键词视为履约"
+    },
+    {
+      "id": "drink_water_idle_2",
+      "keywords": ["喝水", "drink water", "hydrate", "倒水", "杯水"],
+      "expected_behavior": {"kind": "idle_min", "threshold": 2},
+      "state": "review",
+      "source": "seeded",
+      "created_at": 1779079980.0,
+      "note": "喝水 — 暂草案, Sir 决定阈值是否合理"
+    }
+  ]
+}

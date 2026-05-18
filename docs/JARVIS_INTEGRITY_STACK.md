@@ -1,8 +1,15 @@
-# Jarvis Integrity Stack — 言出必行 7 层分层架构
+# Jarvis Integrity Stack — 言出必行 7 层分层架构 (+ 1 横向贯通层)
 
-**版本**: v1.0 / 2026-05-18
-**作者**: Sir 12:37 提出 + Claude 综合设计
+**版本**: v1.1 / 2026-05-18 (Sir 12:57 升级动态化原则)
+**作者**: Sir 12:37 提出 + 12:53 vocab 反硬编码 + 12:57 升级架构原则 + Claude 综合
 **地位**: 与 `INTEGRITY ABSOLUTE`（言出必行核心原则）和 `SOUL_DRIVE`（灵魂工程）**并列的第三条灵魂级模块**
+
+## v1.1 升级核心 (Sir 12:57)
+
+> "一切层级架构都要有动态修正的能力，并且不写死任何死编码，应该动态从对话中提取，
+>  python 规则无法覆盖的部分引入 LLM。"
+
+新加 **L0.5 Dynamic Vocab Substrate** — 横向贯通所有 7 层的基础设施层：所有 keyword/pattern/list 必须满足 3 硬规（持久化 + CLI 可改 + L7 LLM-propose）。详 AGENTS.md 准则 6.5.
 
 > Sir 12:37 实测发现:
 > "我觉得言出必行的约束还是太局限某些特殊的情况了。
@@ -58,7 +65,19 @@
 ## 2. 7 层架构详图
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+╔═════════════════════════════════════════════════════════════════╗
+║ L0.5  Dynamic Vocab Substrate (横向贯通所有 7 层)              ║
+║      ── 准则 6.5: 所有 keyword/pattern/list 必须:               ║
+║         (1) 持久化 memory_pool/*.json                          ║
+║         (2) CLI 工具 scripts/<thing>_dump.py 看/加/激活/拒绝   ║
+║         (3) L7 Reflector LLM-propose 新 vocab 入 review        ║
+║      已立此规范: concerns / directive_registry / relational /   ║
+║                 behavior_inference_vocab                       ║
+║      待补 (任何新模块都自动适用): predicate library / claim     ║
+║              分类器 vocab / evidence 要求表 / tool overture     ║
+║              vocab / dashboard_intent vocab / memory_correction ║
+║              vocab / etc.                                       ║
+╠═════════════════════════════════════════════════════════════════╣
 │ L0  根本立场  ── INTEGRITY ABSOLUTE 静态 PERSONA                │
 │      Jarvis 的"魂"，不可绕过的根本规则                         │
 │      ── 现状: ✅ 已有                                          │
@@ -114,28 +133,48 @@
 
 ---
 
-## 3. 当前实现状态盘点（截 2026-05-18 β.2.9.11）
+## 3. 当前实现状态盘点（截 2026-05-18 β.2.9.12）
 
 | 层 | 状态 | 已做 | 缺什么 |
 |---|---|---|---|
+| **L0.5** | ⚠️ | β.2.9.12 立此规范 + behavior_vocab 接通 (本轮) | 把现有 14 directive / claim 分类 vocab / tool overture / dashboard intent vocab 全迁 json |
 | L0 | ✅ | INTEGRITY ABSOLUTE 在 PERSONA | — |
-| L1 | ❌ | — | Claim 分类器 (LLM-based or pattern-based) |
-| L2 | ❌ | Evidence 要求散在 directive 文本 | 中央 EvidenceRequirements 表 |
-| L3 | ⚠️ | 14 条 directive | 统一注册表 + claim 类型 → directive 反查 |
-| L4 | ⚠️ | ClaimTracer 抓 | enforce: 下一轮 prompt 注入"撤回上一句" |
-| L5 | ✅ | β.2.9.11 闭环 A (本轮) | (基本完整) |
-| L6 | ⚠️ | dashboard 信任审计卡 | 兑现率 / claim verify 比例 / 趋势图 |
-| L7 | ❌ | — | WeeklyReflector 接 audit log → propose 改 PERSONA |
+| L1 | ❌ | — | Claim 分类器 (LLM 1.5B 兜底 + vocab json) |
+| L2 | ❌ | Evidence 要求散在 directive 文本 | 中央 EvidenceRequirements 表 (json + CLI + reflector) |
+| L3 | ⚠️ | 17 条 directive | 全迁 directive_registry.json (已有 json) + CLI 加 propose 接口 |
+| L4 | ⚠️ | ClaimTracer 抓 | enforce: integrity_audit.jsonl + 下一轮 prompt 注入撤回 |
+| L5 | ✅ | β.2.9.11 闭环 A (本轮) | infer vocab 已迁 json (β.2.9.12 本轮) ✅ |
+| L6 | ⚠️ | dashboard 信任审计卡 | 兑现率统计 / claim verify 比例 / 趋势图 |
+| L7 | ❌ | — | **关键**: WeeklyReflector 接 audit log + 自动 LLM-propose 新 vocab/directive |
 
 ---
 
-## 4. 推进步骤 — 4 个 session 分阶段
+## 4. 推进步骤 — 5 个 session 分阶段 (v1.1 加 Session 0 vocab 迁移)
+
+### Session 0 — L0.5 Dynamic Vocab Substrate 全面迁移（必须先做，~3h）
+
+**目标**: 把现有所有 py-hardcoded vocab 迁到 json + CLI + 预留 LLM-propose 接口
+
+按 AGENTS.md 准则 6.5 审计现有 py 文件, 找所有 `_XXX_PATTERNS = [...]` / `_XXX_KEYWORDS = (...)`:
+
+| 当前位置 | 迁移目标 |
+|---|---|
+| `jarvis_directives.py:_TOOL_INTENT_PATTERNS` (打开/关闭/搜) | `memory_pool/tool_intent_vocab.json` + `scripts/tool_intent_dump.py` |
+| `jarvis_directives.py:_DASHBOARD_INTENT_PATTERNS` | `memory_pool/dashboard_intent_vocab.json` + CLI |
+| `jarvis_directives.py:_MEMORY_CORRECTION_PATTERNS` | `memory_pool/memory_correction_vocab.json` + CLI |
+| `jarvis_inconsistency_watcher.py:_SIR_SLEEP_VERBS / _JARVIS_WRAPPER_MARKERS / _SIR_BREAK_VERBS` | `memory_pool/inconsistency_vocab.json` + CLI |
+| `jarvis_proactive_care.py:_RESPONSE_POSITIVE / _RESPONSE_NEGATIVE` | `memory_pool/response_classify_vocab.json` + CLI |
+| `jarvis_commitment_watcher.py:_BEHAVIOR_PATTERNS` | ✅ 已迁 `memory_pool/behavior_inference_vocab.json` (β.2.9.12) |
+| `jarvis_memory_core.py:FeedbackTracker._correction_patterns` | `memory_pool/feedback_vocab.json` + CLI |
+| `jarvis_soul_reflector.py:CONCERN_KEYWORDS` | `memory_pool/concern_keywords_vocab.json` + CLI |
+
+每个迁移 step 独立 commit, 跟 β.2.9.12 一样的范式: `_SEED_X` py 留 fallback + json 优先 + mtime cache + CLI.
 
 ### Session 1 — L5 + L4 enforce（本周完成，~3h）
 
 **目标**: 关闭闭环 + ClaimTracer 升级 trace → enforce
 
-- ✅ L5 闭环 A（β.2.9.11 本轮完工，commit ?? + testcase 19 通过）
+- ✅ L5 闭环 A（β.2.9.11 本轮完工，commit 3a89168 + testcase 19 通过）
 - ⏳ L4 enforce 升级：
   - ClaimTracer 把 unverified claim 记入 `memory_pool/integrity_audit.jsonl`
   - 下一轮 `_assemble_prompt` 头部 prepend "[INTEGRITY ALERT] 上一轮你 X claim 未 verify (evidence missing), 主动撤回或补 evidence"
@@ -147,11 +186,13 @@
 
 - 新 `jarvis_claim_classifier.py`:
   - 入口 `classify(reply_text) → ClaimType` (6 类)
-  - 用 regex + LLM-1.5B 二次判（前者快、后者细）
+  - **vocab 持久化**: `memory_pool/claim_classify_vocab.json` + CLI + LLM 二次判 fallback
+  - 用 regex (从 json 加载) + LLM-1.5B 二次判 (前者快、后者细)
 - 新 `jarvis_evidence_requirements.py`:
   - 中央表 `EvidenceRequirements[ClaimType] = required_evidence_kinds`
-  - 给 L4 ClaimTracer 反查"这类 claim 应有什么 evidence"
-- L3 directive 不动（仍兼容）但减少新增（让 L1+L2+L4 自动覆盖）
+  - **持久化** `memory_pool/evidence_requirements.json` + CLI 可改
+  - 给 L4 ClaimTracer 反查
+- L3 directive 不动（仍兼容）但减少新增
 
 ### Session 3 — L6 dashboard 升级（短期，~2h）
 
@@ -161,17 +202,21 @@
 - dashboard 卡片显示:
   - 今日 claim 数 / verify 数 / unverify 数 / 兑现率
   - 7d 趋势 ASCII chart
-  - 顶部整体评估 + 加 "言出必行健康度: ✅/⚠️/❌"
+  - 顶部整体评估加 "言出必行健康度: ✅/⚠️/❌"
 
-### Session 4 — L7 自我修正（长期，~4h）
+### Session 4 — L7 自我修正 + LLM-propose（长期，~6h，灵魂级）
 
-**目标**: WeeklyReflector 看 L4+L5 数据 → propose 改 PERSONA / 加 directive
+**目标**: WeeklyReflector 看 L0.5 所有 vocab + L4 audit log + L5 履约率 → LLM-propose 新 vocab/directive 入 review
 
+- WeeklyReflector 加 `_reflect_vocab_gaps()`:
+  - 扫 7d 对话 STM/LTM, 找不能命中现有 vocab 但语义关键的 token
+  - 用 Gemini-3-Flash LLM 提取候选 vocab → 写 review queue
+  - Sir CLI review → activate → 自动加进对应 json
 - WeeklyReflector 加 `_reflect_integrity_audit()`:
   - 扫 7d `integrity_audit.jsonl`
   - 找 unverified claim 类型分布 (e.g. "Past-action 类 unverify 率 30%")
-  - propose 新 directive 加入 review queue
-- Sir review → activate → 自动加进 L3
+  - LLM-propose 新 directive 入 review
+- **核心契约**: Sir 永远是仲裁人, propose 只入 review, Sir 拍板才生效
 
 ---
 
@@ -222,10 +267,11 @@
 
 | Session | 何时 | 内容 | 验收 |
 |---|---|---|---|
-| 1 | **本周** | L5 闭环 (✅ β.2.9.11) + L4 enforce | Sir 实测看 reply 含"我已 X"未 verify 时主脑下一轮撤回 |
-| 2 | 下周 | L1 Claim 分类器 + L2 Evidence 表 | claim 自动分类 + evidence 要求中央化 |
+| **0** | **下个 session 第一件事** | L0.5 vocab 全面迁移 (7 项 py-hardcoded → json + CLI) | py 不再含任何 `_XXX_PATTERNS = [...]`,审计 Grep 0 命中 |
+| 1 | 本周 | L5 闭环 (✅ β.2.9.11) + L4 enforce | Sir 实测看 reply 含"我已 X"未 verify 时主脑下一轮撤回 |
+| 2 | 下周 | L1 Claim 分类器 + L2 Evidence 表 (都 json + CLI) | claim 自动分类 + evidence 要求中央化 |
 | 3 | 下周 | L6 dashboard 升级 + 趋势 | Sir 看 7d 兑现率 |
-| 4 | 下下周 | L7 WeeklyReflector 自我修正 | 每周自动 propose 新 directive |
+| 4 | 下下周 | L7 WeeklyReflector LLM-propose + Sir review | 每周自动 propose 新 vocab/directive, Sir CLI 一键拍板 |
 
 ---
 
