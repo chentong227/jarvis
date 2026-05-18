@@ -382,6 +382,30 @@ class ReturnSentinel(threading.Thread):
         self._last_greeting_time = time.time()
         self.first_active_today = False
 
+    def open_soft_focus(self, duration_s: float = 60.0,
+                          reason: str = 'external') -> None:
+        """🩹 [β.2.9.9 / 2026-05-18] 通用 API: 任何主动发声后开 soft focus window.
+
+        Sir 10:43 痛点: ProactiveCare 主动 nudge 后没焦点模式, Sir 想口头回应
+        "我中午会补觉" 还要先说 "Jarvis" 唤醒. 复用 soft_focus 机制 (原本只
+        AFK 归来用), 让任何主动发声路径都能借这条 X 秒短焦点窗口.
+
+        Args:
+          duration_s: focus 持续时间秒, 默认 60s
+          reason: 'proactive_care' / 'inconsistency' / 'commitment_check' 等
+        """
+        self.soft_focus_active = True
+        self.soft_focus_until = time.time() + max(15.0, min(180.0, duration_s))
+        self._soft_focus_reason = reason
+        try:
+            from jarvis_utils import bg_log as _bg
+            _bg(
+                f"🎯 [ReturnSentinel/SoftFocus] 开 {int(duration_s)}s focus "
+                f"window (reason={reason}) — Sir 短回应不用喊 Jarvis"
+            )
+        except Exception:
+            pass
+
     def _pick_return_greeting(self, afk_duration, current_hour, work_category, weekday, is_first_today=False):
         afk_min = int(afk_duration / 60)
         is_weekend = weekday in ("Saturday", "Sunday")

@@ -630,6 +630,97 @@ def _trigger_correction_writepath(ctx: DirectiveContext) -> bool:
     return _user_input_is_memory_write(ctx.user_input)
 
 
+# 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计:
+# Jarvis 嘴上说"I've updated my records / 我已更新" 但底层根本没动 db.
+# 准则 5 (言出必行) 重大违反. 加新 directive 在 Sir 像在纠正/澄清记忆时
+# 强制 Jarvis 诚实 — 没真调 MEMORY_UPDATE 工具就别说"已更新".
+_MEMORY_CORRECTION_PATTERNS_ZH = (
+    '我没', '我不是', '我才不', '不是的', '其实', '澄清', '纠正',
+    '两码事', '两个事', '搞错了', '错了', '记错', '不对',
+    '我说的是', '我的意思是', '不要混淆', '不要搞混',
+)
+_MEMORY_CORRECTION_PATTERNS_EN = (
+    "i'm not", "i am not", "actually", "clarify", "correction",
+    "two different things", "you got it wrong", "you misunderstood",
+    "to be clear", "let me clarify", "let me correct",
+    "what i meant was", "i meant", "no that's not",
+)
+
+
+def _trigger_memory_update_honesty(ctx: DirectiveContext) -> bool:
+    """Sir 输入像在纠正/澄清记忆 → 强制 Jarvis 不撒谎说'已更新'.
+
+    准则 6 (vocab 驱动, 不针对'职业考试'特定 case 硬编码):
+      看 user_input 是否含 correction-class vocab. 命中 → 注入诚信 directive.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if any(w in t for w in _MEMORY_CORRECTION_PATTERNS_ZH):
+        return True
+    if any(w in t for w in _MEMORY_CORRECTION_PATTERNS_EN):
+        return True
+    return False
+
+
+# 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09-11:11 实测痛点: 工具调用同步阻塞期间
+# 没声音, Sir 体感"说话-卡顿-全部一起出". Sir 11:11 反对占位语音"没人味",
+# 要求"全部走主脑". 改架构: 用 directive 教主脑在 FAST_CALL 前自然生成 1 句
+# 过渡话, 主脑生成的话被 splitter 切走 push 进 audio_queue → tool 执行期间
+# Sir 听到真自然话, 不卡顿. 准则 6 完全主脑自由发挥, 不写句式锁.
+_TOOL_INTENT_PATTERNS = (
+    # 设备控制
+    '打开', '关闭', '启动', '停止', '播放', '暂停', '切换', '调高', '调低',
+    '调到', '调整', '设置', '设为', '改成', '改为', '静音', '取消静音',
+    # 文件操作
+    '保存', '新建', '删除', '复制', '移动', '改名', '打开文件',
+    # 搜索 / 查询
+    '搜', '查', '找', '看一下', '看看', '帮我',
+    # ASCII
+    'open', 'close', 'launch', 'kill', 'play', 'pause', 'toggle',
+    'mute', 'unmute', 'turn off', 'turn on', 'set', 'adjust',
+    'save', 'create', 'delete', 'copy', 'move', 'rename',
+    'search', 'find', 'lookup', 'pull up',
+)
+
+
+def _trigger_tool_overture(ctx: DirectiveContext) -> bool:
+    """Sir 像在请求工具动作 → 注入"FAST_CALL 前先讲过渡句"指令.
+
+    准则 6 vocab 驱动 — 不针对每种工具硬编码, 看 user_input 是否含
+    action verb (打开/关闭/搜/查 等). 命中 → 主脑被提醒不要 silent execute.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    return any(w in t for w in _TOOL_INTENT_PATTERNS)
+
+
+# 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09: dashboard 集成主脑 — 模糊语义启动
+_DASHBOARD_INTENT_PATTERNS_ZH = (
+    '面板', '看板', '总览', '仪表盘', '状态板', '监控',
+    '看看状态', '看下状态', '看一下状态', '给我看', '展示状态',
+    '查看你', '看一眼你', '看看你的', '现在啥状态',
+)
+_DASHBOARD_INTENT_PATTERNS_EN = (
+    'dashboard', 'panel', 'overview', 'status board',
+    'show me status', 'show me the dashboard', 'open the dashboard',
+    'pull up dashboard', "what's going on inside",
+)
+
+
+def _trigger_dashboard_intent(ctx: DirectiveContext) -> bool:
+    """Sir 说"打开面板/看看状态" 类模糊语义 → 提示主脑用 ui_control.dashboard_open"""
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if any(w in t for w in _DASHBOARD_INTENT_PATTERNS_ZH):
+        return True
+    if any(w in t for w in _DASHBOARD_INTENT_PATTERNS_EN):
+        return True
+    return False
+
+
 def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
     """一次性注册 12 条默认 directive。返回注册数。
     
@@ -886,6 +977,113 @@ def bootstrap_default_registry(registry: DirectiveRegistry) -> int:
                 FORBIDDEN: another vague future-tense promise without follow-through.
             """).rstrip(),
             trigger=_trigger_future_tense_capability_check,
+        ),
+        # 14. MEMORY UPDATE HONESTY — β.2.9.9 / Sir 10:51 诚信审计治本
+        # Sir 实测: 10:49 跟 Jarvis 说"职业考试是成绩不是考试", Jarvis 回"我已
+        # 更新了记录" — 但 CorrectionMemory 表 0 条今天写入. 准则 5 重大违反.
+        Directive(
+            id='memory_update_honesty',
+            source_marker='P0+20-β.2.9.9',
+            priority=10,
+            ttl_days=180,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [MEMORY UPDATE HONESTY]:
+                Sir 此刻像在纠正/澄清你对他的记忆 (用了"其实/不是/两码事/搞错了
+                / actually / clarify / I meant" 等). 你必须诚实, 准则 5 言出必行:
+
+                FORBIDDEN phrasing (除非你本轮真用了 <MEMORY_UPDATE> 结构化标签):
+                  - "I've updated my records"
+                  - "I have noted the distinction"
+                  - "I have logged the correction"
+                  - "我已经更新了记录"
+                  - "我已记下这一区别"
+                  - "I will ensure I don't conflate them again"
+                  - "今后不会再混淆"
+                  (这些是空头话, 你没有自动 mutate sir_profile.json 的能力)
+
+                Honest fallback (推荐):
+                  - "Noted, Sir. I'll carry this clarification through our conversation,
+                     though I should be honest — I don't have an automatic write into
+                     long-term storage. If you want it persisted, say 'remember that'
+                     and I'll use the proper tool."
+                  - "记下了, 先生. 我会在这次对话里带上这个区分; 但坦白说我没有
+                     自动改 sir_profile 的能力. 想我永久记住, 请说'记住:...'."
+
+                IF you do want to persist, you MUST emit a structured tag:
+                  <MEMORY_UPDATE field="career_exam" old="exam itself" new="exam results release">
+                  (the worker will execute the actual write and confirm to Sir)
+            """).rstrip(),
+            trigger=_trigger_memory_update_honesty,
+        ),
+        # 15. TOOL OVERTURE — β.2.9.9 / Sir 11:09-11:11 痛点修
+        # Sir 11:09: "工具调用非常卡顿, 之前是 说话-工具-说话, 现在全部一起出"
+        # Sir 11:11: 反对占位语音"没人味", 要求"全部走主脑"
+        # 修法 (准则 6 主脑自由发挥, 不教句式):
+        Directive(
+            id='tool_overture_directive',
+            source_marker='P0+20-β.2.9.9',
+            priority=9,
+            ttl_days=60,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [TOOL OVERTURE]:
+                Sir 此刻像在请求一个 tool 动作 (含 "打开/关闭/搜/查/帮我"
+                / "open/close/launch/find" 等). 你即将 emit <FAST_CALL>.
+
+                NEW REQUIREMENT (Sir 11:09 体感修):
+                Tool 执行同步阻塞 1-5 秒, 期间 audio 流静默 → Sir 听不到声 →
+                体感"卡顿" → 抵触你用工具.
+
+                MUST: 在 emit <FAST_CALL> **之前**先用 1 句自然话告诉 Sir 你
+                正在做什么. 这句话会先 stream 到 audio, Sir 在 tool 执行期间
+                听到你的声音, 体感不卡.
+
+                好的例子 (主脑自由发挥, 任何意思接近都行):
+                  - "好的, 我帮您打开 Chrome." → <FAST_CALL>...
+                  - "查一下日历, 请稍候." → <FAST_CALL>...
+                  - "Pulling that up now, Sir." → <FAST_CALL>...
+                  - "Let me adjust that for you." → <FAST_CALL>...
+
+                FORBIDDEN:
+                  - 直接 emit <FAST_CALL> 不讲话 (Sir 体感"卡顿")
+                  - 占位模板话 ("On it" / "One moment") — Sir 反对"没人味"
+                  - tool 完成后用 "Done." 一字了事 — 至少讲一句结果讲解
+
+                AFTER tool result (tool 执行完, result 注入 prompt 时):
+                  - 用 1-2 句自然话讲结果 ("打开了 Chrome, 还需要我做什么吗?")
+                  - 不要复读 result JSON / 路径
+            """).rstrip(),
+            trigger=_trigger_tool_overture,
+        ),
+        # 16. DASHBOARD INTENT — β.2.9.9 / Sir 11:09 集成主脑
+        # Sir 说"打开面板/看看状态/查看你" 类模糊语义 → 主脑应 emit FAST_CALL
+        # ui_control.dashboard_open. 不教句式 (准则 6), 让主脑自己理解何时该开.
+        Directive(
+            id='dashboard_intent_directive',
+            source_marker='P0+20-β.2.9.9',
+            priority=8,
+            ttl_days=60,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [DASHBOARD INTENT]:
+                Sir 此刻像在请求看你的内部状态总览 (用了"面板/看板/总览/dashboard
+                / show me status / 看看你的" 等). 你可以打开 jarvis_dashboard
+                给他看 — 这是一个独立的中文可视化窗口, 显示:
+                  - 你长期惦记 Sir 的事 (Concerns)
+                  - 你们之间的默契 (Inside jokes)
+                  - 你的健康 (内存/线程/API)
+                  - Sir 待办 / 提案审阅 / Directive 偏移 / 实时事件流
+                  - 信任审计 (你今天真改了什么记忆)
+
+                用法 (FAST_CALL):
+                  <FAST_CALL>{"organ":"ui_control","command":"dashboard_open","params":{}}</FAST_CALL>
+
+                语义模糊时 (Sir 只说"看看" 没说面板) — 反问 1 句澄清, 别瞎开.
+                看完 Sir 自然会自己关; 想关也可:
+                  <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
+            """).rstrip(),
+            trigger=_trigger_dashboard_intent,
         ),
     ]
 

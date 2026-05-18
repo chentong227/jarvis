@@ -818,6 +818,80 @@ def read_system_health() -> Dict:
 
 # ---- 待审阅队列 ----
 
+def read_memory_mutations() -> Dict:
+    """🔬 信任审计 — Jarvis 今天真改了什么 (memory_pool/profile_corrections.jsonl)
+
+    🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本卡片. 显示:
+      - 今天写入 N 条 (Jarvis 真"改记忆"几次)
+      - 最近 5 条 detail (field / old → new / source / 时间)
+      - 诊断: ✅ 真做了 / ⚠️ 今天 0 条 (主脑可能空头说"已更新")
+    """
+    out = {'today_n': 0, 'total_n': 0, 'rows': [],
+           'sources': {}, 'err': None}
+    path = os.path.join(MEM, 'profile_corrections.jsonl')
+    if not os.path.exists(path):
+        out['diagnosis'] = '📝 还没有任何记忆变更记录'
+        out['suggestion'] = (
+            '正常 — 文件首次启用需触发 ProfileCard.apply_correction 或 LLM 发 '
+            '<MEMORY_UPDATE> 标签才创建'
+        )
+        return out
+    try:
+        records = _safe_read_jsonl(path, tail=500)
+    except Exception as e:
+        out['err'] = f'读取异常: {e}'
+        return out
+    out['total_n'] = len(records)
+    now = time.time()
+    today_start = now - (now % 86400) - time.timezone  # 本地今日 00:00
+    today_records = [r for r in records if r.get('ts', 0) >= today_start]
+    out['today_n'] = len(today_records)
+    # source 分布
+    src_counter = {}
+    for r in records:
+        s = r.get('source', '?')
+        src_counter[s] = src_counter.get(s, 0) + 1
+    out['sources'] = src_counter
+    # 最近 8 条
+    for r in records[-8:]:
+        out['rows'].append({
+            'time': r.get('time', '?'),
+            'iso': r.get('iso', ''),
+            'age': _humanize_age_zh(r.get('ts', 0)),
+            'source': r.get('source', '?'),
+            'field': str(r.get('field', ''))[:40],
+            'old': str(r.get('old', ''))[:60],
+            'new': str(r.get('new', ''))[:60],
+            'confidence': float(r.get('confidence', 0) or 0),
+        })
+    out['rows'].reverse()  # 最新在上
+
+    # 📌 诊断
+    if out['today_n'] == 0 and out['total_n'] == 0:
+        out['diagnosis'] = '⚪ 全程 0 次记忆变更 — 系统还没触发过 apply_correction'
+        out['suggestion'] = (
+            'Sir 跟 Jarvis 纠正记忆 (如"职业考试 vs 成绩") 后, 应该出现新记录. '
+            '若 Sir 说了纠正但这里仍 0 → 主脑在撒"已更新"假话, 应触发 '
+            'memory_update_honesty directive 拦截'
+        )
+    elif out['today_n'] == 0 and out['total_n'] > 0:
+        last_iso = records[-1].get('iso', '?') if records else '?'
+        out['diagnosis'] = (
+            f'⚠️ 今天 0 条记忆变更 (上次是 {last_iso}) — 主脑可能在空头说"已更新"'
+        )
+        out['suggestion'] = (
+            '看主对话 log: Sir 如有纠正话语 ("不是/其实/澄清/两码事") + Jarvis '
+            '回 "I\'ve updated", 但这里 0 条 → 是诚信 BUG'
+        )
+    elif out['today_n'] > 5:
+        out['diagnosis'] = f'📈 今天 {out["today_n"]} 条记忆变更 — 活跃学习中'
+        out['suggestion'] = '正常 — Sir 多次纠正/澄清产生的真写入'
+    else:
+        out['diagnosis'] = f'✅ 今天 {out["today_n"]} 条真写入 (言行一致)'
+        out['suggestion'] = '主脑用 MEMORY_UPDATE 标签或 ProfileCard 触发真改了'
+    return out
+
+
 def read_review_queues() -> Dict:
     """⚠️ 等你拍板的提案 — concerns/relational/directive review"""
     out = {'items': []}
@@ -964,9 +1038,12 @@ def read_event_stream(limit: int = 30) -> Dict:
 
 def compute_overall_status(concerns: dict, directive: dict, promise: dict,
                              relation: dict, daemon: dict, health: dict,
-                             review: dict, events: dict) -> dict:
+                             review: dict, events: dict,
+                             mutations: dict = None) -> dict:
     """🤖 整体一句话 — 综合所有 reader, 给 Sir 看就懂的 top-3 重点"""
     out = {'level': 'ok', 'headline': '', 'top_actions': []}
+    if mutations is None:
+        mutations = {'today_n': 0, 'total_n': 0}
 
     issues = []  # [(severity, text, action), ...] severity: 'crit' / 'warn' / 'info'
 
@@ -1035,6 +1112,19 @@ def compute_overall_status(concerns: dict, directive: dict, promise: dict,
             f'内存 {ws_mb:.0f}MB 偏高 (> 4GB) — 可能泄漏',
             '看 24h 趋势; 必要重启',
         ))
+
+    # 🩹 [β.2.9.9] 信任审计 — 今天 Sir 有纠正话语但 0 真写入 → 言行不一信号
+    if mutations.get('today_n', 0) == 0 and mutations.get('total_n', 0) > 0:
+        # 检查 events 流是否有 "correction" 触发
+        n_correction = sum(1 for e in events.get('events', [])
+                            if '纠错' in e.get('tag', '') or
+                            '言行' in e.get('tag', ''))
+        if n_correction > 0:
+            issues.append((
+                'crit',
+                f'今天 Sir 纠正 {n_correction} 次但 0 真写入 — 可能在空头"我已更新"',
+                '看 dashboard 信任审计卡 + log 主对话纠正话语',
+            ))
 
     # 综合 headline
     if not issues:
@@ -1428,10 +1518,12 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     )
 
     # ===== 第 3 块: 观测 =====
+    # 🩹 [β.2.9.9] 加第 4 列 "信任审计" — Sir 10:51 诚信审计治本卡片
     group_obs = _make_group_frame(main, '▌ 观测 — 看贾维斯有没有偏轨', 'group_obs', 2)
     group_obs.columnconfigure(0, weight=2, uniform='g3')
     group_obs.columnconfigure(1, weight=2, uniform='g3')
     group_obs.columnconfigure(2, weight=2, uniform='g3')
+    group_obs.columnconfigure(3, weight=2, uniform='g3')
     group_obs.rowconfigure(0, weight=1)
 
     card_directive, lbl_directive = _make_card(
@@ -1445,6 +1537,10 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     card_event, lbl_event = _make_card(
         group_obs, 0, 2,
         '🔔  贾维斯最近在干嘛 (实时事件流)',
+    )
+    card_mutations, lbl_mutations = _make_card(
+        group_obs, 0, 3,
+        '🔬  信任审计 (今天真改了什么)',
     )
 
     # ============ 渲染函数 ============
@@ -1577,6 +1673,28 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
         lines = [_diag_header(data), f"📄 {os.path.basename(data['log_path'])}"]
         for e in data['events']:
             lines.append(f"{e['ts']}  {e['tag']}  {e['body']}")
+        return '\n'.join(lines) + '\n'
+
+    def _render_mutations(data):
+        if data.get('err'):
+            return f"读取失败: {data['err']}\n"
+        lines = [_diag_header(data)]
+        lines.append(f"今天 {data['today_n']} 条  /  总 {data['total_n']} 条")
+        if data['sources']:
+            src_str = '  '.join(f"{k}={v}" for k, v in data['sources'].items())
+            lines.append(f"来源: {src_str}")
+        lines.append("")
+        if not data['rows']:
+            lines.append("(无记录 — Jarvis 还没真做过任何记忆变更)")
+        else:
+            for r in data['rows']:
+                lines.append(f"  {r['time']}  [{r['source']}]")
+                lines.append(f"    field: {r['field']}")
+                if r['old']:
+                    lines.append(f"    {r['old'][:50]}  →  {r['new'][:50]}")
+                else:
+                    lines.append(f"    → {r['new'][:50]}")
+                lines.append(f"    ({r['age']}  conf={r['confidence']:.2f})")
         return '\n'.join(lines) + '\n'
 
     # ============ 待处理卡片 渲染 (带真按钮) ============
@@ -1796,9 +1914,11 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
             health = read_system_health()
             review = read_review_queues()
             events = read_event_stream(limit=25)
+            mutations = read_memory_mutations()  # 🩹 [β.2.9.9] 信任审计
             overall = compute_overall_status(
                 concerns, directive, promise, relation,
-                daemon, health, review, events)
+                daemon, health, review, events,
+                mutations=mutations)
             elapsed = (time.time() - t0) * 1000
 
             # Header 状态条
@@ -1843,6 +1963,7 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
             _set_text(card_directive, _render_directive(directive))
             _set_text(card_daemon, _render_daemon(daemon))
             _set_text(card_event, _render_events(events))
+            _set_text(card_mutations, _render_mutations(mutations))
 
             _render_todo_buttons(todo)
             _render_review_buttons(review)
@@ -1867,6 +1988,9 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                 text=f"💡  后台管家  ({live_n}/{len(daemon['daemons'])} 在跑)")
             lbl_event.config(
                 text=f"🔔  贾维斯最近在干嘛  ({len(events['events'])} 件)")
+            lbl_mutations.config(
+                text=f"🔬  信任审计 — 今天真改了什么  "
+                     f"({mutations['today_n']}/{mutations['total_n']})")
 
             _set_status(f"刷新 {time.strftime('%H:%M:%S')}  ({elapsed:.0f}ms)", True)
         except Exception as e:
@@ -1906,6 +2030,7 @@ def print_snapshot() -> int:
         ('📜 临时提醒规则 (Directive)', read_directives),
         ('💡 后台管家 (Daemon)', read_daemon_status),
         ('🔔 实时事件流', lambda: read_event_stream(limit=15)),
+        ('🔬 信任审计 (今天真改了什么)', read_memory_mutations),  # β.2.9.9
     ]
     for title, reader in sections:
         print(f"\n--- {title} ---")

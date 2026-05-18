@@ -1180,6 +1180,13 @@ Spoken English:"""
             r'^(okay|ok|yeah|yep|yes|sure|right|got it|mhm|alright|fine|good|great|nice|cool)[,.!]*$',
         ]
 
+        # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09+11:11 痛点:
+        # 旧 v1 加占位语音 → Sir 反对"没人味". 撤回. 改架构靠 directive 教
+        # 主脑在 FAST_CALL 前自然过渡 (见 jarvis_directives.py:tool_overture_directive).
+        # tool 执行仍同步, 但主脑生成的 overture 话已 push 进 audio_queue,
+        # Sir 听到自然连贯语 + tool 同时执行 = 不卡顿体感.
+        # 真异步留 β.3.0 大重构.
+
         for key in list(params.keys()):
             val = params[key]
             if isinstance(val, str):
@@ -1193,8 +1200,45 @@ Spoken English:"""
             if ctrl_cmd in ("subtitle_on", "subtitle_off", "orb_on", "orb_off"):
                 self.subtitle_queue.put(("control", ctrl_cmd))
                 return f"✅ ui_control.{ctrl_cmd}"
-            else:
-                return f"❌ ui_control: 未知指令 {ctrl_cmd}"
+            # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09 集成 dashboard 到主脑:
+            # "打开面板/看看状态" 模糊语义 → 主脑 emit FAST_CALL ui_control.dashboard_open
+            # → 此处 subprocess 启动 jarvis_dashboard.py (pythonw, 无 console).
+            if ctrl_cmd == "dashboard_open":
+                try:
+                    import subprocess as _sp
+                    import sys as _sys
+                    # 用 pythonw.exe (无 console). fallback Windows 自带 cmd.
+                    py_w = _sys.executable.replace('python.exe', 'pythonw.exe')
+                    if not os.path.exists(py_w):
+                        py_w = _sys.executable
+                    dash_script = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'scripts', 'jarvis_dashboard.py')
+                    if not os.path.exists(dash_script):
+                        # 兼容运行时 __file__ 在 jarvis_chat_bypass 同目录
+                        dash_script = 'scripts/jarvis_dashboard.py'
+                    # detached 启动, 不阻塞主进程
+                    _sp.Popen(
+                        [py_w, dash_script],
+                        creationflags=getattr(_sp, 'DETACHED_PROCESS', 0x00000008),
+                        close_fds=True,
+                    )
+                    return f"✅ ui_control.dashboard_open: 看板已启动"
+                except Exception as _de:
+                    return f"❌ ui_control.dashboard_open: {_de}"
+            if ctrl_cmd == "dashboard_close":
+                try:
+                    import subprocess as _sp
+                    # taskkill 找窗口标题含 J.A.R.V.I.S 的 python 进程
+                    _sp.run(
+                        ['taskkill', '/F', '/FI',
+                         'WINDOWTITLE eq 贾维斯总览看板*'],
+                        capture_output=True, timeout=5,
+                    )
+                    return f"✅ ui_control.dashboard_close"
+                except Exception as _ce:
+                    return f"❌ ui_control.dashboard_close: {_ce}"
+            return f"❌ ui_control: 未知指令 {ctrl_cmd}"
 
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
@@ -1563,6 +1607,35 @@ Spoken English:"""
                     # [轴3-L3.3 / 2026-05-15] RESUME_PLAN — paused (dangerous_confirm/clarification) 复活
                     if PromiseActivator.has_any_tag(full_text) and plan_ledger_ref is not None:
                         PromiseActivator.activate_from_text(full_text, plan_ledger_ref)
+
+                    # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本路径:
+                    # 解析 <MEMORY_UPDATE field="X" old="A" new="B"> 标签 → 真写
+                    # memory_pool/profile_corrections.jsonl. 这是主脑说"已更新"
+                    # 的唯一合法路径 (准则 5). 没发标签 + 说"已更新" → 被
+                    # memory_update_honesty directive 拦.
+                    try:
+                        from jarvis_safety import (
+                            parse_memory_update_tags, execute_memory_updates
+                        )
+                        _mu_updates = parse_memory_update_tags(full_text)
+                        if _mu_updates:
+                            _n_written = execute_memory_updates(
+                                _mu_updates, source='llm_tag')
+                            if _n_written > 0:
+                                try:
+                                    from jarvis_utils import bg_log as _mu_bg
+                                    _mu_bg(
+                                        f"📝 [MemoryUpdate] LLM 标签触发, "
+                                        f"写入 {_n_written} 条 profile correction"
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception as _mu_e:
+                        try:
+                            from jarvis_utils import bg_log as _mu_bg
+                            _mu_bg(f"⚠️ [MemoryUpdate] parse/execute fail: {_mu_e}")
+                        except Exception:
+                            pass
                         PromiseActivator.cancel_from_text(full_text, plan_ledger_ref)
                         PromiseActivator.resume_from_text(full_text, plan_ledger_ref)
                 except Exception:
@@ -1637,6 +1710,18 @@ Spoken English:"""
                         print(f"║ 📝 [CorrectionLoop] 检测到纠正信号，已记录学习案例")
                     elif correction_result.get('type') == 'style':
                         print(f"║ 🎨 [StyleAdjust] 检测到风格偏好: {correction_result.get('direction', '')}")
+
+        # 🩹 [β.2.9.9-D / 2026-05-18] Sir 10:43 反馈: 主动 nudge 后 Sir 回应
+        # 应反馈到 concern severity. 通用 hook — 任何 Sir cmd 都跑一次
+        # ProactiveCare 看是否是对最近 nudge 的回应 (120s 窗口内). 不阻塞主对话.
+        try:
+            if not is_system_event:
+                from jarvis_proactive_care import get_default_engine
+                _pce = get_default_engine()
+                if _pce is not None and hasattr(_pce, 'notify_sir_response_post_nudge'):
+                    _pce.notify_sir_response_post_nudge(clean_user_input or '')
+        except Exception:
+            pass
 
         if hasattr(self, 'jarvis') and hasattr(self.jarvis, 'content_tracker'):
             prev_user = ""

@@ -761,7 +761,38 @@ class ProfileCard:
         
         if effective_confidence >= 0.30:
             print(f"[ProfileCard] 贝叶斯修正: {source_module} → {field} (置信度: {effective_confidence:.2f})")
-    
+
+        # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本:
+        # 旧版 apply_correction 只 in-memory append, 进程重启完全丢失 + 主脑还
+        # 大言不惭"我已更新". 现真持久化到磁盘 (audit trail + cross-restart 留存).
+        # 写到 memory_pool/profile_corrections.jsonl (不是 sir_profile.json — 避免
+        # 误改主 profile 结构). dashboard 可读 + Sir 可查.
+        if effective_confidence >= 0.20:
+            try:
+                self._persist_correction_to_disk(correction)
+            except Exception as _pe:
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"⚠️ [ProfileCard] _persist_correction fail: {_pe}")
+                except Exception:
+                    pass
+
+    def _persist_correction_to_disk(self, correction: dict) -> None:
+        """🩹 [β.2.9.9] 把 correction 真写到 memory_pool/profile_corrections.jsonl
+        让 Sir / dashboard / Agent 都能审计 Jarvis 真改了什么.
+        format: 一行一个 JSON 对象, 含 time/source/field/old/new/confidence/iso.
+        """
+        import json as _json
+        record = dict(correction)
+        record.setdefault('iso', time.strftime('%Y-%m-%dT%H:%M:%S'))
+        record.setdefault('ts', time.time())
+        path = os.path.join("memory_pool", "profile_corrections.jsonl")
+        # 确保目录存在 (memory_pool 一般已存在)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # 追加单行写 — 原子性: JSONL 每行独立, 即便中断也不破坏其他行
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(_json.dumps(record, ensure_ascii=False) + '\n')
+
     def _load_profile(self) -> dict:
         import json as _json
         profile_file = os.path.join("jarvis_config", "sir_profile.json")

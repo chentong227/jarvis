@@ -63,6 +63,10 @@ __all__ = [
     '_strip_structural_tag_blocks',
     '_strip_structural_tags_only',
     '_is_forming_structural_tag',
+    '_MEMORY_UPDATE_RE',
+    '_MEMORY_UPDATE_SELF_CLOSING_RE',
+    'parse_memory_update_tags',
+    'execute_memory_updates',
     # P0+18-e.2 上游 Audio Guard
     '_CHINESE_CHAR_RE',
     '_sentence_is_chinese_lean',
@@ -223,22 +227,101 @@ def _box_newline(text: str) -> str:
 # 修法：抽统一 helper 把 5 类"结构化标签 + 内容"整块剥掉。所有 stream_chat /
 # stream_chat_cloud_followup 的 clean_full / final_clean / 收尾 buffer 都调它，
 # splitter 的 `is_forming_tag` 守门也用 _STRUCTURAL_TAGS 集合判断。
-_STRUCTURAL_TAGS = ('FAST_CALL', 'PROMISE', 'ACTIVATE_PLAN', 'CANCEL_PLAN', 'RESUME_PLAN')
+# 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计加 MEMORY_UPDATE — Sir 纠正记忆时
+# Jarvis 用 <MEMORY_UPDATE field="X" old="..." new="..."> 真做记录写盘 (而非空
+# 头话 "I've updated"). 见 jarvis_directives.py:memory_update_honesty.
+# MEMORY_UPDATE 是 self-closing tag (无 children) — block_re 也匹配单标签.
+_STRUCTURAL_TAGS = ('FAST_CALL', 'PROMISE', 'ACTIVATE_PLAN', 'CANCEL_PLAN',
+                     'RESUME_PLAN', 'MEMORY_UPDATE')
+# 🩹 [β.2.9.9] paired tags (必须闭合才剥, 半成态保留在 buffer 等下一 token)
 _STRUCTURAL_TAG_BLOCK_RE = re.compile(
-    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN)>.*?'
-    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN)>',
+    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)\b[^>]*>'
+    r'.*?'
+    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)>',
     re.DOTALL,
 )
-_STRUCTURAL_TAG_ANY_RE = re.compile(
-    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN)>'
+# 🩹 [β.2.9.9] MEMORY_UPDATE 单独支持 self-closing 形式 (<MEMORY_UPDATE attrs/>)
+_MEMORY_UPDATE_SELF_CLOSING_RE = re.compile(
+    r'<MEMORY_UPDATE\b[^>]*/>',
+    re.IGNORECASE,
 )
+_STRUCTURAL_TAG_ANY_RE = re.compile(
+    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)\b[^>]*/?>'
+)
+# 🩹 [β.2.9.9] MEMORY_UPDATE 单独 regex (self-closing 形式 + 含 attributes)
+_MEMORY_UPDATE_RE = re.compile(
+    r'<MEMORY_UPDATE\s+([^>]+?)\s*/?>',
+    re.IGNORECASE,
+)
+
+
+def parse_memory_update_tags(text: str) -> list:
+    """从 LLM 输出抽 <MEMORY_UPDATE field="X" old="A" new="B"> 标签.
+
+    返回 [{'field': str, 'old': str, 'new': str}, ...]
+    准则 5: 主脑只有发了 tag 才算真"更新", 否则被 directive 拦"已更新"假话.
+    """
+    if not text or '<MEMORY_UPDATE' not in text.upper():
+        return []
+    out = []
+    for m in _MEMORY_UPDATE_RE.finditer(text):
+        attrs_str = m.group(1)
+        attrs = {}
+        for am in re.finditer(r'(\w+)\s*=\s*"([^"]*)"', attrs_str):
+            attrs[am.group(1).lower()] = am.group(2)
+        if 'field' in attrs and 'new' in attrs:
+            out.append({
+                'field': attrs.get('field', ''),
+                'old': attrs.get('old', ''),
+                'new': attrs.get('new', ''),
+            })
+    return out
+
+
+def execute_memory_updates(updates: list, source: str = 'llm_tag') -> int:
+    """真执行 MEMORY_UPDATE: 写到 memory_pool/profile_corrections.jsonl.
+
+    准则 5: 这是主脑说"已更新"的唯一合法路径. 写完 Sir 在 dashboard 能看到.
+    返回成功写入数.
+    """
+    if not updates:
+        return 0
+    import json as _json
+    import os as _os
+    import time as _time
+    path = _os.path.join("memory_pool", "profile_corrections.jsonl")
+    _os.makedirs(_os.path.dirname(path), exist_ok=True)
+    n = 0
+    try:
+        with open(path, 'a', encoding='utf-8') as f:
+            for u in updates:
+                record = {
+                    'time': _time.strftime('%H:%M:%S'),
+                    'iso': _time.strftime('%Y-%m-%dT%H:%M:%S'),
+                    'ts': _time.time(),
+                    'source': source,
+                    'field': u.get('field', ''),
+                    'old': str(u.get('old', ''))[:200],
+                    'new': str(u.get('new', ''))[:200],
+                    'confidence': 1.0,  # 主脑显式发 tag 高置信
+                }
+                f.write(_json.dumps(record, ensure_ascii=False) + '\n')
+                n += 1
+    except Exception:
+        pass
+    return n
 
 
 def _strip_structural_tag_blocks(text: str) -> str:
     """整块剥离 <TAG>...</TAG> 内容（含中间 JSON / 任何 payload）。
     成对闭合的才剥；半成形态 `<PROMISE>...<EOF>` 不剥（保留在 buffer 里等下一片 token）。
+
+    🩹 [β.2.9.9] MEMORY_UPDATE 还可以是 self-closing 形式 (<MEMORY_UPDATE attrs/>),
+    单独跑一次自闭合 regex 也剥掉.
     """
-    return _STRUCTURAL_TAG_BLOCK_RE.sub('', text)
+    text = _STRUCTURAL_TAG_BLOCK_RE.sub('', text)
+    text = _MEMORY_UPDATE_SELF_CLOSING_RE.sub('', text)
+    return text
 
 
 def _strip_structural_tags_only(text: str) -> str:

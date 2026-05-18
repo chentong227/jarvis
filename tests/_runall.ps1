@@ -121,7 +121,8 @@ $tests = @(
     "_test_p0_plus_20_beta297_care_live",
     "_test_p0_plus_20_beta298_dashboard",
     "_test_p0_plus_20_beta299_commit_confidence",
-    "_test_p0_plus_20_beta299_concern_feedback"
+    "_test_p0_plus_20_beta299_concern_feedback",
+    "_test_p0_plus_20_beta299_focus_after_nudge"
 )
 
 foreach ($t in $tests) {

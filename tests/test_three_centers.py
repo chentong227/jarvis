@@ -423,15 +423,17 @@ class TestQuickClassifier(unittest.TestCase):
         cw.commitments = []
         cw._lock = threading.Lock()
         cw._to_24h = lambda h, m, ap: time.time() + 3600
+        # 🩹 [β.2.9.9] 时间确定性闸门: add_commitment 第 2 参数必须传可解析 deadline
+        # 或 predicate. 旧 test 传 "" 现在会被闸门拒 (转 PromiseLog soft). 改传时间锚.
         accepted_samples = [
-            "I will sleep at 11",
-            "我11点睡觉",
-            "I'll go to bed by midnight",
+            ("I will sleep at 11", "23:00"),
+            ("我11点睡觉", "23:00"),
+            ("I'll go to bed by midnight", "midnight"),
         ]
-        for sample in accepted_samples:
+        for sample, deadline in accepted_samples:
             with self.subTest(sample=sample):
                 cw.commitments = []
-                cw.add_commitment(sample, "")
+                cw.add_commitment(sample, deadline)
                 self.assertEqual(len(cw.commitments), 1,
                                  f"应被注册为承诺，但被拒绝: '{sample}'")
 

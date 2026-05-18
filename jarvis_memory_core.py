@@ -677,11 +677,26 @@ class FeedbackTracker:
     def __init__(self):
         self.signals = collections.deque(maxlen=200)
         self._correction_patterns = [
-            (r"\b(?:no|nope|not|不对|不是|错了|don't|doesn't|isn't)\b", "correction"),
-            (r"\b(?:what\?|huh\?|啥|什么\?|pardon|excuse me\?)\b", "confusion"),
-            (r"\b(?:thanks|thank you|谢谢|perfect|exactly|great|good|nice)\b", "positive"),
-            (r"\b(?:go on|continue|然后|接着|and then|what else)\b", "follow_up"),
-            (r"\b(?:ignore|skip|never mind|算了|不管|别管)\b", "dismiss"),
+            # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计: 旧 regex `\b` 对中文不可靠
+            # (中文无 ASCII boundary), Sir 自然中文"出错/澄清/两码事/忌讳"全漏 →
+            # CorrectionMemory 0 写入 → 主脑大言不惭"我已更新".
+            # 修 (准则 6 vocab 驱动, 不针对特定 case 硬编码):
+            #   中文 — 直接 substring (中文词无空格)
+            #   ASCII — 保留 \b 防 "not" 误命中 "another"
+            #   扩词表覆盖"其实/澄清/纠正/搞错/记错/出错/两码事/I meant/actually" 等
+            (r"(?:不对|不是|错了|搞错|记错|出错|两码事|两个事|其实|"
+             r"澄清|纠正|没那么|不是的|不要混淆|搞混)", "correction"),
+            (r"\b(?:no|nope|not|don't|doesn't|isn't|actually|clarify|"
+             r"correction|i meant|i'm not|you got it wrong|that's not)\b",
+             "correction"),
+            (r"\b(?:what\?|huh\?|pardon|excuse me\?)\b", "confusion"),
+            (r"(?:啥|什么意思|没听明白|没明白)", "confusion"),
+            (r"\b(?:thanks|thank you|perfect|exactly|great|good|nice)\b", "positive"),
+            (r"(?:谢谢|对了|完美|不错|很好|挺好)", "positive"),
+            (r"\b(?:go on|continue|and then|what else)\b", "follow_up"),
+            (r"(?:然后|接着)", "follow_up"),
+            (r"\b(?:ignore|skip|never mind)\b", "dismiss"),
+            (r"(?:算了|不管|别管)", "dismiss"),
         ]
         self._response_quality_scores = collections.deque(maxlen=100)
 

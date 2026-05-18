@@ -1080,6 +1080,16 @@ class ProactiveCareEngine(threading.Thread):
                 self.ledger.record_triggered(top_c.id)
             except Exception:
                 pass
+            # 🩹 [β.2.9.9-D / 2026-05-18] Sir 10:43 痛点: nudge 后无焦点模式
+            # → 开 60s soft focus, Sir 可直接口头回应 ("我中午会补觉") 不用喊 Jarvis
+            if channel == 'voice':
+                try:
+                    rs = getattr(self.worker, 'return_sentinel', None)
+                    if rs is not None and hasattr(rs, 'open_soft_focus'):
+                        rs.open_soft_focus(
+                            duration_s=60.0, reason='proactive_care')
+                except Exception as _fce:
+                    bg_log(f"⚠️ [ProactiveCare] open_soft_focus fail: {_fce}")
 
     def run(self) -> None:
         time.sleep(min(15, self.tick))
