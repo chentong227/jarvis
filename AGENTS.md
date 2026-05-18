@@ -306,13 +306,52 @@ Get-Content tests\last_run.json | Select-String "passed|failed|duration"
 
 ---
 
-## 12. 当前迭代状态（动态 — 由 TODO.md 维护）
+## 12. Agent Handoff Protocol — 接手 / 工作 / 交接 三阶段
+
+> Sir 2026-05-18 立 "黑箱化 + 可迭代" 目标 — 任何 agent 接手都能 (1) 读懂前面 (2) 知道自己 (3) 规划下一个 agent。本节是入口章程级速览, 详细协议 ↓
+
+- **详细协议** → `docs/AGENT_HANDOFF_PROTOCOL.md` (~250 行, 按需 Grep)
+- **KICKOFF 模板** → `docs/AGENT_KICKOFF_TEMPLATE.md` (~250 行, 完工交接时填空)
+
+### 12.1 三阶段速览
+
+| 阶段 | 触发 | 核心动作 | 完工标准 |
+|---|---|---|---|
+| **1 INTAKE** | 进窗口 | 按 §2 必读表读 5 个文件 (≤ 30 秒) | 心里能回答: 在哪个轨道 / 上轮完工了什么 / 我要做什么 |
+| **2 WORK** | KICKOFF 指定 sub-step | 7 步: 读 → grep → code → test → runall → commit → 双层报告 | sub-step / Session 完成且全测绿 |
+| **3 HANDOFF** | KICKOFF 全完工 | 滚 TODO → 写下一个 KICKOFF (按模板) → tag (大轮次) → 双层报告 Sir | 下一 agent 接手有完整指引 |
+
+### 12.2 写下一个 KICKOFF 的硬规 (阶段 3 核心)
+
+当前 agent 完工进入阶段 3 时, **必须**生成 `docs/AGENT_KICKOFF_<NEXT_TRACK>.md` 给下一 agent:
+
+| 内容 | 来源 |
+|---|---|
+| 进窗口必读顺序 | 复用 `AGENT_KICKOFF_TEMPLATE.md` 段落 |
+| 当前进度快照 | 从 TODO.md "上轮完工速览" 段提取 |
+| 当前 commit 链 | `git log --oneline -10` 输出 |
+| 下轮 Session 列表 | 按 design doc 拆 3-5 个, 每个 ~3-6h |
+| 第 1 个 sub-step 7 步 | 必须**具体到代码层 + 文件路径**, 不能模糊 |
+| 验收标准 | 可 grep / 可跑命令 的客观判定 |
+
+### 12.3 应急: 任务跑到一半交接
+
+不必等"完工", 但**必须** (详 `AGENT_HANDOFF_PROTOCOL.md §A`):
+
+1. 当前已完成 sub-step 独立 commit
+2. 在 `docs/AGENT_KICKOFF_<TRACK>.md` 顶部加 "🚧 当前卡点" 段 (≤ 5 行: 想做什么 / 卡在哪 / 尝试过什么 / 建议方向 / Sir 是否需介入)
+3. 跑全测确认已 commit 部分没破坏
+4. 报告 Sir 标注"需要交接"
+
+---
+
+## 13. 当前迭代状态（动态 — 由 TODO.md 维护）
 
 - **上轮完工**：P0+19 (Nerve 拆分 17479→324 / 16 新文件)
 - **当前轨 1**：P0+20-α（拆分收尾 + 4 缺口修复）
 - **当前轨 2**：P0+20-β.0（Prompt 重构 + Directive Registry / 详 `docs/PROMPT_REFACTOR_PLAN.md`）
-- **本轮 (P0+20-W)**：本规范化协议本身（trace_id 体系 + 测试规范 + commit 模板 + 本文件）
+- **当前轨 3**：P0+20-β.3（跨 agent 工程纪律可携带性 + INTEGRITY_STACK 7 层架构 / 详 `docs/JARVIS_INTEGRITY_STACK.md` + `docs/AGENT_HANDOFF_PROTOCOL.md`）
 
 ---
 
-*本文件由 `P0+20-W.4 / 2026-05-16` 创建。变更走 `docs(P0+X-W): AGENTS.md vN.Y` 类 commit。*
+*本文件由 `P0+20-W.4 / 2026-05-16` 创建, `P0+20-β.3.2 / 2026-05-18` 加 §12 Agent Handoff Protocol 速览 + §9.2 双层表达 + §2 跨 agent 引用. 变更走 `docs(P0+X-Y.Z): AGENTS.md vN.Y` 类 commit。*
