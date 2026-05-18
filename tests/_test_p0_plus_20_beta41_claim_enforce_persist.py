@@ -80,9 +80,10 @@ class TestWriteAuditEntry(unittest.TestCase):
         self.assertEqual(content.strip(), '')
 
     def test_write_multiple_appends(self):
+        # β.4.2-hotfix: time kind 已豁免 audit, 此 case 改用 state (普通 unverified kind) 测多写
         c1 = _FakeClaim('past_action', 'A')
         c2 = _FakeClaim('past_action', 'B')
-        c3 = _FakeClaim('time', '17:30')
+        c3 = _FakeClaim('state', 'dashboard active')
         self.write('t1', c1, found=False, audit_path=self.path)
         self.write('t1', c2, found=False, audit_path=self.path)
         self.write('t1', c3, found=False, audit_path=self.path)
@@ -136,7 +137,8 @@ class TestReadRecentUnverified(unittest.TestCase):
 
     def test_read_returns_only_unverified(self):
         # 全是 unverified (verified 本身不写)
-        for i, kind in enumerate(['past_action', 'time', 'count']):
+        # β.4.2-hotfix: 'time' 改 'state' 避开 hotfix 豁免 (time kind 不进 audit)
+        for i, kind in enumerate(['past_action', 'state', 'count']):
             self.write(f't{i}', _FakeClaim(kind, f'claim_{i}'),
                           found=False, audit_path=self.path)
         entries = self.read(audit_path=self.path)
