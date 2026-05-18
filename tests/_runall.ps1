@@ -118,7 +118,8 @@ $tests = @(
     "_test_p0_plus_20_beta287_claim_tracer",
     "_test_p0_plus_20_beta297_inconsistency_subject",
     "_test_p0_plus_20_beta297_timeanchor",
-    "_test_p0_plus_20_beta297_care_live"
+    "_test_p0_plus_20_beta297_care_live",
+    "_test_p0_plus_20_beta298_dashboard"
 )
 
 foreach ($t in $tests) {
