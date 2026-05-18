@@ -1,0 +1,116 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-18T19:20:00",
+    "marker": "P0+20-β.4.3.1",
+    "purpose": "INTEGRITY_STACK L1 — Claim Classifier vocab (准则 6.5)",
+    "source_origin": "seed from β.2.8.7 + β.3.0 extract_claims kind 命名 + Sir KICKOFF 6 类设计",
+    "edit_via": "scripts/claim_classify_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 扩展 type/keyword",
+    "consumer": "jarvis_claim_classifier.classify",
+    "schema_note": "每条 pattern = 1 个 (claim_type, kinds_hard_map, keywords) 三元组. 多 pattern 同 claim_type 在 loader 合并. kinds_hard_map 中 kind 命中 → 直接返该 claim_type (优先级最高). keywords 命中 → 也返该 claim_type. 都没命中 → 'Unknown'.",
+    "claim_types_canonical": ["Past", "Future", "State", "Recall", "Social", "Tool"],
+    "design_note": "kind ('time'/'past_action'/'count'/'percent'/'quote'/'multiplier') 是 extract_claims 产出, claim_type ('Past'/'Future'/...) 是 L1 分类. 前者细粒度命中 regex, 后者粗粒度供 L2 evidence_requirements 表查."
+  },
+  "patterns": [
+    {
+      "id": "past_default",
+      "claim_type": "Past",
+      "kinds_hard_map": ["past_action"],
+      "keywords": [
+        "already", "i've", "i have", "i opened", "i launched", "i started",
+        "i closed", "i muted", "i sent", "i set", "i updated", "i saved",
+        "i deleted", "i cancelled",
+        "已经", "已", "完成了", "做完了", "刚才完成", "刚搞定", "处理完了"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Past-action claim: 主脑声称做过某事 → 必须 tool ✅ 验证"
+    },
+    {
+      "id": "future_default",
+      "claim_type": "Future",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i will", "i'll", "i plan", "i'm going to", "let me",
+        "i'll try", "i'll see", "i can take", "i can do", "i'll set",
+        "i'll look", "i'll check", "i'll get back", "let me know",
+        "我会", "我准备", "我打算", "我之后", "稍后我", "我去做",
+        "我看看", "我尝试", "我帮你", "我帮您", "等我"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Future-tense claim: 主脑承诺将做某事 → PromiseLog/<PROMISE> tag 记录即 evidence"
+    },
+    {
+      "id": "state_time_default",
+      "claim_type": "State",
+      "kinds_hard_map": ["time"],
+      "keywords": [],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Time claim (报当前时间) 归 State; evidence 路径 = prompt SYSTEM CLOCK ±2min (β.4.2 hotfix 治本)"
+    },
+    {
+      "id": "state_quant_default",
+      "claim_type": "State",
+      "kinds_hard_map": ["percent", "multiplier", "count"],
+      "keywords": [
+        "is currently", "currently", "right now",
+        "正在", "处于", "当前", "目前", "现在",
+        "状态是", "数据显示", "stats show"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "State 量化类 (百分比/倍数/计数/状态描述); evidence = tool_results / STM / LTM 任一命中"
+    },
+    {
+      "id": "recall_default",
+      "claim_type": "Recall",
+      "kinds_hard_map": ["quote"],
+      "keywords": [
+        "you said", "you told me", "you mentioned", "you noted",
+        "as you said", "as you mentioned", "you recall",
+        "您说", "您说过", "您告诉我", "您提到", "您表示",
+        "我记得您", "正如您说", "您之前说"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Recall claim (引用 Sir 原话/历史): evidence = STM/LTM 命中"
+    },
+    {
+      "id": "social_default",
+      "claim_type": "Social",
+      "kinds_hard_map": [],
+      "keywords": [
+        "you like", "you prefer", "you enjoy", "you tend to", "you usually",
+        "you always", "you never", "you typically", "sir likes", "sir prefers",
+        "您喜欢", "您偏爱", "您习惯", "您通常", "您总是", "您从不", "您往往"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Social claim (Sir 喜好/偏好/习惯): evidence = sir_profile (LTM) 命中"
+    },
+    {
+      "id": "tool_default",
+      "claim_type": "Tool",
+      "kinds_hard_map": [],
+      "keywords": [
+        "opening", "launching", "calling", "executing", "running",
+        "fetching", "querying", "pulling up", "checking",
+        "正在打开", "正在调用", "正在执行", "正在运行", "正在查",
+        "在打开", "在调用", "在查", "帮您打开", "帮您查"
+      ],
+      "state": "active",
+      "source": "seed",
+      "created_at": 1779999600.0,
+      "note": "Tool 调用进行时 claim: evidence = 本轮 tool_results 任何命中"
+    }
+  ]
+}
