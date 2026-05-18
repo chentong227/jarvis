@@ -133,7 +133,8 @@ $tests = @(
     "_test_p0_plus_20_beta34_vocab5_response_classify_persist",
     "_test_p0_plus_20_beta34_vocab6_feedback_persist",
     "_test_p0_plus_20_beta34_vocab7_concern_keywords_persist",
-    "_test_p0_plus_20_beta41_claim_enforce_persist"
+    "_test_p0_plus_20_beta41_claim_enforce_persist",
+    "_test_p0_plus_20_beta36_docs_references_valid"
 )
 
 foreach ($t in $tests) {

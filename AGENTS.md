@@ -136,7 +136,7 @@ rg "sess_20260516_092307_35344" docs/runtime_logs/ | wc -l
 5. **不动 `jarvis_config/sir_profile.json`** 直接 `Write`：必须走 `ProfileCard.apply_correction` API
 6. **不主动 `git push`**：见 §5
 7. **不创建 `README.md` 之外的对外文档**，除非 Sir 明确同意
-8. **不重写 PERSONA**：`JARVIS_CORE_PERSONA`（central_nerve.py:129）是 Sir 的 IP，改 PERSONA 必须 Sir 显式同意
+8. **不重写 PERSONA**：`JARVIS_CORE_PERSONA`（`jarvis_central_nerve.py:129`）是 Sir 的 IP，改 PERSONA 必须 Sir 显式同意
 
 ---
 
