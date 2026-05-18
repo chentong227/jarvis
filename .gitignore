@@ -60,6 +60,10 @@ memory_pool/plans.json
 memory_pool/jarvis_promise_log.json
 # [P0+20-β.2.8.6 / 2026-05-17] HealthProbe 自检趋势数据 — runtime 时间序列
 memory_pool/jarvis_health_history.jsonl
+# [P0+20-β.4.5.1 / 2026-05-18] ClaimStatsDumper 跨进程持久化: in-memory counter snapshot
+memory_pool/claim_stats.json
+# memory_pool 下的 .bak 文件 (jsonl tainted 备份 / promise_log 归档备份等 runtime 残留)
+memory_pool/*.bak
 jarvis_config/screenshots/
 jarvis_config/user_status_history/
 jarvis_config/user_status_ledger.json

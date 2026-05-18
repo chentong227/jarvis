@@ -600,6 +600,26 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.4.5.1 / 2026-05-18] Sir Session 4: ClaimStatsDumper daemon
+        # 60s tick dump _CLAIM_STATS → memory_pool/claim_stats.json,
+        # 让 dashboard L6 (β.4.4) 跨进程读到 verify_rate
+        # 模块: jarvis_integrity_reflector (Session 4 主文件,
+        #       claim_tracer 保持职责单一只做 trace, 反思/持久化分到本文件)
+        self.claim_stats_dumper = None
+        try:
+            from jarvis_integrity_reflector import get_default_claim_stats_dumper
+            self.claim_stats_dumper = get_default_claim_stats_dumper(
+                tick_seconds=60.0,
+            )
+            if self.claim_stats_dumper is not None and not self.claim_stats_dumper.is_alive():
+                self.claim_stats_dumper.start()
+        except Exception as _csd_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ClaimStatsDumper] 初始化失败（非致命）：{_csd_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
