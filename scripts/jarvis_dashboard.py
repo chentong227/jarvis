@@ -2414,7 +2414,9 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                 extra = {'proposed_value': item.get('proposed_value')}
 
             def _do():
-                # 直接执行不再问确认 (拍板就拍板)
+                # 🩹 [β.5.24-fix2 / 2026-05-19] Sir 02:17 反馈"同意默契没反应".
+                # Root cause: 我去掉了完成弹窗, status bar 反馈不显眼.
+                # 修法: 加回 messagebox.showinfo 完成弹窗 (但保持无确认弹窗 - 拍板就拍板)
                 def _on_done(ok, out):
                     short = (out or '').strip().splitlines()
                     first = short[0] if short else ''
@@ -2423,6 +2425,13 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                     else:
                         msg = f'❌ {verb_zh}失败: {first[:60]}'
                     root.after(0, lambda: _set_status(msg, ok))
+                    # 完成弹窗 (让 Sir 一定看到)
+                    root.after(50, lambda: messagebox.showinfo(
+                        f'{verb_zh}结果',
+                        f"对 \"{preview[:60]}\" {verb_zh}:\n\n"
+                        f"{'✓ 成功' if ok else '❌ 失败'}\n\n"
+                        f"脚本输出:\n{(out or '(无输出)')[:400]}"
+                    ))
                     # 1.5s 后强制刷新让 Sir 看到列表变化
                     root.after(1500, _do_refresh)
 
