@@ -3526,6 +3526,10 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             return f"Sir has been working for {int(work_duration)} minutes through multiple reminders. He is clearly deep in something important. DO NOT tell him to take a break. Express gentle, loyal concern — acknowledge his dedication and ask if there's anything you can help with to wrap up faster. Sound like a loyal companion. Two sentences max. Under 30 words. You ARE allowed to ask a question."
 
     def stream_nudge(self, nudge_context: dict, stm_context: str, ltm_context: str):
+        # 🩹 [β.5.19-A / 2026-05-20] 进 stream_nudge 时复位 silence flag.
+        # 让上层 (jarvis_worker) 准确区分 "主脑选 [SILENCE]" (正常静默) vs
+        # "empty_reply" (BUG, 主脑该说但返空) — 避免 NoSound 警告 false alarm.
+        self._last_nudge_was_silence = False
         self.subtitle_queue.put(("clear", ""))
         import re
         nudge_type = nudge_context.get("type", "unknown")
@@ -4106,6 +4110,9 @@ No ZH translation. No closing remark. Nothing else.
             # [β.5.0-B / 2026-05-19] reaction_space: 主脑选 [SILENCE] → 不出声 + 不字幕 +
             # publish self_silence_chose 到 SWM 让下一轮主脑知道 "我刚刚选过沉默".
             if _silence_chosen:
+                # 🩹 [β.5.19-A / 2026-05-20] 标 silence flag, 让上层 worker 不报
+                # `[Nudge/NoSound] empty_reply` 误警 (实是预期 reaction_space 静默).
+                self._last_nudge_was_silence = True
                 print(_box_newline("[SILENCE — 主脑选择沉默, 看 SWM evidence 不发声]"))
                 print("╚" + "═"*63 + "\n")
                 try:

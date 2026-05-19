@@ -2886,27 +2886,48 @@ class JarvisWorkerThread(QThread):
                             except Exception:
                                 pass
 
-                        # [P0+9 / 2026-05-15] 失败/为空都打日志 + 把"未出声"信号 publish 到 event_bus，
-                        # 让主脑下一轮 prompt 能看到"刚刚有个 nudge 计划但没出来"
+                        # [P0+9 / 2026-05-15] 失败/为空都打日志 + 把"未出声"信号 publish 到 event_bus
+                        # 🩹 [β.5.19-A / 2026-05-20] 分级 log + publish:
+                        #   主脑 [SILENCE] (β.5.0-B reaction_space) — 预期静默, info 级,
+                        #     etype='nudge_silenced' (区别于真异常)
+                        #   empty_reply / exception — 真异常, ⚠️ warn 级, etype='nudge_no_sound'
+                        # 治根 5/19 真机 audit false alarm: 4 处 empty_reply 实是主脑 [SILENCE]
+                        # (β.5.0-B 后预期), 被误归类为 BUG 警告. β.5.19 修后 audit 准确.
                         if not nudge_reply:
+                            _silenced_intent = False
+                            try:
+                                _silenced_intent = getattr(
+                                    self.chat_bypass, '_last_nudge_was_silence', False)
+                            except Exception:
+                                _silenced_intent = False
                             try:
                                 from jarvis_utils import bg_log as _nudge_bg_log
-                                _nudge_bg_log(
-                                    f"⚠️ [Nudge/NoSound] type={nudge_type} 未出声 — "
-                                    f"reason={'exception:' + _nudge_exc_repr if _nudge_exc_repr else 'empty_reply'}"
-                                )
+                                if _silenced_intent and not _nudge_exc_repr:
+                                    # 主脑选 [SILENCE]: chat_bypass 已发 `[Nudge/Silence]`
+                                    # info log + publish self_critique. worker 不再重报.
+                                    pass
+                                else:
+                                    _nudge_bg_log(
+                                        f"⚠️ [Nudge/NoSound] type={nudge_type} 未出声 — "
+                                        f"reason={'exception:' + _nudge_exc_repr if _nudge_exc_repr else 'empty_reply'}"
+                                    )
                             except Exception:
                                 pass
                             try:
                                 bus = getattr(self.jarvis, 'event_bus', None)
                                 if bus is not None:
-                                    bus.publish(
-                                        etype='nudge_no_sound',
-                                        description=f"{nudge_type}: {_nudge_exc_repr or 'empty_reply'}",
-                                        source='nudge_dispatch',
-                                        metadata={'nudge_type': nudge_type,
-                                                  'exception': _nudge_exc_repr},
-                                    )
+                                    if _silenced_intent and not _nudge_exc_repr:
+                                        # 主脑主动选 [SILENCE]: chat_bypass 已 publish
+                                        # 'self_critique' 进 SWM. 此处不重复.
+                                        pass
+                                    else:
+                                        bus.publish(
+                                            etype='nudge_no_sound',
+                                            description=f"{nudge_type}: {_nudge_exc_repr or 'empty_reply'}",
+                                            source='nudge_dispatch',
+                                            metadata={'nudge_type': nudge_type,
+                                                      'exception': _nudge_exc_repr},
+                                        )
                             except Exception:
                                 pass
 
