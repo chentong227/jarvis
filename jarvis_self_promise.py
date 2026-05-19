@@ -120,30 +120,102 @@ _REJECT_PATTERNS = [
 # remind/keep watch/integrate/ensure/track/守候/留意/持续) 但无时间锚 → 注册成
 # concerns_ledger.notes_for_self 或 PlanLedger soft action (不走 commitment_watcher 定时
 # nudge 因为没时间, 但下次 _assemble_prompt 时 LLM 能看到 "I owe Sir X 长期监督")
-_EN_SOFT_PROMISE_VERBS = (
+#
+# 🩹 [β.5.19-C / 2026-05-20] Sir 准则 6 vocab 持久化第 1 维.
+#   - SOFT_PROMISE_VERBS 从 source list 迁 memory_pool/promise_soft_vocab.json
+#   - py 仅留 _SEED_*_SOFT_PROMISE_VERBS 作 fallback (json 损坏 / 首次启动)
+#   - _get_compiled_soft_patterns() 带 mtime cache, vocab 变自动 recompile regex
+#   - CLI scripts/promise_vocab_dump.py 让 Sir 加 verb 不动代码
+#   - L7 reflector LLM-propose 新 verb 入 review queue 待后续轨道
+#   - 注: 复杂 hard PROMISE_PATTERNS regex 留源码 (准则 6 递归边界, 系统级 regex)
+_SEED_EN_SOFT_PROMISE_VERBS = (
     'monitor', 'remind', 'keep an? eye on', 'keep watch over', 'integrate reminders',
     'issue proactive', 'ensure', 'track', 'watch over', 'stay vigilant',
     'follow up', 'check in', 'keep tabs on',
 )
-_ZH_SOFT_PROMISE_VERBS = (
+_SEED_ZH_SOFT_PROMISE_VERBS = (
     '持续监督', '持续提醒', '留意', '关注', '守候', '守护', '保持关注', '主动提醒',
     '加入提醒', '集成提醒', '在对话中提醒', '主动提示', '盯着', '关照', '看着',
     '记下', '记着', '记住', '不会忘', '不会遗忘',
 )
 
-_EN_SOFT_PATTERN = re.compile(
-    r"(?P<subject>\bi\s*(?:will|shall|'ll|am\s+going\s+to|am\s+committed\s+to|am\s+about\s+to))\s+"
-    r"(?P<action>[^.!?]*?(?:"
-    + '|'.join(_EN_SOFT_PROMISE_VERBS) +
-    r")[^.!?]{0,80})",
-    re.IGNORECASE,
-)
-_ZH_SOFT_PATTERN = re.compile(
-    r"(?P<subject>我(?:会|要|将|得|打算|答应|确保|保证))"
-    r"(?P<action>[^。！？]{0,30}?(?:"
-    + '|'.join(_ZH_SOFT_PROMISE_VERBS) +
-    r")[^。！？]{0,40})"
-)
+import os as _sp_os
+import json as _sp_json
+
+_PROMISE_VOCAB_PATH = _sp_os.path.join(
+    _sp_os.path.dirname(_sp_os.path.abspath(__file__)),
+    'memory_pool', 'promise_soft_vocab.json')
+
+_sp_vocab_lock = threading.Lock()
+_sp_vocab_cache: dict = {}
+_sp_vocab_mtime: float = 0.0
+_sp_compiled_en = None
+_sp_compiled_zh = None
+
+
+def _load_promise_vocab() -> tuple:
+    """读 memory_pool/promise_soft_vocab.json (mtime cache).
+
+    Returns: (en_verbs_tuple, zh_verbs_tuple)
+    Fail-safe: 文件不存在 / 损坏 → 返 SEED fallback.
+    """
+    global _sp_vocab_cache, _sp_vocab_mtime
+    fallback = (_SEED_EN_SOFT_PROMISE_VERBS, _SEED_ZH_SOFT_PROMISE_VERBS)
+    try:
+        if not _sp_os.path.exists(_PROMISE_VOCAB_PATH):
+            return fallback
+        mtime = _sp_os.path.getmtime(_PROMISE_VOCAB_PATH)
+        with _sp_vocab_lock:
+            if _sp_vocab_cache and mtime == _sp_vocab_mtime:
+                return (_sp_vocab_cache['en'], _sp_vocab_cache['zh'])
+            with open(_PROMISE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = _sp_json.load(f)
+            groups = data.get('groups', {})
+            en = tuple(groups.get('en_soft_verbs', {}).get(
+                'verbs', _SEED_EN_SOFT_PROMISE_VERBS))
+            zh = tuple(groups.get('zh_soft_verbs', {}).get(
+                'verbs', _SEED_ZH_SOFT_PROMISE_VERBS))
+            _sp_vocab_cache = {'en': en, 'zh': zh}
+            _sp_vocab_mtime = mtime
+            return (en, zh)
+    except Exception:
+        return fallback
+
+
+def _get_compiled_soft_patterns() -> tuple:
+    """[β.5.19-C] vocab-driven _EN_SOFT_PATTERN / _ZH_SOFT_PATTERN 编译 cache.
+
+    Returns: (en_pattern, zh_pattern) compiled re objects.
+    vocab mtime 变 → recompile; 否则返 cache 编译结果 (零开销).
+    """
+    global _sp_compiled_en, _sp_compiled_zh
+    en_verbs, zh_verbs = _load_promise_vocab()
+    # cache key = vocab mtime, _load_promise_vocab 内已更新 _sp_vocab_mtime
+    with _sp_vocab_lock:
+        cache_key = getattr(_get_compiled_soft_patterns, '_compiled_mtime', None)
+        if cache_key == _sp_vocab_mtime and _sp_compiled_en is not None:
+            return (_sp_compiled_en, _sp_compiled_zh)
+        _sp_compiled_en = re.compile(
+            r"(?P<subject>\bi\s*(?:will|shall|'ll|am\s+going\s+to|am\s+committed\s+to|am\s+about\s+to))\s+"
+            r"(?P<action>[^.!?]*?(?:"
+            + '|'.join(en_verbs) +
+            r")[^.!?]{0,80})",
+            re.IGNORECASE,
+        )
+        _sp_compiled_zh = re.compile(
+            r"(?P<subject>我(?:会|要|将|得|打算|答应|确保|保证))"
+            r"(?P<action>[^。！？]{0,30}?(?:"
+            + '|'.join(zh_verbs) +
+            r")[^。！？]{0,40})"
+        )
+        _get_compiled_soft_patterns._compiled_mtime = _sp_vocab_mtime
+        return (_sp_compiled_en, _sp_compiled_zh)
+
+
+# 旧符号兼容: vocab-driven 初始编译, mtime cache 之后自动 reload.
+# 新代码请直接调 _get_compiled_soft_patterns().
+_EN_SOFT_PROMISE_VERBS, _ZH_SOFT_PROMISE_VERBS = _load_promise_vocab()
+_EN_SOFT_PATTERN, _ZH_SOFT_PATTERN = _get_compiled_soft_patterns()
 
 
 # ============================================================
@@ -217,8 +289,10 @@ class SelfPromiseDetector:
         # dedup 用 startswith/包含：避免 hard "I will remind you" + soft "I will remind you at 23:00" 双计
         hard_descs_en = [r.get('description', '').lower() for r in results if r.get('lang') == 'en']
         hard_descs_zh = [r.get('description', '') for r in results if r.get('lang') == 'zh']
+        # [β.5.19-C] 取 mtime-cached compiled patterns (vocab 变自动 recompile)
+        _en_pat, _zh_pat = _get_compiled_soft_patterns()
         # EN soft
-        for m in _EN_SOFT_PATTERN.finditer(text):
+        for m in _en_pat.finditer(text):
             action = m.groupdict().get('action', '').strip()
             if not action or len(action) < 5:
                 continue
@@ -235,7 +309,7 @@ class SelfPromiseDetector:
                 'kind': 'soft',
             })
         # ZH soft
-        for m in _ZH_SOFT_PATTERN.finditer(text):
+        for m in _zh_pat.finditer(text):
             action = m.groupdict().get('action', '').strip()
             if not action or len(action) < 4:
                 continue

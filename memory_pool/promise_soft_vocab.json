@@ -1,0 +1,59 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-20T00:36:00+08:00",
+  "purpose": "jarvis_self_promise.SelfPromiseDetector 的 soft promise (无时间锚) 检测词表. β.2.7.8 立: Sir 实测发现 Jarvis 说 'I will integrate reminders into our dialogue' 类承诺但无具体时间被原 hard promise regex (要求时间锚) 漏判. 加 soft 检测路径用动词词表拼 regex.",
+  "design_note": "准则 6 vocab 持久化第 1 维: 动词词表不再写死 .py source. Sir 实测发现新动词时走 CLI scripts/promise_vocab_dump.py 加, 不动代码. 词表变 → mtime cache 自动 recompile regex. 注: 复杂 hard PROMISE_PATTERNS regex 留源码 (准则 6 递归边界, 系统级常量类).",
+  "groups": {
+    "en_soft_verbs": {
+      "description": "英文 soft promise 动词 (无时间锚) — 拼进 _EN_SOFT_PATTERN regex",
+      "verbs": [
+        "monitor",
+        "remind",
+        "keep an? eye on",
+        "keep watch over",
+        "integrate reminders",
+        "issue proactive",
+        "ensure",
+        "track",
+        "watch over",
+        "stay vigilant",
+        "follow up",
+        "check in",
+        "keep tabs on"
+      ]
+    },
+    "zh_soft_verbs": {
+      "description": "中文 soft promise 动词 (无时间锚) — 拼进 _ZH_SOFT_PATTERN regex",
+      "verbs": [
+        "持续监督",
+        "持续提醒",
+        "留意",
+        "关注",
+        "守候",
+        "守护",
+        "保持关注",
+        "主动提醒",
+        "加入提醒",
+        "集成提醒",
+        "在对话中提醒",
+        "主动提示",
+        "盯着",
+        "关照",
+        "看着",
+        "记下",
+        "记着",
+        "记住",
+        "不会忘",
+        "不会遗忘"
+      ]
+    }
+  },
+  "history": [
+    {
+      "ts": "2026-05-20T00:36:00+08:00",
+      "marker": "β.5.19-C",
+      "action": "init",
+      "note": "从 jarvis_self_promise.py 源码迁移 _EN_SOFT_PROMISE_VERBS + _ZH_SOFT_PROMISE_VERBS 到此 json. py 仅保留 _SEED_*_SOFT_PROMISE_VERBS fallback. 复杂 PROMISE_PATTERNS regex 留源码 (递归边界)."
+    }
+  ]
+}
