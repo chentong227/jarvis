@@ -101,13 +101,17 @@ class TestRule65VocabHardcoded(unittest.TestCase):
     ALLOW_LIST_VOCAB_HARDCODED = [
         # P0+20-β.3.0 Session 0 剩余待迁:
         ('jarvis_utils.py', '_OPEN_THREAD_PATTERNS'),       # 承诺动词正则 — 待迁 open_thread_vocab.json
-        ('jarvis_self_promise.py', '_EN_PROMISE_PATTERNS'),  # 英文承诺 — 待迁 self_promise_vocab.json
-        ('jarvis_self_promise.py', '_ZH_PROMISE_PATTERNS'),  # 中文承诺 — 同上
-        ('jarvis_self_promise.py', '_REJECT_PATTERNS'),      # 拒绝模式 — 待迁 reject_vocab.json
-        ('jarvis_skill_registry.py', '_CLAIM_PATTERNS'),     # claim 提取 — 待迁 claim_vocab.json
-        ('jarvis_predicate.py', '_WAKE_KEYWORDS'),           # 唤醒词 — 待迁 predicate_wake_vocab.json
-        ('jarvis_predicate.py', '_EXPORT_KEYWORDS'),         # 导出词 — 同上
-        ('jarvis_predicate.py', '_PREMIERE_KEYWORDS'),       # premiere 词 — 同上
+        ('jarvis_self_promise.py', '_EN_PROMISE_PATTERNS'),  # 英文 hard 承诺 regex (准则 6 递归边界, 系统级 regex 留源码)
+        ('jarvis_self_promise.py', '_ZH_PROMISE_PATTERNS'),  # 中文 hard 承诺 regex (递归边界)
+        ('jarvis_self_promise.py', '_REJECT_PATTERNS'),      # 拒绝模式 regex (递归边界)
+        ('jarvis_skill_registry.py', '_CLAIM_PATTERNS'),     # claim 提取 regex (递归边界)
+        # 🩹 [β.5.19-B / 2026-05-20] 移除: jarvis_predicate.py _WAKE/EXPORT/PREMIERE_KEYWORDS
+        # 已迁 memory_pool/predicate_keywords.json + scripts/predicate_vocab_dump.py.
+        # 兼容符号 _WAKE_KEYWORDS 等仍在源码 (= _SEED_*) 不算违规, ratchet 收紧.
+        # 🩹 [β.5.19-C / 2026-05-20] 同步: jarvis_self_promise.py SOFT_PROMISE_VERBS
+        # 已迁 memory_pool/promise_soft_vocab.json + scripts/promise_vocab_dump.py.
+        # SOFT_PROMISE_VERBS 不在 _PATTERNS / _KEYWORDS scanner 命中范围 (变量名是
+        # `_*_SOFT_PROMISE_VERBS`), 所以无需 ALLOW_LIST 项, 自然合规.
         ('scripts/jarvis_dashboard.py', '_EVENT_PATTERNS'),       # dashboard CLI 事件 regex (CLI 工具, 优先级低)
         ('scripts/proactive_care_tail.py', '_EVENT_PATTERNS'),    # proactive_care 后台事件 regex (CLI 工具, 优先级低)
     ]
@@ -242,20 +246,26 @@ class TestRuleSixFiveCharter(unittest.TestCase):
     """AGENTS.md 准则 6.5 文档自检 — 章程不能被悄悄改没."""
 
     def test_charter_rule_six_five_present(self):
-        """AGENTS.md 必须含准则 6.5 段落 — 立项至今不可移除."""
+        """AGENTS.md 必须含准则 6 (含 6.5 工程方法论) 关键字 — 立项至今语义不可移除.
+
+        🩹 [β.5.18 / 2026-05-19] β.5 时 Sir 把准则 6.5 合并到准则 6 (拒绝硬编码 +
+        三维耦合 + 工程方法论). '动态架构必须' 老表达改写为 '任何层级架构 (...) 必须满
+        足 3 个硬规'. 同语义, 关键字同步演化.
+        """
         path = os.path.join(ROOT, 'AGENTS.md')
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
         for required in [
-            '准则 6.5',
-            '动态架构必须',
+            '准则 6',  # 准则 6 + 工程方法论 (合并的 6.5)
+            '任何层级架构',  # 替代老 '动态架构必须' 表达 (语义相同)
             '持久化',
             'CLI 可改',
             'L7 Reflector LLM-propose',
         ]:
             self.assertIn(
                 required, content,
-                f"AGENTS.md 必须含准则 6.5 关键字 '{required}' (Sir 2026-05-18 12:57 立).")
+                f"AGENTS.md 必须含准则 6 工程方法论关键字 '{required}' "
+                f"(Sir 2026-05-18 12:57 立 / β.5.18 同步演化).")
 
     def test_charter_double_layer_reporting_present(self):
         """AGENTS.md §9.2 双层表达硬规必须存在."""

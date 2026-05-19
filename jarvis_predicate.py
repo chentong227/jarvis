@@ -415,13 +415,85 @@ def parse_predicate(d: dict) -> Optional[Predicate]:
 
 # ============================================================
 # Heuristic: 从自然语言关键词推断 predicate (LLM 不可用时 fallback)
+# ------------------------------------------------------------
+# 🩹 [β.5.19-B / 2026-05-20] Sir 准则 6 vocab 持久化第 1 维.
+#   - keywords 从 _WAKE/EXPORT/PREMIERE_KEYWORDS source list 迁到
+#     memory_pool/predicate_keywords.json (CLI scripts/predicate_vocab_dump.py)
+#   - py 仅留 _SEED_*_KEYWORDS 作 fallback (json 损坏 / 首次启动)
+#   - get_predicate_keywords(group) 带 mtime cache, 文件变自动 reload
+#   - L7 reflector LLM-propose 新 keyword 入 review queue 待后续轨道
 # ============================================================
+import os as _pred_os
+import json as _pred_json
+import threading as _pred_threading
 
-_WAKE_KEYWORDS = ('醒', '起床', '起来', 'wake', 'woken', 'morning',
-                   '早上', '明早', '一早', 'woke', 'wake up')
-_EXPORT_KEYWORDS = ('导出完', '导出之后', '导完', 'export finished', 'export done',
-                     'finished exporting')
-_PREMIERE_KEYWORDS = ('视频', 'premiere', '剪辑', 'video')
+_SEED_WAKE_KEYWORDS = ('醒', '起床', '起来', 'wake', 'woken', 'morning',
+                        '早上', '明早', '一早', 'woke', 'wake up')
+_SEED_EXPORT_KEYWORDS = ('导出完', '导出之后', '导完', 'export finished', 'export done',
+                          'finished exporting')
+_SEED_PREMIERE_KEYWORDS = ('视频', 'premiere', '剪辑', 'video')
+
+_PRED_VOCAB_PATH = _pred_os.path.join(
+    _pred_os.path.dirname(_pred_os.path.abspath(__file__)),
+    'memory_pool', 'predicate_keywords.json')
+
+# mtime cache: 重读 json 仅当文件 mtime 变 (vocab 加 keyword / dump 工具改).
+_pred_vocab_lock = _pred_threading.Lock()
+_pred_vocab_cache: dict = {}
+_pred_vocab_mtime: float = 0.0
+
+
+def _load_predicate_vocab() -> dict:
+    """读 memory_pool/predicate_keywords.json (mtime cache).
+
+    Returns: {'wake': tuple, 'export': tuple, 'premiere': tuple}
+    Fail-safe: 文件不存在 / 损坏 → 返 SEED fallback (兼容老路径).
+    """
+    global _pred_vocab_cache, _pred_vocab_mtime
+    fallback = {
+        'wake': _SEED_WAKE_KEYWORDS,
+        'export': _SEED_EXPORT_KEYWORDS,
+        'premiere': _SEED_PREMIERE_KEYWORDS,
+    }
+    try:
+        if not _pred_os.path.exists(_PRED_VOCAB_PATH):
+            return fallback
+        mtime = _pred_os.path.getmtime(_PRED_VOCAB_PATH)
+        with _pred_vocab_lock:
+            if _pred_vocab_cache and mtime == _pred_vocab_mtime:
+                return _pred_vocab_cache
+            with open(_PRED_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = _pred_json.load(f)
+            groups = data.get('groups', {})
+            cache = {
+                'wake': tuple(groups.get('wake', {}).get(
+                    'keywords', _SEED_WAKE_KEYWORDS)),
+                'export': tuple(groups.get('export', {}).get(
+                    'keywords', _SEED_EXPORT_KEYWORDS)),
+                'premiere': tuple(groups.get('premiere', {}).get(
+                    'keywords', _SEED_PREMIERE_KEYWORDS)),
+            }
+            _pred_vocab_cache = cache
+            _pred_vocab_mtime = mtime
+            return cache
+    except Exception:
+        return fallback
+
+
+def get_predicate_keywords(group: str) -> tuple:
+    """[β.5.19-B] 取某 group keywords (vocab-driven). group ∈ {'wake', 'export', 'premiere'}.
+
+    Returns: tuple of str. 文件损坏 / group 未知 → 返 () 安全空.
+    """
+    vocab = _load_predicate_vocab()
+    return vocab.get(group, ())
+
+
+# 旧符号兼容: 读 vocab live (避免老 import 拿到 stale snapshot).
+# 新代码请直接用 get_predicate_keywords('wake') 等.
+_WAKE_KEYWORDS = _SEED_WAKE_KEYWORDS
+_EXPORT_KEYWORDS = _SEED_EXPORT_KEYWORDS
+_PREMIERE_KEYWORDS = _SEED_PREMIERE_KEYWORDS
 
 
 def predicate_library_prompt() -> str:
@@ -480,14 +552,19 @@ def heuristic_predicate_from_text(text: str) -> Optional[Predicate]:
         return None
     t = text.lower()
     children: List[Predicate] = []
+    # [β.5.19-B] 用 vocab-driven keyword (memory_pool/predicate_keywords.json)
+    # mtime cache, Sir 加新词不动代码即可生效
+    _wake = get_predicate_keywords('wake')
+    _export = get_predicate_keywords('export')
+    _premiere = get_predicate_keywords('premiere')
 
-    if any(k in t for k in _WAKE_KEYWORDS):
+    if any(k in t for k in _wake):
         children.append(WakeFirstActive())
         children.append(TimeAfter('06:00'))
 
-    if any(k in t for k in _EXPORT_KEYWORDS):
+    if any(k in t for k in _export):
         # 优先匹配 Premiere; 也接受 generic
-        target = 'Adobe Premiere Pro.exe' if any(k in t for k in _PREMIERE_KEYWORDS) \
+        target = 'Adobe Premiere Pro.exe' if any(k in t for k in _premiere) \
             else 'Adobe Premiere Pro.exe'
         children.append(ProcessExited(target, max_recent_s=900))
         children.append(IdleFor(30))

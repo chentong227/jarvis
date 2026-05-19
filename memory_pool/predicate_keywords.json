@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-20T00:35:00+08:00",
+  "purpose": "jarvis_predicate.heuristic_predicate_from_text() 用的关键词集合. LLM parser 未上时的 fallback: 从自然语言抓 wake/export/premiere intent 推 predicate.",
+  "design_note": "准则 6 vocab 持久化第 1 维: 数据强耦合 — keyword 不再写死 .py source. Sir 加新词不动代码, 走 CLI scripts/predicate_vocab_dump.py 即可. L7 LLM-propose reflector 待后续轨道.",
+  "groups": {
+    "wake": {
+      "description": "唤醒/起床/早晨 — heuristic_predicate_from_text 命中 → WakeFirstActive() AND TimeAfter('06:00')",
+      "keywords": [
+        "醒",
+        "起床",
+        "起来",
+        "早上",
+        "明早",
+        "一早",
+        "wake",
+        "woken",
+        "woke",
+        "wake up",
+        "morning"
+      ]
+    },
+    "export": {
+      "description": "导出完成 — heuristic_predicate_from_text 命中 → ProcessExited(target) AND IdleFor(30)",
+      "keywords": [
+        "导出完",
+        "导出之后",
+        "导完",
+        "export finished",
+        "export done",
+        "finished exporting"
+      ]
+    },
+    "premiere": {
+      "description": "视频/剪辑工具 (Adobe Premiere) — export 类 predicate 的 target 选择",
+      "keywords": [
+        "视频",
+        "剪辑",
+        "premiere",
+        "video"
+      ]
+    }
+  },
+  "history": [
+    {
+      "ts": "2026-05-20T00:35:00+08:00",
+      "marker": "β.5.19-B",
+      "action": "init",
+      "note": "从 jarvis_predicate.py 源码迁移 _WAKE/EXPORT/PREMIERE_KEYWORDS 到此 json. py 仅保留 _SEED_*_KEYWORDS fallback (json 损坏 / 首次启动)."
+    }
+  ]
+}
