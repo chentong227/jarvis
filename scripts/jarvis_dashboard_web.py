@@ -308,10 +308,11 @@ HTML_TEMPLATE = r"""
   </div>
 </section>
 
-<!-- 信息区: 长期惦记 / 默契 / 健康 / 承诺 -->
+<!-- 🩹 [β.5.32 / 2026-05-20] Sir 03:54 反馈"删 Jarvis 承诺卡 + 长期惦记/你们之间均分 + 系统健康放下面" -->
+<!-- 信息区: 长期惦记 + 你们之间 (50/50 一行) -->
 <section class="max-w-7xl mx-auto px-6 pt-8">
   <h2 class="text-xl font-bold mb-3 flex items-center gap-2"><span>📋</span><span>信息 - 你想了解的</span></h2>
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 
     <!-- 长期惦记 -->
     <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
@@ -319,8 +320,8 @@ HTML_TEMPLATE = r"""
         <h3 class="font-semibold flex items-center gap-2"><span>🎯</span>长期惦记</h3>
         <span class="badge bg-slate-700/50" x-text="(concerns.rows ? concerns.rows.length : 0) + ' 件'"></span>
       </div>
-      <div class="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
-        <template x-for="r in (concerns.rows || []).slice(0, 8)" :key="r.zh_name">
+      <div class="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
+        <template x-for="r in (concerns.rows || []).slice(0, 12)" :key="r.zh_name">
           <div class="text-xs">
             <div class="flex items-center gap-2">
               <span x-text="r.warn"></span>
@@ -340,59 +341,46 @@ HTML_TEMPLATE = r"""
         <span class="badge bg-slate-700/50"
               x-text="((relation.jokes||[]).length) + '梗·' + ((relation.protocols||[]).length) + '默·' + ((relation.threads||[]).length) + '经历'"></span>
       </div>
-      <div class="space-y-2 text-xs max-h-72 overflow-y-auto scrollbar-thin">
-        <template x-for="j in (relation.jokes || []).slice(0, 4)" :key="j.phrase">
+      <div class="space-y-2 text-xs max-h-96 overflow-y-auto scrollbar-thin">
+        <template x-for="j in (relation.jokes || []).slice(0, 5)" :key="j.phrase">
           <div>
             <p class="text-emerald-300">😂 "<span x-text="j.phrase"></span>"</p>
             <p class="text-slate-500 ml-5" x-text="j.birth"></p>
           </div>
         </template>
         <!-- 🩹 [β.5.28-fix5] 共同经历 - Sir 通过的 thread 显示位 -->
-        <template x-for="t in (relation.threads || []).slice(0, 6)" :key="t.id">
+        <template x-for="t in (relation.threads || []).slice(0, 10)" :key="t.id">
           <div>
             <p class="text-pink-300">📖 <span x-text="t.title"></span></p>
             <p x-show="t.what" class="text-slate-500 ml-5 text-xs" x-text="t.what"></p>
             <p class="text-slate-600 ml-5 text-[10px]" x-text="(t.last_milestone || t.started) + ' · ' + t.n_highlights + ' 高光'"></p>
           </div>
         </template>
-        <template x-for="u in (relation.unfinished || []).slice(0, 3)" :key="u.topic">
+        <template x-for="u in (relation.unfinished || []).slice(0, 5)" :key="u.topic">
           <div class="text-amber-300">📌 <span x-text="u.topic"></span></div>
         </template>
       </div>
     </div>
 
-    <!-- 健康 -->
-    <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
-      <h3 class="font-semibold flex items-center gap-2 mb-3"><span>📊</span>系统健康</h3>
-      <div class="space-y-1 text-xs">
-        <p><span class="text-slate-400">内存:</span> <span x-text="(health.health_last && health.health_last.ws_mb ? health.health_last.ws_mb.toFixed(0) : '?') + ' MB'"></span></p>
-        <p><span class="text-slate-400">日志数:</span> <span x-text="health.log_count || 0"></span></p>
-        <p x-show="health.diagnosis" class="text-slate-300 mt-2" x-text="health.diagnosis"></p>
+  </div>
+
+  <!-- 系统健康单独一行 (Sir 03:54 改 layout) -->
+  <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg mt-4">
+    <h3 class="font-semibold flex items-center gap-2 mb-3"><span>📊</span>系统健康</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+      <div>
+        <p class="text-slate-400">内存</p>
+        <p class="text-slate-200 text-base font-mono" x-text="(health.health_last && health.health_last.ws_mb ? health.health_last.ws_mb.toFixed(0) : '?') + ' MB'"></p>
+      </div>
+      <div>
+        <p class="text-slate-400">日志数</p>
+        <p class="text-slate-200 text-base font-mono" x-text="health.log_count || 0"></p>
+      </div>
+      <div class="col-span-2">
+        <p class="text-slate-400">诊断</p>
+        <p class="text-slate-300" x-text="health.diagnosis || '-'"></p>
       </div>
     </div>
-
-    <!-- Jarvis 口头承诺 -->
-    <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="font-semibold flex items-center gap-2"><span>🤝</span>Jarvis 承诺</h3>
-        <span class="badge bg-slate-700/50"
-              x-text="'⏳' + (promise.pending_n || 0) + ' ✓' + (promise.fulfilled_n || 0)"></span>
-      </div>
-      <div class="space-y-1 text-xs max-h-64 overflow-y-auto scrollbar-thin">
-        <template x-if="!(promise.rows || []).length">
-          <p class="text-emerald-400">✓ 干净 — Jarvis 没未兑现承诺</p>
-        </template>
-        <template x-for="p in (promise.rows || []).slice(0, 6)" :key="p.id">
-          <div>
-            <span :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-rose-400' : 'text-amber-400')"
-                  x-text="p.state_zh"></span>
-            <span class="text-slate-500 ml-1" x-text="p.age"></span>
-            <p class="text-slate-300 ml-1 truncate" x-text="p.desc"></p>
-          </div>
-        </template>
-      </div>
-    </div>
-
   </div>
 </section>
 

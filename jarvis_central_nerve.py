@@ -3140,6 +3140,12 @@ User: {new_cmd}
         # 🩹 [β.2.9.1.4 / 2026-05-18] Sir 08:10 反馈: 主动质疑是 Jarvis 人设, 别删.
         # 撤回 β.2.9.1.3 的"改 bg_log only". 恢复 vocal.say + 加去重 (1 次 sleep_intent
         # 内只 fire 1 次, 不重复刷屏).
+        # 🩹 [β.5.32 / 2026-05-20] Sir 03:55 实测 BUG: dismissal → 0.0 分钟立刻 wake +
+        # 询问 "只 1 分钟" — 光速触发. Root cause: dismissal 后 keyboard/mouse 还在动
+        # 立刻被 _on_activity_wake 触发. 加 30s minimum grace: 0-30s 内 silent (明显
+        # 是 dismissal 残留活动), 30s-300s 才真问.
+        if sleep_duration < 30:
+            return
         if sleep_duration < 300:
             # 去重: 1 次 sleep_intent 窗口内只发一次
             if getattr(self, '_short_sleep_questioned_at', 0) > 0 and \

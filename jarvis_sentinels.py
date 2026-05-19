@@ -1035,9 +1035,17 @@ class NudgeGate:
 
     # 🩹 [β.2.9.1.4 / 2026-05-18] 撤 30min 硬约束 (Sir 08:10 不喜欢这种粗暴).
     # 保留 force 参数兼容 _detect_wake_up / ReturnSentinel 调用.
+    # 🩹 [β.5.32 / 2026-05-20] Sir 03:55 实测 BUG: dismissal 后 0.0 min 自动解除 + 立刻问"只 1 分钟".
+    # Root cause: dismissal 时 Sir 刚说完命令 idle_ms=0, sleep mode 一激活下一 tick 就 < 30000ms → 解除.
+    # 修法: 加 30s minimum lock - 非 force 路径 30s 内 deactivate 直接拒, 给 sleep 站稳脚步.
     def deactivate_sleep_mode(self, force: bool = False):
         with self._lock:
             was_sleeping = self._sleep_mode
+            if was_sleeping and not force:
+                duration_so_far = time.time() - self._sleep_activated_at
+                if duration_so_far < 30:
+                    # 非 force 路径 (auto activity wake) 30s 内拒绝解除
+                    return
             self._sleep_mode = False
             if was_sleeping:
                 duration = time.time() - self._sleep_activated_at
