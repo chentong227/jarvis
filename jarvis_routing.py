@@ -998,6 +998,25 @@ class CompanionCenter:
             print(f"[CompanionCenter] ProactiveCareEngine 启动失败 (非致命): {_pce_err}")
             self.proactive_care = None
 
+        # 🩹 [β.5.23-B / 2026-05-19] ConcernFeedbackReflector L7 daemon (准则 6 自动化).
+        # Sir 01:36 'B 不交手动 自动化为主'. 周期 24h 看 ProactiveCare 数据, LLM
+        # propose cooldown 调整 + optimal_timing 模式 + 新 concern. 写到 cooldown_vocab.json
+        # review_queue 等 Sir 用 scripts/cooldown_vocab_dump.py review 看, 拍板 apply.
+        # 启动失败不影响 ProactiveCare 主路径.
+        try:
+            from jarvis_concern_feedback_reflector import get_or_create_reflector
+            _nerve_ref_22b = getattr(self.worker, 'jarvis', None)
+            _ledger_22b = getattr(_nerve_ref_22b, 'concerns_ledger', None) if _nerve_ref_22b else None
+            _kr_22b = getattr(_nerve_ref_22b, 'key_router', None) if _nerve_ref_22b else None
+            if _ledger_22b is not None:
+                self.concern_feedback_reflector = get_or_create_reflector(
+                    ledger=_ledger_22b, key_router=_kr_22b, nerve=_nerve_ref_22b)
+                if self.concern_feedback_reflector is not None:
+                    self.concern_feedback_reflector.start_daemon(interval_s=86400.0)
+                    print("[CompanionCenter] ConcernFeedbackReflector 就绪 (24h L7 LLM propose)")
+        except Exception as _cfr_err:
+            print(f"[CompanionCenter] ConcernFeedbackReflector 启动失败 (非致命): {_cfr_err}")
+
         # 🩹 [β.2.8.5 / 2026-05-17] Promise 账本 sweep daemon — 让"言出必行"可观察
         # 每 1h 跑 sweep_untracked 把超过 24h 无 evidence 的 promise → untracked
         try:

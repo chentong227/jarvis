@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "note": "ProactiveCare cooldown \u9608\u503c vocab - \u51c6\u5219 6 vocab \u5316. Sir 01:36 \u5cf0 'B \u4e0d\u4ea4\u624b\u52a8' \u2014 \u4e0d\u8ba9 Sir CLI \u6539, \u7531 ConcernFeedbackReflector L7 \u5468\u671f LLM-propose \u8c03\u8282 (\u4f46\u4ecd\u7559 CLI \u770b\u9605 / \u624b\u52a8 override).",
+  "markers": ["P0+20-\u03b2.5.23-A / 2026-05-19"],
+  "current": {
+    "GLOBAL_NUDGE_COOLDOWN_S": 300.0,
+    "SILENT_GLOBAL_COOLDOWN_S": 90.0,
+    "PER_CONCERN_COOLDOWN_S": 1800.0,
+    "EXPLICIT_REJECT_COOLDOWN_S": 1800.0,
+    "WARMUP_SECONDS": 300,
+    "NIGHT_CRITICAL_THRESHOLD": 0.85,
+    "DEFAULT_URGENCY_THRESHOLD": 0.55,
+    "SIGNAL_RECENCY_HALFLIFE_H": 24.0,
+    "SILENCE_PRESSURE_FULL_H": 12.0,
+    "FATIGUE_PENALTY_PER_REJECT": 0.15,
+    "FATIGUE_FLOOR": 0.2
+  },
+  "ranges": {
+    "GLOBAL_NUDGE_COOLDOWN_S": {"min": 60.0, "max": 1800.0, "step": 60.0},
+    "SILENT_GLOBAL_COOLDOWN_S": {"min": 30.0, "max": 600.0, "step": 30.0},
+    "PER_CONCERN_COOLDOWN_S": {"min": 600.0, "max": 7200.0, "step": 300.0},
+    "EXPLICIT_REJECT_COOLDOWN_S": {"min": 600.0, "max": 86400.0, "step": 600.0},
+    "NIGHT_CRITICAL_THRESHOLD": {"min": 0.5, "max": 0.95, "step": 0.05},
+    "DEFAULT_URGENCY_THRESHOLD": {"min": 0.3, "max": 0.85, "step": 0.05}
+  },
+  "history": [],
+  "review_queue": []
+}

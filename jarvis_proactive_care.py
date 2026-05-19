@@ -52,27 +52,78 @@ _LEVEL_PRESETS = {
 _DEFAULT_LEVEL = os.environ.get('JARVIS_PROACTIVE_CARE_LEVEL', 'normal').strip().lower()
 _LEVEL_CONF = _LEVEL_PRESETS.get(_DEFAULT_LEVEL, _LEVEL_PRESETS['normal'])
 
-TICK_INTERVAL_S = 60.0                  # daemon tick
-WARMUP_SECONDS = 300                    # 启动 5 分钟 silent
-DEFAULT_URGENCY_THRESHOLD = _LEVEL_CONF['threshold']
-NIGHT_CRITICAL_THRESHOLD = 0.85         # 凌晨 2-5 点仅 critical
-HIGH_ACTIVITY_DAMPEN = 0.85             # Sir 高活跃 (≥10 turn 最近 1h) 降权
-UNHEALTHY_KEY_DAMPEN = 0.75             # KeyRouter 不健康降权
-SIGNAL_RECENCY_HALFLIFE_H = 24.0        # signal age 半衰
-SILENCE_PRESSURE_FULL_H = 12.0          # 未提满 12h 算"该提了"
-SIGNAL_DENSITY_FULL_COUNT = 5           # 24h 内信号数 5 个算"密集"
-FATIGUE_PENALTY_PER_REJECT = 0.15       # 每次拒绝降 15%
-FATIGUE_FLOOR = 0.2                     # 疲劳惩罚下限
+TICK_INTERVAL_S = 60.0                  # daemon tick — 系统级常量, 不 vocab 化
 
-# 防双发: 距上次任何 nudge (SmartNudge 或自身) 至少 X 秒
-GLOBAL_NUDGE_COOLDOWN_S = 300.0
-# [β.4.10 / 2026-05-19] silent_text 也占独立全局 cooldown (Sir 凌晨 1 点 sleep silent→hydration silent 连推 BUG 治本)
-# 旧版 silent_text 不占 last_any_nudge_ts, 可连续推不同 concern silent → Sir 烦 + attribution 错
-SILENT_GLOBAL_COOLDOWN_S = 90.0
-# 同一 concern 至少 X 秒不重复
-PER_CONCERN_COOLDOWN_S = 1800.0
-# Sir 显式拒绝 ("别催了") 后 X 秒静默
-EXPLICIT_REJECT_COOLDOWN_S = 1800.0
+# 🩹 [β.5.23-A / 2026-05-19] cooldown / threshold 阈值 vocab 化 (Sir 准则 6).
+# 老硬编码 .py 常量留作 fallback. source of truth = memory_pool/proactive_care_cooldown_vocab.json
+# 由 ConcernFeedbackReflector L7 LLM-propose 自动调节, Sir 不用手动改.
+HIGH_ACTIVITY_DAMPEN = 0.85             # Sir 高活跃降权 — 系统级 dampen, 不 vocab
+UNHEALTHY_KEY_DAMPEN = 0.75             # KeyRouter 不健康降权 — 系统级 dampen, 不 vocab
+SIGNAL_DENSITY_FULL_COUNT = 5           # 24h 内信号数 5 个算"密集" — 系统级 algo 参数
+
+# vocab 化 fallback (json 不可用时用): 这些都是上一稳定版本数字
+_FALLBACK_WARMUP_SECONDS = 300
+_FALLBACK_NIGHT_CRITICAL_THRESHOLD = 0.85
+_FALLBACK_SIGNAL_RECENCY_HALFLIFE_H = 24.0
+_FALLBACK_SILENCE_PRESSURE_FULL_H = 12.0
+_FALLBACK_FATIGUE_PENALTY_PER_REJECT = 0.15
+_FALLBACK_FATIGUE_FLOOR = 0.2
+_FALLBACK_GLOBAL_NUDGE_COOLDOWN_S = 300.0
+_FALLBACK_SILENT_GLOBAL_COOLDOWN_S = 90.0
+_FALLBACK_PER_CONCERN_COOLDOWN_S = 1800.0
+_FALLBACK_EXPLICIT_REJECT_COOLDOWN_S = 1800.0
+
+# vocab cache (module-level, mtime cache)
+_COOLDOWN_VOCAB_CACHE: dict = {}
+_COOLDOWN_VOCAB_MTIME: float = 0.0
+_COOLDOWN_VOCAB_PATH = os.path.join('memory_pool', 'proactive_care_cooldown_vocab.json')
+
+
+def _load_cooldown_vocab() -> dict:
+    """🩹 [β.5.23-A] 读 proactive_care_cooldown_vocab.json with mtime cache.
+    返 'current' dict (key → 阈值 float). 失败 → 用 fallback dict.
+    """
+    global _COOLDOWN_VOCAB_CACHE, _COOLDOWN_VOCAB_MTIME
+    try:
+        mt = os.path.getmtime(_COOLDOWN_VOCAB_PATH)
+        if mt == _COOLDOWN_VOCAB_MTIME and _COOLDOWN_VOCAB_CACHE:
+            return _COOLDOWN_VOCAB_CACHE
+        import json as _j
+        with open(_COOLDOWN_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = _j.load(f)
+        cur = dict(data.get('current') or {})
+        _COOLDOWN_VOCAB_CACHE = cur
+        _COOLDOWN_VOCAB_MTIME = mt
+        return cur
+    except Exception:
+        return {}
+
+
+def _get_cd(key: str, fallback: float) -> float:
+    """统一访问 vocab cooldown 阈值. key 缺失 / json 不可用 → fallback."""
+    try:
+        v = _load_cooldown_vocab().get(key)
+        if v is not None:
+            return float(v)
+    except Exception:
+        pass
+    return float(fallback)
+
+
+# 公共访问: 直接代理到 vocab. 老代码 GLOBAL_NUDGE_COOLDOWN_S 全部改成 _get_cd(...)
+# 但为兼容 module-level 引用 (e.g. 其他文件 from jarvis_proactive_care import GLOBAL_NUDGE_COOLDOWN_S),
+# 仍 expose 初始读出的值 (启动时一次性). 之后改值由 _get_cd 即时读 vocab.
+WARMUP_SECONDS = int(_get_cd('WARMUP_SECONDS', _FALLBACK_WARMUP_SECONDS))
+DEFAULT_URGENCY_THRESHOLD = float(_get_cd('DEFAULT_URGENCY_THRESHOLD', _LEVEL_CONF['threshold']))
+NIGHT_CRITICAL_THRESHOLD = float(_get_cd('NIGHT_CRITICAL_THRESHOLD', _FALLBACK_NIGHT_CRITICAL_THRESHOLD))
+SIGNAL_RECENCY_HALFLIFE_H = float(_get_cd('SIGNAL_RECENCY_HALFLIFE_H', _FALLBACK_SIGNAL_RECENCY_HALFLIFE_H))
+SILENCE_PRESSURE_FULL_H = float(_get_cd('SILENCE_PRESSURE_FULL_H', _FALLBACK_SILENCE_PRESSURE_FULL_H))
+FATIGUE_PENALTY_PER_REJECT = float(_get_cd('FATIGUE_PENALTY_PER_REJECT', _FALLBACK_FATIGUE_PENALTY_PER_REJECT))
+FATIGUE_FLOOR = float(_get_cd('FATIGUE_FLOOR', _FALLBACK_FATIGUE_FLOOR))
+GLOBAL_NUDGE_COOLDOWN_S = float(_get_cd('GLOBAL_NUDGE_COOLDOWN_S', _FALLBACK_GLOBAL_NUDGE_COOLDOWN_S))
+SILENT_GLOBAL_COOLDOWN_S = float(_get_cd('SILENT_GLOBAL_COOLDOWN_S', _FALLBACK_SILENT_GLOBAL_COOLDOWN_S))
+PER_CONCERN_COOLDOWN_S = float(_get_cd('PER_CONCERN_COOLDOWN_S', _FALLBACK_PER_CONCERN_COOLDOWN_S))
+EXPLICIT_REJECT_COOLDOWN_S = float(_get_cd('EXPLICIT_REJECT_COOLDOWN_S', _FALLBACK_EXPLICIT_REJECT_COOLDOWN_S))
 
 
 # ============================================================
@@ -472,20 +523,23 @@ class CareWindowGuard:
         if now_ts < explicit_reject_until:
             return False, f'explicit_reject_cooldown ({int(explicit_reject_until - now_ts)}s left)'
 
-        # 5. 全局 nudge 冷却
-        if now_ts - last_any_nudge_ts < GLOBAL_NUDGE_COOLDOWN_S:
-            return False, f'global_nudge_cooldown ({int(GLOBAL_NUDGE_COOLDOWN_S - (now_ts - last_any_nudge_ts))}s left)'
+        # 5. 全局 nudge 冷却 (β.5.23-A: 动态读 vocab)
+        _gnc = _get_cd('GLOBAL_NUDGE_COOLDOWN_S', GLOBAL_NUDGE_COOLDOWN_S)
+        if now_ts - last_any_nudge_ts < _gnc:
+            return False, f'global_nudge_cooldown ({int(_gnc - (now_ts - last_any_nudge_ts))}s left)'
 
-        # 6. 同 concern 冷却
+        # 6. 同 concern 冷却 (β.5.23-A: 动态读 vocab)
         last_trig = float(getattr(concern, 'last_triggered', 0) or 0)
-        if last_trig > 0 and now_ts - last_trig < PER_CONCERN_COOLDOWN_S:
-            return False, f'per_concern_cooldown ({int(PER_CONCERN_COOLDOWN_S - (now_ts - last_trig))}s left)'
+        _pcc = _get_cd('PER_CONCERN_COOLDOWN_S', PER_CONCERN_COOLDOWN_S)
+        if last_trig > 0 and now_ts - last_trig < _pcc:
+            return False, f'per_concern_cooldown ({int(_pcc - (now_ts - last_trig))}s left)'
 
-        # 7. 时段判断
+        # 7. 时段判断 (β.5.23-A: 动态读 vocab)
+        _nct = _get_cd('NIGHT_CRITICAL_THRESHOLD', NIGHT_CRITICAL_THRESHOLD)
         hour = time.localtime(now_ts).tm_hour
         if 2 <= hour <= 5:
-            if urgency < NIGHT_CRITICAL_THRESHOLD:
-                return False, f'night_quiet (hour={hour}, urgency={urgency:.2f} < {NIGHT_CRITICAL_THRESHOLD})'
+            if urgency < _nct:
+                return False, f'night_quiet (hour={hour}, urgency={urgency:.2f} < {_nct})'
 
         # 8. Sir 在睡眠模式?
         try:
@@ -1021,10 +1075,12 @@ class ProactiveCareEngine(threading.Thread):
 
     def notify_sir_explicit_reject(self) -> None:
         """主脑 / Gatekeeper 发现 Sir 显式拒绝 ("别催了" / "knock it off") 调."""
+        # β.5.23-A: 动态读 vocab cooldown
+        _erc = _get_cd('EXPLICIT_REJECT_COOLDOWN_S', EXPLICIT_REJECT_COOLDOWN_S)
         with self._state_lock:
-            self.explicit_reject_until = time.time() + EXPLICIT_REJECT_COOLDOWN_S
+            self.explicit_reject_until = time.time() + _erc
         bg_log(
-            f"🚫 [ProactiveCare] Sir 显式拒绝 → 静默 {int(EXPLICIT_REJECT_COOLDOWN_S/60)} min"
+            f"🚫 [ProactiveCare] Sir 显式拒绝 → 静默 {int(_erc/60)} min"
         )
 
     def notify_any_nudge_sent(self) -> None:
@@ -1181,8 +1237,9 @@ class ProactiveCareEngine(threading.Thread):
         self._tick_count += 1
         now_ts = time.time()
 
-        # 1. warm-up
-        if now_ts - self.start_ts < WARMUP_SECONDS:
+        # 1. warm-up (β.5.23-A: 动态读 vocab)
+        _wm = _get_cd('WARMUP_SECONDS', WARMUP_SECONDS)
+        if now_ts - self.start_ts < _wm:
             return
 
         # 1.5. [β-2.5] 跑 sensor → 让 sensor 派生 signal 喂给 concern
@@ -1253,9 +1310,10 @@ class ProactiveCareEngine(threading.Thread):
         # 治 Sir 凌晨 1 点 sleep silent → 立刻 hydration silent 连推 BUG.
         if ok and last_silent > 0:
             _silent_age = now_ts - last_silent
-            if _silent_age < SILENT_GLOBAL_COOLDOWN_S:
+            _sgc = _get_cd('SILENT_GLOBAL_COOLDOWN_S', SILENT_GLOBAL_COOLDOWN_S)
+            if _silent_age < _sgc:
                 ok = False
-                reason = f'silent_global_cooldown ({int(SILENT_GLOBAL_COOLDOWN_S - _silent_age)}s left)'
+                reason = f'silent_global_cooldown ({int(_sgc - _silent_age)}s left)'
         if not ok:
             # 🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "skip 刷屏":
             # 旧版每 60s tick 同 cid+reason 都 bg_log 一遍, 30min cooldown 刷 30 次.
