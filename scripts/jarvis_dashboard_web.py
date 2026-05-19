@@ -96,6 +96,12 @@ HTML_TEMPLATE = r"""
         <span x-show="autoRefresh">⏸ 暂停自动</span>
         <span x-show="!autoRefresh">▶ 自动 10s</span>
       </button>
+      <!-- 🩹 [β.5.28-fix6] Sir 想立即跑 SoulArchivist 反思 (propose 新 joke/thread) -->
+      <button onclick="window.dashboardReflectNow(this)"
+              title="立刻让 Reflector 跑一次反思 (proposal 新 joke/thread/concern)"
+              class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 transition text-sm font-medium">
+        💭 立刻反思
+      </button>
     </div>
   </div>
 </header>
@@ -417,6 +423,32 @@ HTML_TEMPLATE = r"""
 
 <script>
 // 🩹 [β.5.28-fix4 / 2026-05-20] inline fallback - alpine 没绑/失败也能点
+// 🩹 [β.5.28-fix6 / 2026-05-20] Sir 03:13 反馈"通过的瞬间所有信息不显示, 延迟避免?"
+// 修法: 不再 location.reload (整页 flash). 改 in-place 删卡片 + 调 alpine refresh().
+// 立刻反思 - trigger SoulArchivist propose 新 joke/thread
+window.dashboardReflectNow = async function(btn) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ 反思中 (10-30s)...';
+  try {
+    const resp = await fetch('/api/reflect_now', {method: 'POST'});
+    const r = await resp.json();
+    btn.textContent = r.ok ? '✓ 反思完成' : '✗ 反思失败';
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = orig;
+      try { if (document.body.__x) document.body.__x.$data.refresh(); }
+      catch (e) {}
+    }, 2000);
+    if (!r.ok) alert('反思失败: ' + (r.detail || r.stderr || ''));
+    else console.log('[Reflect]', r.stdout);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = orig;
+    alert('请求失败: ' + e);
+  }
+};
+
 window.dashboardFallbackAct = async function(btn, action) {
   const kind = (btn.dataset.kind || '').split('/')[0];
   const id = btn.dataset.id;
@@ -425,6 +457,12 @@ window.dashboardFallbackAct = async function(btn, action) {
   console.log('[Fallback]', action, kind, id);
   btn.disabled = true;
   btn.textContent = '⏳ 处理中...';
+  // 立刻视觉淡出整张卡片 (找最近的 .glass.rounded-2xl 父)
+  const card = btn.closest('.rounded-2xl');
+  if (card) {
+    card.style.transition = 'opacity 0.3s, transform 0.3s';
+    card.style.opacity = '0.4';
+  }
   try {
     const resp = await fetch('/api/review/' + action, {
       method: 'POST',
@@ -433,10 +471,33 @@ window.dashboardFallbackAct = async function(btn, action) {
     });
     const r = await resp.json();
     btn.textContent = r.ok ? '✓ ' + (action === 'activate' ? '已通过' : '已拒绝') : '✗ 失败';
-    btn.style.opacity = '0.6';
-    if (!r.ok) alert('失败: ' + (r.detail || '未知'));
-    setTimeout(() => location.reload(), 800);
+    if (!r.ok) {
+      // 失败 → 恢复卡片
+      if (card) card.style.opacity = '1';
+      alert('失败: ' + (r.detail || '未知'));
+    } else {
+      // 成功 → 卡片缩走 + 触发 Alpine refresh 而非 reload
+      if (card) {
+        card.style.transform = 'scale(0.95) translateX(20px)';
+        card.style.opacity = '0';
+      }
+      // 触发 Alpine refresh (in-place 拉新数据更新 reviewItems / threads)
+      setTimeout(() => {
+        try {
+          const root = document.body;
+          if (root.__x) {
+            root.__x.$data.refresh();
+          } else {
+            // Alpine 没 init → 退到 reload (兜底)
+            location.reload();
+          }
+        } catch (e) {
+          location.reload();
+        }
+      }, 350);
+    }
   } catch (e) {
+    if (card) card.style.opacity = '1';
     btn.disabled = false;
     btn.textContent = (action === 'activate' ? '✅ 通过' : '❌ 拒绝');
     alert('请求失败: ' + e);
@@ -654,6 +715,28 @@ def api_cancel_commitment(cw_id: int):
     if not done.wait(timeout=15):
         return jsonify({'ok': False, 'detail': '超时'}), 504
     return jsonify(result)
+
+
+@app.route('/api/reflect_now', methods=['POST'])
+def api_reflect_now():
+    """🩹 [β.5.28-fix6 / 2026-05-20] Sir 03:13 反馈 'JOKE 不动态更新'.
+    手动 trigger WeeklyReflector (含 joke + thread propose) 立刻跑.
+    """
+    import subprocess as _sp
+    try:
+        r = _sp.run(
+            [sys.executable, 'scripts/concerns_dump.py', '--reflect-now'],
+            capture_output=True, text=True, timeout=60,
+        )
+        return jsonify({
+            'ok': r.returncode == 0,
+            'stdout': (r.stdout or '')[:1000],
+            'stderr': (r.stderr or '')[:500],
+        })
+    except _sp.TimeoutExpired:
+        return jsonify({'ok': False, 'detail': '60s 超时'}), 504
+    except Exception as e:
+        return jsonify({'ok': False, 'detail': str(e)}), 500
 
 
 @app.route('/api/all')
