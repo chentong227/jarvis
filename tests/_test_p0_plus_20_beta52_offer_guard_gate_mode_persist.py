@@ -181,13 +181,16 @@ class TestP0Plus20Beta52OfferGuardModes(unittest.TestCase):
 # ==========================================================================
 
 class TestP0Plus20Beta52VocabIncludesOfferGuard(unittest.TestCase):
-    def test_vocab_has_offer_guard_default_hard(self):
+    def test_vocab_has_offer_guard_with_valid_mode(self):
+        """[β.5.3 升级] OfferGuard 必须在 vocab + mode 有效.
+        历史: 初始 hard. β.5.3 Sir 拍板切 publish_only."""
         path = os.path.join(ROOT, 'memory_pool', 'gate_mode_vocab.json')
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         self.assertIn('OfferGuard', data.get('current', {}))
-        self.assertEqual(data['current']['OfferGuard'], 'hard',
-            'OfferGuard 默认必须 hard (兼容)')
+        mode = data['current']['OfferGuard']
+        self.assertIn(mode, ('hard', 'soft', 'publish_only'),
+            f'OfferGuard mode 必须有效, 实际 {mode}')
 
 
 if __name__ == '__main__':

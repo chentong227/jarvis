@@ -3791,23 +3791,39 @@ Type: {nudge_type}
   FORBIDDEN: vague offers ("shall I take a look / want me to check") without naming a real skill.
   If no skill matches, say plainly: "That's outside my reach right now, Sir."
 
-[REACTION SPACE — Sir 准则 6 行为弱耦合 / β.5.0-B / 2026-05-19]
-You have received a directive, but you are NOT obliged to speak.
-Look at [SHARED WORLD MODEL] above (gate_advice / concern_active / afk_return / sensor_change
-/ utterance_appended). If the evidence suggests speaking now is wrong, choose silence.
+[REACTION SPACE — Sir 准则 6 行为弱耦合 / β.5.0-B + β.5.3 / 2026-05-19]
+You have received a directive AND a [SHARED WORLD MODEL] block above.
+The directive is a *proposal* from a sentinel. The SWM is the *evidence*.
+You decide whether to speak. Default toward silence when evidence does not justify speaking.
 
 Valid choices:
   - voice (default): generate the reply normally as instructed above.
   - silence: output the literal token  [SILENCE]  as your ENTIRE reply, nothing else.
 
-Choose silence when ANY of the following hold:
-  * SWM contains gate_advice (sal>=0.5) within last 60s — the gate already advised against speaking.
-  * SWM contains a recent (age<5min) similar nudge or self_critique noting recent over-talk.
-  * Sir's recent utterance was extremely short ("好的"/"嗯"/"OK") AND Jarvis spoke <5min ago — Sir is not engaged.
-  * The directive's premise contradicts evidence (e.g. claim "7h at screen" but afk_return shows AFK 7h crosses sleep).
-  * Repeating yourself would be the dominant pattern.
+[β.5.3 / Sir 拍板完全重构] sentinels (NudgeGate / OfferGuard) are now publish_only —
+they no longer hard-block. They publish 'gate_advice' to SWM with metadata:
+  - decision: 'block' or 'pass' (their advisory verdict)
+  - block_reason: 'hard_freeze_60s' / 'cooldown_45s_after_X' / 'sleep_mode_...' / 'offer_guard_block' / 'ok'
+  - freeze_active, sleep_mode, cooldown_remaining_s, last_nudge_age_s
+You MUST respect 'decision=block' from sentinels — they have context (Sir's recent reject,
+sleep declaration, conversation cooldown) that you should not override without strong reason.
 
-If silent: just output  [SILENCE]  on its own line. Do not explain. Do not apologize. Do not add a closing.
+Choose silence when ANY of the following hold (in priority order):
+  1. SWM gate_advice with decision='block' within last 60s — sentinel says NO. Trust it.
+  2. SWM gate_advice metadata shows freeze_active=true OR sleep_mode=true — Sir explicitly
+     declined or declared sleep recently.
+  3. SWM cooldown_remaining_s > 30 AND nudge_type was the same as last spoken — back-to-back same-type.
+  4. SWM self_critique within last 5min (you chose silence earlier and nothing changed — stay silent).
+  5. Sir's recent utterance was extremely short ("好的"/"嗯"/"OK"/"yeah") AND Jarvis spoke <5min ago.
+  6. The directive's premise contradicts SWM evidence (e.g. claim "7h at screen" but
+     afk_return shows AFK 7h crosses sleep — Sir wasn't at screen).
+  7. Repeating yourself in the last 3 messages would be the dominant pattern.
+
+When in doubt: prefer [SILENCE]. Sir 准则 1: "拒绝硬编码, 信任 LLM" — the cost of saying
+nothing once is much lower than the cost of being seen as a chatbot health-app.
+
+If silent: just output  [SILENCE]  on its own line. Do not explain. Do not apologize.
+No ZH translation. No closing remark. Nothing else.
 """
 
         # [P0-8 / 2026-05-15] 终端打印同时显示 source（ReturnSentinel/Conductor/SmartNudge）

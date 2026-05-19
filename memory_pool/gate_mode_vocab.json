@@ -9,13 +9,17 @@
     "publish_only": "永不 hard 拦: 永远 return True. 仅 publish 'gate_advice' 到 SWM. 主脑看 advice 自决是否说话 (走 stream_nudge reaction_space [SILENCE] 路径)."
   },
   "current": {
-    "NudgeGate": "hard",
-    "OfferGuard": "hard",
+    "NudgeGate": "publish_only",
+    "OfferGuard": "publish_only",
     "SmartNudgeSentinel": "hard",
     "Conductor": "hard",
     "WellnessGuardian": "hard",
     "ReturnSentinel": "hard"
   },
+  "history": [
+    {"date": "2026-05-19T11:00:00+08:00", "change": "init all hard"},
+    {"date": "2026-05-19T11:45:00+08:00", "change": "β.5.3 Sir 拍板完全重构: NudgeGate / OfferGuard hard → publish_only. 主脑看 SWM evidence 自决, 不再受 cooldown / freeze / sleep_mode hard 拦. 紧急回滚: python scripts/gate_mode_dump.py --reset"}
+  ],
   "rollout_plan": {
     "phase_1_β.5.1": "NudgeGate hard → soft (双轨观察期)",
     "phase_2_β.5.2": "OfferGuard hard → soft + 观察 1 天",

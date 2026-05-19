@@ -766,24 +766,21 @@ class NudgeGate:
         - capability 闸（offer_help 必须有 healthy safe skill 可 reference，修 Cs2 宽泛承诺）
         - 通过 → 立刻 OfferGuard.mark_spoken 更新节奏 last_ts（守望者一旦 can_speak 通过就
           push_command，不会再次 check_offer，所以这里立即 mark 是安全的）。
-        
-        [β.5.0-A / 2026-05-19] gate decision 同时 publish 到 SWM (准则 6 数据强耦合):
-        return False 时 publish gate_advice 让主脑下次能看到 "I would block this".
-        
-        [β.5.1 / 2026-05-19] gate_mode 三档 (准则 6 行为弱耦合):
-          - hard (默认):     原行为, return False 时 publish + 真拦
-          - soft:            return True/False 同时 publish gate_advice 到 SWM (双轨观察期)
-          - publish_only:    永远 return True (永不 hard 拦), 只 publish 到 SWM (主脑自决)
-        模式持久化在 memory_pool/gate_mode_vocab.json, Sir CLI scripts/gate_mode_dump.py 切换.
-        每次 can_speak 读 vocab 即时生效 (cache 5s 防文件 IO 高开销).
+
+        [β.5.0-A / β.5.1] gate_mode 三档 + publish SWM (准则 6 行为弱耦合).
+
+        [β.5.3 / 2026-05-19] Sir 拍板完全重构 push + SWM + 主脑:
+          - 默认 publish_only (vocab.json 已切): 永不 hard 拦
+          - publish 细致 state 到 SWM: freeze/sleep/cooldown_remaining 都给主脑看
+          - 主脑 prompt 含 [SHARED WORLD MODEL] + reaction_space, 自决 [SILENCE]
         """
         gate_mode = self._read_gate_mode('NudgeGate')
-        result = self._can_speak_internal(center_name, is_urgent, nudge_type)
+        result, block_reason, state_meta = self._can_speak_internal_v2(
+            center_name, is_urgent, nudge_type)
 
-        # [β.5.0-A / β.5.1] publish gate_advice 到 SWM
-        # hard mode: 仅在 block 时 publish (原行为)
-        # soft mode: 任何 decision 都 publish, 让主脑下轮看
-        # publish_only mode: 任何 decision 都 publish, 且本函数永远 return True
+        # [β.5.0-A / β.5.1 / β.5.3] publish gate_advice 到 SWM
+        # hard mode: 仅在 block 时 publish
+        # soft / publish_only: 任何 decision 都 publish
         should_publish = (
             (gate_mode == 'hard' and not result) or
             gate_mode in ('soft', 'publish_only')
@@ -795,23 +792,29 @@ class NudgeGate:
                 if _bus is not None:
                     decision_str = 'block' if not result else 'pass'
                     desc_prefix = (
-                        'NudgeGate blocked' if not result else 'NudgeGate passed'
+                        'NudgeGate would-block' if not result else 'NudgeGate ok-to-speak'
                     )
                     desc = (
                         f"{desc_prefix} {center_name}/{nudge_type or '?'}: "
-                        f"mode={gate_mode}"
+                        f"reason={block_reason} mode={gate_mode}"
                     )
+                    meta = {
+                        'center': center_name,
+                        'nudge_type': nudge_type,
+                        'is_urgent': is_urgent,
+                        'decision': decision_str,
+                        'block_reason': block_reason,
+                        'gate_mode': gate_mode,
+                    }
+                    meta.update(state_meta)  # freeze_active / sleep_mode / cooldown_remaining_s
+                    # publish_only mode 下 salience 提高 (block 信号必看)
+                    sal = 0.7 if (gate_mode == 'publish_only' and not result) else 0.55
                     _bus.publish(
                         etype='gate_advice',
                         description=desc,
                         source='NudgeGate',
-                        metadata={
-                            'center': center_name,
-                            'nudge_type': nudge_type,
-                            'is_urgent': is_urgent,
-                            'decision': decision_str,
-                            'gate_mode': gate_mode,
-                        },
+                        metadata=meta,
+                        salience=sal,
                     )
             except Exception:
                 pass
@@ -835,28 +838,52 @@ class NudgeGate:
             return 'hard'
 
     def _can_speak_internal(self, center_name: str, is_urgent: bool, nudge_type: str) -> bool:
-        """can_speak 原逻辑, 拆出来方便 publish wrap."""
+        """[向后兼容] 老版本只返 bool. v2 拆出 (result, reason, state_meta) 给 SWM publish."""
+        result, _r, _m = self._can_speak_internal_v2(center_name, is_urgent, nudge_type)
+        return result
+
+    def _can_speak_internal_v2(self, center_name: str, is_urgent: bool, nudge_type: str):
+        """[β.5.3 / 2026-05-19] 拆出 reason + state metadata 给 SWM publish.
+
+        Returns:
+            (result: bool, block_reason: str, state_meta: dict)
+            state_meta 永远填: freeze_active / sleep_mode / cooldown_remaining_s / last_nudge_age_s
+            主脑下次 prompt 看 SWM gate_advice metadata 全部 state 自决.
+        """
         with self._lock:
             now = time.time()
+            freeze_remaining = max(0.0, self._hard_freeze_until - now)
+            cooldown_remaining = 0.0
+            if self._last_nudge_center and self._last_nudge_center != center_name:
+                cooldown_remaining = max(0.0, self._cooldown - (now - self._last_nudge_time))
+            last_nudge_age_s = (now - self._last_nudge_time) if self._last_nudge_time > 0 else -1
+            state_meta = {
+                'freeze_active': freeze_remaining > 0,
+                'freeze_remaining_s': round(freeze_remaining, 1) if freeze_remaining > 0 else 0,
+                'sleep_mode': bool(self._sleep_mode),
+                'cooldown_remaining_s': round(cooldown_remaining, 1) if cooldown_remaining > 0 else 0,
+                'last_nudge_age_s': round(last_nudge_age_s, 1) if last_nudge_age_s >= 0 else -1,
+                'last_nudge_center': self._last_nudge_center,
+            }
+
             # [v3] 硬冻结优先于一切（包括 is_urgent）—— 用户拒绝/急停明确不想听见
-            if now < self._hard_freeze_until:
-                return False
+            if freeze_remaining > 0:
+                return False, f'hard_freeze_{int(freeze_remaining)}s', state_meta
             if self._sleep_mode:
                 if nudge_type not in self.SLEEP_ALLOWED_TYPES:
-                    return False
+                    return False, 'sleep_mode_allowed_type_only', state_meta
             if is_urgent:
                 # [轴3-L1] is_urgent 也过 OfferGuard 闸（path_b is_urgent=True 也得遵守节奏）
                 if nudge_type and not self._offer_guard_pass(nudge_type):
-                    return False
+                    return False, 'offer_guard_block_urgent', state_meta
                 self._guardian_override = True
-                return True
-            if self._last_nudge_center and self._last_nudge_center != center_name:
-                if now - self._last_nudge_time < self._cooldown:
-                    return False
+                return True, 'urgent_override', state_meta
+            if cooldown_remaining > 0:
+                return False, f'cooldown_{int(cooldown_remaining)}s_after_{self._last_nudge_center}', state_meta
             # OfferGuard 兜底：节奏 + capability
             if nudge_type and not self._offer_guard_pass(nudge_type):
-                return False
-            return True
+                return False, 'offer_guard_block', state_meta
+            return True, 'ok', state_meta
 
     def _offer_guard_pass(self, nudge_type: str) -> bool:
         """[轴3-L1] 中央闸调用 + 通过时记节奏。任何异常默认放行（兜底安全）。"""

@@ -149,7 +149,8 @@ $tests = @(
     "_test_p0_plus_20_beta50_swm_persist",
     "_test_p0_plus_20_beta50b_reaction_space_persist",
     "_test_p0_plus_20_beta51_gate_mode_persist",
-    "_test_p0_plus_20_beta52_offer_guard_gate_mode_persist"
+    "_test_p0_plus_20_beta52_offer_guard_gate_mode_persist",
+    "_test_p0_plus_20_beta53_full_publish_only_persist"
 )
 
 foreach ($t in $tests) {

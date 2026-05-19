@@ -61,13 +61,15 @@ class TestP0Plus20Beta51VocabPersist(unittest.TestCase):
                   'Conductor', 'WellnessGuardian', 'ReturnSentinel'):
             self.assertIn(s, current, f'vocab.current 必须含 {s}')
 
-    def test_default_all_hard(self):
-        """默认所有 sentinel = hard (向后兼容)."""
+    def test_default_modes_valid(self):
+        """所有 sentinel default mode ∈ (hard / soft / publish_only).
+        [β.5.3 / 2026-05-19] 部分 sentinel 已切 publish_only, 不再强制 hard.
+        历史保留: NudgeGate / OfferGuard 旧默认 hard, β.5.3 切 publish_only."""
         with open(VOCAB_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         for s, mode in data.get('current', {}).items():
-            self.assertEqual(mode, 'hard',
-                f'{s} 默认必须 hard (兼容老路径), 实际 {mode}')
+            self.assertIn(mode, ('hard', 'soft', 'publish_only'),
+                f'{s} mode 必须有效, 实际 {mode}')
 
     def test_vocab_documents_3_modes(self):
         with open(VOCAB_PATH, 'r', encoding='utf-8') as f:
