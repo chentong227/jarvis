@@ -3998,15 +3998,28 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
                         if _utt_ts > _now_ts:  # 跨日
                             _utt_ts -= 86400
                         _elapsed_min = (_now_ts - _utt_ts) / 60
+                        # 🩹 [β.5.31-fix / 2026-05-20] Sir 反问"为什么是模板? LLM 不能自己判断?"
+                        # → 准则 6 (拒绝硬编码 + 信任 LLM). 删 prescriptive RULE, 只注入事实.
+                        # ASR 事实: utterance 长度 + 是否 ambiguous (单字/字符级), LLM 自己判.
+                        _utt_len = len(_u)
+                        _is_short = _utt_len < 4
+                        _is_single_token = ' ' not in _u and _utt_len < 6
+                        _asr_facts = ""
+                        if _is_short or _is_single_token:
+                            _asr_facts = (
+                                f"\n[ASR QUALITY FACT]\n"
+                                f"Sir's last utterance length: {_utt_len} chars "
+                                f"({'single-syllable / very short' if _is_short else 'single token / no space'}). "
+                                f"This often indicates mis-ASR or filler. "
+                                f"Context-anchored evidence may be thin.\n"
+                            )
                         _time_anchor_block = (
-                            f"\n[TIME ANCHOR — ANTI-HALLUCINATION 准则 5]\n"
+                            f"\n[TIME ANCHOR — FACT]\n"
                             f"Current wall clock: {time.strftime('%H:%M:%S', _local)}\n"
                             f"Sir's last utterance at: {_t_str} "
                             f"({_elapsed_min:.1f} min ago)\n"
                             f'Sir said: "{_u[:120]}"\n'
-                            f"DO NOT claim time-elapsed facts (e.g. 'long since passed', "
-                            f"'早就过去了') unless arithmetic supports it. If Sir said 'in N min', "
-                            f"compare {_elapsed_min:.1f} min vs N. Be precise or be silent on time.\n"
+                            f"{_asr_facts}"
                         )
                         break
                     except Exception:
@@ -4056,11 +4069,6 @@ Type: {nudge_type}
   Generic greeting / acknowledgement / mood reflection / available skill mention is always safe.
   (β.5.8-fix: 旧文 "silence on unknown beats invented detail" 让主脑全沉默 — 错. 真规则是
   "略过未知细节但继续说话", 不是"不知道就沉默".)
-- [β.5.31 / 2026-05-20 — 不臆造关怀对象]: If Sir's last utterance is < 4 chars / unintelligible
-  / clearly mis-ASR ("ber" / "嗯" / "啊" / single syllable), DO NOT fabricate a concern topic
-  (e.g. "your hands may be fatigued"). Either ask Sir to repeat ("Could you repeat, Sir?") or
-  acknowledge ambiguity ("I'm not sure I caught that"). Never invent a body part / activity
-  / emotion that has zero anchor in [RECENT MEMORY].
 - [INTEGRITY / OFFER INTEGRITY — Sir 准则 5]: When offering help AND AVAILABLE SKILLS listed above,
   name the specific action you can take by skill name (e.g. "I can run key_health_inspector.report_status").
   FORBIDDEN: vague offers ("shall I take a look / want me to check") without naming a real skill.
