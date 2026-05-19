@@ -531,6 +531,23 @@ Example: Coding|Working in VS Code on a Python project"""
                 
                 if prev_category != cls.current_work_category:
                     cls.work_session_start = current_time
+                    # [β.5.0-A / 2026-05-19] SWM: category 变化 publish 给主脑
+                    try:
+                        from jarvis_utils import get_event_bus
+                        _bus = get_event_bus()
+                        if _bus is not None:
+                            _bus.publish(
+                                etype='sensor_change',
+                                description=f"work_category: {prev_category} → {cls.current_work_category}",
+                                source='PhysicalEnvProbe',
+                                metadata={
+                                    'kind': 'category_change',
+                                    'prev': prev_category,
+                                    'curr': cls.current_work_category,
+                                },
+                            )
+                    except Exception:
+                        pass
                 
                 if cls.work_session_start > 0:
                     cls.work_duration_minutes = round((current_time - cls.work_session_start) / 60, 1)

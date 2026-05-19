@@ -990,6 +990,23 @@ def clear_jarvis_tts_ring():
 # - B1 修复：gatekeeper 写 bus，prompt assembler 读 bus → 不再"一轮载具"丢事件
 # - 老友感物理基础：把"3 分钟前 Sir 提过累"这种事实让 LLM 物理引用而非编造
 # ============================================================
+# [β.5.0-A / 2026-05-19] 全局 event_bus 单例 (主脑只 1 个 instance, 不需多 bus)
+# 远端模块 (PhysicalEnvProbe / sentinels / OfferGuard / ProactiveCare) 通过
+# get_event_bus() 拿到 instance publish, 不需持有 self.jarvis ref.
+_GLOBAL_EVENT_BUS = None
+
+
+def get_event_bus():
+    """[β.5.0-A] 返回全局注册的 event_bus instance, 没注册返 None.
+    远端模块 publish 通用范式:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus:
+            bus.publish(etype='...', description='...', source='...')
+    """
+    return _GLOBAL_EVENT_BUS
+
+
 class ConversationEventBus:
     """对话事件总线。一律 in-memory + 线程安全。
     publish 写入是 O(1)，read O(n) 其中 n 默认 ≤ 50。
@@ -1014,6 +1031,39 @@ class ConversationEventBus:
         # 避免"幻觉 + 又催"叠加的尴尬。300s 足够覆盖典型 follow-up 窗口。
         'hallucination_detected': 300,
         'sleep_intent_declared': 1800,     # [v5.1] Sir 表态 X 时间内睡 → 静默催睡 nudge
+        # [β.5.0-A / 2026-05-19] Shared World Model 新增 etype:
+        'sensor_change': 120,              # PhysicalEnvProbe window/category/idle 变化
+        'gate_advice': 240,                # NudgeGate / OfferGuard advise (soft mode)
+        'concern_active': 360,             # ProactiveCare top_concern publish
+        'afk_return': 300,                 # ReturnSentinel _on_return raw signal
+        'self_critique': 600,              # MetaSelfReflector 自评结果
+        'utterance_appended': 60,          # _append_stm 末尾新对话 (短 TTL, 仅作 trigger)
+    }
+    # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
+    # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
+    # 命名约定: 0.9 = 必看 (commitment overdue / hallucination), 0.7 = 重要,
+    # 0.5 = 一般, 0.3 = 背景信号, 0.1 = 极弱.
+    DEFAULT_SALIENCE = {
+        'commitment_overdue': 0.95,
+        'hallucination_detected': 0.92,
+        'manual_standby': 0.90,
+        'sleep_intent_declared': 0.85,
+        'commitment_detected': 0.80,
+        'tool_chain_circuit_broken': 0.78,
+        'soft_focus_active': 0.70,
+        'concern_active': 0.65,
+        'help_refused': 0.62,
+        'reminder_fired': 0.60,
+        'self_critique': 0.60,
+        'gate_advice': 0.55,
+        'afk_return': 0.55,
+        'conversation_event': 0.55,
+        'tool_executed': 0.50,
+        'proactive_nudge': 0.50,
+        'emotion_shift': 0.45,
+        'persona_note': 0.40,
+        'sensor_change': 0.30,
+        'utterance_appended': 0.20,
     }
 
     def __init__(self, max_events: int = 60):
@@ -1025,10 +1075,13 @@ class ConversationEventBus:
 
     def publish(self, etype: str, description: str,
                 ttl: float = None, source: str = 'unknown',
-                metadata: dict = None) -> bool:
+                metadata: dict = None, salience: float = None) -> bool:
         """投递一条事件。返回 True 表示已写入；False 表示被去重抑制。
         - description 自动裁到 300 字
         - 同 (etype, description[:60]) 8 秒内重复发布会被去重抑制
+        - salience [0.0, 1.0]: 此事件的显著性 (越高越优先进 top_n).
+          默认 None → 从 DEFAULT_SALIENCE[etype] 取, 找不到则 0.5.
+          准则 6.5: salience 是数据耦合维度, 给主脑判该事件多重要的 signal.
         """
         if not etype or not description:
             return False
@@ -1037,6 +1090,12 @@ class ConversationEventBus:
             return False
         if ttl is None:
             ttl = self.DEFAULT_TTL.get(etype, 180)
+        if salience is None:
+            salience = self.DEFAULT_SALIENCE.get(etype, 0.5)
+        try:
+            salience = max(0.0, min(1.0, float(salience)))
+        except (TypeError, ValueError):
+            salience = 0.5
 
         now = time.time()
         fp = (etype, desc[:60])
@@ -1057,6 +1116,7 @@ class ConversationEventBus:
                 'ttl': float(ttl),
                 'source': source or 'unknown',
                 'metadata': dict(metadata) if metadata else {},
+                'salience': salience,
             })
         return True
 
@@ -1138,6 +1198,85 @@ class ConversationEventBus:
         """供调试 / 测试：返回当前完整事件列表的拷贝。"""
         with self._lock:
             return [dict(e) for e in self._events]
+
+    # ----------------------------------------------------------------------
+    # [β.5.0-A / 2026-05-19] Shared World Model APIs
+    # ----------------------------------------------------------------------
+    def top_n(self, n: int = 12, types: set = None,
+              within_seconds: float = None,
+              salience_floor: float = 0.0) -> list:
+        """按 (salience × recency) 综合分排序, 返回最重要的 n 条事件.
+
+        Args:
+            n: 取多少条 (默认 12).
+            types: 仅取这些 etype (None = 全部).
+            within_seconds: 仅取最近 X 秒内 (None = 用 TTL).
+            salience_floor: 仅取 salience >= floor 的 (0.0 = 全部).
+
+        Returns:
+            List[dict], 含 score 字段排序. 已 expired 的不返回.
+
+        准则 6 evidence-only: 给主脑 raw signal pool, 不教如何反应.
+        """
+        events = self.recent_events(within_seconds=within_seconds, types=types)
+        if not events:
+            return []
+        now = time.time()
+        # recency: e^(-age/halflife), halflife = 180s
+        # 综合 = salience * 0.7 + recency * 0.3
+        scored = []
+        for e in events:
+            sal = e.get('salience', 0.5)
+            if sal < salience_floor:
+                continue
+            age = max(0, now - e['timestamp'])
+            recency = 2.71828 ** (-age / 180.0)  # halflife 3min
+            score = sal * 0.7 + recency * 0.3
+            e_copy = dict(e)
+            e_copy['score'] = round(score, 3)
+            e_copy['_age_s'] = int(age)
+            scored.append(e_copy)
+        scored.sort(key=lambda x: x['score'], reverse=True)
+        return scored[:n]
+
+    @classmethod
+    def register_global(cls, bus_instance):
+        """[β.5.0-A] 注册全局 event_bus 让无 self.jarvis 引用的远端模块也能 publish.
+        CentralNerve.__init__ 创建 bus 后, 调 ConversationEventBus.register_global(self.event_bus).
+        """
+        global _GLOBAL_EVENT_BUS
+        _GLOBAL_EVENT_BUS = bus_instance
+
+    def to_swm_block(self, n: int = 12, max_chars: int = 800,
+                     title: str = "=== [SHARED WORLD MODEL — Sir 准则 6 evidence] ===",
+                     types: set = None,
+                     salience_floor: float = 0.3) -> str:
+        """渲染 SWM 给主脑 prompt 看. 按 top_n 排, 显示 salience + age + source + desc.
+
+        给主脑富 evidence 自决, 不教具体反应方式.
+        """
+        top = self.top_n(n=n, types=types, salience_floor=salience_floor)
+        if not top:
+            return ""
+        lines = [title]
+        for e in top:
+            age_s = e['_age_s']
+            if age_s < 60:
+                age_str = f"{age_s}s"
+            elif age_s < 3600:
+                age_str = f"{age_s // 60}m"
+            else:
+                age_str = f"{age_s // 3600}h"
+            sal = e.get('salience', 0.5)
+            src = e.get('source', '') or 'unknown'
+            src_tag = f"[{src}]" if src else ''
+            lines.append(
+                f"- (sal={sal:.2f}, age={age_str}) {e['type']} {src_tag}: {e['description']}"
+            )
+        result = "\n".join(lines)
+        if len(result) > max_chars:
+            result = result[:max_chars - 4].rstrip() + " …"
+        return result
 
 
 # ============================================================

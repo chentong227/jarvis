@@ -353,6 +353,12 @@ class CentralNerve:
         try:
             from jarvis_utils import ConversationEventBus
             self.event_bus = ConversationEventBus()
+            # [β.5.0-A / 2026-05-19] 注册全局 SWM 让远端模块 (PhysicalEnvProbe /
+            # OfferGuard / ProactiveCare / Reflectors) publish 不需 self.jarvis ref
+            try:
+                ConversationEventBus.register_global(self.event_bus)
+            except Exception:
+                pass
         except Exception:
             self.event_bus = None
         # [R7-α/B1] event_bus 准备好后，回填到 state，让状态切换也能 publish 出去
@@ -941,6 +947,23 @@ class CentralNerve:
         self._stm_importance_scores[len(self.short_term_memory) - 1] = importance
         self._compress_stm_if_needed()
         self._stm_dirty = True  # [β.4.10] 标记 STM 改了, daemon 下次 dump 该写
+        # [β.5.0-A / 2026-05-19] 准则 6 数据强耦合: STM append trigger publish 到 SWM
+        # 让 EpisodeBridge 类 daemon 可订阅 (β.5.x 立项时). 主脑也可看到 STM 末尾刚发生.
+        try:
+            if self.event_bus is not None:
+                self.event_bus.publish(
+                    etype='utterance_appended',
+                    description=f"STM new: '{(user or '')[:50]}' → '{(jarvis or '')[:50]}'",
+                    source='STM',
+                    metadata={
+                        'user_text': (user or '')[:120],
+                        'jarvis_text': (jarvis or '')[:120],
+                        'importance': importance,
+                    },
+                    salience=min(0.6, 0.2 + importance * 0.4),
+                )
+        except Exception:
+            pass
 
     # ----------------------------------------------------------------------
     # [β.4.10 / 2026-05-19] STM 持久化 (Sir 重启不忘) — 准则 4 "懂我" 治本
@@ -2096,6 +2119,19 @@ User: {user_input}
         except Exception:
             event_bus_block = ""
 
+        # [β.5.0-A / 2026-05-19] SharedWorldModel block — 准则 6 数据强耦合
+        # event_bus.to_prompt_block 走旧 type_priority 静态权重 + 时近度.
+        # to_swm_block 走 (salience × recency) 动态评分, 显示 sal+age+source+desc.
+        # 主脑看 raw signal pool 12 条自决, 不教反应方式. 跟 event_bus_block 并列展示
+        # (后者按 conversation_event 链, 前者按全局 SWM 显著性).
+        swm_block = ""
+        try:
+            bus = getattr(self, 'event_bus', None)
+            if bus is not None and hasattr(bus, 'to_swm_block'):
+                swm_block = bus.to_swm_block(n=12, max_chars=900, salience_floor=0.3)
+        except Exception:
+            swm_block = ""
+
         # [R7-α/AttentionContext] 注意力锚点：Sir 讲话当下盯着的窗口/光标位置/最近窗口切换。
         # 用 ≤ 5s 内的快照，过时则丢（避免把陈旧 attention 当成"现在"）。
         # 让 LLM 解 "这里/这个/那段" 这类指代成本接近零。
@@ -2192,6 +2228,8 @@ User: {user_input}
 {fuzzy_candidates_policy}
 
 {promise_protocol_directive}
+
+{swm_block}
 
 {event_bus_block}
 

@@ -1136,6 +1136,30 @@ class ProactiveCareEngine(threading.Thread):
         if top_u < self.threshold:
             return
 
+        # [β.5.0-A / 2026-05-19] 准则 6 数据强耦合: top concern publish 到 SWM
+        # 让主脑下次 prompt 看到 "Sir 当下最受关心的事 = X, urgency=Y", 不依赖
+        # ProactiveCare 自己 push __NUDGE__ 才让主脑知道.
+        try:
+            from jarvis_utils import get_event_bus
+            _swm = get_event_bus()
+            if _swm is not None:
+                _cid = getattr(top_c, 'id', '?')
+                _sev = getattr(top_c, 'severity', 0.0)
+                _swm.publish(
+                    etype='concern_active',
+                    description=f"top_concern={_cid} urgency={top_u:.2f} severity={_sev:.2f}",
+                    source='ProactiveCare',
+                    metadata={
+                        'concern_id': _cid,
+                        'urgency': round(top_u, 3),
+                        'severity': round(_sev, 3),
+                        'breakdown': top_bd,
+                    },
+                    salience=min(0.95, 0.4 + top_u * 0.5),  # urgency 越高 salience 越高
+                )
+        except Exception:
+            pass
+
         # 5. guard 判定
         with self._state_lock:
             last_any = self.last_any_nudge_ts

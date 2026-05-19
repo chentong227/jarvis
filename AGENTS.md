@@ -23,11 +23,15 @@
 3. **符合人设**（butler 风格 / 不奉承）
 4. **懂我**（profile / hippocampus / 老友感）
 5. **言出必行**（INTEGRITY ABSOLUTE / 不假装完成 / 任何 specific factual claim 必须 trace 到 evidence）
-6. **拒绝硬编码**（β.2.8.8 / 2026-05-17 Sir 立准则）— 一切以足够智能的动态上下文注入让 Jarvis 自然涌现"懂我"的感觉, 不靠硬编码句式/触发/角色
+6. **拒绝硬编码, 信任 LLM** (β.2.8.8 立 / β.5.0 / 2026-05-19 Sir 升级合并 6.5) — 三维耦合:
+   - **数据强耦合**: 所有模块 publish raw signal 进 SharedWorldModel (= `ConversationEventBus`), 持久化 + CLI 可改
+   - **行为弱耦合**: 砍 hard gate 链, sentinel (NudgeGate/OfferGuard/SmartNudge/Conductor/Wellness...) 逐步退化为 publish-only
+   - **决策集中主脑**: LLM 一处看全 SWM evidence, 自决反应空间 (silence / voice / silent_text / visual_pulse / tool_call). Python regex 覆盖不到的复杂语义 → L7 Reflector LLM-propose
+   - 工程冲突时, 当 LLM 能干就别 python 拦. 但**优先级仍低于准则 1 (高效 TTFT < 5s)** — Sir 不允许调一次 GPT-5 PRO 调子.
 
 任何改动让这 6 项退步，**Sir 真机实测会立刻打回**。
 
-### 准则 6 —"拒绝硬编码" 5 类反例 + 替代方案
+### 准则 6 —"拒绝硬编码 + 信任 LLM" 5 类反例 + 替代方案
 
 | 硬编码反例 | 等价替代 |
 |---|---|
@@ -39,36 +43,43 @@
 
 **判别**: 写新 directive/prompt 时, 自问"如果 Sir 看到这段会不会说'怎么和模板一样'?". 凡是 prescribe 句式/词汇/动作步骤的 → 大概率硬编码 → 改成 evidence-only.
 
-### 准则 6.5 — 动态架构必须 + LLM 兜底 (Sir 2026-05-18 12:57 升级)
+### 准则 6 — 工程方法论 (合并自原 6.5, Sir 2026-05-18 / 2026-05-19 升级)
 
 > "一切层级架构都要有动态修正的能力，并且不写死任何死编码，应该动态从对话中提取，python 规则无法覆盖的部分引入 LLM。"
 
-**任何层级架构 (Concern / Directive / Vocab / Predicate / Pattern / ...) 必须满足 3 个硬规**:
+**任何层级架构 (Concern / Directive / Vocab / Predicate / Pattern / Gate / Sentinel / ...) 必须满足 3 个硬规**:
 
 1. **持久化** — 数据持久化到 `memory_pool/*.json|jsonl|db`, NOT 在 `.py` source 文件里写死 list/dict
 2. **CLI 可改** — 必须有 `scripts/<thing>_dump.py` 工具让 Sir list/add/activate/reject/delete (类 `scripts/concerns_dump.py` 风格), Sir 操作不需要改源码 + git commit
 3. **L7 Reflector LLM-propose** — 配套 reflector daemon 看对话/事件流, LLM 提取新 keyword/pattern → 写 review queue → Sir 拍板. python regex 命中不到的复杂中文/语义场景 → LLM 二次判 + propose 加 vocab
+
+**β.5.0 三维耦合工程落地** (新):
+- **数据强耦合**: `ConversationEventBus` = `SharedWorldModel` (SWM), 所有 sensor/sentinel publish signal 进 SWM, 主脑 prompt 读 `to_swm_block()`
+- **行为弱耦合**: sentinel `gate_mode` 三档 `hard | soft | publish_only`, 持久化 `memory_pool/gate_mode_vocab.json`, CLI `scripts/gate_mode_dump.py` 可切换
+- **决策集中主脑**: stream_nudge 加 `reaction_space` (silence / voice / silent_text / visual_pulse / tool_call), 主脑输出 JSON 选 action + 内容
 
 **示例 (已立此规范)**:
 - `concerns.json` + `concerns_review.json` + `scripts/concerns_dump.py` + `ConcernsReflector / WeeklyReflector` ✅
 - `directive_registry.json` + `directive_review.json` + `scripts/registry_dump.py` + Sir 手动 (L7 待做) ⚠️
 - `behavior_inference_vocab.json` + `scripts/behavior_vocab_dump.py` + L7 待做 (β.2.9.12 本轮立) ⚠️
 - `relational_state.json` + `relational_review.json` + `scripts/relational_dump.py` + L4 Reflector ✅
+- `commitment_conditional_vocab.json` (β.4.11) + `scripts/cmt_vocab_dump.py` 待做 ⚠️
+- `ConversationEventBus.salience + top_n()` (β.5.0-A 本轮新) ✅
 
 **反例 (违规)**: 任何看到 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须立刻迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 TICK_INTERVAL=60) 可以.
 
-**准则 6.5 递归边界 (β.3.5 立)**: testcase 红线 / 系统级常量 (`TICK_INTERVAL` / `_NON_RETRYABLE_KEYWORDS` / HTTP 错误码黑名单 / `_COLOR_PATTERNS` ANSI regex) / `< 400 行` 核心 .md (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md`) 是 **"持久化的硬规"** — 不再下钻 vocab 化, 防止递归到地心.
+**准则 6 递归边界 (β.3.5 立)**: testcase 红线 / 系统级常量 (`TICK_INTERVAL` / `_NON_RETRYABLE_KEYWORDS` / HTTP 错误码黑名单 / `_COLOR_PATTERNS` ANSI regex) / `< 400 行` 核心 .md (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md`) 是 **"持久化的硬规"** — 不再下钻 vocab 化, 防止递归到地心.
 
 ### 准则 7 — Sir 元否决权 (META-PRINCIPLE, β.3.5 立)
 
 任何章程在 Sir 显式创新或方向调整冲突时, **Sir 元否决权优先, 章程让步**。Agent 看到冲突: 提示"这与 §X 准则冲突"即可, Sir 拍板后立刻执行不再 hedge。Sir 是项目唯一仲裁者, 章程是 Sir 工程治理的工具, **不是反制 Sir 的枷锁**。
 
 **反例 (Agent 不该做)**:
-- ❌ "Sir 你这条改动违反 §6.5, 我不能做" — 拒绝 Sir 是越权
+- ❌ "Sir 你这条改动违反 §6, 我不能做" — 拒绝 Sir 是越权
 - ❌ Sir 说"先这样, 后面再优化" → Agent 反复劝"先优化再做更好" — 这是 hedge 反阻
 
 **正例**:
-- ✅ "这与 §6.5 vocab 持久化冲突, 我会执行 Sir 决定, 同时记一笔 TODO `<...>` 等 Sir 决定后续是否升级章程"
+- ✅ "这与 §6 vocab 持久化冲突, 我会执行 Sir 决定, 同时记一笔 TODO `<...>` 等 Sir 决定后续是否升级章程"
 
 ---
 
@@ -89,7 +100,7 @@
 | 触发 | 看什么 |
 |---|---|
 | 查规范 (commit / push / 测试 / trace_id) | `docs/JARVIS_WORKFLOW_PROTOCOL.md` |
-| 改 `jarvis_*.py` | `docs/JARVIS_PYTHON_STYLE.md` (imports / marker / forbidden / 准则 6.5 vocab 范式) |
+| 改 `jarvis_*.py` | `docs/JARVIS_PYTHON_STYLE.md` (imports / marker / forbidden / 准则 6 vocab 范式) |
 | 完工要交接给下一 agent | `docs/AGENT_HANDOFF_PROTOCOL.md` + `docs/AGENT_KICKOFF_TEMPLATE.md` |
 | Sir 提"上次/上轮某 marker" | 先 `Grep TODO.md`, 再 `Grep docs/TODO_ARCHIVE.md` |
 

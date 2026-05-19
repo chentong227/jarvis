@@ -256,6 +256,29 @@ class ReturnSentinel(threading.Thread):
         afk_min = int(afk_duration / 60)
         _log(f"📞 [ReturnSentinel] _on_return: afk={afk_min}min (raw={int(afk_duration)}s), first_today={self.first_active_today}")
 
+        # [β.5.0-A / 2026-05-19] 准则 6 数据强耦合: AFK 回归原始信号 publish 到 SWM
+        # 即使本次 _on_return 被各种 gate 拦 (cooldown / startup_guard / media_window / ...)
+        # 不发 nudge, 主脑仍能在 next prompt 看到 "Sir 刚回来过, AFK X min, first_today=Y".
+        try:
+            from jarvis_utils import get_event_bus
+            _swm = get_event_bus()
+            if _swm is not None:
+                _swm.publish(
+                    etype='afk_return',
+                    description=f"Sir returned: AFK {afk_min}min, first_today={self.first_active_today}",
+                    source='ReturnSentinel',
+                    metadata={
+                        'afk_minutes': afk_min,
+                        'afk_seconds': int(afk_duration),
+                        'first_today': bool(self.first_active_today),
+                        'crosses_sleep': bool(afk_duration > 14400),
+                    },
+                    # AFK > 4h (跨夜) salience 高, 短 AFK 较低
+                    salience=0.75 if afk_duration > 14400 else 0.45,
+                )
+        except Exception:
+            pass
+
         if time.time() - self._last_greeting_time < self._greeting_cooldown:
             _log(f"📞 [ReturnSentinel/Skip] greeting cooldown 未过（剩 {int(self._greeting_cooldown-(time.time()-self._last_greeting_time))}s）")
             return

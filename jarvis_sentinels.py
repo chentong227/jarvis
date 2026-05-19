@@ -765,7 +765,36 @@ class NudgeGate:
         - 节奏闸（按 nudge_type 各自的 min_interval_s 限频，修 Cs1 path_b 绕过 wellness cooldown）
         - capability 闸（offer_help 必须有 healthy safe skill 可 reference，修 Cs2 宽泛承诺）
         - 通过 → 立刻 OfferGuard.mark_spoken 更新节奏 last_ts（守望者一旦 can_speak 通过就
-          push_command，不会再次 check_offer，所以这里立即 mark 是安全的）。"""
+          push_command，不会再次 check_offer，所以这里立即 mark 是安全的）。
+        
+        [β.5.0-A / 2026-05-19] gate decision 同时 publish 到 SWM (准则 6 数据强耦合):
+        return False 时 publish gate_advice 让主脑下次能看到 "I would block this".
+        当前仍 hard return (gate_mode=hard 默认); β.5.1 加 soft/publish_only mode.
+        """
+        result = self._can_speak_internal(center_name, is_urgent, nudge_type)
+        # [β.5.0-A] publish gate decision (无论 True/False) 到 SWM
+        if not result:
+            try:
+                from jarvis_utils import get_event_bus
+                _bus = get_event_bus()
+                if _bus is not None:
+                    _bus.publish(
+                        etype='gate_advice',
+                        description=f"NudgeGate blocked {center_name}/{nudge_type or '?'}: cooldown/freeze/sleep",
+                        source='NudgeGate',
+                        metadata={
+                            'center': center_name,
+                            'nudge_type': nudge_type,
+                            'is_urgent': is_urgent,
+                            'decision': 'block',
+                        },
+                    )
+            except Exception:
+                pass
+        return result
+
+    def _can_speak_internal(self, center_name: str, is_urgent: bool, nudge_type: str) -> bool:
+        """can_speak 原逻辑, 拆出来方便 publish wrap."""
         with self._lock:
             now = time.time()
             # [v3] 硬冻结优先于一切（包括 is_urgent）—— 用户拒绝/急停明确不想听见
