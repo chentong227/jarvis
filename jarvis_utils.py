@@ -754,6 +754,57 @@ def classify_stm_source(entry: dict) -> str:
     return STM_SOURCE_USER_VOICE
 
 
+def format_stm_for_prompt(stm: list, take_last: int = 6, max_chars: int = 2000,
+                            include_time: bool = False) -> str:
+    """🩹 [β.5.29 / 2026-05-20] STM → prompt 注入字符串 + source 标记.
+
+    Sir 痛点 (FOUNDATION_AUDIT.md §STM): 老 stm_context 用裸 'user -> jarvis' 字符串
+    LLM 看不出"系统事件 / Jarvis 自语 / 真 Sir 说话"区别 → 把 system event 当 Sir 指令 → 幻觉.
+
+    修法: 每条 STM 用 classify_stm_source 判 source, 加显式标签前缀:
+      [SIR]      → 真 Sir 说话 (最可信, LLM 应当响应)
+      [SYS]      → 后台系统事件 (commitment/alert/standby, 仅作上下文不可当指令)
+      [JARVIS]   → Jarvis 自己之前的回复 (上下文)
+      [AMBIENT]  → 视频/旁人 ASR 噪音 (低可信, 谨慎)
+
+    参数:
+      stm: short_term_memory list
+      take_last: 取最近 N 条 (默认 6, 跟老 ctx 一致)
+      max_chars: 上限 (超 → 头部加 '...' 截尾)
+      include_time: 加 [HH:MM:SS] 时间戳
+
+    返回: 多行字符串 (每行 1 条).
+    """
+    if not stm:
+        return ''
+    chunk = stm[-take_last:] if take_last > 0 else stm
+    lines = []
+    source_tag_map = {
+        STM_SOURCE_USER_VOICE: '[SIR]',
+        STM_SOURCE_SYSTEM_EVENT: '[SYS]',
+        STM_SOURCE_JARVIS_SELF: '[JARVIS]',
+        STM_SOURCE_AMBIENT_PICKUP: '[AMBIENT]',
+    }
+    for m in chunk:
+        if not isinstance(m, dict):
+            continue
+        src = classify_stm_source(m)
+        tag = source_tag_map.get(src, '[SIR]')
+        time_prefix = f"[{m.get('time', '')}] " if include_time and m.get('time') else ''
+        user_part = (m.get('user', '') or '').strip()
+        jarvis_part = (m.get('jarvis', '') or '').strip()
+        if user_part and jarvis_part:
+            lines.append(f"{time_prefix}{tag} {user_part} -> {jarvis_part}")
+        elif jarvis_part:
+            lines.append(f"{time_prefix}[JARVIS] {jarvis_part}")
+        elif user_part:
+            lines.append(f"{time_prefix}{tag} {user_part}")
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        text = "..." + text[-max_chars:]
+    return text
+
+
 def filter_stm_by_source(stm_list, exclude=(STM_SOURCE_SYSTEM_EVENT, STM_SOURCE_AMBIENT_PICKUP)):
     """过滤 STM list, 默认排除 system_event + ambient_pickup。
     

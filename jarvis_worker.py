@@ -3075,9 +3075,9 @@ class JarvisWorkerThread(QThread):
                         except Exception:
                             _set_conv_active_c6 = None
 
-                        stm_context = "\n".join([f"{m['user']} -> {m['jarvis']}" for m in self.jarvis.short_term_memory[-6:]])
-                        if len(stm_context) > 2000:
-                            stm_context = "..." + stm_context[-2000:]
+                        # β.5.29: STM source 分嵌
+                        from jarvis_utils import format_stm_for_prompt as _fmt_stm_w1
+                        stm_context = _fmt_stm_w1(self.jarvis.short_term_memory, take_last=6, max_chars=2000)
 
                         ltm_context = "暂无相关历史记录。"
                         try:
@@ -3280,9 +3280,9 @@ class JarvisWorkerThread(QThread):
                 # ==========================================
 # 📍 修改目标位置: jarvis_nerve.py (在 JarvisWorkerThread.run 中)
 # ==========================================
-                stm_context = "\n".join([f"{m['user']} -> {m['jarvis']}" for m in self.jarvis.short_term_memory[-6:]])
-                if len(stm_context) > 2000:
-                    stm_context = "..." + stm_context[-2000:]
+                # β.5.29: STM source 分嵌
+                from jarvis_utils import format_stm_for_prompt as _fmt_stm_w2
+                stm_context = _fmt_stm_w2(self.jarvis.short_term_memory, take_last=6, max_chars=2000)
                 
                 clean_cmd = cmd
                 clean_intent = cmd # 👈 新增：专门用于 UI 打印的纯净意图

@@ -719,24 +719,49 @@ def api_cancel_commitment(cw_id: int):
 
 @app.route('/api/reflect_now', methods=['POST'])
 def api_reflect_now():
-    """🩹 [β.5.28-fix6 / 2026-05-20] Sir 03:13 反馈 'JOKE 不动态更新'.
-    手动 trigger WeeklyReflector (含 joke + thread propose) 立刻跑.
+    """🩹 [β.5.28-fix6/8 / 2026-05-20] Sir 03:13/03:25 反馈 'JOKE/经历 不动态更新'.
+
+    双路触发:
+    1. concerns_dump.py --reflect-now → WeeklyReflector (propose concerns)
+    2. 写 memory_pool/_force_soul_now.flag → 主 jarvis 进程的 SoulArchivist 60s 内
+       检测 flag → 强制反思一次 (propose jokes/threads, 绕过 last_update_hour cooldown).
     """
     import subprocess as _sp
+    import os as _os
+    # 1. SoulArchivist flag (主进程 SoulArchivist 60s 内会 pick up)
+    soul_flag_ok = False
+    try:
+        flag_path = _os.path.join('memory_pool', '_force_soul_now.flag')
+        with open(flag_path, 'w') as f:
+            f.write(str(int(__import__('time').time())))
+        soul_flag_ok = True
+    except Exception as fe:
+        pass
+    # 2. WeeklyReflector concerns
     try:
         r = _sp.run(
             [sys.executable, 'scripts/concerns_dump.py', '--reflect-now'],
             capture_output=True, text=True, timeout=60,
         )
         return jsonify({
-            'ok': r.returncode == 0,
+            'ok': r.returncode == 0 and soul_flag_ok,
             'stdout': (r.stdout or '')[:1000],
             'stderr': (r.stderr or '')[:500],
+            'soul_flag': '✓ SoulArchivist flag written (60s 内会反思 propose joke/thread)'
+                          if soul_flag_ok else '✗ flag 写入失败',
         })
     except _sp.TimeoutExpired:
-        return jsonify({'ok': False, 'detail': '60s 超时'}), 504
+        return jsonify({
+            'ok': soul_flag_ok,
+            'detail': 'WeeklyReflector 60s 超时, 但 SoulArchivist flag 已写',
+            'soul_flag': soul_flag_ok,
+        }), 504
     except Exception as e:
-        return jsonify({'ok': False, 'detail': str(e)}), 500
+        return jsonify({
+            'ok': soul_flag_ok,
+            'detail': str(e),
+            'soul_flag': soul_flag_ok,
+        }), 500
 
 
 @app.route('/api/all')

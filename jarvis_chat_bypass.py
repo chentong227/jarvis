@@ -546,6 +546,25 @@ class ChatBypass:
         except Exception:
             pass
 
+        # 🩹 [β.5.28-fix7 / 2026-05-20] Sir 03:22 实测 TTS 输出末尾 '---ZH' (partial marker).
+        # Root cause: stream 末 buffer 含 LLM 输出截断的 partial '---ZH' (没等到完整 '---ZH---').
+        # 老 5 处 splitter 末尾 flush 只查完整 '---ZH---', miss partial → TTS 念出 'ZH'.
+        # 修法: _put_audio 单点守门, 末尾任意 '-{1,}\s*Z?H?-*' marker 残段一律剥.
+        try:
+            import re as _re_partial_zh
+            if text:
+                _orig_partial = text
+                # 剥末尾 partial marker: '---' / '---Z' / '---ZH' / '---ZH-' / '---ZH--' / 残缺间隔
+                text = _re_partial_zh.sub(r'-{2,}\s*[Zz]?[Hh]?-*\s*$', '', text).rstrip()
+                if text != _orig_partial:
+                    try:
+                        from jarvis_utils import bg_log as _zh_partial_log
+                        _zh_partial_log(f"🛡️ [Audio Guard β.5.28-fix7] 剥末尾 partial ZH marker: '{_orig_partial[-30:]}' → '{text[-30:]}'")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # [P0+18-a.14 / 2026-05-15] 修 BUG #9: 第一句对话念中文
         # 兜底守门：任何送进 audio_queue 的文本若含 [\u4e00-\u9fa5]，
         # 立即 strip 中文 + bg_log 警告。Jarvis 是英文 TTS（CosyVoice 用英文 prompt zero-shot），

@@ -177,9 +177,9 @@ class ChronosTick(threading.Thread):
 
         pseudo_input = f"[SYSTEM BACKGROUND EVENT]: {mail['content']}\n[DIRECTIVE]: Act autonomously and inform Sir about this event. {tone_prompt} Do NOT wait for my prompt. Do NOT use <START_ROUTING>."
         
-        stm_context = "\n".join([f"[{m.get('time', '')}] {m['user']} -> {m['jarvis']}" for m in self.jarvis.short_term_memory[-6:]])
-        if len(stm_context) > 2000:
-            stm_context = "..." + stm_context[-2000:]
+        # β.5.29: STM source 分嵌 (带 time)
+        from jarvis_utils import format_stm_for_prompt as _fmt_stm_s1
+        stm_context = _fmt_stm_s1(self.jarvis.short_term_memory, take_last=6, max_chars=2000, include_time=True)
         ltm_context = getattr(self.chat_bypass, 'last_ltm_context', 'None')
         chat_organs = ", ".join(self.jarvis.hand_manifests.keys())
         
@@ -560,8 +560,22 @@ class SoulArchivistSentinel(threading.Thread):
         while True:
             time.sleep(60)
             
+            # 🩹 [β.5.28-fix8 / 2026-05-20] Sir 03:25 反馈"重跑反思 LLM".
+            # File-flag trigger: web /api/reflect_now 写 memory_pool/_force_soul_now.flag,
+            # 这里检 + 删 + 强制跑一次 (绕过 last_update_hour cooldown).
+            _force_flag = os.path.join('memory_pool', '_force_soul_now.flag')
+            _force_now = False
+            try:
+                if os.path.exists(_force_flag):
+                    _force_now = True
+                    os.remove(_force_flag)
+                    print("[SoulArchivist] 🎯 收到 force_now flag, 强制反思一次...")
+                    self.last_update_hour = -1  # 让下面 check 通过
+            except Exception:
+                pass
+            
             current_hour = time.localtime(time.time()).tm_hour
-            if current_hour == self.last_update_hour:
+            if not _force_now and current_hour == self.last_update_hour:
                 continue
             if self.is_updating:
                 continue
@@ -570,7 +584,9 @@ class SoulArchivistSentinel(threading.Thread):
             try:
                 current_profile = self._load_profile()
                 
-                recent_chats = "\n".join([f"[{m.get('time', '')}] {m['user']} -> {m['jarvis']}" for m in self.jarvis.short_term_memory[-20:]])
+                # β.5.29: STM source 分嵌
+                from jarvis_utils import format_stm_for_prompt as _fmt_stm_s2
+                recent_chats = _fmt_stm_s2(self.jarvis.short_term_memory, take_last=20, max_chars=5000, include_time=True)
                 if not recent_chats or recent_chats == self.last_processed_chats:
                     self.last_update_hour = current_hour
                     self.is_updating = False
@@ -578,6 +594,28 @@ class SoulArchivistSentinel(threading.Thread):
                 
                 current_hour_str = time.strftime('%H:%M')
                 current_weekday = time.strftime('%A')
+
+                # 🩹 [β.5.28-fix8 / 2026-05-20] Sir 03:25 反馈"经历漏了, 记得去重已有的".
+                # 装配 existing_relational_block 给 LLM 看, 避免重复 propose.
+                try:
+                    from jarvis_relational import get_default_store
+                    _rs = get_default_store()
+                    _existing_lines = []
+                    _existing_lines.append("Existing JOKES (DO NOT re-propose):")
+                    for _j in list(_rs.inside_jokes.values()):
+                        if _j.state in ('active', 'review'):
+                            _existing_lines.append(f"  - '{_j.phrase}' [{_j.state}]")
+                    if len(_existing_lines) == 1:
+                        _existing_lines.append("  (none)")
+                    _existing_lines.append("Existing THREADS (DO NOT re-propose):")
+                    for _t in list(_rs.shared_history_threads.values()):
+                        if _t.state in ('active', 'review'):
+                            _existing_lines.append(f"  - '{_t.title}' [{_t.state}]")
+                    if 'none' not in ' '.join(_existing_lines[-3:]) and len(_existing_lines) <= 4:
+                        _existing_lines.append("  (none)")
+                    existing_relational_block = '\n'.join(_existing_lines)
+                except Exception:
+                    existing_relational_block = "(failed to load existing relational state — be conservative, propose only obvious new ones)"
                 
                 ledger_snapshot = "No ledger data available."
                 if hasattr(self.jarvis, 'status_ledger'):
@@ -619,6 +657,12 @@ Real-time Ledger: {ledger_snapshot}
 [PROPOSAL DIRECTIVES — Our relational state (REVIEW queue, NOT auto-active)]
 6. Proposed Inside Jokes: Did a genuinely amusing interaction occur? Output entries in `proposed_inside_jokes` (at most 3 per cycle). Each entry: {{"phrase": "<short callback phrase, <80 chars>", "birth_context": "<one-sentence why funny>", "tone": "<wry/dry/playful/etc>"}}.
 7. Proposed Shared History Threads: Did Sir mention a significant life event or achievement? Output in `proposed_shared_history_threads`. Each entry: {{"title": "<short title>", "highlight": "<one-sentence latest detail>"}}.
+
+[CRITICAL DEDUP RULE — β.5.28-fix8 / 2026-05-20]
+Below is the FULL LIST of jokes / threads ALREADY captured (state=active or review).
+DO NOT propose anything that overlaps with these titles or phrases (semantic similarity counts, not just exact match):
+{existing_relational_block}
+If you have nothing genuinely NEW to propose, output empty arrays. Better to propose nothing than to flood Sir with duplicates.
 
 [INPUT]
 Old Soul Ledger: {json.dumps(current_profile, ensure_ascii=False)}
@@ -1131,7 +1175,9 @@ class UserStatusLedgerSentinel(threading.Thread):
             snapshot = PhysicalEnvironmentProbe.get_sensor_snapshot()
             fusion_score = PhysicalEnvironmentProbe.compute_fusion_score()
 
-            recent_chats = "\n".join([f"[{m.get('time', '')}] {m['user']} -> {m['jarvis']}" for m in self.jarvis.short_term_memory[-10:]])
+            # β.5.29: STM source 分嵌
+            from jarvis_utils import format_stm_for_prompt as _fmt_stm_s3
+            recent_chats = _fmt_stm_s3(self.jarvis.short_term_memory, take_last=10, max_chars=3000, include_time=True)
             if not recent_chats: recent_chats = "近期无对话。"
 
             prompt = f"""You are an ultra-fast behavioral profiler documenting Sir's real-time state.
