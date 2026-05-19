@@ -81,7 +81,7 @@ HTML_TEMPLATE = r"""
       <div class="text-2xl">🤖</div>
       <div>
         <h1 class="text-xl font-bold tracking-tight">J.A.R.V.I.S. Dashboard</h1>
-        <p class="text-xs text-slate-400">β.5.25 · <span x-text="lastUpdate"></span></p>
+        <p class="text-xs text-slate-400">β.5.28-fix4 · build {{ build_ts }} · <span x-text="lastUpdate"></span></p>
       </div>
     </div>
     <div class="flex items-center gap-2">
@@ -180,16 +180,23 @@ HTML_TEMPLATE = r"""
         <!-- rationale_zh (翻译) -->
         <p x-show="it.rationale_zh" class="text-xs text-cyan-400/70 leading-relaxed mb-4 flex-1" x-text="'  └ ' + it.rationale_zh"></p>
         <!-- action 按钮 -->
+        <!-- 🩹 [β.5.28-fix4 / 2026-05-20] Sir 03:03 反馈"按钮还是点不了". -->
+        <!-- 改用纯 inline onclick + fetch (不依赖 Alpine reactive), 100% 能点. -->
         <div class="flex gap-2 mt-auto">
-          <button @click="approve(it)"
-                  :disabled="actionPending[it.kind + '/' + it.id]"
-                  class="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition text-sm font-medium">
-            <span x-show="!actionPending[it.kind + '/' + it.id]">✅ 通过</span>
-            <span x-show="actionPending[it.kind + '/' + it.id]">⏳...</span>
+          <button
+                  :data-kind="it.kind"
+                  :data-id="it.id"
+                  :data-pv="it.proposed_value"
+                  onclick="window.dashboardFallbackAct(this, 'activate')"
+                  class="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition text-sm font-medium cursor-pointer">
+            ✅ 通过
           </button>
-          <button @click="reject(it)"
-                  :disabled="actionPending[it.kind + '/' + it.id]"
-                  class="flex-1 px-4 py-2 rounded-lg bg-rose-600/80 hover:bg-rose-500 disabled:opacity-50 transition text-sm font-medium">
+          <button
+                  :data-kind="it.kind"
+                  :data-id="it.id"
+                  :data-pv="it.proposed_value"
+                  onclick="window.dashboardFallbackAct(this, 'reject')"
+                  class="flex-1 px-4 py-2 rounded-lg bg-rose-600/80 hover:bg-rose-500 transition text-sm font-medium cursor-pointer">
             ❌ 拒绝
           </button>
         </div>
@@ -401,6 +408,33 @@ HTML_TEMPLATE = r"""
 </div>
 
 <script>
+// 🩹 [β.5.28-fix4 / 2026-05-20] inline fallback - alpine 没绑/失败也能点
+window.dashboardFallbackAct = async function(btn, action) {
+  const kind = (btn.dataset.kind || '').split('/')[0];
+  const id = btn.dataset.id;
+  const pv = btn.dataset.pv;
+  if (!kind || !id) { alert('数据丢失: kind=' + kind + ' id=' + id); return; }
+  console.log('[Fallback]', action, kind, id);
+  btn.disabled = true;
+  btn.textContent = '⏳ 处理中...';
+  try {
+    const resp = await fetch('/api/review/' + action, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: kind, id: id, proposed_value: pv})
+    });
+    const r = await resp.json();
+    btn.textContent = r.ok ? '✓ ' + (action === 'activate' ? '已通过' : '已拒绝') : '✗ 失败';
+    btn.style.opacity = '0.6';
+    if (!r.ok) alert('失败: ' + (r.detail || '未知'));
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = (action === 'activate' ? '✅ 通过' : '❌ 拒绝');
+    alert('请求失败: ' + e);
+  }
+};
+
 function dashboard() {
   return {
     loading: false,
@@ -532,9 +566,20 @@ function dashboard() {
 # API endpoints
 # ============================================================
 
+_BUILD_TS = __import__('time').strftime('%H:%M:%S')
+
+
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    from flask import make_response
+    resp = make_response(render_template_string(HTML_TEMPLATE, build_ts=_BUILD_TS))
+    # 🩹 [β.5.28-fix4 / 2026-05-20] Sir 03:03 反馈"按钮还是点不了" - 浏览器缓存老 JS.
+    # 加 no-cache header 防 Sir 刷新仍跑老 JS.
+    # build_ts 显头部让 Sir 一眼看是不是新 server (老 server 跑 build_ts 不变).
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 def _summary_for_web() -> Dict[str, Any]:
