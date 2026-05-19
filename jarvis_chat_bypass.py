@@ -2876,6 +2876,33 @@ If you need to perform ANOTHER action based on this result, output ONLY the next
 If ALL tasks are fully completed (no more tools needed), then and ONLY then:
 1. Speak a SINGLE, concise concluding sentence in English that summarizes ALL the actions you just performed.
 2. Output `---ZH---` followed by the Chinese translation.
+
+🩹 [β.5.21-A / 2026-05-20] CHINESE SUBTITLE COVERAGE — Sir 准则 5 言出必行
+   Your `---ZH---` Chinese subtitle MUST cover EVERYTHING you spoke in this turn,
+   INCLUDING any English you said BEFORE the <FAST_CALL>. Sir reads ZH subtitles
+   live; if ZH only translates the concluding sentence, Sir's earlier EN content
+   has no Chinese — Sir cannot follow. Concretely:
+
+   - Recall what you said before <FAST_CALL> (your spoken English so far).
+   - Your final concluding English sentence covers the actions performed.
+   - Your `---ZH---` MUST translate BOTH:
+     (1) the earlier English you spoke before tool call, AND
+     (2) the concluding English about the actions performed.
+   - Use natural Chinese flow (not literal sentence-by-sentence). Keep it concise.
+
+   Example (correct):
+     EN: "It is a far cry from a sticky note, Sir. The current architecture
+          manages everything from sensor fusion to multi-tier nudging."
+     ---ZH---
+     ZH: "从一张便签到现在的多层架构，确实是巨大的飞跃。我刚刚浏览了
+          jarvis_conductor.py，把核心调度逻辑给您梳理了一下。"
+     (ZH 同时覆盖前面说的 'far cry' 评价 + tool call 后的工作总结)
+
+   Example (WRONG, Sir 22:42 实测痛点):
+     [EN1 spoken before FAST_CALL]: "I'll take a look at the core logic now."
+     [EN2 concluding]: "It is a far cry from a sticky note..."
+     [ZH only]: "这离便签纸相去甚远..."  (only covers EN2, EN1 has no ZH!)
+
 DO NOT call any tool (like 'finish') to end the conversation!"""
                     chat_history.append(types.Content(role="user", parts=[types.Part(text=continuation_prompt)]))
                     
