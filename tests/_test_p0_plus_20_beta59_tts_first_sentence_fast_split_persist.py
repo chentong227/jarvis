@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-[P0+20-β.5.9 / 2026-05-19] BUG-3 fix: TTS 卡顿 — 首句激进切 + Audio Trace 诊断
+[P0+20-β.5.9 / 2026-05-19] BUG-3 fix: TTS 卡顿 — 首句激进切
 
 Sir 真机实测主诉: "字幕都打完了好久才说话".
 Root cause 分析 (jarvis_20260519_141609.log turn 14:21:34):
@@ -9,18 +9,17 @@ Root cause 分析 (jarvis_20260519_141609.log turn 14:21:34):
   - 长回复首句 ("A fortuitous outcome, Sir." 26 字符) 在 i=20 切, 仍偏晚
   - render_only 单 thread 串行, 长回复 4 句累积 ~6s
 
-Fix (3 改动, 不动 render 并行):
+Fix (2 改动, 不动 render 并行):
   A. `_find_sentence_split_idx` 加 `is_first_sentence` 参数, 首句 hard>=8/soft>=4
   B. 4 处 splitter 调用 (主 stream_chat / cloud followup / local fallback / nudge)
      传 `is_first_sentence=not _first_sent_done`, 切完后置 True
-  C. `_put_audio` / `_render_worker` / `_play_worker` 加 `[Audio Trace] seq=N` log
-     4 节点 (enq / render_start / render_done / play_start) 让 Sir 下次实测精确定位
+
+Note: 原 C/D 部分 Audio Trace timing log 已于 2026-05-19 21:33 退役 (Sir 实测
+确认 β.5.10 prompt cache render 6.67s→1.9-2.4s 诊断使命完成).
 
 测试覆盖:
   A. _find_sentence_split_idx 首句 vs 后续句阈值差异
   B. 4 处调用点都传 is_first_sentence
-  C. Audio Trace log marker 字面存在 (enq / render_start / render_done / play_start)
-  D. ChatBypass 实例化时 _audio_trace_seq / _audio_trace_lock 存在
 """
 
 from __future__ import annotations
@@ -163,59 +162,42 @@ class TestBeta59SplitterCallSitesPassIsFirst(unittest.TestCase):
 
 
 # ==========================================================================
-# C: Audio Trace timing log marker
+# C/D: Audio Trace timing log + ChatBypass trace attrs (均于 2026-05-19 21:33 退役)
 # ==========================================================================
 
-class TestBeta59AudioTraceLog(unittest.TestCase):
-    """4 个节点 Audio Trace log 字面 marker."""
+class TestBeta59AudioTraceRetired(unittest.TestCase):
+    """送别测: Audio Trace bg_log 已除, 反向锁 — 不该再出现在代码.
+
+    退役原因: β.5.10 prompt encoding cache 落地后 Sir 实测证实 render 从 6.67s
+    降到 1.9-2.4s (【Audio Trace】诊断使命完成). Sir 2026-05-19 21:33 明确
+    "这个部分可以去掉了" — 4 处 bg_log + metadata 透传 + _audio_trace_seq
+    + _audio_trace_lock 全部移除, 净化 noise log.
+
+    下次再需诊断: git show e216a0a — 【jarvis_chat_bypass.py】 可恢复.
+    """
 
     @classmethod
     def setUpClass(cls):
         cls.src = _read(os.path.join(ROOT, 'jarvis_chat_bypass.py'))
 
-    def test_log_marker_enq(self):
-        self.assertIn('[Audio Trace] enq seq=', self.src,
-            'Audio Trace enq log marker 必须存在 (_put_audio 节点)')
+    def test_audio_trace_bg_log_removed(self):
+        """[Audio Trace] bg_log 字面 marker 不该出现在运行时 emit 处.
 
-    def test_log_marker_render_start(self):
-        self.assertIn('[Audio Trace] render_start seq=', self.src,
-            'Audio Trace render_start log marker 必须存在 (_render_worker 进入 render 前)')
+        注: bg_log f-string 内容 【Audio Trace] enq seq=】等字面应全别.
+        允许出现在注释/docstring 里说明"已退役".
+        """
+        # bg_log emit 的 4 个 marker 必须不出现
+        forbidden = ['enq seq=', 'render_start seq=', 'render_done seq=', 'play_start seq=']
+        for marker in forbidden:
+            self.assertNotIn(f'[Audio Trace] {marker}', self.src,
+                f'Audio Trace bg_log marker "{marker}" 已退役, 不该再在代码中出现')
 
-    def test_log_marker_render_done(self):
-        self.assertIn('[Audio Trace] render_done seq=', self.src,
-            'Audio Trace render_done log marker 必须存在 (vocal.render_only 返回后)')
-
-    def test_log_marker_play_start(self):
-        self.assertIn('[Audio Trace] play_start seq=', self.src,
-            'Audio Trace play_start log marker 必须存在 (_play_worker 进入 play_only 前)')
-
-    def test_log_includes_queue_wait(self):
-        self.assertIn('queue_wait=', self.src,
-            'Audio Trace render_start 必须 log queue_wait (audio_queue 等候时间)')
-
-    def test_log_includes_e2e(self):
-        self.assertIn('e2e=', self.src,
-            'Audio Trace play_start 必须 log e2e (enq → play_start 端到端延迟)')
-
-
-# ==========================================================================
-# D: ChatBypass instance has _audio_trace_seq / _audio_trace_lock
-# ==========================================================================
-
-class TestBeta59ChatBypassInstanceAttrs(unittest.TestCase):
-    """ChatBypass.__init__ 后必须有 trace counter + lock."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.src = _read(os.path.join(ROOT, 'jarvis_chat_bypass.py'))
-
-    def test_init_has_audio_trace_seq(self):
-        self.assertIn('self._audio_trace_seq = 0', self.src,
-            'ChatBypass.__init__ 必须初始化 _audio_trace_seq = 0')
-
-    def test_init_has_audio_trace_lock(self):
-        self.assertIn('self._audio_trace_lock = threading.Lock()', self.src,
-            'ChatBypass.__init__ 必须初始化 _audio_trace_lock = threading.Lock()')
+    def test_audio_trace_attrs_removed(self):
+        """_audio_trace_seq / _audio_trace_lock 实例字段 已除."""
+        self.assertNotIn('self._audio_trace_seq = 0', self.src,
+            '_audio_trace_seq 实例字段已退役')
+        self.assertNotIn('self._audio_trace_lock = threading.Lock()', self.src,
+            '_audio_trace_lock 实例字段已退役')
 
 
 if __name__ == '__main__':

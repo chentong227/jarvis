@@ -243,12 +243,9 @@ class ChatBypass:
         # 不能 emit IDLE 缩短回声防御窗口。
         self._render_in_progress = False
 
-        # 🩹 [P0+20-β.5.9 / 2026-05-19] BUG-3 (TTS 卡顿) 诊断 — Audio Trace timing
-        # Sir 实测: "字幕都打完了好久才说话". 加 seq 串联 _put_audio → _render_worker
-        # → _play_worker 时序, 让 Sir 下次实测能 grep "[Audio Trace]" 看每段耗时.
-        # 性能影响: 仅 bg_log 4 行 / 句, < 100us. 不破坏行为.
-        self._audio_trace_seq = 0
-        self._audio_trace_lock = threading.Lock()
+        # 🩹 [P0+20-β.5.9 / 2026-05-19] BUG-3 诊断 Audio Trace 已退役
+        # β.5.10 prompt encoding cache 落地后 Sir 实测确认 render 6.67s→1.9-2.4s,
+        # 诊断使命已完成. 下次再需诊断从 git 恢复 β.5.9 timing log 即可.
 
         # 🩹 [P0+20-β.1.25 / 2026-05-16] Nudge anti-repeat 历史
         # Sir 反馈："回归问候/催睡固定句式我看了 5-6 遍" — 因为 directive + STM + LLM 一样
@@ -653,21 +650,7 @@ class ChatBypass:
                 self._last_audio_ts = now
             except Exception:
                 pass
-        # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace seq+timing — BUG-3 诊断
-        # Sir grep "[Audio Trace] enq" 看 sentence 入 audio_queue 的精确时间.
-        try:
-            with self._audio_trace_lock:
-                self._audio_trace_seq += 1
-                _trace_seq = self._audio_trace_seq
-            _enq_t = time.time()
-            try:
-                from jarvis_utils import bg_log as _at_bg
-                _at_bg(f"🎵 [Audio Trace] enq seq={_trace_seq} len={len(text)} text={text[:40]!r}")
-            except Exception:
-                pass
-            self.audio_queue.put((text, {'seq': _trace_seq, 'enq_t': _enq_t}))
-        except Exception:
-            self.audio_queue.put((text, {}))
+        self.audio_queue.put(text)
 
     def _create_stream(self, contents, enable_search=False):
         _t_key_start = time.time()
@@ -900,12 +883,8 @@ Spoken English:"""
             try:
                 item = self.audio_queue.get()
                 sentence = item[0] if isinstance(item, tuple) else item
-                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace metadata 透传
-                _trace_meta = item[1] if (isinstance(item, tuple) and len(item) > 1 and isinstance(item[1], dict)) else {}
-                _trace_seq = _trace_meta.get('seq', -1)
-                _enq_t = _trace_meta.get('enq_t', None)
                 # [P0+18-a.14 / 2026-05-15] 修 BUG #9: 任何含中文的 sentence 在 render 前 strip 中文。
-                # _put_audio 已加守门但有些路径直接 audio_queue.put((text, {})) 绕开，这里兜底。
+                # _put_audio 已加守门但有些路径直接 audio_queue.put(...) 绕开，这里兜底。
                 if sentence and _zh_re.search(sentence):
                     _orig = sentence
                     if '---ZH---' in sentence:
@@ -938,25 +917,10 @@ Spoken English:"""
                         pass
                     # [R7-α/B8] 置标志位：渲染期间 _play_worker 不允许 emit IDLE
                     self._render_in_progress = True
-                    # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace render start
-                    _render_start_t = time.time()
-                    _queue_wait_s = (_render_start_t - _enq_t) if _enq_t else -1
-                    try:
-                        from jarvis_utils import bg_log as _at_bg2
-                        _at_bg2(f"🎵 [Audio Trace] render_start seq={_trace_seq} queue_wait={_queue_wait_s:.2f}s")
-                    except Exception:
-                        pass
                     try:
                         audio_bytes = self.vocal.render_only(sentence)
-                        _render_done_t = time.time()
                         if audio_bytes:
-                            self.wave_queue.put((audio_bytes, {'seq': _trace_seq, 'enq_t': _enq_t, 'render_done_t': _render_done_t}))
-                            try:
-                                from jarvis_utils import bg_log as _at_bg3
-                                _wq_size = self.wave_queue.qsize()
-                                _at_bg3(f"🎵 [Audio Trace] render_done seq={_trace_seq} render={_render_done_t - _render_start_t:.2f}s wave_qsize={_wq_size} bytes={len(audio_bytes)}")
-                            except Exception:
-                                pass
+                            self.wave_queue.put(audio_bytes)
                         else:
                             try:
                                 from jarvis_utils import bg_log as _bg
@@ -1008,27 +972,10 @@ Spoken English:"""
                         self.state_callback("IDLE")
                     continue
 
-                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace metadata 解包
-                if isinstance(item, tuple):
-                    audio_bytes = item[0]
-                    _wq_meta = item[1] if (len(item) > 1 and isinstance(item[1], dict)) else {}
-                else:
-                    audio_bytes = item
-                    _wq_meta = {}
-                _trace_seq = _wq_meta.get('seq', -1)
-                _enq_t = _wq_meta.get('enq_t', None)
-                _render_done_t = _wq_meta.get('render_done_t', None)
+                # [P0+20-β.5.9-revert / 2026-05-19] Audio Trace metadata 退役
+                audio_bytes = item[0] if isinstance(item, tuple) else item
 
                 self.state_callback("EXECUTING")
-                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace play_start
-                _play_start_t = time.time()
-                try:
-                    from jarvis_utils import bg_log as _at_bg4
-                    _e2e = (_play_start_t - _enq_t) if _enq_t else -1
-                    _wave_wait = (_play_start_t - _render_done_t) if _render_done_t else -1
-                    _at_bg4(f"🎵 [Audio Trace] play_start seq={_trace_seq} e2e={_e2e:.2f}s wave_wait={_wave_wait:.2f}s bytes={len(audio_bytes) if audio_bytes else 0}")
-                except Exception:
-                    pass
                 try:
                     self.vocal.play_only(audio_bytes)
                 except Exception as e:
