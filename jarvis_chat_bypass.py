@@ -3700,6 +3700,34 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
                 f"ONE sentence. Under 15 words. Sound like yourself, not the scheduling center."
             )
 
+        # 🩹 [β.5.20-B / 2026-05-20] AFK CONTEXT block 给主脑看 — Sir 实测痛点修.
+        # Sir 22:42 实测: AFK 9.6min 期间 Conductor offer_help "AttributeErrors persistent"
+        # 但屏幕报错是 Cascade 跑代码出来的, 不是 Sir 在挣扎 fix. 主脑没看 afk_minutes
+        # → 误判 Sir 在场需要帮助. 修法: 显式给主脑 afk_minutes / is_afk_long 信号 +
+        # 准则 6 evidence-based 决策提示 (主脑自决 [SILENCE] / 转 return_greeting / 还是说).
+        # 不写死句式, 只给 evidence + 决策选项让主脑自己涌现.
+        _afk_min = nudge_context.get('afk_minutes', 0) or 0
+        _is_afk_long = nudge_context.get('is_afk_long', False)
+        if _afk_min >= 3 and nudge_type not in ('return_greeting', 'morning_greeting'):
+            afk_context_block = (
+                f"\n\n[AFK CONTEXT — Sir 准则 6 信号充分 / β.5.20-B]:\n"
+                f"  afk_minutes: {_afk_min} (Sir 离开桌前的分钟数)\n"
+                f"  is_afk_long: {_is_afk_long} (≥5min 视为 Sir 不在桌前)\n"
+                f"  current nudge_type: {nudge_type}\n"
+                f"  → 重要 evidence: Sir 在过去 {_afk_min} 分钟没有键盘/鼠标活动.\n"
+                f"     屏幕上的状态 (报错 / IDE 内容 / 窗口标题) 不一定是 Sir 当前\n"
+                f"     在尝试解决的问题 — 也可能是 Cascade Agent / 后台进程 / 上次未关\n"
+                f"     的 IDE state.\n"
+                f"  → 决策提示 (主脑自决, 不是硬规):\n"
+                f"     · 若 is_afk_long=True: 优先 [SILENCE] (主脑选静默) 或转为\n"
+                f"       'welcome back' 风格的归来招呼, 不要直接 offer_help / suggest_break\n"
+                f"       — 那会让 Sir 体感 '错的时机被打扰'.\n"
+                f"     · 若 afk_minutes 在 3-5 之间: 短暂离桌 (例如喝水 / 接电话),\n"
+                f"       说话需谨慎 — Sir 可能刚回来还没看屏幕. 倾向于轻 acknowledge\n"
+                f"       或 [SILENCE].\n"
+            )
+            nudge_directive = nudge_directive + afk_context_block
+
         recent_str = ""
         if recent_topics:
             recent_str = f"\n[RECENT NUDGES — DO NOT REPEAT THESE SENTIMENTS]:\n" + "\n".join([f"  - {t}" for t in recent_topics])

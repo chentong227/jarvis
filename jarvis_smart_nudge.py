@@ -602,6 +602,20 @@ Answer ONLY the nudge type name, nothing else."""
         context["type"] = nudge_type
         context["recent_topics"] = list(self.recent_nudge_topics[-5:])
 
+        # 🩹 [β.5.20-C / 2026-05-20] SmartNudge 也注入 AFK 语义信号给主脑.
+        # 跟 Conductor (β.5.20-A) 同款修法 — chat_bypass.stream_nudge β.5.20-B
+        # 的 AFK CONTEXT block 需读 nudge_context['afk_minutes'] / ['is_afk_long'].
+        # 主脑收到 SmartNudge nudge (例如 screen_tease/error 在 AFK 屏幕上) 自决静默.
+        try:
+            _snap = PhysicalEnvironmentProbe.get_sensor_snapshot() or {}
+            _idle_s = int(_snap.get('idle_seconds', 0) or 0)
+            _afk_min = _idle_s // 60
+            context["afk_minutes"] = _afk_min
+            context["is_afk_long"] = _afk_min >= 5
+        except Exception:
+            context["afk_minutes"] = 0
+            context["is_afk_long"] = False
+
         if nudge_type in ("late_night", "suggest_break"):
             context["sleep_escalation"] = self._sleep_nudge_escalation_level
             context["unanswered_count"] = self._unanswered_sleep_nudges

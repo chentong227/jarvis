@@ -389,6 +389,21 @@ class Conductor(threading.Thread):
         except:
             pass
         
+        # 🩹 [β.5.20-A / 2026-05-20] Sir 实测痛点修: AFK 信号语义化.
+        # 老 sensor_summary 只给 `空闲:578s` 原始秒数, 主脑 LLM 难推 "Sir AFK 9.6min"
+        # → 主脑看 "报错:True + 窗口:Cursor IDE" 误判 Sir 在挣扎 fix → 误触 offer_help
+        # "AttributeErrors persistent" 实是 Cascade / 后台进程跑出来. 修法: 给主脑直接
+        # 看的 `afk_minutes` 字段 + 语义化标签 ("AFK Xmin — Sir 离开桌前" / "短暂空闲" / "在场").
+        _idle_s = int(snapshot.get('idle_seconds', 0) or 0)
+        _afk_min = _idle_s // 60
+        _is_afk_long = _afk_min >= 5
+        if _afk_min >= 5:
+            _afk_label = f"AFK {_afk_min}min — Sir 离开桌前"
+        elif _afk_min >= 2:
+            _afk_label = f"短暂空闲 {_afk_min}min"
+        else:
+            _afk_label = f"在场 (空闲 {_idle_s}s)"
+
         sensor_summary = (
             f"窗口: {window_title[:80]} | "
             f"类别: {work_category} | "
@@ -396,11 +411,11 @@ class Conductor(threading.Thread):
             f"按键/5min: {snapshot.get('key_press_count_5min', 0)} | "
             f"退格率: {snapshot.get('backspace_ratio', 0):.2%} | "
             f"切换/5min: {snapshot.get('switch_frequency_5min', 0)} | "
-            f"空闲: {snapshot.get('idle_seconds', 0)}s | "
+            f"空闲状态: {_afk_label} | "  # [β.5.20-A] 替代原始 "空闲:578s"
             f"深夜: {snapshot.get('is_night_time', False)} | "
             f"报错: {snapshot.get('error_visible', False)}"
         )
-        
+
         conductor_message = (
             f"调度中心内部通知：{alert_info['source']} 检测到事件。"
             f"触发原因：{alert_info['reason']}。"
@@ -410,7 +425,7 @@ class Conductor(threading.Thread):
             f"语气要求：{alert_info['tone']}。"
             f"不要说我通知你的，就像你自己注意到的一样自然地说出来。"
         )
-        
+
         nudge_context = {
             "type": nudge_type,
             "recent_topics": [],
@@ -421,8 +436,11 @@ class Conductor(threading.Thread):
             "error_visible": snapshot.get('error_visible', False),
             "switch_frequency": snapshot.get('switch_frequency_5min', 0),
             "category_entropy": snapshot.get('category_entropy', 0),
+            # [β.5.20-A] AFK 语义信号给 chat_bypass.stream_nudge directive 看
+            "afk_minutes": _afk_min,
+            "is_afk_long": _is_afk_long,
         }
-        
+
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:
@@ -539,6 +557,17 @@ class Conductor(threading.Thread):
         except:
             pass
         
+        # 🩹 [β.5.20-A / 2026-05-20] path_b 同步 AFK 语义化 (跟 _dispatch_path_a 同款修法)
+        _idle_s = int(snapshot.get('idle_seconds', 0) or 0)
+        _afk_min = _idle_s // 60
+        _is_afk_long = _afk_min >= 5
+        if _afk_min >= 5:
+            _afk_label = f"AFK {_afk_min}min — Sir 离开桌前"
+        elif _afk_min >= 2:
+            _afk_label = f"短暂空闲 {_afk_min}min"
+        else:
+            _afk_label = f"在场 (空闲 {_idle_s}s)"
+
         sensor_summary = (
             f"窗口: {window_title[:80]} | "
             f"类别: {work_category} | "
@@ -546,7 +575,7 @@ class Conductor(threading.Thread):
             f"按键/5min: {snapshot.get('key_press_count_5min', 0)} | "
             f"退格率: {snapshot.get('backspace_ratio', 0):.2%} | "
             f"切换/5min: {snapshot.get('switch_frequency_5min', 0)} | "
-            f"空闲: {snapshot.get('idle_seconds', 0)}s | "
+            f"空闲状态: {_afk_label} | "  # [β.5.20-A]
             f"深夜: {snapshot.get('is_night_time', False)} | "
             f"报错: {snapshot.get('error_visible', False)}"
         )
@@ -573,6 +602,9 @@ class Conductor(threading.Thread):
             "error_visible": snapshot.get('error_visible', False),
             "switch_frequency": snapshot.get('switch_frequency_5min', 0),
             "category_entropy": snapshot.get('category_entropy', 0),
+            # [β.5.20-A] AFK 语义信号给 chat_bypass.stream_nudge directive 看
+            "afk_minutes": _afk_min,
+            "is_afk_long": _is_afk_long,
         }
         
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
