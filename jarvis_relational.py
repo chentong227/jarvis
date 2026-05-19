@@ -523,8 +523,59 @@ class RelationalStateStore:
         return self.add_inside_joke(joke)
 
     def propose_thread(self, thread: SharedHistoryThread) -> bool:
-        """自动来源 propose 新 shared_history_thread。强制 state=STATE_REVIEW。"""
+        """自动来源 propose 新 shared_history_thread。强制 state=STATE_REVIEW。
+
+        🩹 [β.5.28-dedup / 2026-05-20] Sir 02:49 反馈 'review queue 重复'.
+        Sir 截图 'Data Alignment Milestone' / 'Implementation' / 'Integrity Milestone'
+        3 条几乎相同的 thread 堆 review. Root cause: 老 propose_thread 直接 add 不 dedup.
+        修法: title 前缀 + token jaccard 双策略 (类似 propose_inside_joke). 拒重复.
+        """
         thread.state = STATE_REVIEW
+        try:
+            new_title = (thread.title or '').lower().strip()
+            new_tokens = set(new_title.replace('_', ' ').split())
+            # 拒和已存在任一 thread 的 title 高度相似 (state 任意)
+            for existing in self.shared_history_threads.values():
+                ex_title = (existing.title or '').lower().strip()
+                if not new_title or not ex_title:
+                    continue
+                if new_title == ex_title:
+                    return False
+                # 前缀重合 ≥ 15 字符 (e.g. 'data alignment ...' 系列)
+                _prefix_len = 0
+                for a, b in zip(new_title, ex_title):
+                    if a == b:
+                        _prefix_len += 1
+                    else:
+                        break
+                if _prefix_len >= 15:
+                    try:
+                        from jarvis_utils import bg_log
+                        bg_log(
+                            f"🚫 [Thread/dedup] propose '{thread.title[:40]}' "
+                            f"vs existing '{existing.title[:40]}' — prefix overlap {_prefix_len}, skip"
+                        )
+                    except Exception:
+                        pass
+                    return False
+                # token jaccard ≥ 0.7 (e.g. 'Data Alignment Milestone' vs 'Data Alignment Implementation' = 2/4 = 0.5, OK; vs 'Data Alignment Module Done' = 2/5 = 0.4)
+                ex_tokens = set(ex_title.replace('_', ' ').split())
+                if new_tokens and ex_tokens:
+                    inter = len(new_tokens & ex_tokens)
+                    union = len(new_tokens | ex_tokens)
+                    jaccard = inter / union if union > 0 else 0.0
+                    if jaccard >= 0.7:
+                        try:
+                            from jarvis_utils import bg_log
+                            bg_log(
+                                f"🚫 [Thread/dedup] propose '{thread.title[:40]}' "
+                                f"vs existing '{existing.title[:40]}' — jaccard {jaccard:.2f}, skip"
+                            )
+                        except Exception:
+                            pass
+                        return False
+        except Exception:
+            pass
         return self.add_thread(thread)
 
     def list_inside_jokes_review(self) -> List[InsideJoke]:

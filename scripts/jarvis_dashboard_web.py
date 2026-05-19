@@ -171,10 +171,14 @@ HTML_TEMPLATE = r"""
                   x-text="'紧迫 ' + (it.severity * 100).toFixed(0) + '%'"></span>
           </template>
         </div>
-        <!-- preview -->
-        <p class="text-base font-medium mb-2 leading-snug" x-text="it.preview"></p>
-        <!-- rationale -->
-        <p x-show="it.rationale" class="text-sm text-slate-400 leading-relaxed mb-4 flex-1" x-text="it.rationale"></p>
+        <!-- preview (英文原文) -->
+        <p class="text-base font-medium mb-1 leading-snug" x-text="it.preview"></p>
+        <!-- preview_zh (翻译, 仅当有) -->
+        <p x-show="it.preview_zh" class="text-sm text-cyan-300 mb-2 leading-snug" x-text="'🇨🇳 ' + it.preview_zh"></p>
+        <!-- rationale (英文) -->
+        <p x-show="it.rationale" class="text-sm text-slate-400 leading-relaxed mb-1" x-text="it.rationale"></p>
+        <!-- rationale_zh (翻译) -->
+        <p x-show="it.rationale_zh" class="text-xs text-cyan-400/70 leading-relaxed mb-4 flex-1" x-text="'  └ ' + it.rationale_zh"></p>
         <!-- action 按钮 -->
         <div class="flex gap-2 mt-auto">
           <button @click="approve(it)"
@@ -601,7 +605,80 @@ def api_cancel_commitment(cw_id: int):
 
 @app.route('/api/all')
 def api_all():
-    return jsonify(_summary_for_web())
+    data = _summary_for_web()
+    # 🩹 [β.5.28-i18n / 2026-05-20] Sir 02:49 'review 提案能不能带翻译'.
+    # 用 QuickClassifier.prompt_raw (本地 ollama qwen2.5:1.5b) 翻 preview/rationale 英→中.
+    # 失败/无 ollama → preview_zh 留空 (前端 fallback 只显原文).
+    try:
+        _i18n_review_items(data.get('reviewItems', []))
+    except Exception as _ie:
+        pass
+    return jsonify(data)
+
+
+# 简单 i18n cache (per-process, key=源字符串 → zh)
+_I18N_CACHE: Dict[str, str] = {}
+_I18N_LOCK = threading.Lock()
+
+
+def _looks_english(s: str) -> bool:
+    """判 s 是否主要英文 (字母 > 50% + 没有 CJK)."""
+    if not s:
+        return False
+    if any('\u4e00' <= c <= '\u9fff' for c in s):
+        return False  # 已有中文不翻
+    letters = sum(1 for c in s if c.isalpha())
+    return letters > len(s) * 0.4
+
+
+def _translate_to_zh(text: str, max_len: int = 300) -> str:
+    """用 QuickClassifier.prompt_raw 翻英→中. 失败返空."""
+    if not text or not _looks_english(text):
+        return ''
+    t = text[:max_len].strip()
+    with _I18N_LOCK:
+        if t in _I18N_CACHE:
+            return _I18N_CACHE[t]
+    try:
+        from jarvis_utils import get_quick_classifier
+        qc = get_quick_classifier()
+        if not qc or not getattr(qc, 'is_available', False):
+            return ''
+        if not hasattr(qc, 'prompt_raw'):
+            return ''
+        prompt = (
+            "将下面这段英文简洁地翻成中文 (1 句话, 保留原意, 不加解释).\n\n"
+            f"英文: {t}\n\n"
+            "中文:"
+        )
+        resp = qc.prompt_raw(prompt, max_tokens=200, temperature=0.0, timeout=5.0)
+        zh = (resp or '').strip()
+        # 取首行 + 去 "中文:" 前缀
+        zh = zh.split('\n')[0].strip()
+        for prefix in ('中文:', '中文：', 'Chinese:', '翻译:', '翻译：'):
+            if zh.startswith(prefix):
+                zh = zh[len(prefix):].strip()
+        if zh:
+            with _I18N_LOCK:
+                _I18N_CACHE[t] = zh
+                # 缓存上限防内存爆
+                if len(_I18N_CACHE) > 500:
+                    # FIFO drop 100
+                    for _k in list(_I18N_CACHE.keys())[:100]:
+                        del _I18N_CACHE[_k]
+            return zh
+    except Exception:
+        return ''
+    return ''
+
+
+def _i18n_review_items(items: list) -> None:
+    """给每条 review item 加 preview_zh / rationale_zh (in-place)."""
+    for it in items[:30]:  # 30 上限防 ollama 慢
+        if 'preview_zh' not in it:
+            it['preview_zh'] = _translate_to_zh(it.get('preview', ''))
+        if 'rationale_zh' not in it:
+            it['rationale_zh'] = _translate_to_zh(it.get('rationale', ''))
 
 
 @app.route('/api/review/<action_kind>', methods=['POST'])

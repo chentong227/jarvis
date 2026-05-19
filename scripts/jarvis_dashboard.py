@@ -1269,6 +1269,27 @@ def read_review_queues() -> Dict:
                 'cli': "python scripts/cooldown_vocab_dump.py review",
             })
 
+    # 🩹 [β.5.28-dedup / 2026-05-20] Sir 02:49 反馈 '还有重复的'.
+    # runtime dedup 兜底 (即使 propose_thread 加 dedup 漏掉 / 老数据). 同 base_kind 内,
+    # preview 前 25 字 lowercased + 去标点 → 重复 sig → 保第一条丢后续.
+    import re as _re
+    _seen_sigs = {}
+    _deduped = []
+    _dropped = 0
+    for _it in out['items']:
+        _bk = _it['kind'].split('/')[0]
+        _pv = (_it.get('preview') or '').lower().strip()
+        _pv = _re.sub(r'[^\w\u4e00-\u9fff]+', '', _pv)  # 去标点
+        _sig = (_bk, _pv[:25])
+        if _sig in _seen_sigs and _pv:
+            _dropped += 1
+            continue
+        _seen_sigs[_sig] = True
+        _deduped.append(_it)
+    if _dropped > 0:
+        out['_dedup_dropped'] = _dropped
+    out['items'] = _deduped
+
     # 📌 诊断
     n = len(out['items'])
     if n == 0:
@@ -1278,8 +1299,9 @@ def read_review_queues() -> Dict:
         out['diagnosis'] = f'📝 {n} 条小提案, 不急'
         out['suggestion'] = '有空时点 "处理这批" 按钮逐条 ✅/❌'
     else:
+        _dedup_note = f' (已去重 {_dropped})' if _dropped > 0 else ''
         out['diagnosis'] = (
-            f'⚠️ {n} 条提案累积 — 贾维斯想了解你的看法')
+            f'⚠️ {n} 条提案累积{_dedup_note} — 贾维斯想了解你的看法')
         out['suggestion'] = '建议今天抽 5 分钟处理 (按钮在卡片底部)'
     return out
 
