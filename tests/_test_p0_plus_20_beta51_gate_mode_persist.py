@@ -88,10 +88,17 @@ class TestP0Plus20Beta51CLI(unittest.TestCase):
         self.assertTrue(os.path.exists(CLI_PATH))
 
     def test_cli_list_runs(self):
-        """无参 = list mode, 不应崩."""
+        """无参 = list mode, 不应崩.
+
+        🩹 [β.5.16-fix-vocab / 2026-05-19] 加 PYTHONIOENCODING=utf-8 让 child
+        Python 输出 utf-8 + capture 用 utf-8 解码. 否则 Windows console 默认 cp936
+        (GBK), CLI 输出含 em-dash '—' / 希腊 β 等 GBK 不支持字符 → stdout=None
+        让 testcase 误判 fail.
+        """
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         out = subprocess.run(
-            [sys.executable, CLI_PATH], capture_output=True, text=True,
-            timeout=10, cwd=ROOT,
+            [sys.executable, CLI_PATH], capture_output=True,
+            encoding='utf-8', errors='replace', timeout=10, cwd=ROOT, env=env,
         )
         # 不一定 returncode=0 (PowerShell 重定向问题可能 1), 但不应 exception
         # 检查 stdout/stderr 有任何 NudgeGate / SmartNudge 字样

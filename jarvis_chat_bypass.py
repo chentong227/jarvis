@@ -4197,15 +4197,48 @@ No ZH translation. No closing remark. Nothing else.
             return final_reply
 
         except Exception as e:
+            # 🩹 [P0+20-β.5.16 / 2026-05-19] BUG-D: stream_nudge partial-flush 守卫
+            # Sir 22:21 实测 - ProactiveCare nudge 主回复已 stream 出 ("I've been
+            # watching your late-night streak, Sir..."), 然后 read_timeout, ZH 翻译
+            # 没流回. 体感: 无中文字幕 + 上层看 nudge_reply='' 误判"未出声" 进 NoSound.
+            # 修法 (跟 β.5.12 BUG-A 同款): 若 full_text 已 stream 实质内容 (>= 12 char),
+            # best-effort flush ZH (有就用) + 返 final_reply 非空让上层认知"说过了".
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"⚠️[Nudge Error]: {e}")
             except Exception:
                 pass
+
+            _final_reply = ''
+            try:
+                _net = (full_text or '').strip() if 'full_text' in dir() else ''
+                _net_clean = re.sub(r'<[^>]+>', '', _net).strip() if _net else ''
+                if _net_clean and len(_net_clean) >= 12:
+                    # 已说实质 — 拆 ZH (best-effort) + 设 final_reply
+                    if '---ZH---' in _net:
+                        _final_reply = _net.split('---ZH---')[0].strip()
+                        _zh = _net.split('---ZH---', 1)[1].strip()
+                        _zh_clean = re.sub(r'<[^>]+>', '', _zh).strip()
+                        if _zh_clean:
+                            self.subtitle_queue.put(("zh", _zh_clean))
+                            try:
+                                print("\n" + _box_newline(f"║ 📺  [Subtitle] {_zh_clean} (β.5.16 partial flush)"))
+                            except Exception:
+                                pass
+                    else:
+                        _final_reply = _net.strip()
+                    try:
+                        from jarvis_utils import bg_log as _b516
+                        _b516(f"🩹 [β.5.16/Nudge-Partial] {type(e).__name__} after spoken={len(_net_clean)}ch, flush ZH={'yes' if '---ZH---' in _net else 'no'}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             print("╚" + "═"*63 + "\n")
             if '_nudge_key_name' in dir():
                 self.key_router.release(_nudge_key_name)
-            return ""
+            return _final_reply
 
 
 # [P0+19-final fix 5 / 2026-05-16] 全量跨模块类引用兜底（try/except 防循环依赖）

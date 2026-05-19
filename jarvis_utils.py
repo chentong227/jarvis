@@ -5,6 +5,13 @@ import sys
 import re as _re_module
 from collections import deque
 
+# [P0+20-beta.5.16-fix-vocab / 2026-05-19] BUG-F (beta.5 publish_only): 顶部裸 import.
+# 历史包袱: 全文用 alias (_os_for_log / _stdlib_os / _stdlib_json / _json) 但
+# read_gate_mode / 测试 latest.txt 守卫等多处函数体内裸用 os./json. -> NameError ->
+# silent except -> beta.5 publish_only 全失效一直跑 hard mode. 顶部加裸 import 修.
+import os
+import json
+
 import httpx
 
 _PROXY_URL = 'http://127.0.0.1:7890'
@@ -1029,19 +1036,27 @@ def read_gate_mode(sentinel_name: str) -> str:
     
     Cache:
         模块级 5s TTL cache 防 vocab JSON 高频读 (NudgeGate.can_speak 每 nudge 一次).
+
+    🩹 [β.5.16-fix-vocab / 2026-05-19] BUG-F (β.5 头号边界): jarvis_utils.py 只 alias
+    `import os as _os_for_log` 等, 没裸 `import os`/`import json`. 本函数体内用
+    裸 `os.` / `json.` 会 NameError, 走 silent except 返 'hard'. β.5.x 整个
+    publish_only 重构从未真生效 (所有 sentinel 一直跑 hard). 修: 本函数体内本地
+    `import os, json` 显式拿到名字. Sir log 22:23 line 419 `mode=hard` 实锤.
     """
+    import os as _os_local
+    import json as _json_local
     global _GATE_MODE_CACHE, _GATE_MODE_CACHE_T
     now = time.time()
     if now - _GATE_MODE_CACHE_T < _GATE_MODE_CACHE_TTL_S and _GATE_MODE_CACHE:
         return _GATE_MODE_CACHE.get(sentinel_name, 'hard')
     # 重读
     try:
-        root = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(root, 'memory_pool', 'gate_mode_vocab.json')
-        if not os.path.exists(path):
+        root = _os_local.path.dirname(_os_local.path.abspath(__file__))
+        path = _os_local.path.join(root, 'memory_pool', 'gate_mode_vocab.json')
+        if not _os_local.path.exists(path):
             return 'hard'
         with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+            data = _json_local.load(f)
         current = data.get('current', {}) if isinstance(data, dict) else {}
         _GATE_MODE_CACHE = current
         _GATE_MODE_CACHE_T = now
