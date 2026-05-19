@@ -3974,6 +3974,46 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
         except Exception:
             pass
 
+        # 🩹 [β.5.31 / 2026-05-20] Sir 03:42 实测时间幻觉 BUG (准则 5 严重违规):
+        # Sir 03:41:02 说"再过个十几分钟", 03:42:39 (1.6min 后) Jarvis 说"早就过去了".
+        # Root cause: stream_nudge prompt 没注入"Sir 上一句话时间 + 距今 N min" 时间事实,
+        # LLM 自由幻觉 elapsed time.
+        # 修法: 加 [TIME ANCHOR] 段 - 显式列 Sir 最近 utterance 时间 + 距今 min, 强约束.
+        _time_anchor_block = ""
+        try:
+            _stm_for_anchor = list(getattr(self.jarvis, 'short_term_memory', []) or [])
+            _now_ts = time.time()
+            for _e in reversed(_stm_for_anchor[-10:]):
+                _u = str(_e.get('user', '') or '').strip()
+                _src = _e.get('source', '')
+                # 找最近一条真用户说话 (不是 system/jarvis_self)
+                if _u and not _u.startswith('[') and _src not in ('system_event', 'jarvis_self', 'ambient_pickup'):
+                    _t_str = _e.get('time', '')
+                    # 反推 timestamp (HH:MM:SS → 今天该时刻)
+                    try:
+                        _h, _m, _s = _t_str.split(':')
+                        _local = time.localtime(_now_ts)
+                        _utt_ts = time.mktime((_local.tm_year, _local.tm_mon, _local.tm_mday,
+                                                int(_h), int(_m), int(_s), 0, 0, -1))
+                        if _utt_ts > _now_ts:  # 跨日
+                            _utt_ts -= 86400
+                        _elapsed_min = (_now_ts - _utt_ts) / 60
+                        _time_anchor_block = (
+                            f"\n[TIME ANCHOR — ANTI-HALLUCINATION 准则 5]\n"
+                            f"Current wall clock: {time.strftime('%H:%M:%S', _local)}\n"
+                            f"Sir's last utterance at: {_t_str} "
+                            f"({_elapsed_min:.1f} min ago)\n"
+                            f'Sir said: "{_u[:120]}"\n'
+                            f"DO NOT claim time-elapsed facts (e.g. 'long since passed', "
+                            f"'早就过去了') unless arithmetic supports it. If Sir said 'in N min', "
+                            f"compare {_elapsed_min:.1f} min vs N. Be precise or be silent on time.\n"
+                        )
+                        break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         prompt = f"""{public_layers}
 
 [CURRENT CONTEXT]
@@ -3982,7 +4022,7 @@ Sir has been: {work_category} for {int(work_duration)} minutes
 Active window: {window_title}
 Process: {process_name}
 {sensor_hints}
-
+{_time_anchor_block}
 [RECENT MEMORY]
 {stm_context}
 
@@ -4016,6 +4056,11 @@ Type: {nudge_type}
   Generic greeting / acknowledgement / mood reflection / available skill mention is always safe.
   (β.5.8-fix: 旧文 "silence on unknown beats invented detail" 让主脑全沉默 — 错. 真规则是
   "略过未知细节但继续说话", 不是"不知道就沉默".)
+- [β.5.31 / 2026-05-20 — 不臆造关怀对象]: If Sir's last utterance is < 4 chars / unintelligible
+  / clearly mis-ASR ("ber" / "嗯" / "啊" / single syllable), DO NOT fabricate a concern topic
+  (e.g. "your hands may be fatigued"). Either ask Sir to repeat ("Could you repeat, Sir?") or
+  acknowledge ambiguity ("I'm not sure I caught that"). Never invent a body part / activity
+  / emotion that has zero anchor in [RECENT MEMORY].
 - [INTEGRITY / OFFER INTEGRITY — Sir 准则 5]: When offering help AND AVAILABLE SKILLS listed above,
   name the specific action you can take by skill name (e.g. "I can run key_health_inspector.report_status").
   FORBIDDEN: vague offers ("shall I take a look / want me to check") without naming a real skill.
