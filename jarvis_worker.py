@@ -245,6 +245,46 @@ def detect_semantic_category(text: str) -> str:
     return matched[0]
 
 
+# ============================================================
+# 🩹 [β.5.26 / 2026-05-20 + β.5.26-fix 2026-05-20]
+# wake filler vocab loader (模块级 fn, 给 VoiceListenThread.parse_wake_word 调).
+# 之前误放 JarvisWorkerThread 类里 → 'VoiceListenThread no attribute' 爆错 Audio Nerve 断连.
+# ============================================================
+
+_WAKE_FILLER_CACHE: list = []
+_WAKE_FILLER_MTIME: float = 0.0
+_WAKE_FILLER_SEED = [
+    r'\bhey\b', r'\bhi\b', r'\bhiya\b', r'\byo\b', r'\boi\b',
+    r'\bhello\b', r'\bhallo\b', r'\bhola\b', r'\bok\b', r'\bokay\b',
+    r'嘿', r'喂', r'嗨', r'哟', r'哎', r'唉', r'喔', r'噢', r'哈喽', r'哈罗',
+]
+
+
+def _load_wake_filler_vocab() -> list:
+    """读 memory_pool/wake_filler_vocab.json + mtime cache.
+    失败 fallback 用 hardcoded SEED (跟老 β.5.11 list 同).
+    """
+    global _WAKE_FILLER_CACHE, _WAKE_FILLER_MTIME
+    import json as _json
+    import os as _os
+    path = _os.path.join('memory_pool', 'wake_filler_vocab.json')
+    try:
+        mt = _os.path.getmtime(path)
+        if mt == _WAKE_FILLER_MTIME and _WAKE_FILLER_CACHE:
+            return _WAKE_FILLER_CACHE
+        with open(path, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        words = data.get('filler_words') or []
+        words = [w for w in words if isinstance(w, str) and w.strip()]
+        if not words:
+            return _WAKE_FILLER_SEED
+        _WAKE_FILLER_CACHE = words
+        _WAKE_FILLER_MTIME = mt
+        return words
+    except Exception:
+        return _WAKE_FILLER_SEED
+
+
 class VoiceListenThread(QThread):
     text_ready = pyqtSignal(str)
     interrupt_signal = pyqtSignal()
@@ -579,7 +619,9 @@ class VoiceListenThread(QThread):
         # 注: 实词 ("jarvis 帮我开 cursor" → cmd='帮我开 cursor') 仍走 LLM 唤醒, 不影响.
         # 🩹 [β.5.26 / 2026-05-20] Sir 准则 6 vocab 化 - 老硬编码 list 留作 fallback,
         # source of truth = memory_pool/wake_filler_vocab.json. CLI scripts/wake_filler_dump.py.
-        filler_addressing_words = self._load_wake_filler_vocab()
+        # 🩹 [β.5.26-fix / 2026-05-20] 调模块级 _load_wake_filler_vocab (Sir 02:43 实测
+        # 'VoiceListenThread no attribute _load_wake_filler_vocab' - 老把它放 JarvisWorkerThread 类错了).
+        filler_addressing_words = _load_wake_filler_vocab()
         for filler in filler_addressing_words:
             cmd = re.sub(filler, '', cmd)
 
@@ -2662,39 +2704,9 @@ class JarvisWorkerThread(QThread):
         except Exception:
             return seed
 
-    # 🩹 [β.5.26 / 2026-05-20] wake filler vocab - Sir 准则 6 (β.5.11 留尾迁移).
-    # mtime cache 防每次 ASR 都读 disk.
-    _wake_filler_cache: list = []
-    _wake_filler_mtime: float = 0.0
-
-    def _load_wake_filler_vocab(self) -> list:
-        """读 memory_pool/wake_filler_vocab.json + mtime cache.
-        失败 fallback 用 hardcoded seed (跟老 β.5.11 list 同).
-        """
-        import json as _json
-        import os as _os
-        SEED = [
-            r'\bhey\b', r'\bhi\b', r'\bhiya\b', r'\byo\b', r'\boi\b',
-            r'\bhello\b', r'\bhallo\b', r'\bhola\b', r'\bok\b', r'\bokay\b',
-            r'嘿', r'喂', r'嗨', r'哟', r'哎', r'唉', r'喔', r'噢', r'哈喽', r'哈罗',
-        ]
-        path = _os.path.join('memory_pool', 'wake_filler_vocab.json')
-        try:
-            mt = _os.path.getmtime(path)
-            if mt == JarvisWorkerThread._wake_filler_mtime \
-                    and JarvisWorkerThread._wake_filler_cache:
-                return JarvisWorkerThread._wake_filler_cache
-            with open(path, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-            words = data.get('filler_words') or []
-            words = [w for w in words if isinstance(w, str) and w.strip()]
-            if not words:
-                return SEED
-            JarvisWorkerThread._wake_filler_cache = words
-            JarvisWorkerThread._wake_filler_mtime = mt
-            return words
-        except Exception:
-            return SEED
+    # 🩹 [β.5.26 / 2026-05-20 + β.5.26-fix 2026-05-20]
+    # wake filler vocab loader 已迁到模块级 (line ~243), 不要再放类里.
+    # 调用点 VoiceListenThread.parse_wake_word (不同类), 类方法访问会爆错.
 
     # [P0+12 / 2026-05-15] 语义清晰别名 — 与 CentralNerve._detect_deep_sleep_request 区分
     def _detect_sleep_window_intent(self, cmd: str):
