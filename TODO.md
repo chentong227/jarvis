@@ -10,9 +10,11 @@
 
  工作板
 
-**更新时间**：2026-05-19 21:42（**🚀 P0+20-β.5.x voice pipeline 系列收尾 — β.5.9/10/11 + Audio Trace 退役 + β.5.12 RemoteProtocolError 3 层修, design doc 已写, 59 testcase 全绿, 待 Sir 真机**）。
+**更新时间**：2026-05-19 23:01（**🚀 P0+20-β.5.x 决策集中主脑完整收尾 + β.5 头号边界 BUG 治本 — 11 commits / ~150 testcase 全绿, 待 Sir 真机**）。
 
-**今晚 β.5.x 收尾 (5/19 09:00 → 21:42, 6 commits 累计)**:
+**今晚 β.5.x 收尾 (5/19 09:00 → 23:01, 11 commits 累计)**:
+
+### Voice Pipeline 4 commit (β.5.9-12)
 
 | commit | marker | 内容 | testcase |
 |---|---|---|---|
@@ -21,6 +23,19 @@
 | `22d8746` | β.5.11 | hey jarvis fast wake — filler-addressing words list 剥 (20 条英中) | 17 |
 | `2a335b8` | β.5.9-revert | Audio Trace 退役 (Sir 21:33 确认 cache 生效) + design doc 新建 | 12 (反向锁) |
 | `d51385c` | β.5.12 | cloud stream RemoteProtocolError 3 层修 (spoken_so_far guard + httpx.Timeout + Ollama 5→8s) | 15 |
+
+### Decision Centralization 4 commit (β.5.13-16 收尾)
+
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `1e1223f` | β.5.13 | ProactiveCare silent_text/visual_pulse 纳入主脑 reaction_space (env JARVIS_NUDGE_LLM_ALL_CHANNELS=1 默认) | 20 |
+| `6702fc6` | β.5.14 | WellnessGuardian publish_skip 补齐 (4 sentinel 全收尾) | 17 |
+| `ec02bd2` | β.5.15 | InconsistencyWatcher 接入 NudgeGate + publish_skip | 15 |
+| `ca18fd2` | **β.5.16** | **β.5 头号边界 BUG 治本** - stream_nudge partial-flush (BUG-D) + jarvis_utils.py 顶部裸 import os/json (BUG-F, publish_only 从未真生效) | 14 |
+
+### 🔥 β.5.16 BUG-F 重要性
+
+`jarvis_utils.py` 全文用 alias (`import os as _os_for_log` 等), `read_gate_mode` 函数体内裸用 `os.` / `json.` → NameError → silent except 返 `hard`. **β.5.x 整个 publish_only 重构从未真生效, 所有 sentinel 一直跑 hard 模式**. Sir 21:33 实测 log line 419 `❌ [OfferGuard] blocked (mode=hard)` 实锤. 顶部加裸 `import os, json` 修. 现 `read_gate_mode('OfferGuard')` 真返 `publish_only`.
 
 **design doc**: `docs/JARVIS_VOICE_PIPELINE_LATENCY.md` (399 行, ≤ cap 400) — §1 一图速记 / §2 commit 表 / §3 β.5.9 / §4 β.5.10 / §5 β.5.11 / §6 Sir 验证 checklist / §7 边界 BUG / §8 紧急回滚 / §9 准则对照 / §11 β.5.12 续写.
 
