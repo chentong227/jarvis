@@ -81,6 +81,25 @@ class VocalCord:
             output=True
         )
         self._render_count = 0
+
+        # 🩹 [P0+20-β.5.10 / 2026-05-19] BUG-3 真因修: prompt encoding cache
+        # 根因 (benchmark 实证): frontend_zero_shot 每次 inference 都重算 5 秒 prompt_wav 的
+        #   - _extract_speech_feat (mel spectrogram)
+        #   - _extract_speech_token (speech tokenizer onnx)
+        #   - _extract_spk_embedding (campplus onnx)
+        # 这是 ~6s 固定开销, 跟字数无关 (9 chars 6.2s / 88 chars 8.5s, 增量极小).
+        # CosyVoice 提供 add_zero_shot_spk(): 一次性 cache prompt encoding 到 spk2info dict,
+        # 后续 inference 传 zero_shot_spk_id 直接复用 cached state, 跳过 prompt encoding.
+        # 预期: 6.67s → ~1-2s (5x speedup).
+        self._jarvis_spk_id = 'jarvis_default'
+        print("⚡ [声带器官] cache prompt encoding (β.5.10)...")
+        try:
+            self.cosyvoice.add_zero_shot_spk(self.prompt_text, self.prompt_speech_16k, self._jarvis_spk_id)
+            print(f"✅ [声带器官] prompt cached as spk_id='{self._jarvis_spk_id}'")
+        except Exception as _cache_e:
+            print(f"⚠️  [声带器官] add_zero_shot_spk 失败, fallback 每次重算: {_cache_e}")
+            self._jarvis_spk_id = ''  # fallback 走 legacy 路径
+
         print("🔥 [声带器官] 正在给 GPU 注入高压点火预热，请稍候...")
         try:
             self.render_only("Systems fully operational.")
@@ -142,10 +161,12 @@ class VocalCord:
                 continue
             for attempt in range(retry + 1):
                 try:
+                    # 🩹 [P0+20-β.5.10] zero_shot_spk_id 非空时跳过 prompt encoding (5x 加速)
                     output_generator = self.cosyvoice.inference_zero_shot(
                         sentence,
                         self.prompt_text,
                         self.prompt_speech_16k,
+                        zero_shot_spk_id=self._jarvis_spk_id,
                         stream=False
                     )
 
