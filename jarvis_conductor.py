@@ -248,6 +248,37 @@ class Conductor(threading.Thread):
             if self.gate is not None and hasattr(self.gate, 'seconds_since_last'):
                 _gap = self.gate.seconds_since_last()
                 if _gap < INTER_SOURCE_COOLDOWN_S:
+                    # [β.5.4 / 2026-05-19] Conductor publish-only signal:
+                    # 即使 cooldown 拦, 也 publish 'conductor_intent' 让主脑看到
+                    # "Conductor 想 propose 但被 cooldown 拦". 主脑下次能利用这信号.
+                    try:
+                        _has_pending = (
+                            snapshot.get('shield_alert', {}).get('active') or
+                            snapshot.get('wellness_alert', {}).get('active')
+                        )
+                        if _has_pending:
+                            from jarvis_utils import get_event_bus
+                            _bus = get_event_bus()
+                            if _bus is not None:
+                                _bus.publish(
+                                    etype='gate_advice',
+                                    description=(
+                                        f"Conductor would-propose alert but blocked: "
+                                        f"inter_source_cooldown_{int(_gap)}s_after_last_nudge"
+                                    ),
+                                    source='Conductor',
+                                    metadata={
+                                        'decision': 'block',
+                                        'block_reason': f'inter_source_cooldown_{int(_gap)}s',
+                                        'gap_s': round(_gap, 1),
+                                        'cooldown_s': INTER_SOURCE_COOLDOWN_S,
+                                        'has_shield_alert': bool(snapshot.get('shield_alert', {}).get('active')),
+                                        'has_wellness_alert': bool(snapshot.get('wellness_alert', {}).get('active')),
+                                    },
+                                    salience=0.5,
+                                )
+                    except Exception:
+                        pass
                     return None
         except Exception:
             pass

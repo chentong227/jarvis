@@ -11,14 +11,16 @@
   "current": {
     "NudgeGate": "publish_only",
     "OfferGuard": "publish_only",
-    "SmartNudgeSentinel": "hard",
-    "Conductor": "hard",
-    "WellnessGuardian": "hard",
-    "ReturnSentinel": "hard"
+    "SmartNudgeSentinel": "publish_only",
+    "Conductor": "publish_only",
+    "WellnessGuardian": "publish_only",
+    "ReturnSentinel": "publish_only"
   },
+  "note_publish_only_partial": "β.5.5-β.5.7 SmartNudge / Conductor / WellnessGuardian / ReturnSentinel 标 publish_only 是 SWM 信号语义 (它们 skip 时 publish gate_advice 到 SWM 让主脑看). 但内部仍有 hardcoded skip 规则 (greeting_cooldown / standby / 启动护栏 / 媒体窗口). NudgeGate / OfferGuard 是真正的 publish_only (永不 hard return). 这些 sentinel 改成真 publish_only 需 β.6+, 改 NudgeGate.can_speak 永远 True 已经覆盖了它们最终发声路径.",
   "history": [
     {"date": "2026-05-19T11:00:00+08:00", "change": "init all hard"},
-    {"date": "2026-05-19T11:45:00+08:00", "change": "β.5.3 Sir 拍板完全重构: NudgeGate / OfferGuard hard → publish_only. 主脑看 SWM evidence 自决, 不再受 cooldown / freeze / sleep_mode hard 拦. 紧急回滚: python scripts/gate_mode_dump.py --reset"}
+    {"date": "2026-05-19T11:45:00+08:00", "change": "β.5.3 Sir 拍板完全重构: NudgeGate / OfferGuard hard → publish_only. 主脑看 SWM evidence 自决, 不再受 cooldown / freeze / sleep_mode hard 拦."},
+    {"date": "2026-05-19T12:05:00+08:00", "change": "β.5.5-β.5.7 完整 publish-only: SmartNudge / Conductor / WellnessGuardian / ReturnSentinel skip 时 publish gate_advice 信号到 SWM. 主脑能看到所有 sentinel 的 'wanted-but-blocked' 决策. 紧急回滚: python scripts/gate_mode_dump.py --reset"}
   ],
   "rollout_plan": {
     "phase_1_β.5.1": "NudgeGate hard → soft (双轨观察期)",

@@ -60,16 +60,17 @@ class TestP0Plus20Beta53VocabDefaultPublishOnly(unittest.TestCase):
             'β.5.3: OfferGuard 默认 publish_only')
 
     def test_vocab_has_history_log(self):
-        """vocab 含 history 记录切档变更."""
+        """vocab 含 history 记录切档变更 (含 β.5.3 节点)."""
         path = os.path.join(ROOT, 'memory_pool', 'gate_mode_vocab.json')
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         self.assertIn('history', data, 'vocab 应含 history 字段记录变更')
         history = data['history']
         self.assertGreater(len(history), 0)
-        # 最后一条 change 应提到 β.5.3
-        last = history[-1]
-        self.assertIn('β.5.3', last['change'])
+        # β.5.3 节点应在任意 history 条目中 (β.5.5+ 会追加新条目)
+        all_changes = ' | '.join(h.get('change', '') for h in history)
+        self.assertIn('β.5.3', all_changes,
+            'history 应至少有一条提及 β.5.3 节点')
 
 
 # ==========================================================================

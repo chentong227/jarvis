@@ -279,11 +279,43 @@ class ReturnSentinel(threading.Thread):
         except Exception:
             pass
 
+        # [β.5.5 / 2026-05-19] skip 时统一 publish 'gate_advice' source='ReturnSentinel'
+        # 让主脑下次能看到 "ReturnSentinel wanted greet but blocked: reason=X".
+        # helper 内含 dedupe (避免循环 publish 风暴, 同 reason 60s 1 次).
+        def _publish_skip(skip_reason: str, extra_meta: dict = None):
+            try:
+                from jarvis_utils import get_event_bus
+                _bus = get_event_bus()
+                if _bus is None:
+                    return
+                meta = {
+                    'decision': 'block',
+                    'block_reason': skip_reason,
+                    'afk_minutes': afk_min,
+                    'first_today': bool(self.first_active_today),
+                }
+                if extra_meta:
+                    meta.update(extra_meta)
+                _bus.publish(
+                    etype='gate_advice',
+                    description=f"ReturnSentinel wanted greet but blocked: {skip_reason}",
+                    source='ReturnSentinel',
+                    metadata=meta,
+                    salience=0.55,
+                )
+            except Exception:
+                pass
+
         if time.time() - self._last_greeting_time < self._greeting_cooldown:
-            _log(f"📞 [ReturnSentinel/Skip] greeting cooldown 未过（剩 {int(self._greeting_cooldown-(time.time()-self._last_greeting_time))}s）")
+            remaining = int(self._greeting_cooldown - (time.time() - self._last_greeting_time))
+            _log(f"📞 [ReturnSentinel/Skip] greeting cooldown 未过（剩 {remaining}s）")
+            _publish_skip(f'greeting_cooldown_{remaining}s_remaining',
+                          {'cooldown_remaining_s': remaining})
             return
         if afk_duration < 300:
             _log(f"📞 [ReturnSentinel/Skip] afk_duration < 300s，太短不算真回归")
+            _publish_skip(f'afk_too_short_{int(afk_duration)}s',
+                          {'afk_seconds': int(afk_duration)})
             return
 
         # [P0+9 / 2026-05-15] 启动护栏：启动 5min 内的 first_active_today 触发被挡
@@ -291,6 +323,8 @@ class ReturnSentinel(threading.Thread):
         if self.first_active_today and time.time() < self._startup_guard_until:
             remaining = int(self._startup_guard_until - time.time())
             _log(f"🛡️ [ReturnSentinel/StartupGuard] 启动后 {300 - remaining}s（< 5min），跳过 first_active_today 首次问候")
+            _publish_skip(f'startup_guard_{remaining}s_remaining',
+                          {'startup_guard_remaining_s': remaining})
             # 不消耗 first_active_today —— 等真正稳定的 AFK 周期再触发
             return
 
@@ -303,9 +337,13 @@ class ReturnSentinel(threading.Thread):
             vt = self.worker.voice_thread
             if vt.in_active_conversation:
                 _log(f"📞 [ReturnSentinel/Skip] 当前在 active_conversation 中，让对话自然继续")
+                _publish_skip('in_active_conversation')
                 return
             if vt.last_conversation_end_time > 0 and (time.time() - vt.last_conversation_end_time) < 120:
+                gap = int(time.time() - vt.last_conversation_end_time)
                 _log(f"📞 [ReturnSentinel/Skip] 距上轮对话结束 < 120s，避免立刻再问候")
+                _publish_skip(f'last_conv_end_{gap}s_ago',
+                              {'last_conv_end_age_s': gap})
                 return
 
         try:
@@ -321,6 +359,8 @@ class ReturnSentinel(threading.Thread):
                           "potplayer", "vlc", "mpv", "kmplayer", "暴风", "迅雷"]
         if any(kw in fg_title for kw in media_keywords):
             _log(f"📞 [ReturnSentinel/Skip] 前台是媒体窗口（{fg_title[:40]}），不打扰")
+            _publish_skip('media_window_foreground',
+                          {'fg_title_prefix': fg_title[:40]})
             return
 
         current_hour = int(time.strftime("%H"))

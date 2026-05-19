@@ -151,7 +151,9 @@ $tests = @(
     "_test_p0_plus_20_beta51_gate_mode_persist",
     "_test_p0_plus_20_beta52_offer_guard_gate_mode_persist",
     "_test_p0_plus_20_beta53_full_publish_only_persist",
-    "_test_p0_plus_20_beta53_fix_persist"
+    "_test_p0_plus_20_beta53_fix_persist",
+    "_test_p0_plus_20_beta54_conductor_publish_persist",
+    "_test_p0_plus_20_beta55_full_publish_only_complete_persist"
 )
 
 foreach ($t in $tests) {

@@ -170,6 +170,42 @@ class SmartNudgeSentinel(threading.Thread):
     def run(self):
         time.sleep(25)
         print("[SmartNudgeSentinel] 智能提醒引擎就绪...")
+        # [β.5.6 / 2026-05-19] skip publish helper + dedupe
+        # 防 while True 循环 publish 风暴: 同 reason 60s 内只 publish 1 次
+        self._skip_publish_last_t = {}
+        def _publish_skip(skip_reason: str, extra_meta: dict = None):
+            try:
+                _now = time.time()
+                _last = self._skip_publish_last_t.get(skip_reason, 0)
+                if _now - _last < 60.0:
+                    return  # dedupe
+                self._skip_publish_last_t[skip_reason] = _now
+                # GC 5min 以前
+                self._skip_publish_last_t = {
+                    k: v for k, v in self._skip_publish_last_t.items()
+                    if _now - v < 300
+                }
+                from jarvis_utils import get_event_bus
+                _bus = get_event_bus()
+                if _bus is None:
+                    return
+                meta = {
+                    'decision': 'block',
+                    'block_reason': skip_reason,
+                }
+                if extra_meta:
+                    meta.update(extra_meta)
+                _bus.publish(
+                    etype='gate_advice',
+                    description=f"SmartNudge skipped tick: {skip_reason}",
+                    source='SmartNudge',
+                    metadata=meta,
+                    salience=0.4,  # tick skip 是背景信号
+                )
+            except Exception:
+                pass
+        # 暴露给 instance 让 sub-method 能用 (虽然现在只 inline)
+        self._publish_skip = _publish_skip
         while True:
             try:
                 current_day = time.strftime("%Y-%m-%d")
@@ -179,10 +215,13 @@ class SmartNudgeSentinel(threading.Thread):
                     self.last_reset_day = current_day
 
                 if self.daily_nudge_count >= 8:
+                    _publish_skip('daily_quota_exhausted',
+                                  {'daily_nudge_count': self.daily_nudge_count})
                     time.sleep(60)
                     continue
 
                 if hasattr(self.worker, 'voice_thread') and self.worker.voice_thread.in_active_conversation:
+                    _publish_skip('in_active_conversation')
                     time.sleep(10)
                     continue
 
@@ -193,6 +232,8 @@ class SmartNudgeSentinel(threading.Thread):
                     if _vt is not None:
                         _bp = getattr(_vt, '_bypass_speech_count', 0)
                         if _bp >= 2:
+                            _publish_skip(f'bypass_speech_count_{_bp}',
+                                          {'bypass_count': _bp})
                             time.sleep(90)
                             continue
                 except Exception:
@@ -208,6 +249,8 @@ class SmartNudgeSentinel(threading.Thread):
                     if state is not None:
                         secs_off = state.seconds_since_conv_off()
                         if 0 <= secs_off < 60.0:
+                            _publish_skip(f'standby_silence_{int(secs_off)}s_since_conv_off',
+                                          {'secs_since_conv_off': int(secs_off)})
                             time.sleep(5)
                             continue
                 except Exception:
