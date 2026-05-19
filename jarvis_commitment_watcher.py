@@ -1078,9 +1078,70 @@ class CommitmentWatcher(threading.Thread):
                     pass
         return updated
 
+    def _consume_pending_callbacks(self) -> int:
+        """🩹 [β.5.33 / 2026-05-20] 消费 dashboard activate 写入的 pending_callbacks.jsonl.
+
+        每条 → add_commitment (cross_session=True 不走 conditional vocab).
+        truncate 后 jsonl 清空, 避免重复消费.
+        """
+        path = os.path.join('memory_pool', 'pending_callbacks.jsonl')
+        if not os.path.exists(path):
+            return 0
+        try:
+            lines = []
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        lines.append(line)
+            if not lines:
+                return 0
+            consumed = 0
+            for line in lines:
+                try:
+                    cb = json.loads(line)
+                    action = (cb.get('action') or '').strip()
+                    when_iso = (cb.get('when_iso') or '').strip()
+                    if not action:
+                        continue
+                    self.add_commitment(
+                        description=action,
+                        deadline_str=when_iso,
+                        user_text=cb.get('source_utterance', ''),
+                        is_future_task_confirmed=True,
+                        source='cross_session_callback',
+                    )
+                    consumed += 1
+                except Exception as e:
+                    try:
+                        from jarvis_utils import bg_log
+                        bg_log(f"⚠️ [CommitmentWatcher] consume callback 失败: {e}")
+                    except Exception:
+                        pass
+            # truncate 文件 (全部消费)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('')
+            if consumed > 0:
+                try:
+                    from jarvis_utils import bg_log
+                    bg_log(f"📅 [CommitmentWatcher β.5.33] 消费 {consumed} 条跨 session callback → commitment")
+                except Exception:
+                    pass
+            return consumed
+        except Exception as e:
+            try:
+                from jarvis_utils import bg_log
+                bg_log(f"⚠️ [CommitmentWatcher] _consume_pending_callbacks IO 失败: {e}")
+            except Exception:
+                pass
+            return 0
+
     def run(self):
         time.sleep(30)
         print("[CommitmentWatcher] 承诺看门狗就绪...", file=sys.stderr)
+        # 🩹 [β.5.33 / 2026-05-20] 启动时立刻消费 pending_callbacks (Sir 之前 activate 的)
+        self._consume_pending_callbacks()
+        _last_callback_check = time.time()
         while True:
             try:
                 if hasattr(self.worker, 'voice_thread') and self.worker.voice_thread.in_active_conversation:
@@ -1203,6 +1264,11 @@ class CommitmentWatcher(threading.Thread):
                                 bg_log(f"⚠️ [Closure/tick] {_fce}")
                             except Exception:
                                 pass
+
+                # 🩹 [β.5.33 / 2026-05-20] 周期消费 pending_callbacks (Sir 拍板后 < 5min 落地)
+                if time.time() - _last_callback_check > 300:
+                    _last_callback_check = time.time()
+                    self._consume_pending_callbacks()
 
                 time.sleep(30)
             except Exception:

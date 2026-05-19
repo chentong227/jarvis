@@ -663,6 +663,9 @@ Real-time Ledger: {ledger_snapshot}
 [PROPOSAL DIRECTIVES — Our relational state (REVIEW queue, NOT auto-active)]
 6. Proposed Inside Jokes: Did a genuinely amusing interaction occur? Output entries in `proposed_inside_jokes` (at most 3 per cycle). Each entry: {{"phrase": "<short callback phrase, <80 chars>", "birth_context": "<one-sentence why funny>", "tone": "<wry/dry/playful/etc>"}}.
 7. Proposed Shared History Threads: Did Sir mention a significant life event or achievement? Output in `proposed_shared_history_threads`. Each entry: {{"title": "<short title>", "highlight": "<one-sentence latest detail>"}}.
+8. Proposed Cross-Session Callbacks (β.5.33): Did Sir mention a future action with a soft time anchor (e.g. "明天/后天/周三/几号 + 做 X" / "tomorrow/next week + do Y") that's NOT an explicit reminder request? Output in `proposed_cross_session_callbacks`. Each entry: {{"action": "<short action description>", "when_natural": "<明天 / 周三 / 后天上午>", "source_utterance": "<Sir 原话>"}}.
+   PURPOSE: Sir 可能提了一句"明天试试 X"就忘. Jarvis 看到, propose, Sir review 后到点提醒.
+   FILTER: Only propose if a SPECIFIC future action + time word are BOTH present. Generic "I'll figure it out" 不算.
 
 [CRITICAL DEDUP RULE — β.5.28-fix8 / 2026-05-20]
 Below is the FULL LIST of jokes / threads ALREADY captured (state=active or review).
@@ -701,10 +704,13 @@ Output ONLY the updated JSON. The JSON MUST include Sir's identity fields plus t
                     #    （兼容 LLM 旧习惯还输出这两字段的情况）
                     proposed_jokes = new_profile.pop('proposed_inside_jokes', []) or []
                     proposed_threads = new_profile.pop('proposed_shared_history_threads', []) or []
+                    # 🩹 [β.5.33 / 2026-05-20] Cross-session callback propose
+                    proposed_callbacks = new_profile.pop('proposed_cross_session_callbacks', []) or []
                     new_profile.pop('our_inside_jokes', None)
                     new_profile.pop('significant_milestones', None)
                     n_joke_proposed = 0
                     n_thread_proposed = 0
+                    n_callback_proposed = 0
                     try:
                         from jarvis_relational import (
                             get_default_store, InsideJoke, SharedHistoryThread,
@@ -746,7 +752,37 @@ Output ONLY the updated JSON. The JSON MUST include Sir's identity fields plus t
                                 thread.add_highlight(highlight)
                             if store.propose_thread(thread):
                                 n_thread_proposed += 1
-                        if n_joke_proposed or n_thread_proposed:
+                        # 🩹 [β.5.33 / 2026-05-20] Cross-session callback propose
+                        try:
+                            from jarvis_cross_session_callback import (
+                                get_default_store as _cb_store,
+                                parse_natural_time_to_iso,
+                            )
+                            cb_store = _cb_store()
+                            for entry in proposed_callbacks[:5]:
+                                if not isinstance(entry, dict):
+                                    continue
+                                action = str(entry.get('action') or '').strip()
+                                when_natural = str(entry.get('when_natural') or '').strip()
+                                source_utt = str(entry.get('source_utterance') or '').strip()
+                                if not action or not when_natural:
+                                    continue
+                                when_iso = parse_natural_time_to_iso(when_natural)
+                                cb_id = cb_store.propose(
+                                    action=action,
+                                    when_iso=when_iso,
+                                    when_natural=when_natural,
+                                    source_utterance=source_utt,
+                                )
+                                if cb_id:
+                                    n_callback_proposed += 1
+                        except Exception as _cb_err:
+                            try:
+                                from jarvis_utils import bg_log
+                                bg_log(f"⚠️ [SoulArchivist] cross-session callback propose 失败: {_cb_err}")
+                            except Exception:
+                                pass
+                        if n_joke_proposed or n_thread_proposed or n_callback_proposed:
                             store._dirty = True
                             store.persist()
                             store.write_review_queue()

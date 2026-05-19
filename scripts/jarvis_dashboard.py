@@ -1327,6 +1327,31 @@ def read_review_queues() -> Dict:
                 'cli': "python scripts/cooldown_vocab_dump.py review",
             })
 
+    # ====== 5. 🩹 [β.5.33 / 2026-05-20] Cross-session callback review ======
+    cb_path = os.path.join(MEM, 'cross_session_callback.json')
+    cb_data = _safe_read_json(cb_path, {})
+    if isinstance(cb_data, dict):
+        callbacks = (cb_data.get('callbacks') or {}).values() if isinstance(cb_data.get('callbacks'), dict) else []
+        for cb in callbacks:
+            if not isinstance(cb, dict) or cb.get('state') != 'review':
+                continue
+            action = (cb.get('action') or '')[:120]
+            when_natural = (cb.get('when_natural') or '')[:60]
+            when_iso = (cb.get('when_iso') or '')[:30]
+            preview = f"{when_natural} - {action}" + (f" (~{when_iso})" if when_iso else '')
+            out['items'].append({
+                'kind': 'callback',
+                'kind_zh': '📅 跨 Session 提醒',
+                'id': cb.get('id', '?'),
+                'preview': preview,
+                'rationale': (cb.get('source_utterance') or '')[:200],
+                'source': 'auto_proposed (SoulArchivist)',
+                'proposed_value': when_iso,
+                'created_iso': time.strftime(
+                    '%Y-%m-%d %H:%M', time.localtime(float(cb.get('proposed_at', 0) or 0))) if cb.get('proposed_at') else '',
+                'cli': 'dashboard 通过 → 转 commitment_watcher 到点提醒',
+            })
+
     # 🩹 [β.5.28-dedup / 2026-05-20] Sir 02:49 反馈 '还有重复的'.
     # runtime dedup 兜底 (即使 propose_thread 加 dedup 漏掉 / 老数据). 同 base_kind 内,
     # preview 前 25 字 lowercased + 去标点 → 重复 sig → 保第一条丢后续.
@@ -1710,6 +1735,10 @@ def action_activate_review(kind: str, item_id: str, on_done=None,
         # 2. 拿 cooldown vocab review_queue pop 这条
         _apply_cooldown_proposal(item_id, prop, on_done=on_done)
         return
+    elif kind == 'callback':
+        # 🩹 [β.5.33 / 2026-05-20] Sir 通过 callback → 转 commitment_watcher 到点 nudge
+        _apply_callback_proposal(item_id, on_done=on_done)
+        return
     else:
         if on_done:
             on_done(False, f'不支持的 kind: {kind}')
@@ -1733,11 +1762,74 @@ def action_reject_review(kind: str, item_id: str, on_done=None,
         # cooldown reject = 直接从 review_queue 删 (不 apply)
         _reject_cooldown_proposal(item_id, on_done=on_done)
         return
+    elif kind == 'callback':
+        # 🩹 [β.5.33] callback reject = state=archived (不再 propose 同 action)
+        _reject_callback_proposal(item_id, on_done=on_done)
+        return
     else:
         if on_done:
             on_done(False, f'不支持的 kind: {kind}')
         return
     _run_script_subprocess(args, on_done=on_done)
+
+
+def _apply_callback_proposal(cb_id: str, on_done=None) -> None:
+    """🩹 [β.5.33 / 2026-05-20] Sir 通过 callback → activate + 转 commitment_watcher.
+
+    步骤:
+    1. CrossSessionCallbackStore.activate(cb_id) → state=active + 返 cb 对象
+    2. commitment_watcher.add_commitment(action, when_iso) → 到点 nudge
+    """
+    import threading as _t
+    def _do():
+        try:
+            from jarvis_cross_session_callback import get_default_store as _cb_store
+            store = _cb_store()
+            cb = store.activate(cb_id)
+            if cb is None:
+                if on_done:
+                    on_done(False, f'callback {cb_id} 不存在或已 activate')
+                return
+            # 注册到 commitment_watcher (跨进程, 用 jsonl 存)
+            try:
+                # 简单办法: 写 commitment_log 文件让主进程 watcher 读
+                cw_path = os.path.join(MEM, 'pending_callbacks.jsonl')
+                import json as _json
+                with open(cw_path, 'a', encoding='utf-8') as f:
+                    f.write(_json.dumps({
+                        'cb_id': cb.id,
+                        'action': cb.action,
+                        'when_iso': cb.when_iso,
+                        'when_natural': cb.when_natural,
+                        'source_utterance': cb.source_utterance,
+                        'activated_at': time.time(),
+                    }, ensure_ascii=False) + '\n')
+                if on_done:
+                    on_done(True,
+                        f'✓ {cb.action[:40]} → 已激活 (主进程 watcher 到 {cb.when_iso} 提醒)')
+            except Exception as e:
+                if on_done:
+                    on_done(False, f'写 pending_callbacks.jsonl 失败: {e}')
+        except Exception as e:
+            if on_done:
+                on_done(False, str(e))
+    _t.Thread(target=_do, daemon=True).start()
+
+
+def _reject_callback_proposal(cb_id: str, on_done=None) -> None:
+    """🩹 [β.5.33] Sir 拒绝 callback → state=archived (不再 propose 同 action)."""
+    import threading as _t
+    def _do():
+        try:
+            from jarvis_cross_session_callback import get_default_store as _cb_store
+            store = _cb_store()
+            ok = store.reject(cb_id)
+            if on_done:
+                on_done(ok, f'✓ {cb_id} archived' if ok else f'✗ {cb_id} 不存在')
+        except Exception as e:
+            if on_done:
+                on_done(False, str(e))
+    _t.Thread(target=_do, daemon=True).start()
 
 
 def _apply_cooldown_proposal(key: str, proposed_value, on_done=None) -> None:
