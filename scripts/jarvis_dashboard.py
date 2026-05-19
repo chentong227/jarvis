@@ -1121,46 +1121,148 @@ def read_integrity_stats(window: str = 'today',
 
 
 def read_review_queues() -> Dict:
-    """⚠️ 等你拍板的提案 — concerns/relational/directive review"""
+    """⚠️ 等你拍板的提案 — concerns/relational/directive/cooldown review.
+
+    🩹 [β.5.24 / 2026-05-19] 全面重构 (Sir 01:58 反馈 'X 拒绝说不存在'):
+    - relational thread 加 title + highlights[0].what fallback (老代码只查 phrase/rule/topic 漏 title 全过滤掉)
+    - 加 cooldown_vocab.review_queue 源 (β.5.23-B L7 propose)
+    - 加 source / rationale / detail / created_iso 字段供详情面板用
+    - 过滤 preview 太短 (< 5 字) 防 'X' 类垃圾
+    - 不再 [:5] 截断 — 让 Sir 看全
+    """
     out = {'items': []}
+
+    # ====== 1. Concerns review ======
     cr = _safe_read_json(os.path.join(MEM, 'concerns_review.json'), [])
-    items_cr = cr if isinstance(cr, list) else (cr.get('proposals', []) if isinstance(cr, dict) else [])
-    for i in items_cr[:5]:
-        if isinstance(i, dict):
-            out['items'].append({
-                'kind': 'concern',
-                'kind_zh': '🎯 长期关心',
-                'id': i.get('id', '?'),
-                'preview': (i.get('what_i_watch') or i.get('id') or '?')[:90],
-                'cli': f"python scripts/concerns_dump.py --review",
-            })
+    items_cr = cr if isinstance(cr, list) else (
+        cr.get('proposals', []) if isinstance(cr, dict) else [])
+    for i in items_cr:
+        if not isinstance(i, dict):
+            continue
+        preview = i.get('what_i_watch') or i.get('id') or ''
+        if not preview or len(preview.strip()) < 5:
+            continue  # filter X / 短垃圾
+        out['items'].append({
+            'kind': 'concern',
+            'kind_zh': '🎯 长期关心',
+            'id': i.get('id', '?'),
+            'preview': preview.strip(),
+            'rationale': (i.get('why_i_care') or '')[:300],
+            'source': i.get('source', '?'),
+            'severity': float(i.get('severity', 0)),
+            'created_iso': i.get('created_at_iso')
+                or _ts_to_iso(i.get('created_at')),
+            'cli': "python scripts/concerns_dump.py --review",
+        })
+
+    # ====== 2. Relational review (thread / joke / protocol) ======
     rr = _safe_read_json(os.path.join(MEM, 'relational_review.json'), [])
     if isinstance(rr, list):
-        for i in rr[:5]:
-            if isinstance(i, dict):
-                out['items'].append({
-                    'kind': 'relational',
-                    'kind_zh': '💞 你们之间',
-                    'id': i.get('id', '?'),
-                    'preview': (i.get('phrase') or i.get('rule') or
-                                 i.get('topic') or '?')[:90],
-                    'cli': f"python scripts/relational_dump.py --review-list",
-                })
+        for i in rr:
+            if not isinstance(i, dict):
+                continue
+            preview = (i.get('phrase') or i.get('rule')
+                        or i.get('topic') or i.get('title') or '')
+            if not preview or len(preview.strip()) < 5:
+                continue
+            out['items'].append({
+                'kind': 'relational',
+                'kind_zh': '💞 你们之间',
+                'id': i.get('id', '?'),
+                'preview': preview.strip(),
+                'rationale': (i.get('detail') or i.get('birth_context')
+                              or i.get('rationale') or '')[:300],
+                'source': i.get('source', '?'),
+                'created_iso': i.get('created_at_iso')
+                    or _ts_to_iso(i.get('created_at') or i.get('started_at')),
+                'cli': "python scripts/relational_dump.py --review-list",
+            })
     elif isinstance(rr, dict):
         for kind, lst in rr.items():
-            if isinstance(lst, list):
-                for i in lst[:3]:
-                    if isinstance(i, dict):
-                        out['items'].append({
-                            'kind': f'relational/{kind}',
-                            'kind_zh': f'💞 {kind}',
-                            'id': i.get('id', '?'),
-                            'preview': (i.get('phrase') or i.get('rule') or
-                                         i.get('topic') or '?')[:90],
-                            'cli': f"python scripts/relational_dump.py --review-list",
-                        })
-    # 过滤掉 preview == '?' 的垃圾条目 (review json 字段空)
-    out['items'] = [i for i in out['items'] if i['preview'] != '?']
+            if kind.startswith('_'):
+                continue  # skip _meta
+            if not isinstance(lst, list):
+                continue
+            for i in lst:
+                if not isinstance(i, dict):
+                    continue
+                # 🩹 β.5.24 thread 字段是 title (老 dashboard 漏)
+                title = i.get('title') or ''
+                rationale_src = ''
+                # highlights 是 thread 的 evidence 列表
+                hl = i.get('highlights') or []
+                if hl and isinstance(hl, list) and isinstance(hl[0], dict):
+                    rationale_src = hl[0].get('what', '')[:300]
+                preview = (i.get('phrase') or i.get('rule')
+                            or i.get('topic') or title or '')
+                if not preview or len(preview.strip()) < 5:
+                    continue
+                kind_zh_map = {
+                    'inside_jokes': '😂 内部梗',
+                    'unspoken_protocols': '🤝 默契',
+                    'shared_history_threads': '📖 共同经历',
+                    'unfinished_business': '📌 未完事项',
+                }
+                out['items'].append({
+                    'kind': f'relational/{kind}',
+                    'kind_zh': kind_zh_map.get(kind, f'💞 {kind}'),
+                    'id': i.get('id', '?'),
+                    'preview': preview.strip(),
+                    'rationale': (rationale_src or i.get('detail')
+                                   or i.get('birth_context')
+                                   or i.get('rationale') or '')[:300],
+                    'source': i.get('source', '?'),
+                    'created_iso': i.get('created_at_iso')
+                        or _ts_to_iso(i.get('created_at')
+                                       or i.get('started_at')),
+                    'cli': "python scripts/relational_dump.py --review-list",
+                })
+
+    # ====== 3. Directive review ======
+    dr = _safe_read_json(os.path.join(MEM, 'directive_review.json'), [])
+    items_dr = dr if isinstance(dr, list) else []
+    for i in items_dr:
+        if not isinstance(i, dict):
+            continue
+        preview = i.get('rule') or i.get('directive') or i.get('id') or ''
+        if not preview or len(preview.strip()) < 5:
+            continue
+        out['items'].append({
+            'kind': 'directive',
+            'kind_zh': '📜 临时规则',
+            'id': i.get('id', '?'),
+            'preview': preview.strip(),
+            'rationale': (i.get('reason') or '')[:300],
+            'source': i.get('source', '?'),
+            'created_iso': i.get('created_at_iso'),
+            'cli': "python scripts/registry_dump.py --review",
+        })
+
+    # ====== 4. 🩹 [β.5.24] Cooldown vocab review (β.5.23-B L7 propose) ======
+    cd_path = os.path.join(MEM, 'proactive_care_cooldown_vocab.json')
+    cd = _safe_read_json(cd_path, {})
+    if isinstance(cd, dict):
+        rq = cd.get('review_queue') or []
+        for i in rq:
+            if not isinstance(i, dict):
+                continue
+            key = i.get('key', '')
+            cur = i.get('current')
+            prop = i.get('proposed')
+            if not key:
+                continue
+            preview = f"{key}: {cur} → {prop}"
+            out['items'].append({
+                'kind': 'cooldown',
+                'kind_zh': '⏰ Cooldown 阈值',
+                'id': key,
+                'preview': preview,
+                'rationale': (i.get('rationale') or '')[:300],
+                'source': i.get('source', 'L7'),
+                'proposed_value': prop,
+                'created_iso': i.get('when'),
+                'cli': "python scripts/cooldown_vocab_dump.py review",
+            })
 
     # 📌 诊断
     n = len(out['items'])
@@ -1171,9 +1273,20 @@ def read_review_queues() -> Dict:
         out['diagnosis'] = f'📝 {n} 条小提案, 不急'
         out['suggestion'] = '有空时点 "处理这批" 按钮逐条 ✅/❌'
     else:
-        out['diagnosis'] = f'⚠️ {n} 条提案累积 — 贾维斯想了解你的看法'
+        out['diagnosis'] = (
+            f'⚠️ {n} 条提案累积 — 贾维斯想了解你的看法')
         out['suggestion'] = '建议今天抽 5 分钟处理 (按钮在卡片底部)'
     return out
+
+
+def _ts_to_iso(ts) -> str:
+    """epoch float → ISO 字符串. 失败返 ''."""
+    if not ts:
+        return ''
+    try:
+        return time.strftime('%Y-%m-%d %H:%M', time.localtime(float(ts)))
+    except Exception:
+        return ''
 
 
 # ---- 实时事件流 ----
@@ -1482,41 +1595,129 @@ def action_open_review_cli(kind: str, on_done=None) -> None:
                 on_done(False, str(e))
 
 
-def action_activate_review(kind: str, item_id: str, on_done=None) -> None:
-    """✅ 通过一条 review 提案 (concern / relational).
+def action_activate_review(kind: str, item_id: str, on_done=None,
+                             extra=None) -> None:
+    """✅ 通过一条 review 提案 (concern / relational / directive / cooldown).
 
     🩹 [β.2.9.8 / 2026-05-18] Sir 10:34 痛点: 不想跳终端, 直接按钮 yes/no.
-    复用 scripts/<kind>_dump.py --activate <id> 路径, 不直接写 json (避免
-    破坏单例 + 主程序写锁竞争).
+    🩹 [β.5.24 / 2026-05-19] Sir 01:58 反馈"全面重构":
+    - 加 cooldown 类型 (β.5.23-B L7 propose): activate = scripts/cooldown_vocab_dump.py set <key> <proposed_value>
+    - reject 失败时 fallback 直接从 review json pop (修 'X 数据不存在' BUG)
+    - extra dict 传 cooldown 的 proposed_value
     """
     if kind.startswith('concern'):
         script = 'scripts/concerns_dump.py'
+        args = [script, '--activate', str(item_id)]
     elif kind.startswith('relational'):
         script = 'scripts/relational_dump.py'
+        args = [script, '--activate', str(item_id)]
+    elif kind == 'directive':
+        script = 'scripts/registry_dump.py'
+        args = [script, '--activate', str(item_id)]
+    elif kind == 'cooldown':
+        # cooldown 'activate' = apply L7 propose 值 + 从 queue 删
+        if extra is None or extra.get('proposed_value') is None:
+            if on_done:
+                on_done(False, 'cooldown 提案缺 proposed_value')
+            return
+        prop = extra['proposed_value']
+        # 1. set 新值
+        # 2. 拿 cooldown vocab review_queue pop 这条
+        _apply_cooldown_proposal(item_id, prop, on_done=on_done)
+        return
     else:
         if on_done:
             on_done(False, f'不支持的 kind: {kind}')
         return
-    _run_script_subprocess(
-        [script, '--activate', str(item_id)],
-        on_done=on_done,
-    )
+    _run_script_subprocess(args, on_done=on_done)
 
 
-def action_reject_review(kind: str, item_id: str, on_done=None) -> None:
-    """❌ 拒绝一条 review 提案 (转 archived)."""
+def action_reject_review(kind: str, item_id: str, on_done=None,
+                           extra=None) -> None:
+    """❌ 拒绝一条 review 提案 (转 archived / 从 queue 删)."""
     if kind.startswith('concern'):
         script = 'scripts/concerns_dump.py'
+        args = [script, '--reject', str(item_id)]
     elif kind.startswith('relational'):
         script = 'scripts/relational_dump.py'
+        args = [script, '--reject', str(item_id)]
+    elif kind == 'directive':
+        script = 'scripts/registry_dump.py'
+        args = [script, '--reject', str(item_id)]
+    elif kind == 'cooldown':
+        # cooldown reject = 直接从 review_queue 删 (不 apply)
+        _reject_cooldown_proposal(item_id, on_done=on_done)
+        return
     else:
         if on_done:
             on_done(False, f'不支持的 kind: {kind}')
         return
-    _run_script_subprocess(
-        [script, '--reject', str(item_id)],
-        on_done=on_done,
-    )
+    _run_script_subprocess(args, on_done=on_done)
+
+
+def _apply_cooldown_proposal(key: str, proposed_value, on_done=None) -> None:
+    """🩹 [β.5.24] cooldown vocab apply L7 propose. Threaded 防 UI 卡."""
+    import threading as _t
+    def _do():
+        try:
+            args = ['scripts/cooldown_vocab_dump.py', 'set', str(key),
+                    str(proposed_value)]
+            # 跑 set 命令
+            import subprocess as _sp
+            r = _sp.run([sys.executable] + args,
+                         capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                if on_done:
+                    on_done(False, f'set 失败: {r.stderr[:200]}')
+                return
+            # 删 review queue 里这条
+            _drop_cooldown_review_entry(key)
+            if on_done:
+                on_done(True, f'✓ {key} → {proposed_value}, queue 删')
+        except Exception as e:
+            if on_done:
+                on_done(False, str(e))
+    _t.Thread(target=_do, daemon=True).start()
+
+
+def _reject_cooldown_proposal(key: str, on_done=None) -> None:
+    """直接从 cooldown_vocab.json review_queue 删指定 key."""
+    import threading as _t
+    def _do():
+        try:
+            removed = _drop_cooldown_review_entry(key)
+            if removed:
+                if on_done:
+                    on_done(True, f'✓ {key} 已从 review queue 删')
+            else:
+                if on_done:
+                    on_done(False, f'{key} 不在 review queue')
+        except Exception as e:
+            if on_done:
+                on_done(False, str(e))
+    _t.Thread(target=_do, daemon=True).start()
+
+
+def _drop_cooldown_review_entry(key: str) -> bool:
+    """从 cooldown_vocab.json review_queue 删指定 key 的所有 entry. 返是否删了."""
+    path = os.path.join(MEM, 'proactive_care_cooldown_vocab.json')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    rq = data.get('review_queue') or []
+    n_before = len(rq)
+    rq = [e for e in rq if e.get('key') != key]
+    if len(rq) == n_before:
+        return False
+    data['review_queue'] = rq
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
 
 
 def action_open_latest_log(on_done=None) -> None:
@@ -1745,9 +1946,13 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
     main = tk.Frame(root, bg=bg)
     main.pack(side='top', fill='both', expand=True, padx=10, pady=6)
     main.columnconfigure(0, weight=1)
-    main.rowconfigure(0, weight=2)  # 信息块
-    main.rowconfigure(1, weight=2)  # 待处理块
-    main.rowconfigure(2, weight=3)  # 观测块
+    # 🩹 [β.5.24 / 2026-05-19] Sir 01:58 反馈: 待处理框太小看不到新建议.
+    # 老版本: 信息=2 / 待处理=2 / 观测=3 → 待处理只 25% 高度.
+    # 新版本: 信息=1 / 待处理=5 / 观测=2 → 待处理 62.5%, 观测 25%, 信息 12.5%.
+    # Sir 拍板才是 dashboard 主目的, 其他放小.
+    main.rowconfigure(0, weight=1)   # 信息块 (缩小)
+    main.rowconfigure(1, weight=5)   # 待处理块 (放大 — Sir 主目的)
+    main.rowconfigure(2, weight=2)   # 观测块 (中)
 
     # ===== 第 1 块: 信息 =====
     group_info = _make_group_frame(main, '▌ 信息 — 你想了解的', 'group_info', 0)
@@ -2125,116 +2330,160 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                            padx=4).pack(side='right', padx=2)
 
     def _render_review_buttons(data):
+        """🩹 [β.5.24 / 2026-05-19] 全面重构 review 卡片渲染.
+
+        Sir 01:58 反馈:
+        - 'X' 拒绝说不存在 → 过滤短 preview + 加错误 fallback (action 层)
+        - 框太小看不到新建议 → main grid row weight 5 (放大到 62%)
+        - 排版老旧 → 每条独立 card-in-card with 更大字号 / source 标签 / rationale 详情
+        - 信息不够到位 → 显 preview + rationale + source + created_iso
+
+        UI 结构 (每条):
+        ┌────────────────────────────────────────────────┐
+        │ [来源]                                          │
+        │ ✦ <preview 完整文本, 大字号>                    │
+        │   └ <rationale 详细 why, 灰字>                  │
+        │   └ 创建时间: 2026-05-19 22:02                  │
+        │                       [✅ 通过] [❌ 拒绝]       │
+        └────────────────────────────────────────────────┘
+        """
         _clear_frame(review_inner)
         card_bg = COLOR['card_bg'] if use_color else 'SystemButtonFace'
+        item_card_bg = '#1a2540' if use_color else 'gray95'
 
         # 顶部诊断条
         diag = data.get('diagnosis', '')
         sugg = data.get('suggestion', '')
         if diag:
-            tk.Label(review_inner, text=f"📌 评估: {diag}",
-                      bg=card_bg, fg=COLOR['warn'] if use_color else 'darkred',
-                      font=h3_font, anchor='w', wraplength=420).pack(
-                fill='x', padx=4, pady=(4, 0))
-            tk.Label(review_inner, text=f"💡 建议: {sugg}",
+            tk.Label(review_inner, text=f"📌 {diag}",
+                      bg=card_bg,
+                      fg=COLOR['warn'] if use_color else 'darkred',
+                      font=h3_font, anchor='w', wraplength=820).pack(
+                fill='x', padx=8, pady=(6, 0))
+            tk.Label(review_inner, text=f"💡 {sugg}",
                       bg=card_bg, fg=COLOR['dim'] if use_color else 'gray',
-                      font=btn_font, anchor='w', wraplength=420).pack(
-                fill='x', padx=4, pady=(0, 6))
+                      font=text_font, anchor='w', wraplength=820).pack(
+                fill='x', padx=8, pady=(0, 6))
 
         if not data['items']:
-            tk.Label(review_inner, text='✓ 没有待审 — 贾维斯没主动提新建议',
-                      bg=card_bg, fg=COLOR['ok'] if use_color else 'darkgreen',
-                      font=text_font, anchor='w').pack(fill='x', padx=4, pady=8)
+            tk.Label(review_inner,
+                      text='✓ 没有待审 — 贾维斯没主动提新建议',
+                      bg=card_bg,
+                      fg=COLOR['ok'] if use_color else 'darkgreen',
+                      font=h3_font, anchor='w').pack(
+                fill='x', padx=8, pady=20)
             return
 
         tk.Label(review_inner,
                   text=f"⚠️ {len(data['items'])} 条提案等你拍板:",
-                  bg=card_bg, fg=COLOR['fg'] if use_color else 'black',
-                  font=h3_font, anchor='w').pack(fill='x', padx=4, pady=(4, 2))
+                  bg=card_bg,
+                  fg=COLOR['fg'] if use_color else 'black',
+                  font=h3_font, anchor='w').pack(
+            fill='x', padx=8, pady=(4, 6))
 
-        # 🩹 [β.2.9.8] 按 kind 分组, 每条独立 ✅/❌ 按钮 (Sir 10:34 痛点)
+        # 按 base kind 分组 (concern / relational / directive / cooldown)
         by_kind: Dict[str, list] = {}
         for it in data['items']:
             base_kind = it['kind'].split('/')[0]
             by_kind.setdefault(base_kind, []).append(it)
 
-        def _make_action(kind, item_id, action_kind, preview):
-            """生成按钮 callback. 闭包捕获参数. 返回结果弹窗 + 刷新 dashboard."""
+        kind_label = {
+            'concern': '🎯 长期关心',
+            'relational': '💞 你们之间',
+            'directive': '📜 临时规则',
+            'cooldown': '⏰ Cooldown 阈值 (L7 LLM propose)',
+        }
+
+        def _make_action(item, action_kind):
+            """生成按钮 callback. item dict 含 kind/id/preview/proposed_value 等."""
+            kind = item['kind'].split('/')[0]
+            base_kind = kind
+            item_id = item['id']
+            preview = item['preview']
             action_fn = (action_activate_review if action_kind == 'activate'
                           else action_reject_review)
             verb_zh = '通过' if action_kind == 'activate' else '拒绝'
+            extra = None
+            if base_kind == 'cooldown':
+                extra = {'proposed_value': item.get('proposed_value')}
 
             def _do():
-                if not messagebox.askyesno(
-                        f'{verb_zh}提案',
-                        f'确定要{verb_zh}这条吗?\n\n  {preview}\n\n'
-                        f'(可在 scripts/relational_dump.py / concerns_dump.py 撤回)'):
-                    return
-
+                # 直接执行不再问确认 (拍板就拍板)
                 def _on_done(ok, out):
                     short = (out or '').strip().splitlines()
                     first = short[0] if short else ''
                     if ok:
-                        msg = f'✓ {verb_zh}成功: {first[:80]}'
+                        msg = f'✓ {verb_zh}: {first[:60]}'
                     else:
-                        msg = f'❌ {verb_zh}失败: {first[:80]}'
+                        msg = f'❌ {verb_zh}失败: {first[:60]}'
                     root.after(0, lambda: _set_status(msg, ok))
-                    root.after(50, lambda: messagebox.showinfo(
-                        f'{verb_zh}结果',
-                        f"对 \"{preview[:60]}\" {verb_zh}:\n\n"
-                        f"{'✓ 成功' if ok else '❌ 失败'}\n\n"
-                        f"脚本输出:\n{(out or '')[:400]}"
-                    ))
+                    # 1.5s 后强制刷新让 Sir 看到列表变化
                     root.after(1500, _do_refresh)
 
-                action_fn(kind, item_id, on_done=_on_done)
+                action_fn(base_kind, item_id, on_done=_on_done, extra=extra)
             return _do
 
         for kind, items in by_kind.items():
+            section_label = kind_label.get(kind, kind)
             section = tk.Frame(review_inner, bg=card_bg)
-            section.pack(fill='x', padx=2, pady=(6, 0))
+            section.pack(fill='x', padx=4, pady=(8, 2))
 
-            label_zh = {'concern': '🎯 长期关心提案',
-                         'relational': '💞 默契提案'}.get(kind, kind)
-            tk.Label(section, text=f"  {label_zh}  ({len(items)} 条)",
-                      bg=card_bg, fg=COLOR['header_fg'] if use_color else 'black',
+            tk.Label(section,
+                      text=f"  {section_label}  · {len(items)} 条",
+                      bg=card_bg,
+                      fg=COLOR['header_fg'] if use_color else 'black',
                       font=h3_font, anchor='w').pack(fill='x', padx=2, pady=2)
 
-            for it in items[:8]:
-                row = tk.Frame(section, bg=card_bg)
-                row.pack(fill='x', padx=6, pady=1)
-
-                # 左侧 preview (可换行)
-                tk.Label(row, text=f"  • {it['preview']}", bg=card_bg,
+            # 每条 → 独立 item card
+            for it in items:
+                ic = tk.Frame(section, bg=item_card_bg,
+                                 highlightbackground=COLOR['dim'],
+                                 highlightthickness=1)
+                ic.pack(fill='x', padx=6, pady=3)
+                # 顶部 source + 时间
+                meta_bits = []
+                src = it.get('source', '')
+                if src:
+                    meta_bits.append(f"来源: {src}")
+                created = it.get('created_iso', '')
+                if created:
+                    meta_bits.append(f"⏱ {created}")
+                if 'severity' in it:
+                    meta_bits.append(f"紧迫度: {it['severity']:.2f}")
+                if meta_bits:
+                    tk.Label(ic, text=' · '.join(meta_bits), bg=item_card_bg,
+                              fg=COLOR['dim'] if use_color else 'gray',
+                              font=btn_font, anchor='w').pack(
+                        fill='x', padx=6, pady=(4, 1))
+                # 主预览 (大字号)
+                tk.Label(ic, text=f"✦  {it['preview']}", bg=item_card_bg,
                           fg=COLOR['fg'] if use_color else 'black',
-                          font=text_font, anchor='w', justify='left',
-                          wraplength=320).pack(side='left', fill='x', expand=True)
-
-                # 右侧 [✅ 通过] [❌ 拒绝]
+                          font=h3_font, anchor='w', justify='left',
+                          wraplength=780).pack(
+                    fill='x', padx=6, pady=(2, 2))
+                # rationale 详情 (灰字)
+                rat = it.get('rationale', '')
+                if rat:
+                    tk.Label(ic, text=f"   └ {rat}", bg=item_card_bg,
+                              fg=COLOR['dim'] if use_color else 'gray',
+                              font=text_font, anchor='w', justify='left',
+                              wraplength=760).pack(
+                        fill='x', padx=6, pady=(0, 4))
+                # 按钮行 (右对齐)
+                btn_row = tk.Frame(ic, bg=item_card_bg)
+                btn_row.pack(fill='x', padx=6, pady=(2, 6))
                 tk.Button(
-                    row, text='❌ 拒绝',
-                    command=_make_action(kind, it['id'], 'reject', it['preview']),
-                    font=btn_font,
-                    bg=COLOR['btn_danger'] if use_color else 'SystemButtonFace',
-                    padx=4).pack(side='right', padx=1)
-                tk.Button(
-                    row, text='✅ 通过',
-                    command=_make_action(kind, it['id'], 'activate', it['preview']),
+                    btn_row, text='✅ 通过',
+                    command=_make_action(it, 'activate'),
                     font=btn_font,
                     bg=COLOR['btn_ok'] if use_color else 'SystemButtonFace',
-                    padx=4).pack(side='right', padx=1)
-
-            # 备选: 批量开 CLI
-            def _make_open(k=kind):
-                def _do():
-                    action_open_review_cli(
-                        k, on_done=lambda ok, m: _set_status(m, ok))
-                return _do
-            tk.Button(section, text=f'🔧 批量处理 (开终端)',
-                       command=_make_open(),
-                       font=btn_font,
-                       bg=COLOR['btn_neutral'] if use_color else 'SystemButtonFace',
-                       padx=8).pack(side='top', anchor='e', padx=4, pady=(2, 4))
+                    padx=12, pady=2).pack(side='right', padx=3)
+                tk.Button(
+                    btn_row, text='❌ 拒绝',
+                    command=_make_action(it, 'reject'),
+                    font=btn_font,
+                    bg=COLOR['btn_danger'] if use_color else 'SystemButtonFace',
+                    padx=12, pady=2).pack(side='right', padx=3)
 
     # ============ 主刷新 ============
     def _do_refresh():
@@ -2318,8 +2567,19 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
                 text=f"📊  贾维斯自己健不健康  ({health['health_last'].get('ws_mb', 0):.0f}MB · {health.get('log_count', 0)}log)")
             lbl_todo.config(
                 text=f"📋  你要他盯的事  (待 {todo['count_pending']} · 已提 {todo['count_done']})")
+            # 🩹 [β.5.24 / 2026-05-19] review 标题徽章按 kind 分布显
+            _kind_counts = {}
+            for _it in review['items']:
+                _bk = _it['kind'].split('/')[0]
+                _kind_counts[_bk] = _kind_counts.get(_bk, 0) + 1
+            _badge_bits = []
+            for _bk, _zh in (('concern', '🎯'), ('relational', '💞'),
+                             ('directive', '📜'), ('cooldown', '⏰')):
+                if _kind_counts.get(_bk, 0) > 0:
+                    _badge_bits.append(f"{_zh}{_kind_counts[_bk]}")
+            _badge = '·'.join(_badge_bits) if _badge_bits else '空'
             lbl_review.config(
-                text=f"⚠️  等你拍板的提案  ({len(review['items'])} 条)")
+                text=f"⚠️  等你拍板的提案  ({len(review['items'])} 条 · {_badge})")
             h = directive['health']
             lbl_directive.config(
                 text=f"📜  临时提醒规则  ({directive['total']} 条 · "
