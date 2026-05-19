@@ -771,9 +771,22 @@ class OfferGuard:
           registry     SkillRegistry 单例（默认 get_registry()）
           publish_event_bus_on_block  True 时拒绝事件投递到 event_bus（要 jarvis_utils
                        的 ConversationEventBus 单例可达，失败被吞）
+
+        [β.5.2 / 2026-05-19] gate_mode 三档 (准则 6 行为弱耦合):
+          - hard (默认):     原行为, block 时 publish 'offer_blocked'
+          - soft:            block 时 publish + pass 时也 publish 'offer_pass' (双轨观察期)
+          - publish_only:    永远 return (True, ...) (永不 hard 拦), 仅 publish 到 SWM
+        模式持久化 memory_pool/gate_mode_vocab.json, Sir CLI scripts/gate_mode_dump.py.
         """
         if not nudge_type:
             return True, ''  # 空 nudge_type 不挡（向后兼容）
+
+        # [β.5.2] 读 gate_mode (5s cache, fail-safe→'hard')
+        try:
+            from jarvis_utils import read_gate_mode
+            gate_mode = read_gate_mode('OfferGuard')
+        except Exception:
+            gate_mode = 'hard'
 
         spec = OFFER_REQUIREMENTS.get(nudge_type)
         if spec is None:
@@ -781,6 +794,26 @@ class OfferGuard:
             # 但生产部署后要求 unkown nudge_type 必须显式 add 到 OFFER_REQUIREMENTS
             return True, f'unknown_nudge_type:{nudge_type}_default_allow'
 
+        # 内部 evaluate (不 publish, 算 ok/reason)
+        ok, reason = cls._evaluate_internal(nudge_type, spec, registry)
+
+        # [β.5.2] publish 策略:
+        # hard: block→publish 'offer_blocked' (原行为)
+        # soft: block→publish 'offer_blocked' + pass→publish 'offer_pass'
+        # publish_only: 同 soft + 永远 return (True, ...)
+        if not ok and publish_event_bus_on_block:
+            cls._publish_block(nudge_type, reason, True, gate_mode=gate_mode)
+        elif ok and gate_mode in ('soft', 'publish_only'):
+            cls._publish_pass(nudge_type, gate_mode=gate_mode)
+
+        # publish_only 永不 hard 拦 — 主脑看 SWM 自决
+        if gate_mode == 'publish_only':
+            return True, f'publish_only_override(was={reason})'
+        return ok, reason
+
+    @classmethod
+    def _evaluate_internal(cls, nudge_type: str, spec: dict, registry) -> tuple:
+        """[β.5.2] 拆出原 check_offer 评估逻辑, 不 publish."""
         # 节奏闸
         min_interval = spec.get('min_interval_s', 0)
         if min_interval > 0:
@@ -789,9 +822,7 @@ class OfferGuard:
             elapsed = time.time() - last_ts
             if elapsed < min_interval:
                 remaining = int(min_interval - elapsed)
-                reason = f'rhythm_cooldown:remaining_{remaining}s'
-                cls._publish_block(nudge_type, reason, publish_event_bus_on_block)
-                return False, reason
+                return False, f'rhythm_cooldown:remaining_{remaining}s'
 
         # required skills 闸
         requires = spec.get('requires', []) or []
@@ -801,20 +832,13 @@ class OfferGuard:
                 if req == REQ_ANY_HEALTHY_SAFE:
                     healthy_safe = [sk for sk in reg.all_healthy() if sk.is_safe()]
                     if not healthy_safe:
-                        reason = 'no_healthy_safe_skill_to_offer'
-                        cls._publish_block(nudge_type, reason, publish_event_bus_on_block)
-                        return False, reason
+                        return False, 'no_healthy_safe_skill_to_offer'
                 else:
-                    # 具体 skill 名
                     sk = reg.get(req)
                     if sk is None:
-                        reason = f'missing_skill:{req}'
-                        cls._publish_block(nudge_type, reason, publish_event_bus_on_block)
-                        return False, reason
+                        return False, f'missing_skill:{req}'
                     if not sk.is_healthy():
-                        reason = f'degraded_skill:{req}_rate={sk.last_30d_success_rate:.2f}'
-                        cls._publish_block(nudge_type, reason, publish_event_bus_on_block)
-                        return False, reason
+                        return False, f'degraded_skill:{req}_rate={sk.last_30d_success_rate:.2f}'
 
         return True, 'ok'
 
@@ -825,25 +849,53 @@ class OfferGuard:
             cls._last_offer_ts[nudge_type] = time.time()
 
     @classmethod
-    def _publish_block(cls, nudge_type: str, reason: str, enable: bool):
+    def _publish_block(cls, nudge_type: str, reason: str, enable: bool, *, gate_mode: str = 'hard'):
+        """[β.5.2] block decision publish, 加 gate_mode meta."""
         if not enable:
             return
         try:
-            # 延迟 import 避开循环依赖
             from jarvis_utils import bg_log
-            bg_log(f"❌ [OfferGuard] {nudge_type} blocked: {reason}")
+            bg_log(f"❌ [OfferGuard] {nudge_type} blocked: {reason} (mode={gate_mode})")
         except Exception:
             pass
-        # event_bus 投递（用 try/except 兜底）
         try:
             from jarvis_utils import get_event_bus
             bus = get_event_bus()
             if bus:
                 bus.publish(
                     etype='offer_blocked',
-                    description=f"OfferGuard blocked nudge '{nudge_type}': {reason}",
-                    source='offer_guard',
-                    metadata={'nudge_type': nudge_type, 'reason': reason},
+                    description=f"OfferGuard blocked nudge '{nudge_type}': {reason} mode={gate_mode}",
+                    source='OfferGuard',
+                    metadata={
+                        'nudge_type': nudge_type,
+                        'reason': reason,
+                        'decision': 'block',
+                        'gate_mode': gate_mode,
+                    },
+                )
+        except Exception:
+            pass
+
+    @classmethod
+    def _publish_pass(cls, nudge_type: str, *, gate_mode: str = 'soft'):
+        """[β.5.2] pass decision publish (soft / publish_only mode 用), 让主脑下轮看
+        'OfferGuard 同意了 nudge_type=X' — 配合 SWM evidence 主脑自决.
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus:
+                bus.publish(
+                    etype='offer_blocked',  # 复用 etype, 用 decision 字段区分
+                    description=f"OfferGuard passed nudge '{nudge_type}' (mode={gate_mode})",
+                    source='OfferGuard',
+                    metadata={
+                        'nudge_type': nudge_type,
+                        'reason': 'ok',
+                        'decision': 'pass',
+                        'gate_mode': gate_mode,
+                    },
+                    salience=0.4,  # pass 信号 salience 低 (不抢 evidence)
                 )
         except Exception:
             pass

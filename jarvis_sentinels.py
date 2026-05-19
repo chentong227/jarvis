@@ -823,34 +823,14 @@ class NudgeGate:
 
     @classmethod
     def _read_gate_mode(cls, sentinel_name: str = 'NudgeGate') -> str:
-        """[β.5.1] 读 memory_pool/gate_mode_vocab.json, 5s cache 防高频 IO.
+        """[β.5.1 / β.5.2] 委派模块级 read_gate_mode helper (DRY 给 OfferGuard 等复用).
         
         Returns: 'hard' (default) | 'soft' | 'publish_only'
         Fail-safe: 文件不存在 / 格式坏 → 返 'hard' (兼容老路径).
         """
-        import os
-        import json
-        import time as _t
-        # cache: class-level (跨 instance 共享)
-        _cache_key = '_gate_mode_cache'
-        _cache_t_key = '_gate_mode_cache_t'
-        now = _t.time()
-        cached_t = getattr(cls, _cache_t_key, 0.0)
-        if now - cached_t < 5.0:
-            cached = getattr(cls, _cache_key, {})
-            return cached.get(sentinel_name, 'hard')
-        # 重读
         try:
-            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            path = os.path.join(root, 'memory_pool', 'gate_mode_vocab.json')
-            if not os.path.exists(path):
-                return 'hard'
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            current = data.get('current', {}) if isinstance(data, dict) else {}
-            setattr(cls, _cache_key, current)
-            setattr(cls, _cache_t_key, now)
-            return current.get(sentinel_name, 'hard')
+            from jarvis_utils import read_gate_mode
+            return read_gate_mode(sentinel_name)
         except Exception:
             return 'hard'
 

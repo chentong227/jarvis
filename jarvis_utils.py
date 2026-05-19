@@ -1007,6 +1007,56 @@ def get_event_bus():
     return _GLOBAL_EVENT_BUS
 
 
+# ==========================================================================
+# [β.5.1 / β.5.2] gate_mode helper (NudgeGate / OfferGuard / Conductor 复用)
+# ==========================================================================
+# 准则 6 行为弱耦合: sentinel 决策权可由 vocab 切档 (hard/soft/publish_only).
+# vocab 在 memory_pool/gate_mode_vocab.json, Sir CLI scripts/gate_mode_dump.py 切.
+# ==========================================================================
+
+_GATE_MODE_CACHE = {}
+_GATE_MODE_CACHE_T = 0.0
+_GATE_MODE_CACHE_TTL_S = 5.0
+
+
+def read_gate_mode(sentinel_name: str) -> str:
+    """[β.5.1 / β.5.2] 读 memory_pool/gate_mode_vocab.json.current[sentinel_name].
+    
+    Returns:
+        'hard' (default) | 'soft' | 'publish_only'
+    Fail-safe:
+        文件不存在 / JSON 格式坏 → 返 'hard' (兼容老路径).
+    
+    Cache:
+        模块级 5s TTL cache 防 vocab JSON 高频读 (NudgeGate.can_speak 每 nudge 一次).
+    """
+    global _GATE_MODE_CACHE, _GATE_MODE_CACHE_T
+    now = time.time()
+    if now - _GATE_MODE_CACHE_T < _GATE_MODE_CACHE_TTL_S and _GATE_MODE_CACHE:
+        return _GATE_MODE_CACHE.get(sentinel_name, 'hard')
+    # 重读
+    try:
+        root = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(root, 'memory_pool', 'gate_mode_vocab.json')
+        if not os.path.exists(path):
+            return 'hard'
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        current = data.get('current', {}) if isinstance(data, dict) else {}
+        _GATE_MODE_CACHE = current
+        _GATE_MODE_CACHE_T = now
+        return current.get(sentinel_name, 'hard')
+    except Exception:
+        return 'hard'
+
+
+def reset_gate_mode_cache() -> None:
+    """[β.5.1 testcase 用] 强制清 cache 让下次重读 vocab."""
+    global _GATE_MODE_CACHE, _GATE_MODE_CACHE_T
+    _GATE_MODE_CACHE = {}
+    _GATE_MODE_CACHE_T = 0.0
+
+
 class ConversationEventBus:
     """对话事件总线。一律 in-memory + 线程安全。
     publish 写入是 O(1)，read O(n) 其中 n 默认 ≤ 50。

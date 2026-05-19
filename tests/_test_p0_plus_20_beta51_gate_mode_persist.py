@@ -130,13 +130,11 @@ class TestP0Plus20Beta51CanSpeakModes(unittest.TestCase):
 
     def setUp(self):
         from jarvis_sentinels import NudgeGate
-        # 清 cache 让 mock 时能控
-        for attr in ('_gate_mode_cache', '_gate_mode_cache_t'):
-            if hasattr(NudgeGate, attr):
-                delattr(NudgeGate, attr)
+        from jarvis_utils import reset_gate_mode_cache
+        # [β.5.2] cache 现在在 jarvis_utils module-level
+        reset_gate_mode_cache()
         self.NudgeGate = NudgeGate
         self.gate = NudgeGate(cooldown_seconds=90)
-        # 注册临时 bus
         from jarvis_utils import ConversationEventBus
         self.bus = ConversationEventBus()
         ConversationEventBus.register_global(self.bus)
@@ -146,9 +144,10 @@ class TestP0Plus20Beta51CanSpeakModes(unittest.TestCase):
         ConversationEventBus.register_global(None)
 
     def _set_mode(self, mode: str):
-        """Mock _read_gate_mode 返指定 mode."""
-        self.NudgeGate._gate_mode_cache = {'NudgeGate': mode}
-        self.NudgeGate._gate_mode_cache_t = time.time()
+        """[β.5.2] Mock module-level cache 让 read_gate_mode 返指定 mode."""
+        import jarvis_utils
+        jarvis_utils._GATE_MODE_CACHE = {'NudgeGate': mode}
+        jarvis_utils._GATE_MODE_CACHE_T = time.time()
 
     def test_hard_mode_blocks_and_publishes_on_block(self):
         """hard mode: block 时 publish, pass 时不 publish."""
