@@ -223,10 +223,10 @@ HTML_TEMPLATE = r"""
   </div>
 </section>
 
-<!-- 信息区: 长期惦记 / 默契 / 健康 -->
+<!-- 信息区: 长期惦记 / 默契 / 健康 / 承诺 -->
 <section class="max-w-7xl mx-auto px-6 pt-8">
   <h2 class="text-xl font-bold mb-3 flex items-center gap-2"><span>📋</span><span>信息 - 你想了解的</span></h2>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 
     <!-- 长期惦记 -->
     <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
@@ -275,6 +275,28 @@ HTML_TEMPLATE = r"""
         <p><span class="text-slate-400">内存:</span> <span x-text="(health.health_last && health.health_last.ws_mb ? health.health_last.ws_mb.toFixed(0) : '?') + ' MB'"></span></p>
         <p><span class="text-slate-400">日志数:</span> <span x-text="health.log_count || 0"></span></p>
         <p x-show="health.diagnosis" class="text-slate-300 mt-2" x-text="health.diagnosis"></p>
+      </div>
+    </div>
+
+    <!-- Jarvis 口头承诺 -->
+    <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold flex items-center gap-2"><span>🤝</span>Jarvis 承诺</h3>
+        <span class="badge bg-slate-700/50"
+              x-text="'⏳' + (promise.pending_n || 0) + ' ✓' + (promise.fulfilled_n || 0)"></span>
+      </div>
+      <div class="space-y-1 text-xs max-h-64 overflow-y-auto scrollbar-thin">
+        <template x-if="!(promise.rows || []).length">
+          <p class="text-emerald-400">✓ 干净 — Jarvis 没未兑现承诺</p>
+        </template>
+        <template x-for="p in (promise.rows || []).slice(0, 6)" :key="p.id">
+          <div>
+            <span :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-rose-400' : 'text-amber-400')"
+                  x-text="p.state_zh"></span>
+            <span class="text-slate-500 ml-1" x-text="p.age"></span>
+            <p class="text-slate-300 ml-1 truncate" x-text="p.desc"></p>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -332,6 +354,37 @@ HTML_TEMPLATE = r"""
       <p class="text-xs text-slate-400">今天 <span x-text="mutations.today_n || 0"></span> / 总 <span x-text="mutations.total_n || 0"></span></p>
     </div>
 
+  </div>
+
+  <!-- 言出必行健康度 (跨整行宽卡) -->
+  <div class="glass rounded-2xl p-5 border border-slate-700/30 mt-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold flex items-center gap-2">
+        <span>💯</span>言出必行健康度
+        <span class="badge"
+              :class="(integrity.unverified_today || 0) === 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'"
+              x-text="'今 ' + (integrity.unverified_today || 0) + ' · 7d ' + (integrity.unverified_7d || 0)"></span>
+        <template x-if="integrity.verify_rate !== null && integrity.verify_rate !== undefined">
+          <span class="badge bg-blue-500/20 text-blue-300"
+                x-text="'兑现 ' + (integrity.verify_rate * 100).toFixed(0) + '%'"></span>
+        </template>
+      </h3>
+    </div>
+    <template x-if="(integrity.unverified_today || 0) === 0 && (integrity.unverified_7d || 0) === 0">
+      <p class="text-sm text-emerald-400">✓ 干净 — 没有 unverified claim</p>
+    </template>
+    <template x-if="(integrity.top_unverified || []).length > 0">
+      <div class="space-y-1 text-xs">
+        <p class="text-slate-400 mb-1">🔁 7 天最常空头话:</p>
+        <template x-for="r in (integrity.top_unverified || []).slice(0, 5)" :key="r.text">
+          <div class="flex items-center gap-2">
+            <span class="badge bg-rose-500/20 text-rose-300" x-text="r.kind"></span>
+            <span class="text-slate-500" x-text="'×' + r.count"></span>
+            <span class="text-slate-300 truncate" x-text="r.text"></span>
+          </div>
+        </template>
+      </div>
+    </template>
   </div>
 </section>
 
