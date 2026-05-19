@@ -1430,7 +1430,12 @@ class ScreenshotSentinel(threading.Thread):
         return self.get_latest_screenshot_b64()
 
 class WellnessGuardian(threading.Thread):
-    """P5 健康守护者：基于工时模式主动建议休息，防止过度疲劳"""
+    """P5 健康守护者：基于工时模式主动建议休息，防止过度疲劳
+
+    🩹 [β.5.14 / 2026-05-19] β.5 重构收尾 - 准则 6 数据强耦合: 所有 skip 路径
+    publish 'gate_advice' source='WellnessGuardian' 到 SWM 让主脑看. salience=0.15
+    低于默认 0.3 floor, 不污染主脑 evidence 视图, 仅写入 SWM 历史 (需 query 时可拿).
+    """
     def __init__(self, central_nerve):
         super().__init__(daemon=True)
         self.jarvis = central_nerve
@@ -1438,6 +1443,45 @@ class WellnessGuardian(threading.Thread):
         self.suggestion_cooldown = 7200
         self.daily_suggestion_count = 0
         self.last_reset_day = time.strftime("%Y-%m-%d")
+        # [β.5.14] skip publish dedupe: 60s 内同 reason 只 publish 1 次防 SWM 堆爆
+        self._skip_publish_last_t = {}
+
+    def _publish_skip(self, skip_reason: str, extra_meta: dict = None):
+        """[β.5.14] WellnessGuardian skip 时 publish 'gate_advice' 到 SWM.
+
+        sal=0.15 (低于默认 0.3 floor): 写入 SWM 历史不进默认 render. 主脑需查时
+        可拿; 默认不污染 evidence. dedupe 60s 内同 reason 只 publish 1 次.
+        """
+        try:
+            _now = time.time()
+            _last = self._skip_publish_last_t.get(skip_reason, 0)
+            if _now - _last < 60.0:
+                return  # dedupe
+            self._skip_publish_last_t[skip_reason] = _now
+            # GC 5min 以前
+            self._skip_publish_last_t = {
+                k: v for k, v in self._skip_publish_last_t.items()
+                if _now - v < 300
+            }
+            from jarvis_utils import get_event_bus
+            _bus = get_event_bus()
+            if _bus is None:
+                return
+            meta = {
+                'decision': 'block',
+                'block_reason': skip_reason,
+            }
+            if extra_meta:
+                meta.update(extra_meta)
+            _bus.publish(
+                etype='gate_advice',
+                description=f"WellnessGuardian skipped tick: {skip_reason}",
+                source='WellnessGuardian',
+                metadata=meta,
+                salience=0.15,  # 低于 SWM render floor 0.3, 仅历史不污染主脑视图
+            )
+        except Exception:
+            pass
 
     def run(self):
         import time
@@ -1458,9 +1502,16 @@ class WellnessGuardian(threading.Thread):
                 current_hour = int(time.strftime("%H"))
                 
                 now = time.time()
+                # [β.5.14] cooldown skip → publish gate_advice 到 SWM
                 if now - self.last_break_suggestion_time < self.suggestion_cooldown:
+                    _cd_remaining = int(self.suggestion_cooldown - (now - self.last_break_suggestion_time))
+                    self._publish_skip(f'cooldown_{_cd_remaining}s_remaining',
+                                        {'cooldown_remaining_s': _cd_remaining})
                     continue
+                # [β.5.14] daily quota skip → publish
                 if self.daily_suggestion_count >= 3:
+                    self._publish_skip('daily_quota_exhausted',
+                                        {'daily_count': self.daily_suggestion_count})
                     continue
                 
                 should_suggest = False
@@ -1472,6 +1523,8 @@ class WellnessGuardian(threading.Thread):
                 # work_duration > 180 触发 "extended screen time". 但 Sir 实际在睡觉, 不是屏前.
                 # 修法: 所有触发条件加 work_category != "AFK" guard. 准则 5 言出必行: 不说错.
                 if work_category == "AFK":
+                    # [β.5.14] AFK skip 也 publish (主脑看到 Sir 不在屏前的事实)
+                    self._publish_skip('afk_not_at_screen', {'work_category': 'AFK'})
                     continue  # AFK = Sir 不在屏前, 不应该触发任何 break suggestion
                 if work_category == "Coding" and work_duration > 120:
                     should_suggest = True
