@@ -714,9 +714,32 @@ class CareSpeechSynth:
                          silent_done_recently: bool) -> str:
         """β-3.1 动态 channel 选择: 不每次都吵.
 
-        - 极高 urgency (>= 0.85): voice
-        - 中高 urgency 第一次 (0.55-0.85, 没 silent 过): silent_text (字幕飘过)
-        - 中高 urgency 已经 silent 过: voice (升级)
+        🩹 [β.5.13 / 2026-05-19] env JARVIS_NUDGE_LLM_ALL_CHANNELS=1 (默认) → 全走 voice
+        意图: silent_text / visual_pulse 跳过主脑是 β.5 重构未覆盖的边界. 改后所有
+        channel 都让主脑 stream_nudge 看 SWM 自己决策 (silent / voice / silent_text).
+        env=0 走老逻辑 (实机出问题秒回, 不用 git revert).
+        原 channel 提示通过 nudge_context['original_channel_hint'] 传给 stream_nudge,
+        主脑可参考但能改 (例如 silent hint + 高 urgency 仍升级 voice).
+
+        - env=1 (默认): 始终返 'voice' → 主脑接管
+        - env=0 (旧):
+          - 极高 urgency (>= 0.85): voice
+          - 中高 urgency 第一次 (0.55-0.85, 没 silent 过): silent_text (字幕飘过)
+          - 中高 urgency 已经 silent 过: voice (升级)
+        """
+        _llm_all = os.environ.get('JARVIS_NUDGE_LLM_ALL_CHANNELS', '1').strip()
+        if _llm_all != '0':
+            return 'voice'
+        if evi.urgency_score >= 0.85:
+            return 'voice'
+        if silent_done_recently:
+            return 'voice'
+        return 'silent_text'
+
+    def _legacy_channel_for_hint(self, evi: CareEvidence,
+                                  silent_done_recently: bool) -> str:
+        """β.5.13: 算"原来 channel 决策会走什么 channel", 给主脑作为 hint.
+        若 env=1 走主脑路径, 仍想让主脑知道老规则会选 silent 还是 voice.
         """
         if evi.urgency_score >= 0.85:
             return 'voice'
@@ -731,8 +754,12 @@ class CareSpeechSynth:
         return f"[I'm watching: {cid_human}] {sig[:80]}"
 
     def push(self, worker, evi: CareEvidence, dry_run: bool,
-              channel: str = 'voice') -> bool:
+              channel: str = 'voice',
+              original_channel_hint: str = None) -> bool:
         directive = self.build_directive(evi)
+        # 🩹 [β.5.13 / 2026-05-19] original_channel_hint 注入 (env=1 时 channel='voice'
+        # 主脑接管, 但仍想让主脑知道老规则会选啥 — silent_text hint 表示"轻量提醒,
+        # 主脑可输出 [SILENCE] 表尊重 silent 本意, 也可升级 voice 视情况").
         nudge_ctx = {
             'type': 'proactive_care',
             'channel': channel,
@@ -741,6 +768,7 @@ class CareSpeechSynth:
             'urgency_score': round(evi.urgency_score, 3),
             'source': 'ProactiveCareEngine',
             'urgency_breakdown': evi.breakdown,
+            'original_channel_hint': original_channel_hint or channel,
         }
         if channel == 'silent_text':
             nudge_ctx['silent_text'] = self.render_silent_text(evi)
@@ -1209,7 +1237,13 @@ class ProactiveCareEngine(threading.Thread):
             last_silent_ts = self.silent_history.get(top_c.id, 0)
         silent_recent = (now_ts - last_silent_ts) < self.silent_decay_s
         channel = self.synth.choose_channel(evi, silent_recent)
-        sent = self.synth.push(self.worker, evi, dry_run=self.dry_run, channel=channel)
+        # 🩹 [β.5.13 / 2026-05-19] legacy_hint 给主脑作为 channel 参考
+        # env=1 时 channel 已被 choose_channel 改为 'voice', legacy_hint 让主脑
+        # 仍知道老规则会选 'silent_text' (轻量) 还是 'voice' (重要)
+        legacy_hint = self.synth._legacy_channel_for_hint(evi, silent_recent)
+        sent = self.synth.push(self.worker, evi, dry_run=self.dry_run,
+                                 channel=channel,
+                                 original_channel_hint=legacy_hint)
         if sent:
             with self._state_lock:
                 # voice 算"全局 voice nudge" (300s 冷却), silent_text 占独立 silent 全局 (90s)

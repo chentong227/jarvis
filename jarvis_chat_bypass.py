@@ -3700,6 +3700,26 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
         if recent_topics:
             recent_str = f"\n[RECENT NUDGES — DO NOT REPEAT THESE SENTIMENTS]:\n" + "\n".join([f"  - {t}" for t in recent_topics])
 
+        # 🩹 [P0+20-β.5.13 / 2026-05-19] channel_hint_str: 主脑参考但能改的轻量提示
+        # 旧 silent_text / visual_pulse 跳过主脑是 β.5 重构未覆盖的边界. 改后所有
+        # channel 走 stream_nudge, 主脑看 SWM evidence 自决真实 channel (silent / voice).
+        # original_channel_hint 是 ProactiveCare 等模块原本会选的 channel — 不强制.
+        channel_hint_str = ""
+        try:
+            _ch_hint = nudge_context.get('original_channel_hint', '')
+            if _ch_hint and _ch_hint != 'voice':
+                channel_hint_str = (
+                    f"\n[CHANNEL HINT — Sir 准则 6 决策集中主脑 / β.5.13]:\n"
+                    f"  This nudge was originally tagged channel='{_ch_hint}' by the\n"
+                    f"  source sentinel (typically meaning 'light touch, low urgency').\n"
+                    f"  Treat as a SUGGESTION you may follow or override:\n"
+                    f"  - silent_text hint + low urgency + SWM busy/standby → consider [SILENCE]\n"
+                    f"  - silent_text hint + high urgency / strong evidence → upgrade to voice\n"
+                    f"  - When in doubt, the reaction-space rules below win."
+                )
+        except Exception:
+            pass
+
         # 🩹 [P0+20-β.1.25 / 2026-05-16] anti-repeat 注入：禁止复用本类型最近 5 次开头
         # Sir 反馈"回归问候/催睡固定句式看了 5-6 遍" → directive + STM + LLM 一样 → 句式复用。
         # 修法：把同 nudge_type 最近 5 条 reply 开头塞进 prompt，显式 FORBIDDEN。
@@ -3845,6 +3865,7 @@ Type: {nudge_type}
 {nudge_directive}
 {recent_str}
 {forbidden_str}
+{channel_hint_str}
 
 [RULES — schema 与防退化 (Sir 准则 6: 不写 persona/句式锁, 只防真坏)]
 - ONE or TWO sentences. Under 25 words total.

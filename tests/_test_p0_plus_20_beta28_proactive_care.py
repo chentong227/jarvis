@@ -15,7 +15,7 @@ import os
 import sys
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -633,10 +633,18 @@ class TestCareConcernSensor(unittest.TestCase):
 
 
 class TestBeta31ChannelEscalation(unittest.TestCase):
-    """β-3.1: channel 动态升级 (silent_text → voice)"""
+    """β-3.1: channel 动态升级 (silent_text → voice)
+
+    🩹 [β.5.13 / 2026-05-19] 老 channel 决策被 env JARVIS_NUDGE_LLM_ALL_CHANNELS=1
+    覆盖 (默认开). 此 class 所有 test 显式 patch env=0 走老逻辑兼容性测试.
+    新行为见 _test_p0_plus_20_beta513_nudge_llm_all_channels_persist.py.
+    """
 
     def setUp(self):
         from jarvis_proactive_care import CareSpeechSynth, CareEvidence
+        # [β.5.13] 强制 env=0 走老 channel 逻辑 (这个 class 测的是 legacy)
+        self._env_patch = patch.dict(os.environ, {'JARVIS_NUDGE_LLM_ALL_CHANNELS': '0'})
+        self._env_patch.start()
         self.synth = CareSpeechSynth()
         self.evi_mid = CareEvidence(
             concern_id='sir_hydration_habit', urgency_score=0.65,
@@ -644,6 +652,9 @@ class TestBeta31ChannelEscalation(unittest.TestCase):
         self.evi_high = CareEvidence(
             concern_id='sir_sleep_streak', urgency_score=0.9,
             what_i_watch='x', why_i_care='y', severity=0.8, breakdown={})
+
+    def tearDown(self):
+        self._env_patch.stop()
 
     def test_high_urgency_always_voice(self):
         ch = self.synth.choose_channel(self.evi_high, silent_done_recently=False)
