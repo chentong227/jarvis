@@ -211,6 +211,42 @@ HTML_TEMPLATE = r"""
   </div>
 </section>
 
+<!-- 🩹 [β.5.28-fix9 / 2026-05-20] Sir 03:33 反馈"Jarvis 口头答应没做到, 没地方显示" -->
+<!-- 言行不一区: 显眼 untracked + pending promise + 一键清残留 -->
+<section class="max-w-7xl mx-auto px-6 pt-8" x-show="(promise.untracked_n || 0) > 0 || (promise.pending_n || 0) > 0">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xl font-bold flex items-center gap-2">
+      <span>⚖️</span>
+      <span>言行一致审计</span>
+      <span class="badge"
+            :class="(promise.untracked_n || 0) > 3 ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'"
+            x-text="'untracked ' + (promise.untracked_n || 0) + ' · pending ' + (promise.pending_n || 0) + ' · ✓' + (promise.fulfilled_n || 0)"></span>
+    </h2>
+    <button onclick="window.dashboardResetPromise(this)"
+            title="清空贾维斯口头承诺残留 (保留已兑现的)"
+            class="px-3 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-600 transition text-xs font-medium">
+      🧹 清残留 (留 ✓)
+    </button>
+  </div>
+  <div class="glass rounded-2xl p-5 border border-rose-500/20 shadow-lg">
+    <p x-show="promise.diagnosis" class="text-sm text-rose-300 mb-3" x-text="'📌 ' + promise.diagnosis"></p>
+    <div class="space-y-2 max-h-80 overflow-y-auto scrollbar-thin">
+      <template x-for="p in (promise.rows || [])" :key="p.id">
+        <div class="flex items-start gap-3 p-2 rounded-lg hover:bg-slate-800/50">
+          <span class="text-sm"
+                :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-rose-400' : 'text-amber-400')"
+                x-text="p.state_zh"></span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-slate-200 truncate" x-text="p.desc"></p>
+            <p class="text-xs text-slate-500" x-text="p.age + ' · ' + p.when + ' · evidence=' + p.evidence_n"></p>
+          </div>
+          <span class="text-xs font-mono text-slate-600" x-text="p.kind"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+</section>
+
 <!-- 待办区: 你要他盯的事 (Commitments) -->
 <section class="max-w-7xl mx-auto px-6 pt-8" x-show="(todo.rows && todo.rows.length) > 0">
   <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
@@ -442,6 +478,30 @@ window.dashboardReflectNow = async function(btn) {
     }, 2000);
     if (!r.ok) alert('反思失败: ' + (r.detail || r.stderr || ''));
     else console.log('[Reflect]', r.stdout);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = orig;
+    alert('请求失败: ' + e);
+  }
+};
+
+// 🩹 [β.5.28-fix9] 一键清空 Jarvis 承诺残留
+window.dashboardResetPromise = async function(btn) {
+  if (!confirm('清空所有 pending/untracked 承诺 (保留已兑现) ?\n\n这不可撤销.')) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ 清理中...';
+  try {
+    const resp = await fetch('/api/promise_reset', {method: 'POST'});
+    const r = await resp.json();
+    btn.textContent = r.ok ? '✓ 已清' : '✗ 失败';
+    if (!r.ok) alert('失败: ' + (r.detail || r.stderr || ''));
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = orig;
+      try { if (document.body.__x) document.body.__x.$data.refresh(); }
+      catch (e) { location.reload(); }
+    }, 1500);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = orig;
@@ -715,6 +775,28 @@ def api_cancel_commitment(cw_id: int):
     if not done.wait(timeout=15):
         return jsonify({'ok': False, 'detail': '超时'}), 504
     return jsonify(result)
+
+
+@app.route('/api/promise_reset', methods=['POST'])
+def api_promise_reset():
+    """🩹 [β.5.28-fix9 / 2026-05-20] Sir 03:33 反馈 'Jarvis 口头答应没做到没地方显示'.
+    一键清残留 promise (保留已兑现历史). 调 scripts/promise_log_reset.py."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(
+            [sys.executable, 'scripts/promise_log_reset.py',
+             '--apply', '--keep-fulfilled'],
+            capture_output=True, text=True, timeout=15,
+        )
+        return jsonify({
+            'ok': r.returncode == 0,
+            'stdout': (r.stdout or '')[:1000],
+            'stderr': (r.stderr or '')[:500],
+        })
+    except _sp.TimeoutExpired:
+        return jsonify({'ok': False, 'detail': '超时'}), 504
+    except Exception as e:
+        return jsonify({'ok': False, 'detail': str(e)}), 500
 
 
 @app.route('/api/reflect_now', methods=['POST'])
