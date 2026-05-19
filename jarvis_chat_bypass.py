@@ -1345,50 +1345,106 @@ Spoken English:"""
                 return f"✅ ui_control.{ctrl_cmd}"
             # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09 集成 dashboard 到主脑:
             # "打开面板/看看状态" 模糊语义 → 主脑 emit FAST_CALL ui_control.dashboard_open
-            # → 此处 subprocess 启动 jarvis_dashboard.py (pythonw, 无 console).
+            # 🩹 [β.5.25-finish / 2026-05-20] Sir 02:30 反馈"打开的还是之前那个 python":
+            # 默认改成 web dashboard (scripts/jarvis_dashboard_web.py + 自动开浏览器).
+            # 已在跑 (port 8765 占用) → 只开浏览器复用. tkinter 老版作 fallback.
             if ctrl_cmd == "dashboard_open":
-                # 🩹 [β.2.9.13 / 2026-05-18] Sir 14:00 实测痛点修:
-                # 旧版用 pythonw.exe 静默失败 + return ✅ → 主脑说"已打开"但 Sir
-                # 没看到窗口 = 言行不一. 准则 5 修:
-                #   1. 优先 python.exe (有 console 看 error), 不用 pythonw 静默失败
-                #   2. 启动后 sleep 0.5s 检查进程 poll() — 活着才返 ✅, 死了返 ❌
                 try:
                     import subprocess as _sp
                     import sys as _sys
                     import time as _t
-                    py_exe = _sys.executable  # 用主进程 python (有 console)
-                    dash_script = os.path.join(
+                    import socket as _sock
+                    import webbrowser as _wb
+                    WEB_PORT = 8765
+                    WEB_URL = f"http://127.0.0.1:{WEB_PORT}/"
+                    py_exe = _sys.executable
+
+                    # 1. 探测 port 8765 是否已在跑 (server 复用)
+                    def _port_alive(port):
+                        with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as s:
+                            s.settimeout(0.3)
+                            try:
+                                s.connect(('127.0.0.1', port))
+                                return True
+                            except Exception:
+                                return False
+                    if _port_alive(WEB_PORT):
+                        # 已 running, 只开浏览器
+                        try:
+                            _wb.open(WEB_URL)
+                        except Exception:
+                            pass
+                        return (f"✅ ui_control.dashboard_open: web 看板已在跑, "
+                                f"浏览器开 {WEB_URL}")
+
+                    # 2. 找 web dashboard 脚本
+                    web_script = os.path.join(
                         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        'scripts', 'jarvis_dashboard.py')
-                    if not os.path.exists(dash_script):
-                        dash_script = 'scripts/jarvis_dashboard.py'
-                    # CREATE_NEW_CONSOLE 让 dashboard 在新窗口 (Sir 能看启动 log)
+                        'scripts', 'jarvis_dashboard_web.py')
+                    if not os.path.exists(web_script):
+                        web_script = 'scripts/jarvis_dashboard_web.py'
+
+                    # 3. 启动 web server (它自己会开浏览器)
                     proc = _sp.Popen(
-                        [py_exe, dash_script],
+                        [py_exe, web_script],
                         creationflags=getattr(_sp, 'CREATE_NEW_CONSOLE',
                                                0x00000010),
                         close_fds=True,
                     )
-                    # 启动健康检查 — 准则 5 不假装成功
-                    _t.sleep(0.6)
+                    # 启动健康检查
+                    _t.sleep(1.5)
                     if proc.poll() is not None:
-                        # 进程秒退 = 启动失败 (Tkinter / import error / etc)
-                        return (f"❌ ui_control.dashboard_open: 进程秒退 "
-                                f"(exit_code={proc.returncode}) — Sir 直接跑 "
-                                f"`scripts\\jarvis_dashboard.cmd` 看 console error")
-                    return f"✅ ui_control.dashboard_open: 看板已启动 (PID={proc.pid})"
+                        # web 启动失败 → fallback 老 tkinter
+                        dash_script = os.path.join(
+                            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'scripts', 'jarvis_dashboard.py')
+                        if not os.path.exists(dash_script):
+                            dash_script = 'scripts/jarvis_dashboard.py'
+                        proc_tk = _sp.Popen(
+                            [py_exe, dash_script],
+                            creationflags=getattr(_sp, 'CREATE_NEW_CONSOLE',
+                                                   0x00000010),
+                            close_fds=True,
+                        )
+                        _t.sleep(0.6)
+                        if proc_tk.poll() is not None:
+                            return (f"❌ ui_control.dashboard_open: "
+                                    f"web (exit={proc.returncode}) + "
+                                    f"tkinter (exit={proc_tk.returncode}) 都失败")
+                        return (f"⚠️ ui_control.dashboard_open: web 启动失败 → "
+                                f"fallback tkinter 看板 (PID={proc_tk.pid})")
+                    return (f"✅ ui_control.dashboard_open: web 看板已启动 "
+                            f"(PID={proc.pid}, {WEB_URL})")
                 except Exception as _de:
                     return f"❌ ui_control.dashboard_open: {_de}"
             if ctrl_cmd == "dashboard_close":
+                # 🩹 [β.5.25-finish / 2026-05-20] 双 kill: web server (port 8765) + tkinter
                 try:
                     import subprocess as _sp
-                    # taskkill 找窗口标题含 J.A.R.V.I.S 的 python 进程
-                    _sp.run(
-                        ['taskkill', '/F', '/FI',
-                         'WINDOWTITLE eq 贾维斯总览看板*'],
-                        capture_output=True, timeout=5,
-                    )
-                    return f"✅ ui_control.dashboard_close"
+                    killed = []
+                    # 1. kill web server (找 jarvis_dashboard_web 命令)
+                    try:
+                        r1 = _sp.run(
+                            ['wmic', 'process', 'where',
+                             "CommandLine like '%jarvis_dashboard_web%'",
+                             'call', 'terminate'],
+                            capture_output=True, timeout=5, text=True,
+                        )
+                        if r1.returncode == 0:
+                            killed.append('web')
+                    except Exception:
+                        pass
+                    # 2. kill tkinter (窗口标题)
+                    try:
+                        _sp.run(
+                            ['taskkill', '/F', '/FI',
+                             'WINDOWTITLE eq 贾维斯总览看板*'],
+                            capture_output=True, timeout=5,
+                        )
+                        killed.append('tkinter')
+                    except Exception:
+                        pass
+                    return f"✅ ui_control.dashboard_close (killed: {killed or 'none'})"
                 except Exception as _ce:
                     return f"❌ ui_control.dashboard_close: {_ce}"
             return f"❌ ui_control: 未知指令 {ctrl_cmd}"
