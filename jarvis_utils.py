@@ -3595,6 +3595,42 @@ One word (sleep/wake/other):"""
         except Exception:
             return "other"
 
+    def prompt_raw(self, prompt: str, max_tokens: int = 512,
+                    temperature: float = 0.0,
+                    timeout: float = 8.0) -> str:
+        """🩹 [β.5.22-C / 2026-05-19] Generic prompt API - 给 ConcernFeedbackJudge 用.
+
+        替代以前每个 detect_X 重复造 ollama 调用 boilerplate. 返 raw response 字符串
+        (上层自己 parse). 失败返空 ''.
+
+        max_tokens=num_predict in ollama parlance.
+        """
+        import urllib.request
+        import json as _json
+        if not self.is_available or not self._active_model:
+            return ''
+        payload = _json.dumps({
+            "model": self._active_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {
+                "temperature": float(temperature),
+                "num_predict": int(max_tokens),
+            },
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                f"{self.BASE_URL}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=float(timeout)) as resp:
+                result = _json.loads(resp.read().decode())
+                return result.get("message", {}).get("content", "")
+        except Exception:
+            return ''
+
     def detect_emotion(self, recent_messages: str) -> str:
         import urllib.request
         import json as _json

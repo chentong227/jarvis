@@ -99,10 +99,15 @@ class ConcernFeedbackJudge:
                     continue
                 ok = self.ledger.record_user_feedback(cid, user_input, entry)
                 if ok:
+                    _sev_d = entry.get('severity_delta') or 0.0
+                    try:
+                        _sev_d = float(_sev_d)
+                    except Exception:
+                        _sev_d = 0.0
                     bg_log(
                         f"🔄 [ConcernFeedback/RECORD] cid={cid} "
                         f"progress={entry.get('progress')} "
-                        f"sev_d={entry.get('severity_delta'):+.2f} "
+                        f"sev_d={_sev_d:+.2f} "
                         f"timing='{entry.get('optimal_timing', '')}' "
                         f"turn={turn_id[:20]}"
                     )
@@ -114,7 +119,9 @@ class ConcernFeedbackJudge:
     def _call_llm_judge(self, user_input: str, actives: list) -> Optional[dict]:
         """构 prompt 调 LLM. fail → 返 None.
 
-        优先尝试 quick_classifier (1.5B local), fallback KeyRouter.
+        用 QuickClassifier.prompt_raw (本地 ollama qwen2.5:1.5b). 准则 1 高效:
+        本地 ~1-3s 不烧 API quota. ollama 不可用 → skip 该 turn, 等下次.
+        准则 5: 不胡判, 宁可 skip 不写错 daily_progress.
         """
         # 构 concerns brief (cid + what_i_watch + 当前 daily_progress)
         actives_brief = []
@@ -126,12 +133,13 @@ class ConcernFeedbackJudge:
             })
         prompt = self._build_prompt(user_input, actives_brief)
 
-        # 1. 尝试 quick_classifier
+        # 调 QuickClassifier.prompt_raw (新 generic API β.5.22-C)
         try:
             from jarvis_utils import get_quick_classifier
             qc = get_quick_classifier()
-            if qc and getattr(qc, 'is_available', False):
-                resp = qc.run_completion(prompt, max_tokens=512, temperature=0.0)
+            if qc and getattr(qc, 'is_available', False) and hasattr(qc, 'prompt_raw'):
+                resp = qc.prompt_raw(prompt, max_tokens=512,
+                                       temperature=0.0, timeout=8.0)
                 if resp:
                     parsed = self._parse_json(resp)
                     if parsed:
@@ -139,16 +147,6 @@ class ConcernFeedbackJudge:
         except Exception:
             pass
 
-        # 2. fallback KeyRouter (用 fast model)
-        if self.key_router is not None:
-            try:
-                resp = self._call_key_router(prompt)
-                if resp:
-                    parsed = self._parse_json(resp)
-                    if parsed:
-                        return parsed
-            except Exception:
-                pass
         return None
 
     def _build_prompt(self, user_input: str, actives_brief: list) -> str:
@@ -197,45 +195,6 @@ class ConcernFeedbackJudge:
             return json.loads(s[i:j+1])
         except Exception:
             return None
-
-    def _call_key_router(self, prompt: str) -> Optional[str]:
-        """通过 KeyRouter pool 调一次 fast model."""
-        try:
-            import urllib.request as _req
-            kr = self.key_router
-            key_info = kr.acquire(category='fast')
-            if not key_info:
-                return None
-            try:
-                payload = {
-                    'model': 'gemini-2.0-flash-lite',
-                    'contents': [{'parts': [{'text': prompt}]}],
-                    'generationConfig': {
-                        'temperature': 0.0,
-                        'maxOutputTokens': 512,
-                    },
-                }
-                url = (
-                    f"https://generativelanguage.googleapis.com/v1beta/models/"
-                    f"gemini-2.0-flash-lite:generateContent?key={key_info.key}"
-                )
-                data = json.dumps(payload).encode('utf-8')
-                req = _req.Request(url, data=data,
-                                     headers={'Content-Type': 'application/json'})
-                with _req.urlopen(req, timeout=8) as resp:
-                    body = json.loads(resp.read().decode('utf-8'))
-                txt = (body.get('candidates') or [{}])[0] \
-                          .get('content', {}).get('parts', [{}])[0] \
-                          .get('text', '')
-                return txt
-            finally:
-                try:
-                    kr.release(key_info, success=True)
-                except Exception:
-                    pass
-        except Exception:
-            return None
-
 
 # ============================================================
 # 单例
