@@ -359,6 +359,13 @@ class ChronosTick(threading.Thread):
             return False, f"SCORE_HIGH({score}>={threshold})"
 
     def run(self):
+        # 🩹 [β.5.28 / 2026-05-20] Sir 02:50 反馈 dashboard 显 ChronosTick 不跑.
+        # Root cause: run() 老不 print 启动 banner → dashboard grep latest log miss.
+        # 修法: 加 banner 让 dashboard regex Chronos.*就绪 命中.
+        try:
+            print("[ChronosTick] 心脏起搏器就绪 (每 8s 检查 mailbox 升级)...")
+        except Exception:
+            pass
         _last_openrouter_check = 0
         while True:
             time.sleep(8) 

@@ -715,14 +715,19 @@ _DAEMON_REGISTRY = [
      r'\[ReturnSentinel/Health\]'),
     ('Commitment', '提醒守门 (你设的提醒到点触发)',
      r'\[CommitmentWatcher\]'),
+    # 🩹 [β.5.28 / 2026-05-20] Sir 02:50 反馈 '3 个 daemon 不运行'.
+    # Root cause: regex 跟实际 print banner 不匹配 → grep miss → 显灰但 daemon 真在跑.
+    # - ChronosTick: 老 run() 完全没 print banner. 加 banner (jarvis_sentinels.py:361).
+    # - UserStatusLedger: print '[StatusLedger]' 不是 '[UserStatusLedger]'. regex 加 StatusLedger.
+    # - SoulArchivist / ScreenshotSentinel: print banner 在, regex 应能匹配.
     ('Chronos', '心跳起搏 (每秒看一眼系统时间)',
-     r'起搏器|ChronosTick.*started'),
+     r'起搏器|ChronosTick|\[ChronosTick\]|Chronos.*就绪'),
     ('SoulArchivist', '灵魂归档 (Sir 长期 profile 演化)',
      r'SoulArchivist'),
     ('ScreenshotSentinel', '截屏哨兵 (定期抓你屏幕看你在干啥)',
      r'ScreenshotSentinel|截屏哨兵'),
     ('UserStatusLedger', 'Sir 状态账本 (生理/情绪/活动历史快照)',
-     r'UserStatusLedger'),
+     r'UserStatusLedger|\[StatusLedger\]|状态台账|异步增量更新引擎就绪'),
 ]
 
 

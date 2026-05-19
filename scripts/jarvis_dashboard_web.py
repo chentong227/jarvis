@@ -464,7 +464,9 @@ function dashboard() {
 
     async cancelCommitment(r) {
       const key = 'todo/' + r.id;
-      this.actionPending[key] = true;
+      console.log('[Dashboard] cancelCommitment', r.id);
+      this.actionPending = {...this.actionPending, [key]: true};
+      this.showToast(true, '⏳ 处理中...', '正在取消 ' + r.desc.slice(0, 40));
       try {
         const resp = await fetch(`/api/commitment/cancel/${r.id}`, {
           method: 'POST'
@@ -473,14 +475,19 @@ function dashboard() {
         this.showToast(j.ok, (j.ok ? '✓ 已取消' : '✗ 取消失败') + ': ' + r.desc.slice(0, 40), j.detail || '');
         setTimeout(() => this.refresh(), 600);
       } catch (e) {
-        this.showToast(false, '请求失败', String(e));
+        console.error('[Dashboard] cancelCommitment err', e);
+        this.showToast(false, '✗ 请求失败', String(e));
       }
-      this.actionPending[key] = false;
+      const np = {...this.actionPending}; delete np[key]; this.actionPending = np;
     },
 
     async _act(it, kind) {
       const key = it.kind + '/' + it.id;
-      this.actionPending[key] = true;
+      console.log('[Dashboard]', kind, key, it.preview.slice(0, 40));
+      // 🩹 [β.5.25-fix3 / 2026-05-20] Sir 02:49 反馈 '按钮按不动'.
+      // 老 actionPending[key]=true 在 Alpine 3 新 key 不触发 reactive. 改 spread + immediate toast 反馈.
+      this.actionPending = {...this.actionPending, [key]: true};
+      this.showToast(true, '⏳ 处理中...', (kind === 'activate' ? '通过' : '拒绝') + ': ' + it.preview.slice(0, 40));
       try {
         const resp = await fetch(`/api/review/${kind}`, {
           method: 'POST',
@@ -492,14 +499,16 @@ function dashboard() {
           })
         });
         const r = await resp.json();
+        console.log('[Dashboard] response', r);
         this.showToast(r.ok,
           (kind === 'activate' ? '✓ 通过' : '✗ 拒绝') + ': ' + it.preview.slice(0, 40),
           r.detail || (r.ok ? '完成' : '失败'));
         setTimeout(() => this.refresh(), 600);
       } catch (e) {
-        this.showToast(false, '请求失败', String(e));
+        console.error('[Dashboard] _act err', e);
+        this.showToast(false, '✗ 请求失败', String(e));
       }
-      this.actionPending[key] = false;
+      const np = {...this.actionPending}; delete np[key]; this.actionPending = np;
     },
 
     showToast(ok, title, detail) {
