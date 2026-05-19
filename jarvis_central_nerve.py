@@ -1000,13 +1000,18 @@ class CentralNerve:
         self.short_term_memory = [e[1] for e in kept]
         self._stm_importance_scores = {i: e[0] for i, e in enumerate(kept)}
 
-    def _append_stm(self, user: str, jarvis: str, importance: float = 0.5):
+    def _append_stm(self, user: str, jarvis: str, importance: float = 0.5,
+                     source: str = None):
+        """🩹 [β.5.29 / 2026-05-20] 加 source kwarg (user_voice/jarvis_self/system_event/ambient_pickup).
+        None → 让 classify_stm_source 按 prefix 推断 (老行为兼容)."""
         entry = {
             "time": time.strftime('%H:%M:%S'),
             "user": user,
             "jarvis": jarvis,
-            "importance": importance
+            "importance": importance,
         }
+        if source:
+            entry["source"] = source
         self.short_term_memory.append(entry)
         self._stm_importance_scores[len(self.short_term_memory) - 1] = importance
         self._compress_stm_if_needed()

@@ -207,10 +207,12 @@ class ChronosTick(threading.Thread):
         
         if jarvis_reply:
             clean_reply = jarvis_reply.split("---ZH---")[0].strip()
+            # β.5.29: source=system_event
             self.jarvis.short_term_memory.append({
                 "time": time.strftime("%H:%M:%S"),
                 "user": f"[系统事件] {mail['content']}",
-                "jarvis": clean_reply
+                "jarvis": clean_reply,
+                "source": "system_event",
             })
             if len(self.jarvis.short_term_memory) > 10: 
                 self.jarvis.short_term_memory.pop(0)
@@ -313,10 +315,12 @@ class ChronosTick(threading.Thread):
         self.jarvis.hippocampus.consume_reminder(mem_id)
         
         trigger_time_str = time.strftime("%H:%M", time.localtime(state['trigger_time']))
+        # β.5.29: source=system_event
         self.jarvis.short_term_memory.append({
             "time": time.strftime("%H:%M:%S"),
             "user": f"[未确认提醒] {trigger_time_str} - {state['intent']}",
-            "jarvis": "[系统] 提醒已过期，用户未响应。"
+            "jarvis": "[系统] 提醒已过期，用户未响应。",
+            "source": "system_event",
         })
         if len(self.jarvis.short_term_memory) > 10:
             self.jarvis.short_term_memory.pop(0)
@@ -380,10 +384,12 @@ class ChronosTick(threading.Thread):
                         print(f"\n{'='*65}")
                         print(f"💳 {alert}")
                         print(f"{'='*65}\n")
+                        # β.5.29: source=system_event
                         self.jarvis.short_term_memory.append({
                             "time": time.strftime("%H:%M:%S"),
                             "user": "[SYSTEM ALERT] OpenRouter fallback active",
-                            "jarvis": alert
+                            "jarvis": alert,
+                            "source": "system_event",
                         })
                         if len(self.jarvis.short_term_memory) > 10:
                             self.jarvis.short_term_memory.pop(0)

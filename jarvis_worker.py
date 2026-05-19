@@ -1822,10 +1822,12 @@ class JarvisWorkerThread(QThread):
 
         threading.Thread(target=_speak_exit, daemon=True).start()
 
+        # β.5.29: 显式 source 标记 (system_event)
         self.jarvis.short_term_memory.append({
             "time": time.strftime("%H:%M:%S"),
             "user": "[System Standby] 退场",
-            "jarvis": en_phrase
+            "jarvis": en_phrase,
+            "source": "system_event",
         })
         if len(self.jarvis.short_term_memory) > 10:
             self.jarvis.short_term_memory.pop(0)
@@ -2995,11 +2997,12 @@ class JarvisWorkerThread(QThread):
                                 # 字幕：用 "user" 频道展示但带标记，让 SubtitleOverlay 知道这是静默 nudge
                                 if hasattr(self.chat_bypass, 'subtitle_queue'):
                                     self.chat_bypass.subtitle_queue.put(("silent_nudge", _silent_text))
-                                # STM 留痕
+                                # STM 留痕 (β.5.29: source=jarvis_self - jarvis 自轻推)
                                 self.jarvis.short_term_memory.append({
                                     "time": time.strftime("%H:%M:%S"),
                                     "user": f"[静默轻推] {nudge_type}",
-                                    "jarvis": _silent_text + " [SILENT_TEXT 通道：未出声]"
+                                    "jarvis": _silent_text + " [SILENT_TEXT 通道：未出声]",
+                                    "source": "jarvis_self",
                                 })
                                 if len(self.jarvis.short_term_memory) > 10:
                                     self.jarvis.short_term_memory.pop(0)
@@ -3034,7 +3037,8 @@ class JarvisWorkerThread(QThread):
                                 self.jarvis.short_term_memory.append({
                                     "time": time.strftime("%H:%M:%S"),
                                     "user": f"[视觉脉冲] {nudge_type}",
-                                    "jarvis": _vp_text + " [VISUAL_PULSE 通道：仅呼吸灯]"
+                                    "jarvis": _vp_text + " [VISUAL_PULSE 通道：仅呼吸灯]",
+                                    "source": "jarvis_self",
                                 })
                                 if len(self.jarvis.short_term_memory) > 10:
                                     self.jarvis.short_term_memory.pop(0)
@@ -3177,10 +3181,12 @@ class JarvisWorkerThread(QThread):
                                 pass
 
                         if nudge_reply:
+                            # β.5.29: source=jarvis_self (智能轻推 是 Jarvis 自主发言)
                             self.jarvis.short_term_memory.append({
                                 "time": time.strftime("%H:%M:%S"),
                                 "user": f"[智能轻推] {nudge_type}",
-                                "jarvis": nudge_reply
+                                "jarvis": nudge_reply,
+                                "source": "jarvis_self",
                             })
                             if len(self.jarvis.short_term_memory) > 10:
                                 self.jarvis.short_term_memory.pop(0)
