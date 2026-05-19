@@ -51,15 +51,7 @@ except ImportError as e:
 class VocalCord:
     def __init__(self):
         print("🗣️ [声带器官] 正在挂载纯血英文 ETE 引擎...")
-        # 🩹 [P0+20-β.5.10 / 2026-05-19] 启用 CosyVoice JIT + fp16 加速
-        # 根因 (β.5.9 [Audio Trace] 实测发现): 19 字符短句 render 6.67s 异常,
-        # 4070 Ti SUPER 应 ~1-1.5s. 检查 CosyVoice 加载方式 = fp32 + 无 JIT 最慢配置.
-        # 模型目录已备 fp16 + JIT 文件 (llm.llm.fp16.zip / flow.encoder.fp16.zip / etc),
-        # 但代码从 P0+19 起就没传加速参数. 启用预期: 6.67s → ~2-3s (3x speedup).
-        # Trade-off: fp16 量化可能轻微影响 voice 质感, 启动加载 JIT .zip ~10-30s 增加.
-        # Sir 真机听感判: 若 voice 退化明显 → fall back 只 fp16 / 只 jit / 全关.
-        print("⚡ [声带器官] 启用 JIT + fp16 加速 (β.5.10), 首次启动加载 .zip ~10-30s...")
-        self.cosyvoice = CosyVoice('iic/CosyVoice-300M', load_jit=True, fp16=True)
+        self.cosyvoice = CosyVoice('iic/CosyVoice-300M')
         
         prompt_path = os.path.join(os.path.dirname(__file__), 'jarvis_prompt.wav')
         query_audio, sr = _original_load(prompt_path)
