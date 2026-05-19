@@ -769,29 +769,90 @@ class NudgeGate:
         
         [β.5.0-A / 2026-05-19] gate decision 同时 publish 到 SWM (准则 6 数据强耦合):
         return False 时 publish gate_advice 让主脑下次能看到 "I would block this".
-        当前仍 hard return (gate_mode=hard 默认); β.5.1 加 soft/publish_only mode.
+        
+        [β.5.1 / 2026-05-19] gate_mode 三档 (准则 6 行为弱耦合):
+          - hard (默认):     原行为, return False 时 publish + 真拦
+          - soft:            return True/False 同时 publish gate_advice 到 SWM (双轨观察期)
+          - publish_only:    永远 return True (永不 hard 拦), 只 publish 到 SWM (主脑自决)
+        模式持久化在 memory_pool/gate_mode_vocab.json, Sir CLI scripts/gate_mode_dump.py 切换.
+        每次 can_speak 读 vocab 即时生效 (cache 5s 防文件 IO 高开销).
         """
+        gate_mode = self._read_gate_mode('NudgeGate')
         result = self._can_speak_internal(center_name, is_urgent, nudge_type)
-        # [β.5.0-A] publish gate decision (无论 True/False) 到 SWM
-        if not result:
+
+        # [β.5.0-A / β.5.1] publish gate_advice 到 SWM
+        # hard mode: 仅在 block 时 publish (原行为)
+        # soft mode: 任何 decision 都 publish, 让主脑下轮看
+        # publish_only mode: 任何 decision 都 publish, 且本函数永远 return True
+        should_publish = (
+            (gate_mode == 'hard' and not result) or
+            gate_mode in ('soft', 'publish_only')
+        )
+        if should_publish:
             try:
                 from jarvis_utils import get_event_bus
                 _bus = get_event_bus()
                 if _bus is not None:
+                    decision_str = 'block' if not result else 'pass'
+                    desc_prefix = (
+                        'NudgeGate blocked' if not result else 'NudgeGate passed'
+                    )
+                    desc = (
+                        f"{desc_prefix} {center_name}/{nudge_type or '?'}: "
+                        f"mode={gate_mode}"
+                    )
                     _bus.publish(
                         etype='gate_advice',
-                        description=f"NudgeGate blocked {center_name}/{nudge_type or '?'}: cooldown/freeze/sleep",
+                        description=desc,
                         source='NudgeGate',
                         metadata={
                             'center': center_name,
                             'nudge_type': nudge_type,
                             'is_urgent': is_urgent,
-                            'decision': 'block',
+                            'decision': decision_str,
+                            'gate_mode': gate_mode,
                         },
                     )
             except Exception:
                 pass
+
+        # publish_only 永不 hard 拦 — 主脑看 SWM 自决 (走 stream_nudge [SILENCE] 路径)
+        if gate_mode == 'publish_only':
+            return True
         return result
+
+    @classmethod
+    def _read_gate_mode(cls, sentinel_name: str = 'NudgeGate') -> str:
+        """[β.5.1] 读 memory_pool/gate_mode_vocab.json, 5s cache 防高频 IO.
+        
+        Returns: 'hard' (default) | 'soft' | 'publish_only'
+        Fail-safe: 文件不存在 / 格式坏 → 返 'hard' (兼容老路径).
+        """
+        import os
+        import json
+        import time as _t
+        # cache: class-level (跨 instance 共享)
+        _cache_key = '_gate_mode_cache'
+        _cache_t_key = '_gate_mode_cache_t'
+        now = _t.time()
+        cached_t = getattr(cls, _cache_t_key, 0.0)
+        if now - cached_t < 5.0:
+            cached = getattr(cls, _cache_key, {})
+            return cached.get(sentinel_name, 'hard')
+        # 重读
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(root, 'memory_pool', 'gate_mode_vocab.json')
+            if not os.path.exists(path):
+                return 'hard'
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            current = data.get('current', {}) if isinstance(data, dict) else {}
+            setattr(cls, _cache_key, current)
+            setattr(cls, _cache_t_key, now)
+            return current.get(sentinel_name, 'hard')
+        except Exception:
+            return 'hard'
 
     def _can_speak_internal(self, center_name: str, is_urgent: bool, nudge_type: str) -> bool:
         """can_speak 原逻辑, 拆出来方便 publish wrap."""

@@ -147,7 +147,8 @@ $tests = @(
     "_test_p0_plus_20_beta411_conditional_vocab_persist",
     "_test_p0_plus_20_beta412_morning_greeting_screen_time",
     "_test_p0_plus_20_beta50_swm_persist",
-    "_test_p0_plus_20_beta50b_reaction_space_persist"
+    "_test_p0_plus_20_beta50b_reaction_space_persist",
+    "_test_p0_plus_20_beta51_gate_mode_persist"
 )
 
 foreach ($t in $tests) {

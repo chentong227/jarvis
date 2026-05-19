@@ -166,10 +166,10 @@ class TestP0Plus20Beta50PublishPoints(unittest.TestCase):
         # 找 NudgeGate.can_speak
         idx = src.find('def can_speak(self, center_name')
         self.assertGreater(idx, 0)
-        # 后 1500 字内必须 publish gate_advice
-        block = src[idx:idx+1500]
+        # 后 2500 字内必须 publish gate_advice (β.5.1 加了 gate_mode 三档注释 + classmethod)
+        block = src[idx:idx+2500]
         self.assertIn("etype='gate_advice'", block,
-            "NudgeGate.can_speak 必须 publish gate_advice (β.5.0-A)")
+            "NudgeGate.can_speak 必须 publish gate_advice (β.5.0-A + β.5.1)")
 
     def test_proactive_care_publishes_top_concern(self):
         path = os.path.join(ROOT, 'jarvis_proactive_care.py')

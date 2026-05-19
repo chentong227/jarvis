@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-19T11:00:00+08:00",
+  "description": "[β.5.1] Sentinel gate mode 三档配置 (准则 6 行为弱耦合工程落地). Sir 准则 6.5 vocab 持久化: Sir CLI 可调, 不改源码 + git commit.",
+  "design_principle": "准则 6 升级版第 2 维: sentinel hard return → 渐进 soft → 最终 publish_only. 默认 hard 保留兼容. soft = publish_only + 仍 hard return (双轨观察期). publish_only = 完全交给主脑 LLM 决策, sentinel 只 publish 信号.",
+  "modes": {
+    "hard": "原行为: return True/False. 不 publish 到 SWM (除 β.5.0-A 已加的拦截 publish).",
+    "soft": "双轨: 仍 return True/False, 同时 publish 'gate_advice' 到 SWM. 主脑下次 prompt 看 evidence 但行为仍受 hard return 约束. 用于 β.5 早期观察期.",
+    "publish_only": "永不 hard 拦: 永远 return True. 仅 publish 'gate_advice' 到 SWM. 主脑看 advice 自决是否说话 (走 stream_nudge reaction_space [SILENCE] 路径)."
+  },
+  "current": {
+    "NudgeGate": "hard",
+    "OfferGuard": "hard",
+    "SmartNudgeSentinel": "hard",
+    "Conductor": "hard",
+    "WellnessGuardian": "hard",
+    "ReturnSentinel": "hard"
+  },
+  "rollout_plan": {
+    "phase_1_β.5.1": "NudgeGate hard → soft (双轨观察期)",
+    "phase_2_β.5.2": "OfferGuard hard → soft + 观察 1 天",
+    "phase_3_β.5.3": "NudgeGate soft → publish_only (完全交主脑) + 观察 1 天",
+    "phase_4_β.5.4+": "OfferGuard / SmartNudge / Conductor 同路径 soft → publish_only"
+  },
+  "rollback": "Sir 任何阶段觉得不稳, 用 scripts/gate_mode_dump.py 一行切回 hard. 立刻生效不需重启 (NudgeGate 每次 can_speak 时读 vocab)."
+}
