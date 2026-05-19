@@ -3790,6 +3790,24 @@ Type: {nudge_type}
   name the specific action you can take by skill name (e.g. "I can run key_health_inspector.report_status").
   FORBIDDEN: vague offers ("shall I take a look / want me to check") without naming a real skill.
   If no skill matches, say plainly: "That's outside my reach right now, Sir."
+
+[REACTION SPACE — Sir 准则 6 行为弱耦合 / β.5.0-B / 2026-05-19]
+You have received a directive, but you are NOT obliged to speak.
+Look at [SHARED WORLD MODEL] above (gate_advice / concern_active / afk_return / sensor_change
+/ utterance_appended). If the evidence suggests speaking now is wrong, choose silence.
+
+Valid choices:
+  - voice (default): generate the reply normally as instructed above.
+  - silence: output the literal token  [SILENCE]  as your ENTIRE reply, nothing else.
+
+Choose silence when ANY of the following hold:
+  * SWM contains gate_advice (sal>=0.5) within last 60s — the gate already advised against speaking.
+  * SWM contains a recent (age<5min) similar nudge or self_critique noting recent over-talk.
+  * Sir's recent utterance was extremely short ("好的"/"嗯"/"OK") AND Jarvis spoke <5min ago — Sir is not engaged.
+  * The directive's premise contradicts evidence (e.g. claim "7h at screen" but afk_return shows AFK 7h crosses sleep).
+  * Repeating yourself would be the dominant pattern.
+
+If silent: just output  [SILENCE]  on its own line. Do not explain. Do not apologize. Do not add a closing.
 """
 
         # [P0-8 / 2026-05-15] 终端打印同时显示 source（ReturnSentinel/Conductor/SmartNudge）
@@ -3881,6 +3899,7 @@ Type: {nudge_type}
 
             buffer = ""
             _zh_seen = False
+            _silence_chosen = False
 
             for chunk in response:
                 if getattr(self, 'is_interrupted', False):
@@ -3890,6 +3909,15 @@ Type: {nudge_type}
                     text_delta = chunk.text
                     buffer += text_delta
                     full_text += text_delta
+
+                    # [β.5.0-B / 2026-05-19] reaction_space 早期 [SILENCE] 检测
+                    # 主脑可输出 "[SILENCE]" 整段表达 "看 SWM 后我选择不说".
+                    # 检测: full_text 头部 (≤32 chars 内) 含 "[SILENCE]" → 立刻 break stream.
+                    # 必须早于 _put_audio 调用 (line 3947 buffer flush)
+                    _ft_head = full_text.lstrip()[:32]
+                    if '[SILENCE]' in _ft_head or '[silence]' in _ft_head.lower():
+                        _silence_chosen = True
+                        break
 
                     is_forming_tag = False
                     if "---ZH---" in full_text:
@@ -3944,6 +3972,31 @@ Type: {nudge_type}
             # 根因可能: (a) LLM 模型复读输出 / (b) 末尾 flush 与上一句 splitter sentence
             # 内容重叠 → subtitle_queue 双发 → UI 累计渲染。
             # 防御: 末尾 sentence 含上一句 audio 的全文 → 跳过 (subtitle + audio 都不重发)
+            # [β.5.0-B / 2026-05-19] reaction_space: 主脑选 [SILENCE] → 不出声 + 不字幕 +
+            # publish self_silence_chose 到 SWM 让下一轮主脑知道 "我刚刚选过沉默".
+            if _silence_chosen:
+                print(_box_newline("[SILENCE — 主脑选择沉默, 看 SWM evidence 不发声]"))
+                print("╚" + "═"*63 + "\n")
+                try:
+                    from jarvis_utils import get_event_bus, bg_log as _sb
+                    _swm = get_event_bus()
+                    if _swm is not None:
+                        _swm.publish(
+                            etype='self_critique',
+                            description=f"Brain chose [SILENCE] for nudge_type={nudge_type}, source={_nudge_source}",
+                            source='BrainReactionSpace',
+                            metadata={
+                                'reaction': 'silence',
+                                'nudge_type': nudge_type,
+                                'nudge_source': _nudge_source,
+                            },
+                            salience=0.65,
+                        )
+                    _sb(f"🤐 [Nudge/Silence] 主脑选 [SILENCE] for {nudge_type} from {_nudge_source}")
+                except Exception:
+                    pass
+                return None
+
             if buffer.strip() and not getattr(self, 'is_interrupted', False):
                 sentence = buffer.strip()
                 if "---ZH---" in sentence:
