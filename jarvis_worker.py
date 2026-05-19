@@ -577,13 +577,9 @@ class VoiceListenThread(QThread):
         # 设计意图: 任意词+jarvis 中"任意词"若是纯 filler/呼语 (hey/hi/yo/嘿/喂...),
         # 不应被当 LLM cmd, 而该降级为空唤醒, 让 fallback `cmd = "jarvis"` 接住走 reflex.
         # 注: 实词 ("jarvis 帮我开 cursor" → cmd='帮我开 cursor') 仍走 LLM 唤醒, 不影响.
-        filler_addressing_words = [
-            # 英文呼语 / 语气词
-            r'\bhey\b', r'\bhi\b', r'\bhiya\b', r'\byo\b', r'\boi\b',
-            r'\bhello\b', r'\bhallo\b', r'\bhola\b', r'\bok\b', r'\bokay\b',
-            # 中文呼语 / 语气词
-            r'嘿', r'喂', r'嗨', r'哟', r'哎', r'唉', r'喔', r'噢', r'哈喽', r'哈罗',
-        ]
+        # 🩹 [β.5.26 / 2026-05-20] Sir 准则 6 vocab 化 - 老硬编码 list 留作 fallback,
+        # source of truth = memory_pool/wake_filler_vocab.json. CLI scripts/wake_filler_dump.py.
+        filler_addressing_words = self._load_wake_filler_vocab()
         for filler in filler_addressing_words:
             cmd = re.sub(filler, '', cmd)
 
@@ -2665,6 +2661,40 @@ class JarvisWorkerThread(QThread):
             return out or seed
         except Exception:
             return seed
+
+    # 🩹 [β.5.26 / 2026-05-20] wake filler vocab - Sir 准则 6 (β.5.11 留尾迁移).
+    # mtime cache 防每次 ASR 都读 disk.
+    _wake_filler_cache: list = []
+    _wake_filler_mtime: float = 0.0
+
+    def _load_wake_filler_vocab(self) -> list:
+        """读 memory_pool/wake_filler_vocab.json + mtime cache.
+        失败 fallback 用 hardcoded seed (跟老 β.5.11 list 同).
+        """
+        import json as _json
+        import os as _os
+        SEED = [
+            r'\bhey\b', r'\bhi\b', r'\bhiya\b', r'\byo\b', r'\boi\b',
+            r'\bhello\b', r'\bhallo\b', r'\bhola\b', r'\bok\b', r'\bokay\b',
+            r'嘿', r'喂', r'嗨', r'哟', r'哎', r'唉', r'喔', r'噢', r'哈喽', r'哈罗',
+        ]
+        path = _os.path.join('memory_pool', 'wake_filler_vocab.json')
+        try:
+            mt = _os.path.getmtime(path)
+            if mt == JarvisWorkerThread._wake_filler_mtime \
+                    and JarvisWorkerThread._wake_filler_cache:
+                return JarvisWorkerThread._wake_filler_cache
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            words = data.get('filler_words') or []
+            words = [w for w in words if isinstance(w, str) and w.strip()]
+            if not words:
+                return SEED
+            JarvisWorkerThread._wake_filler_cache = words
+            JarvisWorkerThread._wake_filler_mtime = mt
+            return words
+        except Exception:
+            return SEED
 
     # [P0+12 / 2026-05-15] 语义清晰别名 — 与 CentralNerve._detect_deep_sleep_request 区分
     def _detect_sleep_window_intent(self, cmd: str):

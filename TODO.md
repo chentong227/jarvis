@@ -1,16 +1,72 @@
 # Jarvis TODO
 
+> **更新**: 2026-05-20 02:34 (β.5.22-25 + dashboard 重构 + ui_control 路由 — 10 commits / ~150 testcase 全绿).
+
+---
+
+## 🚧 当前迭代 (β.5.22 → β.5.25 / 2026-05-19 23:01 → 05-20 02:34, 10 commits)
+
+### β.5.22 Sir 01:22 实测 BUG 治本 (7 sub-step)
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `f297deb` | β.5.22-A/B/E | dismissal flow 调 NudgeGate.activate_sleep_mode + CareWindowGuard 看 _sleep_intent_until + ReturnSentinel 接 _check_short_sleep | 33 |
+| `679e205` | β.5.22-G/F | sleep_intent 到点 due timer 主动提醒 + refusal_vocab.json (4 类) dismissal/sleep_soft 早退 + CLI scripts/refusal_vocab_dump.py | 同上 |
+| `4739ef1` | **β.5.22-C** | **动态语义反馈 LLM judge** - Concern.daily_progress/last_user_feedback/optimal_timing + ConcernsLedger.record_user_feedback API + jarvis_concern_feedback.py (新 ~232 行 QuickClassifier.prompt_raw 调用) + post_chat hook + urgency 计算 progress_mul + timing_mul (0.3 floor 不 close, before_sleep 反弹 1.5x) | 同上 |
+| `36d776c` | β.5.22-D + C-fix | sleep_due 加 focus list (offer_help/commitment_check/proactive_care 4 类型) + QuickClassifier.prompt_raw generic API (替代每个 detect_X 重复 boilerplate) | 同上 |
+
+### β.5.23 准则 6 完结 (2 sub-step)
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| (待 grep) | β.5.23-A | cooldown 阈值 vocab JSON `memory_pool/proactive_care_cooldown_vocab.json` (11 阈值 + ranges) + `_get_cd()` mtime cache + 5 call sites 替换 + CLI `scripts/cooldown_vocab_dump.py` (list/show/set/history/review) | 23 |
+| 同 | β.5.23-B | `jarvis_concern_feedback_reflector.py` (新 ~290 行) ConcernFeedbackReflector L7 daemon - 24h 周期看 7d STM + Concern.last_user_feedback + nudge 推送量 + Sir 拒绝量 → QuickClassifier.prompt_raw propose 阈值调整 → 写 review_queue 等 Sir 拍板 (CompanionCenter 启 daemon) | 同上 |
+
+### β.5.24 Dashboard tkinter 重构 (Sir 01:58 反馈 'X 拒绝说不存在')
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `55e4286` | β.5.24 | scripts/jarvis_dashboard.py 重构 - main grid 信息1/待处理5/观测2 + read_review_queues 整合 4 源 (concerns/relational/directive/**cooldown_vocab L7**) + thread title fallback (修 X BUG root cause) + cooldown action_activate/reject 路径 | 20 |
+| `517cf56` | β.5.24-finish | 标题改 β.5.24 + _make_action_card 加 height=380 + grid_propagate(False) (修待处理区塌缩 BUG - 空 inner canvas → group_todo 整块=0) | 同上 |
+
+### β.5.25 Web Dashboard (Sir 02:17 'tkinter 不喜欢, 现代审美 + 窗口缩放')
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `4ceb046` | β.5.25 | `scripts/jarvis_dashboard_web.py` (新 ~600 行 Flask + Tailwind CDN + Alpine.js) - 4 大区 (整体状态 + 待拍板 + 信息 + 观测) + 现代 glass-morphism 卡片 + 响应式 grid (md:2/lg:4) + Toast 通知 + auto 10s 轮询 + /api/all /api/review/<activate|reject> endpoints | 19 |
+| `6582ec2` | β.5.25-extend | 补 Commitments todo 区 (3 列 grid) + cancelCommitment Alpine 方法 + /api/commitment/cancel endpoint | 同上 |
+| `79faf7d` | β.5.25-finish | 补 Jarvis 承诺卡 (信息区扩 4 卡) + 言出必行健康度宽卡 (top 5 空头话) + dashboard.ps1 一键启动 launcher | 同上 |
+| `e01e868` | β.5.25-route | `ui_control.dashboard_open` 改默认开 web (port 8765 探测复用 + 启动失败 fallback tkinter) + dashboard_close 双 kill (web wmic + tkinter taskkill). Sir 现在语音"打开面板"开 web 浏览器 | - |
+| (修 BUG 1) | β.5.24-fix2 | tkinter 加回 messagebox.showinfo 完成弹窗 (Sir "默契活动无反应" root cause = 反馈不显眼) | - |
+
+---
+
+## 📌 文档遗留尾巴清单 (Sir 02:33 全扫结果)
+
+| 来源 | 尾巴 | 优先级 | 现状 |
+|---|---|---|---|
+| `JARVIS_VOICE_PIPELINE_LATENCY.md §7.3` | filler list 20 条仍 `.py` 硬编码 (β.5.11 留尾), 应迁 `memory_pool/wake_filler_vocab.json` + CLI | 中 | 准则 6 违规, ~30min |
+| `INTEGRITY_STACK.md §L1/L2/L3` | 标 ❌/⚠️ 但 β.4.1-4.5 已做 (L4 ClaimTracer enforce / L5 闭环 / L6 dashboard / L7 reflector) | 低 | **文档 stale** - 仅需 sync ❌→✅ |
+| `INTEGRITY_STACK.md §L0.5` | 14 directive 全迁 JSON (β.2.9.12 立, 部分迁) | 中 | 进行中 (registry_dump.py 已建) |
+| `FOUNDATION_AUDIT.md §STM` | STM source 区分 (reflector 幻觉 root cause) | 中 | 未做 |
+| `PROACTIVITY_NEXT.md §E` | Cross-session memory callback | 低 | 未做 |
+| `JARVIS_PROACTIVITY_NEXT.md` 整体 | 5 大方向 A-E | 低 | 长期规划 |
+| **ProactiveCare sensor=None 老 BUG** | `⚠️ tick err 'NoneType' object has no attribute 'tick'` - daemon bootstrap 路径漏初始化 | 低 | 非阻塞, 主路径 OK, 派生 signal 失效 |
+| TODO.md 章程 cap | 当前 ~680 行 > 300 行 cap | 高 | β.4/4.6/4.7/4.8 段应滚 docs/TODO_ARCHIVE.md |
+
+---
+
 ## 🎯 Sir 想要的新功能 (β.2.9 候选, 等下次启动)
 
 | # | 功能 | 现状 | 实现方向 |
 |---|---|---|---|
-| 1 | 说 "睡觉" 自动单进程静音 WeChat (准则 5 真做不只说) | 缺 organ.command | 扩 `l4_audio_hands.py` 加 `mute_app(name)` 用 pycaw 单进程音量控制 |
-| 2 | 说 "睡觉" 自动 dim 显示器 | 缺 organ | 新 `l4_display_hands.py` 用 Win32 SetBrightness / monitor power state |
-| 3 | "睡觉模式" 总调度: 检测 sleep 意图 → 自动 (1) + (2) + 字幕透明化 + ASR mute 30min | 流程已有 (`SleepIntent`) 但缺 hook | sleep_intent → 触发 sleep_mode_routine() 依次调上述 |
+| 1 | 说 "睡觉" 自动单进程静音 WeChat (准则 5 真做不只说) | ✅ β.2.9.1 + β.3.0-vocab3 已做 | `l4_audio_hands.mute_app` + audio_ducking_targets.json |
+| 2 | 说 "睡觉" 自动 dim 显示器 | ✅ β.2.9.1 已做 | `l4_display_hands.sleep_display` |
+| 3 | "睡觉模式" 总调度: 检测 sleep 意图 → 自动 (1)+(2)+字幕透明化+ASR mute 30min | ✅ β.2.9.1 + β.5.22-G 完整 | `_trigger_sleep_mode_routine` + `_fire_sleep_due_nudge` 到点提醒 |
+
+---
+
+## 📚 老 β.5.x 段 (保留作历史参考)
 
  工作板
 
-**更新时间**：2026-05-19 23:01（**🚀 P0+20-β.5.x 决策集中主脑完整收尾 + β.5 头号边界 BUG 治本 — 11 commits / ~150 testcase 全绿, 待 Sir 真机**）。
+**更新时间 (老段)**：2026-05-19 23:01（**🚀 P0+20-β.5.x 决策集中主脑完整收尾 + β.5 头号边界 BUG 治本 — 11 commits / ~150 testcase 全绿, 待 Sir 真机**）。
 
 **今晚 β.5.x 收尾 (5/19 09:00 → 23:01, 11 commits 累计)**:
 

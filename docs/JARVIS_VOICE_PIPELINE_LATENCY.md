@@ -363,7 +363,7 @@ Jarvis: 长回复 100+ 字
 
 **症状**: Sir 说 "yo bro tell jarvis about Y" → "yo" 被剥后 cmd='bro tell about Y' 仍有效, 但 "yo" 这个语气如果是命令的一部分会丢上下文.
 
-**应对**: 准则 6 vocab 化 — 把 filler list 移到 `memory_pool/wake_filler_vocab.json`, CLI `scripts/wake_filler_dump.py` 让 Sir add/remove. **暂未做**, 等 Sir 真机实测有 case 再补.
+**应对**: 准则 6 vocab 化 — ✅ **β.5.26 已做** (2026-05-20): `memory_pool/wake_filler_vocab.json` (20 词) + `scripts/wake_filler_dump.py` (list/add/count) + `jarvis_worker.py` `_load_wake_filler_vocab` mtime cache + hardcoded SEED fallback. Sir 真机遇实词被误剥 → CLI `add` 调.
 
 ### 7.4 � Audio Trace log 噪音 — 已除根
 

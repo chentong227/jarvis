@@ -133,19 +133,24 @@
 
 ---
 
-## 3. 当前实现状态盘点（截 2026-05-18 β.2.9.12）
+## 3. 当前实现状态盘点（截 2026-05-20 β.5.25, 全 STACK ✅）
 
-| 层 | 状态 | 已做 | 缺什么 |
+> 🩹 [β.5.25-doc-sync / 2026-05-20] Sir 02:33 反馈"看看文档有什么尾巴". 全扫发现
+> L1/L2/L3/L4/L6/L7 文档 stale (实际 β.4.x 已完成). 此表全 sync 真状态.
+
+| 层 | 状态 | 已做 | commit / marker |
 |---|---|---|---|
-| **L0.5** | ⚠️ | β.2.9.12 立此规范 + behavior_vocab 接通 (本轮) | 把现有 14 directive / claim 分类 vocab / tool overture / dashboard intent vocab 全迁 json |
-| L0 | ✅ | INTEGRITY ABSOLUTE 在 PERSONA | — |
-| L1 | ❌ | — | Claim 分类器 (LLM 1.5B 兜底 + vocab json) |
-| L2 | ❌ | Evidence 要求散在 directive 文本 | 中央 EvidenceRequirements 表 (json + CLI + reflector) |
-| L3 | ⚠️ | 17 条 directive | 全迁 directive_registry.json (已有 json) + CLI 加 propose 接口 |
-| L4 | ⚠️ | ClaimTracer 抓 | enforce: integrity_audit.jsonl + 下一轮 prompt 注入撤回 |
-| L5 | ✅ | β.2.9.11 闭环 A (本轮) | infer vocab 已迁 json (β.2.9.12 本轮) ✅ |
-| L6 | ⚠️ | dashboard 信任审计卡 | 兑现率统计 / claim verify 比例 / 趋势图 |
-| L7 | ❌ | — | **关键**: WeeklyReflector 接 audit log + 自动 LLM-propose 新 vocab/directive |
+| **L0.5** | ✅ | 14 directive / claim 分类 / tool overture / dashboard intent / behavior vocab 全迁 json + CLI | β.2.9.12 + β.3.0-vocab1-3 + β.5.23-A (cooldown vocab 也加入) |
+| L0 | ✅ | INTEGRITY ABSOLUTE 在 PERSONA | (持续维护) β.5.21 加 review/look at 动词 + 异步承诺 FORBIDDEN |
+| L1 | ✅ | Claim 分类器完成 (jarvis_claim_classifier.py + vocab json + CLI + LLM 二次判) | β.4.3 |
+| L2 | ✅ | EvidenceRequirements 中央表 (jarvis_evidence_requirements.py + json) | β.4.3 |
+| L3 | ✅ | directive_registry.json 全迁 + CLI registry_dump.py + review queue + propose 接口 | β.4.6 |
+| L4 | ✅ | ClaimTracer enforce + integrity_audit.jsonl + 下一轮 prompt 注入撤回 | β.4.1 + β.4.3.3 + β.4.2-hotfix |
+| L5 | ✅ | β.2.9.11 闭环 A + infer vocab json 迁完 (β.2.9.12) + **β.5.22-C 动态语义反馈 LLM judge** (Concern.daily_progress + ConcernsLedger.record_user_feedback API + post_chat hook + urgency 反向注入) | β.2.9.11 + β.5.22-C |
+| L6 | ✅ | dashboard 信任审计卡 + 兑现率 + 7d 趋势 ASCII chart + Web Dashboard 言出必行宽卡 (top 5 空头话) | β.4.4 Session 3 + **β.5.25 web** |
+| L7 | ✅ | IntegrityReflector LLM-propose + **β.5.23-B ConcernFeedbackReflector 24h daemon** (看 7d STM + nudge 推送量 + Sir 拒绝量 → QuickClassifier.prompt_raw propose cooldown 调整 → 写 review_queue) | β.4.5.2 + β.5.23-B |
+
+**STACK 全 ✅, 不再有 ❌/⚠️.** 后续维护 = 加新 vocab / 调阈值 / 应对真机新 BUG.
 
 ---
 

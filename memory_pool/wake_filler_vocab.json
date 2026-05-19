@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "note": "Wake Filler Words - 'hey jarvis' \u7c7b\u5feb\u5524\u9192\u65f6\u9700\u5265\u9664\u7684\u5448\u8bed/\u8bed\u6c14\u8bcd. Sir \u51c6\u5219 6 vocab \u5316. CLI scripts/wake_filler_dump.py. \u52a8\u8bcd\u7531 Sir add (\u7f3a\u5931\u5b9e\u8bcd\u62a5\u9519 case \u51fa\u73b0\u65f6) \u6216 L7 reflector LLM-propose.",
+  "markers": ["P0+20-\u03b2.5.26 / 2026-05-20"],
+  "previous_location": "jarvis_worker.py:580 filler_addressing_words (\u03b2.5.11 hardcoded)",
+  "filler_words": [
+    "\\bhey\\b",
+    "\\bhi\\b",
+    "\\bhiya\\b",
+    "\\byo\\b",
+    "\\boi\\b",
+    "\\bhello\\b",
+    "\\bhallo\\b",
+    "\\bhola\\b",
+    "\\bok\\b",
+    "\\bokay\\b",
+    "\u55e8",
+    "\u5582",
+    "\u55e8",
+    "\u54df",
+    "\u54ce",
+    "\u5510",
+    "\u5594",
+    "\u5662",
+    "\u54c8\u55bd",
+    "\u54c8\u7f57"
+  ],
+  "history": [],
+  "review_queue": []
+}
