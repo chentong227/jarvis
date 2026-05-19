@@ -194,6 +194,35 @@ HTML_TEMPLATE = r"""
   </div>
 </section>
 
+<!-- 待办区: 你要他盯的事 (Commitments) -->
+<section class="max-w-7xl mx-auto px-6 pt-8" x-show="(todo.rows && todo.rows.length) > 0">
+  <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+    <span>📋</span>
+    <span>你要他盯的事 (Commitments)</span>
+    <span class="badge bg-amber-500/20 text-amber-300"
+          x-text="'⏳' + (todo.count_pending || 0) + ' ✓' + (todo.count_done || 0)"></span>
+  </h2>
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+    <template x-for="r in (todo.rows || [])" :key="r.id">
+      <div class="glass rounded-xl p-4 border border-slate-700/30 hover:border-slate-600 transition flex items-center justify-between gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="text-xs"
+             :class="r.state === 'done' ? 'text-emerald-400' : (r.state === 'overdue' ? 'text-rose-400' : 'text-amber-400')"
+             x-text="'[' + r.state_zh + '] ' + r.when"></p>
+          <p class="text-sm text-slate-300 mt-1 truncate" x-text="r.desc"></p>
+        </div>
+        <template x-if="r.state === 'pending' || r.state === 'overdue'">
+          <button @click="cancelCommitment(r)"
+                  :disabled="actionPending['todo/'+r.id]"
+                  class="px-3 py-1.5 rounded-lg bg-rose-600/70 hover:bg-rose-500 disabled:opacity-50 transition text-xs font-medium">
+            🚫 取消
+          </button>
+        </template>
+      </div>
+    </template>
+  </div>
+</section>
+
 <!-- 信息区: 长期惦记 / 默契 / 健康 -->
 <section class="max-w-7xl mx-auto px-6 pt-8">
   <h2 class="text-xl font-bold mb-3 flex items-center gap-2"><span>📋</span><span>信息 - 你想了解的</span></h2>
@@ -329,6 +358,9 @@ function dashboard() {
     daemon: {},
     events: {},
     mutations: {},
+    integrity: {},
+    todo: {},
+    promise: {},
     actionPending: {},
     toast: { show: false, ok: true, title: '', detail: '' },
 
@@ -376,6 +408,22 @@ function dashboard() {
 
     async approve(it) { await this._act(it, 'activate'); },
     async reject(it) { await this._act(it, 'reject'); },
+
+    async cancelCommitment(r) {
+      const key = 'todo/' + r.id;
+      this.actionPending[key] = true;
+      try {
+        const resp = await fetch(`/api/commitment/cancel/${r.id}`, {
+          method: 'POST'
+        });
+        const j = await resp.json();
+        this.showToast(j.ok, (j.ok ? '✓ 已取消' : '✗ 取消失败') + ': ' + r.desc.slice(0, 40), j.detail || '');
+        setTimeout(() => this.refresh(), 600);
+      } catch (e) {
+        this.showToast(false, '请求失败', String(e));
+      }
+      this.actionPending[key] = false;
+    },
 
     async _act(it, kind) {
       const key = it.kind + '/' + it.id;
@@ -436,6 +484,7 @@ def _summary_for_web() -> Dict[str, Any]:
         events = jd.read_event_stream(limit=25)
         mutations = jd.read_memory_mutations()
         integrity = jd.read_integrity_stats()
+        todo = jd.read_sir_commitments()
         overall = jd.compute_overall_status(
             concerns, directive, promise, relation,
             daemon, health, review, events,
@@ -456,6 +505,9 @@ def _summary_for_web() -> Dict[str, Any]:
             'daemon': daemon,
             'events': events,
             'mutations': mutations,
+            'integrity': integrity,
+            'todo': todo,
+            'promise': promise,
         }
     except Exception as e:
         return {
@@ -463,7 +515,26 @@ def _summary_for_web() -> Dict[str, Any]:
                          'headline': f'读取失败: {e}', 'actions': []},
             'reviewItems': [], 'concerns': {}, 'relation': {}, 'health': {},
             'directive': {}, 'daemon': {}, 'events': {}, 'mutations': {},
+            'integrity': {}, 'todo': {}, 'promise': {},
         }
+
+
+@app.route('/api/commitment/cancel/<int:cw_id>', methods=['POST'])
+def api_cancel_commitment(cw_id: int):
+    """🩹 [β.5.25] 取消 Sir 待办 (Commitments)."""
+    result = {'ok': False, 'detail': ''}
+    done = threading.Event()
+    def _on_done(ok, out):
+        result['ok'] = bool(ok)
+        result['detail'] = str(out)[:400]
+        done.set()
+    try:
+        jd.action_cancel_commitment(cw_id, on_done=_on_done)
+    except Exception as e:
+        return jsonify({'ok': False, 'detail': str(e)}), 500
+    if not done.wait(timeout=15):
+        return jsonify({'ok': False, 'detail': '超时'}), 504
+    return jsonify(result)
 
 
 @app.route('/api/all')
