@@ -11,7 +11,11 @@
 
 | 段落 marker | 行号区间 | 完工时间 | 主题 |
 |---|---|---|---|
-| `P0+19` | ~43-130 | 2026-05-16 02:45 | 17 sub-step / Nerve 拆分 17479→324 (-98.1%) / 16 新文件 / deps 锁定 + key 脱敏 / 1098 testcase 13 次连续验证全绿 / 实际耗时 3.5h (vs 估 13h) — 详 `docs/NERVE_SPLIT_PLAN.md` |
+| `P0+20-β.5.22-27` | ~33-110 (新) | 2026-05-19 23:01 → 05-20 02:46 | 13 commits / Sir 实测 BUG 全治本 (sleep_mode/dismissal/sleep_intent/refusal vocab/动态语义反馈 LLM/cooldown vocab L7/dashboard tkinter 重构/Web Dashboard β.5.25/wake filler vocab/sensor None guard) |
+| `P0+20-β.5.9-16` | ~115-170 (新) | 2026-05-19 09:00 → 23:01 | 11 commits / Voice Pipeline 4 (β.5.9-12) + Decision Centralization 4 (β.5.13-16) / β.5.16 BUG-F 'publish_only 从未真生效' 治本 |
+| `P0+20-β.4.7-8` | ~175-220 (新) | 2026-05-18 23:50 → 05-19 00:30 | Memory Deletion L6/L7/L8 (β.4.7) + Acoustic Wake (β.4.8 openWakeWord MIT) — 96/96 pass |
+| `P0+20-β.4.1-6` | ~225-330 (新) | 2026-05-17 → 05-18 | INTEGRITY_STACK Session 0-5 完整 (L0.5 vocab 横贯 + L1 Claim 分类 + L2 Evidence 表 + L3 Directive vocab + L4 ClaimTracer enforce + L5 闭环 + L6 dashboard + L7 IntegrityReflector LLM-propose) |
+| `P0+19` | ~335-420 | 2026-05-16 02:45 | 17 sub-step / Nerve 拆分 17479→324 (-98.1%) / 16 新文件 / deps 锁定 + key 脱敏 / 1098 testcase 13 次连续验证全绿 / 实际耗时 3.5h (vs 估 13h) — 详 `docs/NERVE_SPLIT_PLAN.md` |
 | `P0+18-f` | ~135-200 | 2026-05-15 22:50 | f.1-f.4 / 4 BUG / Sir 22:10-22:14 实测 / 性能崩溃修复 (TTFT 3s 回归 / colorama wrap 撤销 / TeeStream 异步化 / strip_ansi 快速路径) + NUDGE / AGENDA HONESTY directive + type-specific long-term mute (12/24h) + Integrity referential pre-filter |
 | `P0+18-e` | ~108-180 | 2026-05-15 21:00 | e.1-e.4 / 4 BUG / Sir 20:28-20:32 实测 / Memory Correction 兜底不再降级 REMINDER + 上游 Audio Guard 切句拦中文 + CommitmentWatcher SQLite 持久化 + 终端色彩化分区 (ANSI _ANSI / colorize_terminal_line) |
 | `P0+18-d` | ~115-220 | 2026-05-15 20:30 | d.1-d.7 / 7 BUG / Sir 18:22-18:31 实测 / 主脑 ↔ Reminder/Commitment DB 链路彻底打通 + ACTIVE REMINDERS block 注入 prompt + AFP 信任上游 + Multi-Op Memory Correction + hand 子命令暴露 + 反幻觉 directive |
