@@ -87,21 +87,25 @@ class TestP0Plus20Beta50BStreamSilenceDetection(unittest.TestCase):
 
     def test_silence_detection_in_stream_loop(self):
         src = self._get_src()
-        # 检测 [SILENCE] / [silence] (case-insensitive)
-        self.assertIn("'[SILENCE]' in _ft_head", src,
-            'stream 必须检测 [SILENCE] in full_text head (β.5.0-B)')
+        # [β.5.3-fix BUG-3] 检测扩到全 stream (不只 first 32 chars)
+        # 验证: 必须有 [SILENCE] 检测在 full_text 全文中
+        self.assertTrue(
+            "'[SILENCE]' in full_text" in src or "'[silence]' in _ft_lower" in src,
+            'stream 必须检测 [SILENCE] in full_text (β.5.0-B + β.5.3-fix BUG-3)'
+        )
 
     def test_silence_break_before_tts(self):
         """[SILENCE] 检测必须在 _put_audio 之前 break."""
         src = self._get_src()
-        idx_check = src.find("'[SILENCE]' in _ft_head")
-        # 找下一个 _put_audio
-        idx_audio = src.find('self._put_audio', idx_check)
-        idx_break_silence = src.find("_silence_chosen = True\n                        break", idx_check)
-        self.assertGreater(idx_check, 0)
+        # [β.5.3-fix BUG-3] _ft_head → full_text 全 stream 检测
+        idx_check = src.find("'[SILENCE]' in full_text")
+        if idx_check < 0:
+            idx_check = src.find("'[silence]' in _ft_lower")
+        self.assertGreater(idx_check, 0, '检测代码必须存在')
+        idx_break_silence = src.find("_silence_chosen = True", idx_check)
         self.assertGreater(idx_break_silence, 0)
         self.assertLess(idx_check, idx_break_silence,
-            'silence detection 必须在 break 之前')
+            'silence detection 必须在 set flag + break 之前')
 
     def test_silence_handler_skips_buffer_flush(self):
         """_silence_chosen=True → 跳过末尾 buffer flush + return None."""

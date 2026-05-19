@@ -94,16 +94,23 @@ class TestP0Plus20Beta53InternalV2(unittest.TestCase):
         self.assertIsInstance(meta, dict)
 
     def test_state_meta_has_required_fields(self):
-        """state_meta 必须含核心 state 字段."""
+        """state_meta 必须含核心 state 字段.
+        [β.5.3-fix BUG-6] last_nudge_age_s 改 conditional (从未 nudge → 缺字段)."""
         _, _, meta = self.gate._can_speak_internal_v2('test_center', False, '')
+        # 永远必填字段
         required = (
             'freeze_active', 'freeze_remaining_s',
             'sleep_mode', 'cooldown_remaining_s',
-            'last_nudge_age_s', 'last_nudge_center',
+            'last_nudge_center',
         )
         for field in required:
             self.assertIn(field, meta,
                 f'state_meta 必须含 {field} (β.5.3 给主脑看 state)')
+        # 触发 nudge 后 last_nudge_age_s 应出现 (β.5.3-fix BUG-6)
+        self.gate.mark_spoke('test_center')
+        _, _, meta2 = self.gate._can_speak_internal_v2('other', False, '')
+        self.assertIn('last_nudge_age_s', meta2,
+            'state_meta after mark_spoke 必须含 last_nudge_age_s')
 
     def test_freeze_state_in_meta(self):
         """freeze 时 state_meta 应反映."""

@@ -3926,12 +3926,16 @@ No ZH translation. No closing remark. Nothing else.
                     buffer += text_delta
                     full_text += text_delta
 
-                    # [β.5.0-B / 2026-05-19] reaction_space 早期 [SILENCE] 检测
+                    # [β.5.0-B / β.5.3-fix / 2026-05-19] reaction_space [SILENCE] 检测
                     # 主脑可输出 "[SILENCE]" 整段表达 "看 SWM 后我选择不说".
-                    # 检测: full_text 头部 (≤32 chars 内) 含 "[SILENCE]" → 立刻 break stream.
+                    # 双层检测:
+                    #   1. 头部 (≤32 chars 内) 含 [SILENCE] → 早期 break (TTS 0 漏)
+                    #   2. 全 stream 任何位置含 [SILENCE] / [silence] → break (BUG-3 防御:
+                    #      主脑若输出 "Hello [SILENCE]" 这种乱来, 也得拦截不让 silence
+                    #      token 漏到 TTS)
                     # 必须早于 _put_audio 调用 (line 3947 buffer flush)
-                    _ft_head = full_text.lstrip()[:32]
-                    if '[SILENCE]' in _ft_head or '[silence]' in _ft_head.lower():
+                    _ft_lower = full_text.lower()
+                    if ('[silence]' in _ft_lower or '[SILENCE]' in full_text):
                         _silence_chosen = True
                         break
 

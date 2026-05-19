@@ -759,6 +759,10 @@ class NudgeGate:
         # 入口就 return True，导致 Conductor 路径 B 还能在拒绝后 1m47s 抢话
         self._hard_freeze_until = 0.0
         self._hard_freeze_source = ''
+        # [β.5.3-fix BUG-4 / 2026-05-19] publish_only 模式下防 SWM 堆爆:
+        # dedupe key = (center_name | block_reason | gate_mode), 60s TTL.
+        # 同 key 60s 内只 publish 1 次 gate_advice 到 SWM.
+        self._publish_dedupe = {}
 
     def can_speak(self, center_name: str, is_urgent: bool = False, nudge_type: str = '') -> bool:
         """[轴3-L1 / 2026-05-15] OfferGuard 中央闸接入：
@@ -785,6 +789,25 @@ class NudgeGate:
             (gate_mode == 'hard' and not result) or
             gate_mode in ('soft', 'publish_only')
         )
+        # [β.5.3-fix BUG-4 / 2026-05-19] dedupe: 60s 内同 (center, block_reason)
+        # 只 publish 1 次, 防 SmartNudge 每 tick (30-60s) 都 publish 把 SWM 堆爆把
+        # commitment_overdue 等高 salience evidence 挤走.
+        if should_publish:
+            try:
+                dedupe_key = f"{center_name}|{block_reason}|{gate_mode}"
+                _now = time.time()
+                _last_t = self._publish_dedupe.get(dedupe_key, 0.0)
+                if _now - _last_t < 60.0:
+                    should_publish = False
+                else:
+                    self._publish_dedupe[dedupe_key] = _now
+                    # GC: 清 5min 以前的 dedupe entry
+                    self._publish_dedupe = {
+                        k: v for k, v in self._publish_dedupe.items()
+                        if _now - v < 300.0
+                    }
+            except Exception:
+                pass
         if should_publish:
             try:
                 from jarvis_utils import get_event_bus
@@ -856,15 +879,18 @@ class NudgeGate:
             cooldown_remaining = 0.0
             if self._last_nudge_center and self._last_nudge_center != center_name:
                 cooldown_remaining = max(0.0, self._cooldown - (now - self._last_nudge_time))
-            last_nudge_age_s = (now - self._last_nudge_time) if self._last_nudge_time > 0 else -1
+            # [β.5.3-fix BUG-6] last_nudge_age_s: 若从未 nudge 过 → 不放此字段
+            # (避免主脑误读 -1 为"1s 前"). 显式 None / 缺字段更清晰.
             state_meta = {
                 'freeze_active': freeze_remaining > 0,
                 'freeze_remaining_s': round(freeze_remaining, 1) if freeze_remaining > 0 else 0,
                 'sleep_mode': bool(self._sleep_mode),
                 'cooldown_remaining_s': round(cooldown_remaining, 1) if cooldown_remaining > 0 else 0,
-                'last_nudge_age_s': round(last_nudge_age_s, 1) if last_nudge_age_s >= 0 else -1,
-                'last_nudge_center': self._last_nudge_center,
+                'last_nudge_center': self._last_nudge_center or None,
             }
+            if self._last_nudge_time > 0:
+                state_meta['last_nudge_age_s'] = round(now - self._last_nudge_time, 1)
+            # 若从未 nudge → 不放 last_nudge_age_s 字段 (主脑读到缺字段 → 意味"未发生")
 
             # [v3] 硬冻结优先于一切（包括 is_urgent）—— 用户拒绝/急停明确不想听见
             if freeze_remaining > 0:
