@@ -1749,7 +1749,7 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
         return 1
 
     root = tk.Tk()
-    root.title("贾维斯总览看板  J.A.R.V.I.S. Dashboard  β.2.9.8")
+    root.title("贾维斯总览看板  J.A.R.V.I.S. Dashboard  β.5.24")
     root.geometry(geometry)
     if use_color:
         root.configure(bg=COLOR['bg'])
@@ -1887,11 +1887,17 @@ def launch_gui(refresh_s: int, use_color: bool, geometry: str) -> int:
         return body, title_lbl
 
     def _make_action_card(parent, row, col, title, sticky='nsew'):
-        """带按钮列表的卡片. 返回 (frame, title_lbl, list_canvas)."""
+        """带按钮列表的卡片. 返回 (frame, title_lbl, list_canvas).
+
+        🩹 [β.5.24-fix / 2026-05-19] Sir 截图 'review 区不见了' 修.
+        Root cause: 空 inner canvas 高度=0 → group_todo 整块塌掉.
+        修法: 加 frame.configure(height=380) 强制最小高度 + propagate(False).
+        """
         card_bg = COLOR['card_bg'] if use_color else 'SystemButtonFace'
         frame = tk.Frame(parent, bg=card_bg, highlightthickness=1,
                           highlightbackground=COLOR['card_border'] if use_color
-                          else 'gray')
+                          else 'gray', height=380)
+        frame.grid_propagate(False)  # 不让子组件压缩整 frame 高
         frame.grid(row=row, column=col, sticky=sticky, padx=3, pady=3)
         title_lbl = tk.Label(frame, text=title, bg=card_bg,
                               fg=COLOR['header_fg'] if use_color else 'black',
