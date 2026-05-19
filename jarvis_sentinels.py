@@ -1343,6 +1343,13 @@ class WellnessGuardian(threading.Thread):
                 should_suggest = False
                 suggestion_reason = ""
                 
+                # [β.4.12 / 2026-05-19] Sir 09:59 实测 BUG: 早上 10 点 Jarvis 说 "您坐屏前 7 小时".
+                # 根因: Sir 凌晨 02:30 睡到 09:30, 期间 work_category="AFK", work_session_start
+                # 留在凌晨 02:30, work_duration_minutes 累到 420 min. 早晨 WellnessGuardian 看
+                # work_duration > 180 触发 "extended screen time". 但 Sir 实际在睡觉, 不是屏前.
+                # 修法: 所有触发条件加 work_category != "AFK" guard. 准则 5 言出必行: 不说错.
+                if work_category == "AFK":
+                    continue  # AFK = Sir 不在屏前, 不应该触发任何 break suggestion
                 if work_category == "Coding" and work_duration > 120:
                     should_suggest = True
                     suggestion_reason = f"continuous coding for {int(work_duration)} minutes"

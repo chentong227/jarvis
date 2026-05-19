@@ -333,6 +333,13 @@ class ReturnSentinel(threading.Thread):
                     self.worker.voice_thread.awake_signal.emit(True)
             except:
                 pass
+            # [β.4.12 / 2026-05-19] Sir 09:59 实测 BUG: 起床后 Jarvis 直接说 "10 点了, Integrity
+            # Stack 等您" 像 Sir 没睡觉. 根因: nudge_ctx 没传 is_first_today / 跨夜信号给主脑,
+            # LLM 看到 STM 昨晚 Integrity Stack → 自然引述工作话题. 修法 (准则 6 evidence-only):
+            # 注入 3 个 evidence 字段, 主脑 prompt 看到能涌现 morning tone, 不教句式.
+            crosses_sleep = afk_duration > 14400  # > 4h AFK 大概率跨夜睡觉
+            current_hour_for_ctx = int(time.strftime("%H"))
+            is_morning_window = 5 <= current_hour_for_ctx < 12
             nudge_ctx = {
                 "type": "return_greeting",
                 "afk_minutes": snap["afk_minutes"],
@@ -341,6 +348,10 @@ class ReturnSentinel(threading.Thread):
                 "work_hint": snap["work_hint"],
                 "pattern_hint": snap["pattern_hint"],
                 "time_hint": snap["time_hint"],
+                # [β.4.12] 早起 first greeting 信号 (主脑用来涌现 morning tone)
+                "is_first_today": is_first_today,
+                "crosses_sleep_period": crosses_sleep,
+                "is_morning_window": is_morning_window,
                 # [P0+9 / 2026-05-15] 新增 source 标记，让 _dispatch_nudge 终端 tag 显示 [ReturnSentinel]
                 "via_return_sentinel": True,
                 "source": "ReturnSentinel",

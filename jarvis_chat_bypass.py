@@ -3535,11 +3535,29 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             "return_greeting": (
                 # 🩹 [β.2.8.10 / 2026-05-18] Sir 00:20 "furniture incidents" 编造 → 加 truth anchor
                 # 🩹 [β.2.9.10 / 2026-05-18] Sir 11:54 "Welcome back, Sir" 客套 → 正向引导
+                # 🩹 [β.4.12 / 2026-05-19] Sir 09:59 "10 点了, Integrity Stack 等您" → 加 morning context evidence
                 #   准则 6: 不写 forbidden list (那是负向), 改告诉主脑 "用具体观察开场".
                 #   Sir 偏好 signal > 礼貌; 具体的窗口/活动/时段比 "Welcome back" 强 10 倍.
                 f"Sir just returned to his computer (was away for "
                 f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n"
-                f"Speak in your own voice.\n\n"
+                # [β.4.12] morning evidence — 主脑看 evidence 自己涌现 morning tone, 不教句式
+                + (
+                    f"[MORNING CONTEXT — evidence, not directive]:\n"
+                    f"  is_first_today: {nudge_context.get('is_first_today', False)}\n"
+                    f"  crosses_sleep_period: {nudge_context.get('crosses_sleep_period', False)} "
+                    f"(AFK > 4h indicates likely overnight sleep)\n"
+                    f"  is_morning_window: {nudge_context.get('is_morning_window', False)} "
+                    f"(local hour in [5, 12))\n"
+                    f"  → If all three are true, this is Sir's first activity of the day after sleep.\n"
+                    f"    Treat the moment as a fresh-day check-in, not a return-from-break.\n"
+                    f"    Pending work topics (yesterday's threads, overdue tasks) should NOT be the\n"
+                    f"    opening — Sir hasn't had coffee yet. Acknowledge the new day briefly,\n"
+                    f"    then a lightweight status check ('how did you sleep' / 'how's the morning').\n"
+                    f"    Bring up pending threads ONLY if Sir asks or signals readiness.\n\n"
+                    if nudge_context.get('is_first_today') and nudge_context.get('crosses_sleep_period')
+                    else ""
+                )
+                + f"Speak in your own voice.\n\n"
                 f"[STYLE — concrete signal over polite opener]:\n"
                 f"Sir 准则 6: open with the most specific thing you actually "
                 f"observe in his current context (window title, last activity, "

@@ -233,7 +233,35 @@ class Conductor(threading.Thread):
         shield_alert = snapshot.get('shield_alert', {})
         wellness_alert = snapshot.get('wellness_alert', {})
         
-        if shield_alert.get('active') and self._daily_action_count < 12:
+        # [β.4.12 / 2026-05-19] Sir 09:59 实测 BUG: ReturnSentinel 09:59:44 刚 nudge, 5s 后
+        # Conductor 09:59:49 立刻又 nudge "您坐屏前 7 小时". 根因: wellness_alert flag 是 Sir
+        # 起床前 (e.g. 09:55) WellnessGuardian tick 设的, Sir 一起床 Conductor 立刻消费 stale flag.
+        # 修法 (准则 6 通用):
+        #   a) alert TTL 30min: stale flag (timestamp > 1800s old) 不消费
+        #   b) inter-source cooldown 60s: 任何 nudge 后 60s 内 Conductor 不发新 path_a
+        _now = time.time()
+        ALERT_TTL_S = 1800.0  # 30min, 防 Sir 起床被陈旧 flag 消费
+        INTER_SOURCE_COOLDOWN_S = 60.0  # 任何 nudge 后 60s 不发新
+        # 跨源 cooldown: 看 NudgeGate 共享 last_nudge_time (任何 source 都更新)
+        # 治 Sir 09:59 实测: ReturnSentinel 09:59:44 nudge → 5s 后 Conductor 同 path_a 抢话
+        try:
+            if self.gate is not None and hasattr(self.gate, 'seconds_since_last'):
+                _gap = self.gate.seconds_since_last()
+                if _gap < INTER_SOURCE_COOLDOWN_S:
+                    return None
+        except Exception:
+            pass
+
+        def _is_alert_fresh(alert):
+            try:
+                ts = float(alert.get('timestamp', 0))
+                if ts <= 0:
+                    return True  # 老 flag 无 timestamp, 兼容老路径
+                return (_now - ts) < ALERT_TTL_S
+            except Exception:
+                return True
+        
+        if shield_alert.get('active') and self._daily_action_count < 12 and _is_alert_fresh(shield_alert):
             PhysicalEnvironmentProbe._shield_alert = {'active': False}
             return {
                 'source': 'ProactiveShield',
@@ -244,7 +272,7 @@ class Conductor(threading.Thread):
                 'nudge_type': 'offer_help',
             }
         
-        if wellness_alert.get('active') and self._daily_action_count < 12:
+        if wellness_alert.get('active') and self._daily_action_count < 12 and _is_alert_fresh(wellness_alert):
             PhysicalEnvironmentProbe._wellness_alert = {'active': False}
             return {
                 'source': 'WellnessGuardian',
@@ -255,6 +283,22 @@ class Conductor(threading.Thread):
                 'nudge_type': 'suggest_break',
             }
         
+        # [β.4.12] 陈旧 flag 主动清: 避免下次 tick 又被 _has_pending_alert 误报
+        if shield_alert.get('active') and not _is_alert_fresh(shield_alert):
+            PhysicalEnvironmentProbe._shield_alert = {'active': False}
+            try:
+                from jarvis_utils import bg_log as _ttl_bg
+                _ttl_bg(f"⏰ [Conductor/TTL] shield_alert 过期 (age > {ALERT_TTL_S:.0f}s), 已清.")
+            except Exception:
+                pass
+        if wellness_alert.get('active') and not _is_alert_fresh(wellness_alert):
+            PhysicalEnvironmentProbe._wellness_alert = {'active': False}
+            try:
+                from jarvis_utils import bg_log as _ttl_bg
+                _ttl_bg(f"⏰ [Conductor/TTL] wellness_alert 过期 (age > {ALERT_TTL_S:.0f}s), 已清.")
+            except Exception:
+                pass
+
         return None
     
     def _dispatch_path_a(self, alert_info: dict, snapshot: dict):
