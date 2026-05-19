@@ -332,8 +332,26 @@ class ReturnSentinel(threading.Thread):
 
         if self.gate and self.gate.is_sleep_mode():
             # 🩹 [β.2.9.1.3] ReturnSentinel = Sir AFK >5min 回来, 算真醒 force=True
+            # 🩹 [β.5.22-E / 2026-05-19] Sir 01:24 实测痛点: "退出睡眠很久了, Jarvis 没主动问怎么没睡".
+            # Root cause: 老路径 ReturnSentinel.deactivate_sleep_mode 直接解除, 没调 _check_short_sleep
+            # → 短睡 (e.g. <300s) 询问逻辑只走 CentralNerve._detect_wake_up 路径 (语音唤醒).
+            # 修法: ReturnSentinel 解除 sleep_mode 时也调 nerve._check_short_sleep, 让 AFK 回来
+            # 也能触发短睡询问 (Sir 真睡过 + 真起 不会触发, 假睡 < 5min 才触发).
+            _sleep_dur_for_check = 0.0
+            try:
+                _sleep_dur_for_check = float(self.gate.sleep_duration_seconds() or 0.0)
+            except Exception:
+                pass
             self.gate.deactivate_sleep_mode(force=True)
             print(f"[ReturnSentinel] 用户回归，自动解除休眠模式 (AFK {afk_duration/60:.0f}分钟)")
+            # β.5.22-E: 短睡询问 hook
+            try:
+                _nerve = getattr(self.worker, 'jarvis', None)
+                if _nerve is not None and hasattr(_nerve, '_check_short_sleep') \
+                        and _sleep_dur_for_check > 0:
+                    _nerve._check_short_sleep(_sleep_dur_for_check)
+            except Exception:
+                pass
 
         if hasattr(self.worker, 'voice_thread'):
             vt = self.worker.voice_thread

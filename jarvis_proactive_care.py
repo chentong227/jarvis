@@ -455,6 +455,18 @@ class CareWindowGuard:
         except Exception:
             pass
 
+        # 🩹 [β.5.22-B / 2026-05-19] Sir 01:22 实测痛点: Sir 说"我去睡觉了" 后 10min
+        # 仍被催 hydration. Root cause: ProactiveCare 不读 worker._sleep_intent_until
+        # 软窗口 (Conductor / SmartNudge 都有这个 check, ProactiveCare 漏了). 修法:
+        # sleep_intent 窗口内 (Sir 表态 X 分钟后睡) 全 silence ALL care nudge, 不只
+        # late_night/suggest_break/bedtime. Sir 已在收尾, hydration 这种 nudge 也不该插.
+        try:
+            spi = float(getattr(self.worker, '_sleep_intent_until', 0.0) or 0.0)
+            if spi > 0 and now_ts < spi:
+                return False, f'sleep_intent_window ({int(spi - now_ts)}s left)'
+        except Exception:
+            pass
+
         # 9. [β-2 强化] Sir 深度工作中 → 只有高 urgency 才打扰
         try:
             if self._is_deep_work() and urgency < 0.75:

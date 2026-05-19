@@ -4474,6 +4474,22 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         self.voice_thread.awake_signal.emit(False)
                     if hasattr(self.chat_bypass, 'subtitle_queue'):
                         self.chat_bypass.subtitle_queue.put(("focus", False))
+                    # 🩹 [β.5.22-A / 2026-05-19] Sir 01:22 实测痛点: dismissal 后 NudgeGate.sleep_mode
+                    # 没激活 → ProactiveCare gate.is_sleep_mode() 返 False → 10min 后照推 hydration.
+                    # Root cause: 老路径只 print "进入深度潜意识" 不激活 gate. dismissal = Sir 显式
+                    # 告别 = 应当立即激活 sleep_mode. ReturnSentinel/Sir 主动唤醒会自动解除.
+                    try:
+                        _gate = getattr(self.jarvis, 'nudge_gate', None)
+                        if _gate is not None and hasattr(_gate, 'activate_sleep_mode') \
+                                and not _gate.is_sleep_mode():
+                            _gate.activate_sleep_mode()
+                            try:
+                                from jarvis_utils import bg_log as _bg22a
+                                _bg22a("💤 [β.5.22-A] dismissal → NudgeGate.sleep_mode 已激活 (压所有 ProactiveCare/SmartNudge)")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                     print("\n💤[System Standby] 告别完成，进入深度潜意识。")
                 else:
                     # [R7-α/B1] reason='continuing_conversation'：对话还在进行
