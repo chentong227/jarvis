@@ -659,6 +659,7 @@ class ChatBypass:
         try:
             from openai import OpenAI
             import base64
+            import httpx as _httpx_b512
 
             messages = []
             for content in contents:
@@ -679,11 +680,17 @@ class ChatBypass:
 
             or_model = 'google/gemini-3-flash-preview'
 
+            # 🩹 [P0+20-β.5.12 / 2026-05-19] BUG-B: chunk inter-arrival timeout 12s
+            # Sir 21:37 实测: cloud stream 半路 server close TCP, client 干等 18.8s 才
+            # 报 RemoteProtocolError. 老 float 60s 是 *total* request 超时, 不是 chunk
+            # 间隔超时. httpx.Timeout(read=12.0) 含义: "server 12s 不发任何字节 → ReadTimeout".
+            # 这正是 chunk inter-arrival timeout — 12s 既能盖 reasoning (gemini ~5-10s 思考)
+            # 又能让网络僵局快速断离. connect/write/pool 仍各自 10s.
             client = OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=key,
                 default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
-                timeout=60.0
+                timeout=_httpx_b512.Timeout(connect=10.0, read=12.0, write=10.0, pool=10.0)
             )
 
             response = client.chat.completions.create(
@@ -772,11 +779,15 @@ class ChatBypass:
             return None
         try:
             messages = fallback.build_fallback_prompt(user_input, stm_context)
-            reply = fallback.chat(messages, timeout=5.0)
+            # 🩹 [P0+20-β.5.12 / 2026-05-19] BUG-C: Ollama timeout 5s → 8s
+            # Sir 21:37 实测 "Ollama 返回空内容" — 真因可能是 CosyVoice 此刻正在 render
+            # seq=20 占满 GPU, qwen2.5:14b 排不上 GPU → 5s 内出不了完整 token. 调到 8s
+            # 给 GPU 资源争抢留点空间. 仍空 → 走罐头 (双层 fallback 还在).
+            reply = fallback.chat(messages, timeout=8.0)
             if reply and reply.strip():
                 return reply.strip()
             else:
-                print(f"║ ⚠️  [本地兜底] Ollama 返回空内容，使用罐头回复")
+                print(f"║ ⚠️  [本地兜底] Ollama 返回空内容 (8s 超时, 可能 GPU 被 CosyVoice 占), 使用罐头回复")
         except Exception as e:
             print(f"║ ⚠️  [本地兜底] Ollama 异常: {type(e).__name__}: {str(e)[:100]}")
         return None
@@ -3195,6 +3206,36 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             for _line in _tb.format_exc().strip().split('\n')[-6:]:
                 print(f"║ ║   {_line}")
             print(f"║ ╚══════════════════════════════════════════════════════════")
+
+            # 🩹 [P0+20-β.5.12 / 2026-05-19] BUG-A: partial-stream + 道歉拼接体感分裂修
+            # Sir 21:37 实测 (RemoteProtocolError after 18.8s):
+            #   云端 stream 已 fetch "I try to be, Sir. It is often the most practical approach."
+            #   播给 Sir 听完后, 服务端 close TCP → except 触发 → 又补一句 "Forgive me Sir,
+            #   the evening network traffic..." 道歉. 用户体感: 主回复 + 突兀道歉 = 分裂.
+            # 修法: 若 stream 已 fetch 到实质内容 (>= 12 字符 net text), 视为"功能已达成",
+            # bg_log 错误诊断 + 不补道歉, 直接 return True. 否则走老 fallback 链.
+            try:
+                _spoken_net = (full_text or '').strip() if 'full_text' in dir() else ''
+                # 净化: 剥结构化 tag block / ---ZH--- 之后 / <...> 行内 tag
+                _spoken_net = _strip_structural_tag_blocks(_spoken_net)
+                if '---ZH---' in _spoken_net:
+                    _spoken_net = _spoken_net.split('---ZH---')[0]
+                _spoken_net = re.sub(r'<[^>]+>', '', _spoken_net).strip()
+                _spoken_net = re.sub(r'\[(?:WORK_MODE|WAKE_ONLY|RELAX_MODE)\]', '', _spoken_net).strip()
+            except Exception:
+                _spoken_net = ''
+            _spoken_threshold = 12  # 字符, 低于此视为"几乎没说"
+            if _spoken_net and len(_spoken_net) >= _spoken_threshold:
+                try:
+                    from jarvis_utils import bg_log as _b512
+                    _b512(f"🩹 [β.5.12/BUG-A] cloud stream {type(e).__name__} after spoken={len(_spoken_net)}ch, skip 道歉")
+                except Exception:
+                    pass
+                print(f"║ ✅ [β.5.12] 已说 {len(_spoken_net)} 字符实质内容, 跳过道歉补丁\n╚{'═'*63}\n")
+                if '_stream_key_name' in dir():
+                    self.key_router.release(_stream_key_name)
+                return True, _spoken_net
+
             local_reply = self._try_local_fallback(user_input, stm_context)
             if local_reply:
                 print(f"║ 🔄 [本地兜底] 切换到 {get_local_fallback()._model}")
