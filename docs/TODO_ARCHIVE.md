@@ -42,6 +42,63 @@
 
 ## 📜 原文（按完工时间倒序）
 
+### P0+20-β.5.22-28 — Sir 实测 BUG 全治本 + 动态语义反馈 + Web Dashboard (2026-05-19 23:01 → 05-20 02:59, 18 commits)
+
+**触发**: Sir 01:22-02:55 实测产出 ~25 个 BUG/方向. 全 session 治本.
+
+**13 commits 概览**:
+
+| commit | marker | 主题 |
+|---|---|---|
+| f297deb | β.5.22-A/B/E | dismissal → activate_sleep_mode + ProactiveCare 读 _sleep_intent_until + ReturnSentinel 接 _check_short_sleep |
+| 679e205 | β.5.22-G/F | sleep_intent due timer + refusal_vocab.json 4 类 dismissal/sleep_soft 早退 + CLI |
+| 4739ef1 | β.5.22-C | **动态语义反馈 LLM judge** - Concern.daily_progress/last_user_feedback/optimal_timing + jarvis_concern_feedback.py + post_chat hook + urgency progress_mul/timing_mul (0.3 floor 不 close, before_sleep 反弹 1.5x) |
+| 36d776c | β.5.22-D + C-fix | sleep_due focus + QuickClassifier.prompt_raw generic API |
+| (β.5.23) | β.5.23-A+B | cooldown vocab JSON (11 阈值 + ranges + history + review_queue) + L7 ConcernFeedbackReflector daemon 24h 周期 LLM-propose |
+| 55e4286 | β.5.24 | tkinter dashboard 重构 - main grid 信息1/待处理5/观测2 + 4 源 review 整合 (concerns/relational/directive/cooldown) + thread title fallback + cooldown action 路径 |
+| 517cf56 | β.5.24-finish | 标题 β.5.24 + grid_propagate(False) height=380 (修 group_todo 塌缩 BUG) |
+| 4ceb046 | β.5.25 | **Web Dashboard MVP** - Flask + Tailwind CDN + Alpine.js, 4 大区 + glass-morphism + 响应式 + Toast + auto poll |
+| 6582ec2 | β.5.25-extend | 补 Commitments todo 区 + cancelCommitment 接口 |
+| 79faf7d | β.5.25-finish | 补 Jarvis 承诺卡 + 言出必行宽卡 + dashboard.ps1 launcher |
+| e01e868 | β.5.25-route | ui_control.dashboard_open 默认开 web (port 8765 探测复用 + tkinter fallback), dashboard_close 双 kill |
+| 247dd7b | β.5.26 + doc-sync | wake_filler vocab JSON + CLI + INTEGRITY_STACK §3 全 sync ❌→✅ + VOICE §7.3 sync |
+| 535f660 | β.5.26-fix | wake_filler_vocab loader 模块级 fn (修 Audio Nerve 断连 — 老放错 JarvisWorkerThread 类) |
+| 109fd0b | β.5.27 | ProactiveCare sensor.tick None guard (修 log 噪音) |
+| 86ee06f | β.5.28-roll | TODO.md 684→156 行滚档, 老 β.4.x/β.3.x 段沉 archive |
+| 4866ac9 | β.5.28 | web 按钮 actionPending spread reactive 修 (Sir '按不动') + daemon banner regex 兜底 + ChronosTick 加 banner |
+| 0b07060 | β.5.28-dedup+i18n | propose_thread 加 title 前缀/jaccard dedup + read_review_queues runtime sig dedup + 翻译 (QuickClassifier prompt_raw 英→中 with cache) |
+
+**关键设计哲学 (Sir 拍板)**:
+- **准则 6** (拒绝硬编码): 7 vocab JSON + CLI + L7 reflector 全套范式 (refusal/cooldown/wake_filler 都迁)
+- **准则 6.5** (动态架构必须 + LLM 兜底): ConcernFeedbackReflector L7 daemon 看 7d 数据 LLM-propose cooldown 调整
+- **准则 5** (言出必行): dismissal/freeze 兜底 + activate_sleep_mode 等保留作 explicit reject 兜底
+- **Sir 元否决** (准则 7): cooldown CLI 主要给 Sir review 看, 不强迫手调; 拍板权 Sir 留
+
+**新增文件 (13)**:
+- `jarvis_concern_feedback.py` (~232 行) ConcernFeedbackJudge
+- `jarvis_concern_feedback_reflector.py` (~290 行) L7 daemon
+- `scripts/jarvis_dashboard_web.py` (~700 行) Flask + Tailwind + Alpine
+- `dashboard.ps1` 一键 launcher
+- `memory_pool/refusal_vocab.json` (4 类)
+- `memory_pool/proactive_care_cooldown_vocab.json` (11 阈值)
+- `memory_pool/wake_filler_vocab.json`
+- `scripts/refusal_vocab_dump.py`
+- `scripts/cooldown_vocab_dump.py`
+- `scripts/wake_filler_dump.py`
+- `tests/_test_p0_plus_20_beta522_dynamic_feedback_persist.py` (33/33)
+- `tests/_test_p0_plus_20_beta523_cooldown_vocab_reflector_persist.py` (23/23)
+- `tests/_test_p0_plus_20_beta524_dashboard_refactor_persist.py` (20/20)
+- `tests/_test_p0_plus_20_beta525_web_dashboard_persist.py` (19/19)
+
+**测试**: 95/95 新 testcase 全 pass + β.5.18-21 regression 100/100 + β.2.99/β.2.8 concerns/proactive_care 95/95 OK.
+
+**文档**:
+- `docs/JARVIS_INTEGRITY_STACK.md` §3 全 sync ❌→✅ (L1-L7 实际 β.4.x 已完成)
+- `docs/JARVIS_VOICE_PIPELINE_LATENCY.md` §7.3 filler vocab 完工标记
+- `TODO.md` 684→156 行 (< 300 cap)
+
+---
+
 更新时间：2026-05-16 10:20（**P0+19 沉档 / P0+20-α 收尾 + P0+20-β.0 Prompt 重构启动**）
 
 ---
