@@ -367,6 +367,48 @@ class CareSignalCollector:
         # 避免"无 signal 但 severity 高 + 长久未提"反而 urgency 极低的怪现象.
         signal_modulator = (recency + density + pressure) / 3.0
         urgency = base * (0.7 + 0.3 * signal_modulator) * fatigue_mul * l0_mul
+
+        # 🩹 [β.5.22-C / 2026-05-19] 动态语义反馈纳入 urgency (准则 6 核心).
+        # Sir 01:34 痛点: "我说喝了 6/7 杯水了" 后, hydration concern 当天应削权
+        # 但睡前可反弹提醒最后一杯. 由 ConcernFeedbackJudge LLM 写 daily_progress 进来.
+        # 1. progress_mul: 已完成比例越高 → urgency 越削
+        # 2. timing_mul: optimal_timing 命中当下 → urgency 反弹 (但不超 1.0)
+        progress_mul = 1.0
+        timing_mul = 1.0
+        try:
+            dp = getattr(concern, 'daily_progress', {}) or {}
+            today_iso = time.strftime('%Y-%m-%d', time.localtime(now_ts))
+            # 仅当 daily_progress 是今天的才计入
+            if dp.get('iso_date') == today_iso:
+                cur = float(dp.get('current', 0) or 0)
+                tgt = float(dp.get('target', 0) or 0)
+                if tgt > 0 and cur > 0:
+                    ratio = min(1.0, cur / tgt)
+                    # 进度 100% → mul = 0.3 (削 70%), 进度 75% → mul = 0.475, 进度 50% → mul = 0.65
+                    progress_mul = max(0.3, 1.0 - ratio * 0.7)
+        except Exception:
+            pass
+        try:
+            tm = (getattr(concern, 'optimal_timing', '') or '').lower()
+            hour = time.localtime(now_ts).tm_hour
+            # 简单 timing 命中规则 — LLM 之后可扩
+            timing_hit = False
+            if tm == 'before_sleep' and (hour >= 22 or hour <= 1):
+                timing_hit = True
+            elif tm == 'morning' and 6 <= hour <= 10:
+                timing_hit = True
+            elif tm == 'evening' and 18 <= hour <= 21:
+                timing_hit = True
+            elif tm == 'now':
+                timing_hit = True
+            if timing_hit:
+                timing_mul = 1.5
+        except Exception:
+            pass
+        breakdown['progress_mul'] = round(progress_mul, 3)
+        breakdown['timing_mul'] = round(timing_mul, 3)
+
+        urgency = urgency * progress_mul * timing_mul
         urgency = max(0.0, min(1.0, urgency))
         breakdown['urgency'] = round(urgency, 3)
         return urgency, breakdown

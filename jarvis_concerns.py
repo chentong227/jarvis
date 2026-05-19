@@ -86,6 +86,16 @@ class Concern:
     last_aligned_at: float = 0.0
     last_missed_at: float = 0.0
 
+    # 🩹 [β.5.22-C / 2026-05-19] 动态语义反馈 (准则 6 核心修法).
+    # Sir 01:34 痛点: "我说了喝了 6/7 杯, 那今天的喝水提醒只要再回应一次就该结束".
+    # daily_progress: LLM 从 Sir 回应里抽出的"今天进度" — e.g. {"current": 6, "target": 8, "unit": "杯", "iso_date": "2026-05-19"}.
+    # last_user_feedback: 最近一条 Sir 对此 concern 的回应 + LLM judgement.
+    # optimal_timing: LLM 判的"合适提醒时机" — e.g. "before_sleep" / "morning" / "evening".
+    # 影响 urgency 计算: 进度高 → urgency *= (1 - progress_ratio*0.7); optimal_timing 命中 → urgency *= 1.5.
+    daily_progress: dict = field(default_factory=dict)
+    last_user_feedback: dict = field(default_factory=dict)
+    optimal_timing: str = ''        # 'before_sleep' / 'morning' / 'evening' / 'now' / ''
+
     def record_signal(self, what: str, severity_delta: float = 0.0,
                       source_turn_id: str = '') -> None:
         """记一条 evidence。recent_signals 最多保 10 条。"""
@@ -231,6 +241,66 @@ class ConcernsLedger:
             if c is not None:
                 c.last_triggered = time.time()
                 self._dirty = True
+
+    def record_user_feedback(self, concern_id: str, raw_text: str,
+                              judgement: dict) -> bool:
+        """🩹 [β.5.22-C / 2026-05-19] 动态语义反馈 - Sir 主动说出关于某 concern 的进度/状态.
+
+        Sir 01:34 痛点的核心修法: "我说了喝了 6/7 杯水了". LLM 判断后写回 ledger,
+        urgency 计算时纳入 daily_progress → 当天不再重催, 但 optimal_timing 到了
+        会反弹 (e.g. 睡前 30min 提醒喝最后一杯).
+
+        judgement dict 应包含 (LLM 提取):
+        - has_relevance: bool — 这条 Sir 回应是否真跟此 concern 相关
+        - progress: dict | None — {"current": 6, "target": 8, "unit": "杯"} 或 None
+        - severity_delta: float — 对 concern severity 的影响 (-1.0 to 1.0)
+        - optimal_timing: str — "before_sleep" / "morning" / "" 等
+
+        返 True 表示已写入, False = concern_id 不存在或 has_relevance=False.
+        """
+        if not judgement or not judgement.get('has_relevance'):
+            return False
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False
+            now = time.time()
+            today_iso = time.strftime('%Y-%m-%d', time.localtime(now))
+
+            # 1. 更新 daily_progress (LLM 提取的进度)
+            prog = judgement.get('progress') or None
+            if prog and isinstance(prog, dict):
+                # 跨天清零 — 新一天 progress 不沿用
+                old_iso = (c.daily_progress or {}).get('iso_date', '')
+                if old_iso != today_iso:
+                    c.daily_progress = {}
+                merged = dict(c.daily_progress or {})
+                merged.update(prog)
+                merged['iso_date'] = today_iso
+                merged['last_updated'] = now
+                c.daily_progress = merged
+
+            # 2. last_user_feedback (调试 + L4 reflector 看)
+            c.last_user_feedback = {
+                'raw_text': str(raw_text or '')[:300],
+                'judgement': judgement,
+                'when': now,
+                'when_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+            }
+
+            # 3. optimal_timing 注入
+            tm = judgement.get('optimal_timing') or ''
+            if isinstance(tm, str) and tm:
+                c.optimal_timing = tm[:32]
+
+            # 4. severity 调整 (LLM 判断的 delta)
+            sev_d = float(judgement.get('severity_delta', 0.0) or 0.0)
+            if abs(sev_d) > 1e-3:
+                c.severity = max(0.0, min(1.0, c.severity + sev_d))
+
+            c.last_updated = now
+            self._dirty = True
+            return True
 
     def record_alignment(self, concern_id: str, aligned: bool) -> bool:
         """[P0+20-β.2.6 / 2026-05-17] Layer 5 SoulAlignmentEvaluator 调。
@@ -382,6 +452,10 @@ class ConcernsLedger:
                         missed_count=int(data.get('missed_count', 0)),
                         last_aligned_at=float(data.get('last_aligned_at', 0.0)),
                         last_missed_at=float(data.get('last_missed_at', 0.0)),
+                        # 🩹 [β.5.22-C / 2026-05-19] 动态语义反馈字段 (旧 JSON 兼容默认 空)
+                        daily_progress=dict(data.get('daily_progress', {}) or {}),
+                        last_user_feedback=dict(data.get('last_user_feedback', {}) or {}),
+                        optimal_timing=str(data.get('optimal_timing', '') or ''),
                     )
                     self.concerns[c.id] = c
                     n += 1

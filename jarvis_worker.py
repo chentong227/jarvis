@@ -2774,6 +2774,21 @@ class JarvisWorkerThread(QThread):
                     self._detect_sleep_intent(cmd)
                     # 🩹 [β.3.0 BUG#5 / 2026-05-18] Sir 14:00 痛点: 倒数期可撤回睡眠
                     self._detect_sleep_cancel(cmd)
+                    # 🩹 [β.5.22-C / 2026-05-19] 动态语义反馈 (准则 6 核心修法).
+                    # Sir 主动说 "我喝了 6/7 杯了" → LLM 判进度 → ledger.daily_progress →
+                    # urgency 当天削权 + optimal_timing 反弹. 全异步, 0 阻塞 turn.
+                    try:
+                        _ledger = getattr(self.jarvis, 'concerns_ledger', None)
+                        _kr = getattr(self.jarvis, 'key_router', None)
+                        if _ledger is not None:
+                            from jarvis_concern_feedback import get_or_create_judge
+                            _judge = get_or_create_judge(
+                                ledger=_ledger, key_router=_kr, nerve=self.jarvis)
+                            if _judge is not None:
+                                _judge.judge_async(cmd, turn_id=time.strftime(
+                                    'turn_%Y%m%d_%H%M%S'))
+                    except Exception:
+                        pass
 
                 matched_reflex = False
                 cmd_lower = cmd.lower().strip()
