@@ -162,7 +162,8 @@ $tests = @(
     "_test_p0_plus_20_beta513_nudge_llm_all_channels_persist",
     "_test_p0_plus_20_beta514_wellness_publish_skip_persist",
     "_test_p0_plus_20_beta515_inconsistency_publish_skip_persist",
-    "_test_p0_plus_20_beta516_nudge_partial_flush_and_vocab_fix_persist"
+    "_test_p0_plus_20_beta516_nudge_partial_flush_and_vocab_fix_persist",
+    "_test_p0_plus_20_beta517_proactive_care_focus_mode_persist"
 )
 
 foreach ($t in $tests) {

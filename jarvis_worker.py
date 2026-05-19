@@ -2956,7 +2956,12 @@ class JarvisWorkerThread(QThread):
                             self.voice_thread.in_active_conversation = True
                             self.voice_thread.last_interaction_time = time.time()
 
-                    if nudge_type in ("offer_help", "commitment_check") and hasattr(self, 'return_sentinel') and self.return_sentinel:
+                    # 🩹 [P0+20-β.5.17 / 2026-05-19] Sir 22:21 实测 - proactive_care 也加入 focus.
+                    # 原 list ("offer_help", "commitment_check") 不含 proactive_care 让 Sir
+                    # 听完 ProactiveCare 主动关心后没机会回应 (没 90s 软焦点窗口). 既然 β.5.13
+                    # 已把 ProactiveCare silent_text/visual_pulse 也走主脑 reaction_space, 主脑
+                    # 决定要 voice 发声的 proactive_care 应当跟 offer_help 等同待遇 (用户期望回应).
+                    if nudge_type in ("offer_help", "commitment_check", "proactive_care") and hasattr(self, 'return_sentinel') and self.return_sentinel:
                         self.return_sentinel.soft_focus_active = True
                         self.return_sentinel.soft_focus_until = time.time() + 90.0
                         self.return_sentinel._soft_focus_reason = nudge_type
@@ -2980,7 +2985,7 @@ class JarvisWorkerThread(QThread):
                                 )
                         except Exception:
                             pass
-                        print(f"🎯 [Focus Lock] offer_help 焦点模式已激活 (90s)，等待 Sir 回复...")
+                        print(f"🎯 [Focus Lock] {nudge_type} 焦点模式已激活 (90s)，等待 Sir 回复...")
                     continue
                 
                 # 如果没命中脊髓反射（是正常的聊天指令），大脑进入清醒状态
