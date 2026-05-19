@@ -1244,12 +1244,19 @@ class ProactiveCareEngine(threading.Thread):
 
         # 1.5. [β-2.5] 跑 sensor → 让 sensor 派生 signal 喂给 concern
         # 不依赖 Sir 主动开口才知道关心啥
-        try:
-            n_signals = self.sensor.tick()
-            if n_signals > 0:
-                bg_log(f"📡 [ProactiveCare/Sensor] tick fed {n_signals} signal(s)")
-        except Exception as _sens_e:
-            bg_log(f"⚠️ [ProactiveCare/Sensor] tick err: {_sens_e}")
+        # 🩹 [β.5.27 / 2026-05-20] Sir 02:13 log: 'NoneType object has no attribute tick'.
+        # Root cause: _resolve_deps partial-init 时 sensor 可能仍 None (race condition).
+        # 修法: None guard + 真异常才 log (空 None 早返不噪音).
+        if self.sensor is None:
+            # 静默早返, 等下一 tick _resolve_deps 把 sensor 创出来
+            pass
+        else:
+            try:
+                n_signals = self.sensor.tick()
+                if n_signals > 0:
+                    bg_log(f"📡 [ProactiveCare/Sensor] tick fed {n_signals} signal(s)")
+            except Exception as _sens_e:
+                bg_log(f"⚠️ [ProactiveCare/Sensor] tick err: {_sens_e}")
 
         # 2. 算 urgency
         with self._state_lock:
