@@ -10,9 +10,25 @@
 
  工作板
 
-**更新时间**：2026-05-19 00:30（**🚀 P0+20-β.4.8 Acoustic Wake (openWakeWord MIT) — P1 framework + PhaseC AuditoryCortex 集成完工, Sir 走 Colab 自训 jarvis_v1.onnx 中**）。
+**更新时间**：2026-05-19 21:42（**🚀 P0+20-β.5.x voice pipeline 系列收尾 — β.5.9/10/11 + Audio Trace 退役 + β.5.12 RemoteProtocolError 3 层修, design doc 已写, 59 testcase 全绿, 待 Sir 真机**）。
 
-**今天累计 (5/18 09:00 → 5/19 00:30)**：43 commits / 96/96 → 跨 β.4.7 + β.4.8 共 ~118 测全绿 / 12 tags 同上 (β.4.7 + β.4.8 等真机测试通过后合并 tag v0.37.0-acoustic-wake)。
+**今晚 β.5.x 收尾 (5/19 09:00 → 21:42, 6 commits 累计)**:
+
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `e216a0a` | β.5.9 | TTS first-sentence fast-split (hard>=8/soft>=4) + Audio Trace 诊断 (后退役) | 12 |
+| `b29a041` | β.5.10 | CosyVoice prompt encoding cache — render 6.67s→1.93s (~3.5x) | 9 |
+| `22d8746` | β.5.11 | hey jarvis fast wake — filler-addressing words list 剥 (20 条英中) | 17 |
+| `2a335b8` | β.5.9-revert | Audio Trace 退役 (Sir 21:33 确认 cache 生效) + design doc 新建 | 12 (反向锁) |
+| `d51385c` | β.5.12 | cloud stream RemoteProtocolError 3 层修 (spoken_so_far guard + httpx.Timeout + Ollama 5→8s) | 15 |
+
+**design doc**: `docs/JARVIS_VOICE_PIPELINE_LATENCY.md` (399 行, ≤ cap 400) — §1 一图速记 / §2 commit 表 / §3 β.5.9 / §4 β.5.10 / §5 β.5.11 / §6 Sir 验证 checklist / §7 边界 BUG / §8 紧急回滚 / §9 准则对照 / §11 β.5.12 续写.
+
+**β.4.8 时代以前的 entries 保留下面**:
+
+**更新时间 (β.4.8 时代)**：2026-05-19 00:30（**🚀 P0+20-β.4.8 Acoustic Wake (openWakeWord MIT) — P1 framework + PhaseC AuditoryCortex 集成完工, Sir 走 Colab 自训 jarvis_v1.onnx 中**）。
+
+**β.4.7+β.4.8 累计 (5/18 09:00 → 5/19 00:30)**：43 commits / 96/96 → 跨 β.4.7 + β.4.8 共 ~118 测全绿 / 12 tags 同上 (β.4.7 + β.4.8 等真机测试通过后合并 tag v0.37.0-acoustic-wake)。
 
 **🟢 β.4.8 Acoustic Wakeword (openWakeWord MIT, P1 + PhaseC, Sir 23:50 BUG 治本)**:
 

@@ -394,13 +394,37 @@ Jarvis: 长回复 100+ 字
 
 ---
 
-## 10. 下一阶段候选 (β.6+ 待 Sir 真机反馈后定)
+## 11. β.5.12 — cloud stream RemoteProtocolError 3 层叠加修 (2026-05-19 21:42)
 
-- **filler list vocab 化** (准则 6.5): 20 条 filler 迁 `memory_pool/wake_filler_vocab.json` + `scripts/wake_filler_dump.py` CLI + L7 Reflector propose
-- **wake_aliases 一起 vocab 化** (准则 6.5 同源)
-- **prompt cache 多 speaker**: wake-up 一种声线 / 正经汇报另一种 → 多 spk_id
-- **Audio Trace 轻量哨兵**: 仅 render_dur > 5s 时 bg_log [ALERT] (不玩 4 节点全量 trace, 也不需 Sir 主动 grep)
+**Sir 21:37 实测**: `RemoteProtocolError after 18.8s`, `full 40.5s`. 用户耳朵里 — "I try to be, Sir. It is often the most practical approach." (主回复已说完) → 停 ~7s → "Forgive me Sir, the evening network traffic..." (罐头道歉, 体感分裂).
+
+### 三层 BUG 决策表
+
+| 层 | 痛点 | 修法 | 文件:行 |
+|---|---|---|---|
+| **A** (主修) | except 无脑追加道歉, 不看 cloud stream 是否已实质说够 | 加 `spoken_so_far` 守卫: 净化 `full_text` (剥 `---ZH---` / `<tag>` / `[WAKE_ONLY]` / `_strip_structural_tag_blocks`), 若 net ≥ 12 char 则 `bg_log` 错误 + `return True` 不补道歉 | `@d:\Jarvis\jarvis_chat_bypass.py:3199` |
+| **B** (timeout) | `timeout=60.0` 是 total request 超时, 不是 chunk inter-arrival; server 半路 close TCP, client 等 18.8s 才报错 | `httpx.Timeout(connect=10, read=12, write=10, pool=10)`, `read=12` 即 chunk 间最长间隔 — 既能盖 reasoning ~5-10s, 又比 18s 早砍 6s | `@d:\Jarvis\jarvis_chat_bypass.py:683` |
+| **C** (Ollama 5s) | CosyVoice 占 GPU 时 `qwen2.5:14b` 排不上, 5s 出不了完整 token | `timeout=5.0 → 8.0`, 仍空走罐头 (双层 fallback 保留), print 提示 GPU 争抢假设 | `@d:\Jarvis\jarvis_chat_bypass.py:782` |
+
+### 测试 + 回归
+
+- `tests/_test_p0_plus_20_beta512_stream_break_persist.py` 15 测 4 类 — BUG-A guard (5) / BUG-B httpx.Timeout (4) / BUG-C Ollama bump (3) / NoRegression (3)
+- 全 src 字面 marker check, 不实例化 ChatBypass (避 KeyRouter/VocalCord 依赖)
+- 关联 β.5.9 / β.5.10 / β.5.11 + `jarvis_chat_bypass import` 全 OK
+
+### Sir 真机验证 §6 补一项
+
+**§6.5 cloud stream 半路断验证**
+
+人为模拟 (拔网线 / 改 DNS): `Sir: "嗯, 你说的有道理"` → cloud stream 中途死. 应看到:
+- log 含 `🩹 [β.5.12/BUG-A] cloud stream RemoteProtocolError after spoken=Nch, skip 道歉`
+- 终端含 `║ ✅ [β.5.12] 已说 N 字符实质内容, 跳过道歉补丁`
+- TTS **不补** "Forgive me Sir..." 罐头. 用户体感: 主回复说完戛然 (比 BUG 前的"主+突兀道歉"自然)
+
+### 紧急回滚 (§8 补) + β.6+ 候选
+
+- `git revert d51385c` 单 revert β.5.12 守卫. 其余 β.6+ 候选: filler list vocab 化 / wake_aliases vocab 化 / prompt cache 多 speaker / Audio Trace render_dur > 5s 轻量哨兵
 
 ---
 
-**末**: doc 完成 2026-05-19 21:33 +08; commits `e216a0a` (β.5.9) + `b29a041` (β.5.10) + `22d8746` (β.5.11) 已落地, 44 testcase 全绿, 待 Sir 真机验证.
+**末**: doc 完成 2026-05-19 21:33 +08 (β.5.12 §11 续 21:42 +08); commits `e216a0a` + `b29a041` + `22d8746` + `d51385c` 落地, 59 testcase 全绿, 待 Sir 真机.
