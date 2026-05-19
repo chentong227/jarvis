@@ -842,8 +842,13 @@ class NudgeGate:
             except Exception:
                 pass
 
-        # publish_only 永不 hard 拦 — 主脑看 SWM 自决 (走 stream_nudge [SILENCE] 路径)
+        # [β.5.18 / 2026-05-19] publish_only 永不 hard 拦, 但 hard_freeze 例外:
+        # Sir 显式急停 / 拒绝 / 告别 → freeze_for(180/300/600s) → 准则 5 "言出必行"
+        # 最后一道防线, 即便 publish_only 模式也不能让主脑 override. 主脑 SWM 仍能
+        # 通过 gate_advice metadata.freeze_active=True 看到状态, 自决不说.
         if gate_mode == 'publish_only':
+            if state_meta.get('freeze_active'):
+                return False  # hard_freeze 永远拦, 守 Sir 显式拒绝
             return True
         return result
 
