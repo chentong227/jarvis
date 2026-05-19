@@ -1845,9 +1845,12 @@ class JarvisWorkerThread(QThread):
         except:
             pass
 
-    # [R7-β1/post-test] 通用"拒绝词典"，与 _detect_help_refusal / NudgeGate freeze 共用
+    # 🩹 [β.5.22-F / 2026-05-19] vocab 化 + dismissal/sleep_soft 早退分类.
+    # 老硬编码 list 留作 fallback (vocab json 不可用时), 准则 6 vocab JSON 是 source of truth.
+    # Sir 实测 "嗯, 没事, 那我去睡觉了, 拜拜" 被命中 "没事" 误判 refusal → freeze.
+    # 修法: dismissal_soft / sleep_soft 优先级最高, 命中后早退不触发 freeze.
     _GENERIC_REFUSAL_PATTERNS = [
-        # 英文（按"短而精确"排，避免误伤）
+        # fallback only — 真 source of truth 在 memory_pool/refusal_vocab.json
         "no thanks", "no thank you", "thanks but no",
         "i'm fine", "im fine", "i am fine", "it's fine", "its fine",
         "i'm ok", "im ok", "i am ok", "it's ok", "its ok",
@@ -1857,23 +1860,56 @@ class JarvisWorkerThread(QThread):
         "i'll handle", "ill handle", "i will handle",
         "not now", "leave it", "let it be", "forget it",
         "stop offering", "stop suggesting",
-        # 中文
         "不需要", "不用", "不必", "没事", "算了", "不用了",
         "我自己", "自己来", "自己能", "我可以", "我能",
         "别再提", "别再说", "够了", "停下", "停止帮助",
         "不需要你的帮助", "不要你的帮助",
     ]
 
-    # [R7-β post-test v3] 强拒绝词典 —— 命中即触发硬冻结 300s（NudgeGate.freeze_for），
-    # 即使 stm[-5:] 没看见 offer_help、即使 Conductor 路径 B 用 is_urgent=True 也吵不到 Sir
-    # 设计意图：用户说出这些话本身就是明确"暂时别再说话"的信号，不需要再去看上下文
     _STRONG_REFUSAL_PATTERNS = [
+        # fallback only
         "不需要你的帮助", "不要你的帮助", "不要再提", "别再提", "别再说", "别再来",
         "不要打扰", "别打扰", "闭嘴", "安静一下", "停止帮助", "你别说话",
         "stop offering", "stop suggesting", "stop talking", "stop interrupting",
         "leave me alone", "i don't need help", "i don't need your help",
         "i dont need help", "i dont need your help", "shut up", "be quiet",
     ]
+
+    # β.5.22-F: vocab JSON cache
+    _refusal_vocab_cache: dict = {}
+    _refusal_vocab_mtime: float = 0.0
+    _refusal_vocab_path: str = ''
+
+    def _load_refusal_vocab(self) -> dict:
+        """读 memory_pool/refusal_vocab.json + mtime cache.
+        失败 fallback 用 _GENERIC_/_STRONG_REFUSAL_PATTERNS hardcoded.
+        返 dict: {generic: [...], strong: [...], dismissal_soft: [...], sleep_soft: [...]}.
+        """
+        import os
+        import json
+        path = self._refusal_vocab_path or os.path.join('memory_pool', 'refusal_vocab.json')
+        self._refusal_vocab_path = path
+        try:
+            mt = os.path.getmtime(path)
+            if mt == self._refusal_vocab_mtime and self._refusal_vocab_cache:
+                return self._refusal_vocab_cache
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            JarvisWorkerThread._refusal_vocab_cache = {
+                'generic': list(data.get('generic') or self._GENERIC_REFUSAL_PATTERNS),
+                'strong': list(data.get('strong') or self._STRONG_REFUSAL_PATTERNS),
+                'dismissal_soft': list(data.get('dismissal_soft') or []),
+                'sleep_soft': list(data.get('sleep_soft') or []),
+            }
+            JarvisWorkerThread._refusal_vocab_mtime = mt
+            return self._refusal_vocab_cache
+        except Exception:
+            return {
+                'generic': self._GENERIC_REFUSAL_PATTERNS,
+                'strong': self._STRONG_REFUSAL_PATTERNS,
+                'dismissal_soft': [],
+                'sleep_soft': [],
+            }
 
     def _detect_help_refusal(self, cmd: str):
         """检测用户的"拒绝帮助"信号。R7-β1/post-test 改造：
@@ -1893,8 +1929,41 @@ class JarvisWorkerThread(QThread):
             cmd_lower = (cmd or "").lower().strip()
             if not cmd_lower:
                 return
-            is_strong_refusal = any(p in cmd_lower for p in self._STRONG_REFUSAL_PATTERNS)
-            is_refusal = is_strong_refusal or any(p in cmd_lower for p in self._GENERIC_REFUSAL_PATTERNS)
+
+            # 🩹 [β.5.22-F / 2026-05-19] vocab 读取 + dismissal/sleep_soft 早退.
+            # Sir 实测痛点: 说 "嗯, 没事, 我去睡觉了, 拜拜" 被命中 "没事" 误判 refusal
+            # → freeze 90s. 实际是 dismissal + sleep_intent, 不是拒绝帮助.
+            # 修法: 命中 dismissal_soft / sleep_soft 优先级最高, 早退不算 refusal.
+            # dismissal flow 和 _detect_sleep_intent 会另走自己路径 (activate_sleep_mode /
+            # _sleep_intent_until + due timer). 这里只管"非告别非睡意但拒绝帮助"的情况.
+            _vocab = self._load_refusal_vocab()
+            _dis_soft = _vocab.get('dismissal_soft') or []
+            _slp_soft = _vocab.get('sleep_soft') or []
+            if any(p.lower() in cmd_lower for p in _dis_soft):
+                try:
+                    from jarvis_utils import bg_log as _f_bg
+                    _f_bg(
+                        f"🎫 [Refusal/Skip] cmd 命中 dismissal_soft, 不算拒绝 "
+                        f"(走 dismissal flow): '{cmd_lower[:40]}'"
+                    )
+                except Exception:
+                    pass
+                return
+            if any(p.lower() in cmd_lower for p in _slp_soft):
+                try:
+                    from jarvis_utils import bg_log as _f_bg
+                    _f_bg(
+                        f"🎫 [Refusal/Skip] cmd 命中 sleep_soft, 不算拒绝 "
+                        f"(走 _detect_sleep_intent): '{cmd_lower[:40]}'"
+                    )
+                except Exception:
+                    pass
+                return
+
+            _strong = _vocab.get('strong') or self._STRONG_REFUSAL_PATTERNS
+            _generic = _vocab.get('generic') or self._GENERIC_REFUSAL_PATTERNS
+            is_strong_refusal = any(p.lower() in cmd_lower for p in _strong)
+            is_refusal = is_strong_refusal or any(p.lower() in cmd_lower for p in _generic)
             if not is_refusal:
                 return
 
@@ -2112,16 +2181,105 @@ class JarvisWorkerThread(QThread):
         """🩹 [β.3.0 / 2026-05-18] Sir 14:00 痛点: 说睡觉瞬间黑屏没缓冲.
         Sir 30s 倒数期内说 '等等' / 'cancel' / '取消睡眠' → 调此撤回.
         返 True 表示撤回成功, False 表示当前没活跃的 sleep routine.
+
+        🩹 [β.5.22-G / 2026-05-19] 同时 cancel sleep_intent_due_timer (到点提醒).
         """
         if getattr(self, '_sleep_routine_cancelled', False):
             return False
         self._sleep_routine_cancelled = True
+        # β.5.22-G: 撤销 due timer 防到点又提醒
+        try:
+            _due = getattr(self, '_sleep_intent_due_timer', None)
+            if _due is not None and _due.is_alive():
+                _due.cancel()
+        except Exception:
+            pass
         try:
             from jarvis_utils import bg_log
-            bg_log("🛑 [SleepMode/Cancelled] Sir 撤回睡眠 routine")
+            bg_log("🛑 [SleepMode/Cancelled] Sir 撤回睡眠 routine + due timer")
         except Exception:
             pass
         return True
+
+    def _fire_sleep_due_nudge(self, delay_sec: float, cmd_excerpt: str) -> None:
+        """🩹 [β.5.22-G / 2026-05-19] sleep_intent 到点 → push nudge 提醒 Sir.
+
+        触发条件 (all):
+        - Sir 没在 sleep_mode (没真睡)
+        - Sir 没显式 cancel sleep_routine
+        - Sir 此刻没在 active_conversation (避免插话)
+
+        push __NUDGE__ type=sleep_due, 主脑 stream_nudge 看 SWM 自决怎么说.
+        nudge_directive 含 Sir 原话 + 到点时间, 让主脑 honest 引用.
+        """
+        try:
+            from jarvis_utils import bg_log
+        except Exception:
+            def bg_log(s): print(s)
+        try:
+            # 1. Sir 真睡了 (sleep_mode 激活) → 不打扰
+            gate = getattr(self.jarvis, 'nudge_gate', None)
+            if gate is not None and gate.is_sleep_mode():
+                bg_log("⏰ [SleepDue/Skip] Sir 已 sleep_mode, 不提醒")
+                return
+            # 2. Sir 撤回了 routine → 不打扰
+            if getattr(self, '_sleep_routine_cancelled', False):
+                bg_log("⏰ [SleepDue/Skip] Sir 已撤回 routine, 不提醒")
+                return
+            # 3. Sir 在 active_conversation → 让对话自然继续
+            vt = getattr(self, 'voice_thread', None)
+            if vt is not None and getattr(vt, 'in_active_conversation', False):
+                bg_log("⏰ [SleepDue/Skip] Sir 在对话中, 不打扰")
+                return
+
+            mins = max(1, int(delay_sec / 60))
+            directive = (
+                "Sir 之前主动说要睡觉, 现在到点了, 用 butler 风格提醒一句.\n"
+                "[FACTS YOU CAN STATE — DO NOT INVENT MORE]\n"
+                f"  - Sir 原话约 {mins} 分钟前: '{cmd_excerpt}'\n"
+                f"  - Sir 表示约 {mins} 分钟后睡觉, 这个时间到了\n"
+                "[STYLE]\n"
+                "  - 1 句话英文 + ---ZH--- 中文翻译\n"
+                "  - butler dry tone, 不奉承不啰嗦\n"
+                "  - 直接说时间到了, 别 'Just a gentle reminder' 这种铺垫\n"
+                "  - 如 Sir 此刻在看视频/玩游戏, 别强逼, 提醒为主\n"
+                "[FORBIDDEN]\n"
+                "  - 别说 'I'll keep watching' / 'shall I continue X while you rest' (β.5.21-C)\n"
+                "  - 别给虚假统计 (没数据别瞎报 'Sleep duration / minutes left')\n"
+            )
+            import json as _json
+            ctx = {
+                'type': 'sleep_due',
+                'channel': 'voice',
+                'nudge_directive': directive,
+                'source': 'SleepIntentDueTimer',
+                'urgency_score': 0.7,
+                'cmd_excerpt': cmd_excerpt,
+                'delay_min': mins,
+            }
+            payload = "__NUDGE__:" + _json.dumps(ctx, ensure_ascii=False)
+            self.push_command(payload)
+            bg_log(
+                f"⏰ [SleepDue/PUSH] Sir 表态 {mins}min 后睡 → 到点提醒 nudge 已 push"
+            )
+            # SWM publish 让主脑知道
+            try:
+                bus = getattr(self.jarvis, 'event_bus', None)
+                if bus is not None:
+                    bus.publish(
+                        etype='sleep_intent_due',
+                        description=f"Sir said sleep in {mins}min, time is up",
+                        source='SleepIntentDueTimer',
+                        metadata={'delay_min': mins, 'cmd_excerpt': cmd_excerpt},
+                        salience=0.7,
+                    )
+            except Exception:
+                pass
+        except Exception as _due_e:
+            try:
+                bg_log(f"⚠️ [SleepDue] fire err: {_due_e}")
+            except Exception:
+                pass
 
     def _trigger_sleep_mode_routine(self, delay_sec: float) -> None:
         """🩹 [β.2.9.1 / 2026-05-18] Sir 准则 5 落地: 'I shall mute/dim' 真做.
@@ -2384,6 +2542,36 @@ class JarvisWorkerThread(QThread):
             new_until = time.time() + delay_sec + self._SLEEP_GRACE_SEC
             old_until = getattr(self, '_sleep_intent_until', 0.0)
             self._sleep_intent_until = max(old_until, new_until)
+
+            # 🩹 [β.5.22-G / 2026-05-19] Sir 01:34 实测痛点: "X 分钟后睡 → 到点了 Jarvis 不提醒".
+            # Sir 说"30 分钟后睡" 后, 30 分钟到点 Jarvis 应主动 nudge 提醒"到点了, 该睡了".
+            # 现状: sleep_intent 窗口仅 silence late_night/suggest_break, 没人到点 wake-up 提醒.
+            # 修法: schedule 一个 Timer 到 (now + delay_sec) push __NUDGE__ type=sleep_due.
+            # 主脑 stream_nudge 看 SWM 自决怎么说 (e.g. "Sir, 您说的时间到了, 我送您去休息?").
+            # 撤销条件: Sir 用 _detect_sleep_cancel 命中关键字时, 一并 cancel due timer.
+            try:
+                _old_due = getattr(self, '_sleep_intent_due_timer', None)
+                if _old_due is not None and _old_due.is_alive():
+                    _old_due.cancel()
+            except Exception:
+                pass
+            try:
+                import threading as _due_threading
+                _due_timer = _due_threading.Timer(
+                    delay_sec, self._fire_sleep_due_nudge,
+                    args=(delay_sec, cmd[:80]))
+                _due_timer.daemon = True
+                _due_timer.start()
+                self._sleep_intent_due_timer = _due_timer
+                try:
+                    from jarvis_utils import bg_log as _due_bg
+                    _due_bg(
+                        f"⏰ [Sleep Intent/DueTimer] {int(delay_sec/60)} min 后主动提醒 'sir 到点了'"
+                    )
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
             # 🩹 [β.2.9.1 / 2026-05-18] sleep_mode_routine: 自动执行 Sir 想要的"睡觉模式"
             # mute WeChat + dim display (准则 5 真做, 不只 prompt 上说 'I shall').

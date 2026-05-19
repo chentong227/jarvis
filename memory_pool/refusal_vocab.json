@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "note": "Sir Refusal Detection Vocabulary - 准则 6 vocab 化. \u6309 generic / strong / dismissal_soft / sleep_soft \u5206\u7c7b. \u52a8\u7269\u8868\u8fbe\u4f1a\u88ab L7 Reflector LLM-propose \u63a8\u8350 (\u4e0b\u8f6e).",
+  "markers": ["P0+20-\u03b2.5.22-F / 2026-05-19"],
+  "generic": [
+    "no thanks", "no thank you", "thanks but no",
+    "i'm fine", "im fine", "i am fine", "it's fine", "its fine",
+    "i'm ok", "im ok", "i am ok", "it's ok", "its ok",
+    "i'm good", "im good", "i am good",
+    "i got it", "i've got it", "ive got it",
+    "i'll fix", "ill fix", "i will fix", "i can fix",
+    "i'll handle", "ill handle", "i will handle",
+    "not now", "leave it", "let it be", "forget it",
+    "stop offering", "stop suggesting",
+    "\u4e0d\u9700\u8981", "\u4e0d\u7528", "\u4e0d\u5fc5", "\u6ca1\u4e8b", "\u7b97\u4e86", "\u4e0d\u7528\u4e86",
+    "\u6211\u81ea\u5df1", "\u81ea\u5df1\u6765", "\u81ea\u5df1\u80fd", "\u6211\u53ef\u4ee5", "\u6211\u80fd",
+    "\u522b\u518d\u63d0", "\u522b\u518d\u8bf4", "\u591f\u4e86", "\u505c\u4e0b", "\u505c\u6b62\u5e2e\u52a9",
+    "\u4e0d\u9700\u8981\u4f60\u7684\u5e2e\u52a9", "\u4e0d\u8981\u4f60\u7684\u5e2e\u52a9"
+  ],
+  "strong": [
+    "\u4e0d\u9700\u8981\u4f60\u7684\u5e2e\u52a9", "\u4e0d\u8981\u4f60\u7684\u5e2e\u52a9", "\u4e0d\u8981\u518d\u63d0",
+    "\u522b\u518d\u63d0", "\u522b\u518d\u8bf4", "\u522b\u518d\u6765",
+    "\u4e0d\u8981\u6253\u6270", "\u522b\u6253\u6270", "\u95ed\u5634", "\u5b89\u9759\u4e00\u4e0b", "\u505c\u6b62\u5e2e\u52a9", "\u4f60\u522b\u8bf4\u8bdd",
+    "stop offering", "stop suggesting", "stop talking", "stop interrupting",
+    "leave me alone", "i don't need help", "i don't need your help",
+    "i dont need help", "i dont need your help", "shut up", "be quiet"
+  ],
+  "dismissal_soft": [
+    "\u62dc\u62dc", "\u62dc", "\u665a\u5b89", "\u660e\u5929\u89c1", "\u6539\u5929\u804a", "\u6539\u5929\u89c1", "\u660e\u5929\u518d\u804a", "\u6539\u5929\u518d\u804a",
+    "good night", "goodnight", "bye", "talk later", "catch you later", "see you tomorrow", "see ya"
+  ],
+  "sleep_soft": [
+    "\u6211\u53bb\u7761\u89c9\u4e86", "\u6211\u8981\u7761\u4e86", "\u6211\u53bb\u7761", "\u6211\u7761\u4e86",
+    "\u665a\u70b9\u518d\u7761", "\u8fd9\u4f1a\u8fd8\u4e0d\u7761", "\u73b0\u5728\u4e0d\u7761", "\u8fd8\u4e0d\u7761", "\u4e00\u4f1a\u513f\u7761", "\u4e00\u4f1a\u7761",
+    "\u7b49\u4e0b\u518d\u7761", "\u4e00\u4f1a\u513f\u518d\u7761", "\u4e00\u4f1a\u518d\u7761",
+    "\u597d\u7684", "\u597d", "\u884c", "\u77e5\u9053\u4e86", "\u6536\u5230",
+    "i'll go to sleep", "i'm gonna sleep", "i'll sleep later", "later", "in a bit",
+    "ok", "okay", "sure", "got it", "alright"
+  ],
+  "soft_promise_keywords_excluded_from_refusal_note": "\u8fd9\u4e9b\u8868\u8fbe\u4e0d\u662f\u62d2\u7edd\u5e2e\u52a9, \u662f Sir \u7684\u8f6f\u627f\u8bfa/\u540c\u610f/\u544a\u522b. _detect_help_refusal \u9047\u5230\u8fd9\u4e9b\u5e94\u65e9\u9000, \u4e0d\u89e6\u53d1 freeze_for. _detect_sleep_intent \u4f1a\u53e6\u8d70\u81ea\u5df1\u8def\u5f84 \u8bbe _sleep_intent_until."
+}
