@@ -166,13 +166,22 @@ ABS_AGE_HARD_LIMIT_S = 12 * 3600.0
 
 
 class InconsistencyWatcher(threading.Thread):
-    """主动性 B — 检测 Sir 表态-行为反差, 给 ProactiveCare 注入 signal."""
+    """主动性 B — 检测 Sir 表态-行为反差, 给 ProactiveCare 注入 signal.
+
+    🩹 [β.5.15 / 2026-05-19] β.5 重构收尾 - 准则 6 数据强耦合:
+      1. 加 nudge_gate 引用 (publish_only 模式下永真, 但跨源 cooldown 统一)
+      2. 所有 skip 路径 (startup_guard / global_cooldown / per_promise_cooldown) publish
+         'gate_advice' source='InconsistencyWatcher' 到 SWM. sal=0.15 不污染默认 evidence.
+      3. _dispatch 前调 gate.can_speak (跟 CommitmentWatcher 一致) 让 NudgeGate 知道.
+    """
 
     def __init__(self, worker, central_nerve=None,
-                  tick_interval_s: float = TICK_INTERVAL_S):
+                  tick_interval_s: float = TICK_INTERVAL_S,
+                  nudge_gate=None):
         super().__init__(daemon=True, name='InconsistencyWatcher')
         self.worker = worker
         self.nerve = central_nerve
+        self.gate = nudge_gate  # [β.5.15] NudgeGate 引用 (publish_only 永真)
         self.tick = tick_interval_s
         self._stop = threading.Event()
         # 🩹 [β.2.9.7] key 从 promise.id 改成 (desc+deadline+reply)[:160] hash:
@@ -180,6 +189,44 @@ class InconsistencyWatcher(threading.Thread):
         self._fired_promises: dict = {}      # cooldown_key (str) → last_fire_ts
         self._last_any_fire_ts: float = 0.0  # 全局节流
         self._daemon_start_ts: float = time.time()  # 🩹 startup guard 基准
+        # [β.5.15] skip publish dedupe (60s 内同 reason 1 次)
+        self._skip_publish_last_t: dict = {}
+
+    def _publish_skip(self, skip_reason: str, extra_meta: dict = None):
+        """[β.5.15] skip 时 publish 'gate_advice' 到 SWM (跟 WellnessGuardian 同设计).
+
+        sal=0.15 < 0.3 SWM render floor: 写历史不污染主脑 evidence. dedupe 60s.
+        """
+        try:
+            _now = time.time()
+            _last = self._skip_publish_last_t.get(skip_reason, 0)
+            if _now - _last < 60.0:
+                return
+            self._skip_publish_last_t[skip_reason] = _now
+            # GC 5min 以前
+            self._skip_publish_last_t = {
+                k: v for k, v in self._skip_publish_last_t.items()
+                if _now - v < 300
+            }
+            from jarvis_utils import get_event_bus
+            _bus = get_event_bus()
+            if _bus is None:
+                return
+            meta = {
+                'decision': 'block',
+                'block_reason': skip_reason,
+            }
+            if extra_meta:
+                meta.update(extra_meta)
+            _bus.publish(
+                etype='gate_advice',
+                description=f"InconsistencyWatcher skipped tick: {skip_reason}",
+                source='InconsistencyWatcher',
+                metadata=meta,
+                salience=0.15,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _cooldown_key(p) -> str:
@@ -292,7 +339,17 @@ class InconsistencyWatcher(threading.Thread):
 
         复用 ProactiveCareEngine 现有发送通道, 让主脑自己决定 callback 话术
         (准则 6 不教句式). 复用 ProactiveCare cooldown / channel 升级.
+
+        🩹 [β.5.15 / 2026-05-19] 前置 NudgeGate.can_speak (跟 CommitmentWatcher 一致):
+        publish_only 模式下永真但跨源 cooldown 统一. NudgeGate 标 last_nudge_time
+        让 Conductor/SmartNudge inter_source_cooldown 知道刚 fire 过 inconsistency.
         """
+        # [β.5.15] gate check: 让 NudgeGate 看到这次 nudge (publish_only 永真)
+        if self.gate is not None and not self.gate.can_speak('companion',
+                is_urgent=False, nudge_type='proactive_care'):
+            self._publish_skip('nudge_gate_block_proactive_care',
+                                {'promise_id': getattr(p, 'id', '?')[:40]})
+            return
         try:
             import json
             directive = (
@@ -333,7 +390,12 @@ class InconsistencyWatcher(threading.Thread):
         # 🩹 [β.2.9.7] 启动 guard — 进程刚起来 5min 内只观察, 不发声.
         # 防"跨 session 残留 promise 在启动瞬间被一次 fire 完". 现实 wake-time
         # callback 由 ReturnSentinel 接管, InconsistencyWatcher 只管"刚承诺转头反悔".
-        if time.time() - self._daemon_start_ts < STARTUP_GUARD_S:
+        _now = time.time()
+        if _now - self._daemon_start_ts < STARTUP_GUARD_S:
+            # [β.5.15] startup_guard skip → publish 到 SWM
+            _remain = int(STARTUP_GUARD_S - (_now - self._daemon_start_ts))
+            self._publish_skip(f'startup_guard_{_remain}s_remaining',
+                                {'startup_guard_remaining_s': _remain})
             return
         # 🩹 [β.2.9.6 audit] 清理过期 _fired_promises (cooldown 2 倍后清除, 防内存泄漏)
         try:
@@ -346,7 +408,13 @@ class InconsistencyWatcher(threading.Thread):
         except Exception:
             pass
         # 🩹 [β.2.9.7] 全局节流: 任意 fire 5min 内不再 fire
-        if time.time() - self._last_any_fire_ts < GLOBAL_COOLDOWN_S:
+        if _now - self._last_any_fire_ts < GLOBAL_COOLDOWN_S:
+            # [β.5.15] global_cooldown skip → publish 到 SWM
+            _gap = int(_now - self._last_any_fire_ts)
+            _remain = int(GLOBAL_COOLDOWN_S - _gap)
+            self._publish_skip(f'global_cooldown_{_remain}s_remaining',
+                                {'global_cooldown_remaining_s': _remain,
+                                 'last_fire_age_s': _gap})
             return
         try:
             from jarvis_promise_log import get_default_log
@@ -378,11 +446,14 @@ _DEFAULT_WATCHER: Optional[InconsistencyWatcher] = None
 _LOCK = threading.Lock()
 
 
-def ensure_inconsistency_watcher_started(worker, central_nerve=None) -> None:
+def ensure_inconsistency_watcher_started(worker, central_nerve=None,
+                                            nudge_gate=None) -> None:
+    """[β.5.15] 加 nudge_gate 参数让 InconsistencyWatcher 也走 NudgeGate."""
     global _DEFAULT_WATCHER
     with _LOCK:
         if _DEFAULT_WATCHER is None and worker is not None:
-            _DEFAULT_WATCHER = InconsistencyWatcher(worker, central_nerve)
+            _DEFAULT_WATCHER = InconsistencyWatcher(worker, central_nerve,
+                                                      nudge_gate=nudge_gate)
             _DEFAULT_WATCHER.start()
 
 

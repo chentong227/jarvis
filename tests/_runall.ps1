@@ -160,7 +160,8 @@ $tests = @(
     "_test_p0_plus_20_beta511_hey_jarvis_fast_wake_persist",
     "_test_p0_plus_20_beta512_stream_break_persist",
     "_test_p0_plus_20_beta513_nudge_llm_all_channels_persist",
-    "_test_p0_plus_20_beta514_wellness_publish_skip_persist"
+    "_test_p0_plus_20_beta514_wellness_publish_skip_persist",
+    "_test_p0_plus_20_beta515_inconsistency_publish_skip_persist"
 )
 
 foreach ($t in $tests) {

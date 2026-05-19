@@ -1022,7 +1022,11 @@ class CompanionCenter:
         try:
             from jarvis_inconsistency_watcher import ensure_inconsistency_watcher_started
             _nerve_ref = getattr(self.worker, 'jarvis', None)
-            ensure_inconsistency_watcher_started(self.worker, _nerve_ref)
+            # 🩹 [β.5.15 / 2026-05-19] 传 self.gate 让 InconsistencyWatcher 也走
+            # NudgeGate publish_only 路径 (跨源 cooldown 统一). gate 是 CompanionCenter
+            # 共享的 NudgeGate 实例 (跟 SmartNudge / Conductor / CommitmentWatcher 同源).
+            ensure_inconsistency_watcher_started(self.worker, _nerve_ref,
+                                                  nudge_gate=self.gate)
             print("[CompanionCenter] InconsistencyWatcher 就绪 (每 60s 查 promise-behavior 反差)")
         except Exception as _iw_err:
             print(f"[CompanionCenter] InconsistencyWatcher 启动失败 (非致命): {_iw_err}")
