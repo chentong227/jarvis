@@ -161,7 +161,7 @@ _ORGAN_NAME_LOOKBEHIND = _re_split_helper.compile(
 )
 
 
-def _find_sentence_split_idx(buffer: str, soft_split: bool = True) -> int:
+def _find_sentence_split_idx(buffer: str, soft_split: bool = True, is_first_sentence: bool = False) -> int:
     """splitter helper：在 buffer 找下一句的切分位置。-1 表示没有可切位置。
 
     设计原则（性能第一）：
@@ -170,11 +170,22 @@ def _find_sentence_split_idx(buffer: str, soft_split: bool = True) -> int:
     - 不在 organ.command 的 . 处切
     - soft_split=True 时支持 ',;' 软切
 
-    详 docs/JARVIS_SOUL_UNIVERSALIZATION.md / β.2.7.3 修法。
+    🩹 [P0+20-β.5.9 / 2026-05-19] 加 `is_first_sentence`:
+    - False (默认): hard>=20, soft>=15 (原行为，保护后续句 prosody)
+    - True (首句): hard>=8, soft>=4 (让首句更早切送 TTS, 减少 Sir 听到首句的延迟)
+    根因: 短回复 "Yes, Sir." (9 字符) 现在永远不切, 要等 stream end (~3s)
+    才 flush, 然后 render 1.5s = Sir 5s 后才听到. 首句早切让 render 早启动.
+    长回复首句 "A fortuitous outcome, Sir." (26 字符) 现在在 i=20 切, 改后
+    在 i=4 (',') 切, "A fortuitous" → render → 后续 "outcome, Sir." 跟上.
+
+    详 docs/JARVIS_SOUL_UNIVERSALIZATION.md / β.2.7.3 修法 + β.5.9 BUG-3 fix。
     """
     hard_symbols = {".", "!", "?", "\n"}
     soft_symbols = {",", ";", "，", "；"} if soft_split else set()
     _buf_len = len(buffer)
+    # 🩹 [β.5.9] 首句激进切, 后续保守
+    _hard_min = 8 if is_first_sentence else 20
+    _soft_min = 4 if is_first_sentence else 15
     for i, char in enumerate(buffer):
         if char in hard_symbols:
             if char == '.':
@@ -182,10 +193,10 @@ def _find_sentence_split_idx(buffer: str, soft_split: bool = True) -> int:
                 if _ORGAN_NAME_LOOKBEHIND.search(buffer[:i]) and \
                         i + 1 < _buf_len and buffer[i + 1].isalnum():
                     continue
-            if char == '\n' or i >= 20:
+            if char == '\n' or i >= _hard_min:
                 return i
         elif soft_split and char in soft_symbols:
-            if i >= 15 and _buf_len > i + 5:
+            if i >= _soft_min and _buf_len > i + 5:
                 lookahead = buffer[i + 1:i + 6].lower()
                 if not lookahead.startswith(" sir") and not lookahead.startswith(" jar"):
                     return i
@@ -231,6 +242,13 @@ class ChatBypass:
         # _play_worker 在 wave_queue 空一帧时先看这个标志：True 则说明下一帧马上到，
         # 不能 emit IDLE 缩短回声防御窗口。
         self._render_in_progress = False
+
+        # 🩹 [P0+20-β.5.9 / 2026-05-19] BUG-3 (TTS 卡顿) 诊断 — Audio Trace timing
+        # Sir 实测: "字幕都打完了好久才说话". 加 seq 串联 _put_audio → _render_worker
+        # → _play_worker 时序, 让 Sir 下次实测能 grep "[Audio Trace]" 看每段耗时.
+        # 性能影响: 仅 bg_log 4 行 / 句, < 100us. 不破坏行为.
+        self._audio_trace_seq = 0
+        self._audio_trace_lock = threading.Lock()
 
         # 🩹 [P0+20-β.1.25 / 2026-05-16] Nudge anti-repeat 历史
         # Sir 反馈："回归问候/催睡固定句式我看了 5-6 遍" — 因为 directive + STM + LLM 一样
@@ -635,7 +653,21 @@ class ChatBypass:
                 self._last_audio_ts = now
             except Exception:
                 pass
-        self.audio_queue.put((text, {}))
+        # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace seq+timing — BUG-3 诊断
+        # Sir grep "[Audio Trace] enq" 看 sentence 入 audio_queue 的精确时间.
+        try:
+            with self._audio_trace_lock:
+                self._audio_trace_seq += 1
+                _trace_seq = self._audio_trace_seq
+            _enq_t = time.time()
+            try:
+                from jarvis_utils import bg_log as _at_bg
+                _at_bg(f"🎵 [Audio Trace] enq seq={_trace_seq} len={len(text)} text={text[:40]!r}")
+            except Exception:
+                pass
+            self.audio_queue.put((text, {'seq': _trace_seq, 'enq_t': _enq_t}))
+        except Exception:
+            self.audio_queue.put((text, {}))
 
     def _create_stream(self, contents, enable_search=False):
         _t_key_start = time.time()
@@ -868,6 +900,10 @@ Spoken English:"""
             try:
                 item = self.audio_queue.get()
                 sentence = item[0] if isinstance(item, tuple) else item
+                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace metadata 透传
+                _trace_meta = item[1] if (isinstance(item, tuple) and len(item) > 1 and isinstance(item[1], dict)) else {}
+                _trace_seq = _trace_meta.get('seq', -1)
+                _enq_t = _trace_meta.get('enq_t', None)
                 # [P0+18-a.14 / 2026-05-15] 修 BUG #9: 任何含中文的 sentence 在 render 前 strip 中文。
                 # _put_audio 已加守门但有些路径直接 audio_queue.put((text, {})) 绕开，这里兜底。
                 if sentence and _zh_re.search(sentence):
@@ -902,10 +938,25 @@ Spoken English:"""
                         pass
                     # [R7-α/B8] 置标志位：渲染期间 _play_worker 不允许 emit IDLE
                     self._render_in_progress = True
+                    # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace render start
+                    _render_start_t = time.time()
+                    _queue_wait_s = (_render_start_t - _enq_t) if _enq_t else -1
+                    try:
+                        from jarvis_utils import bg_log as _at_bg2
+                        _at_bg2(f"🎵 [Audio Trace] render_start seq={_trace_seq} queue_wait={_queue_wait_s:.2f}s")
+                    except Exception:
+                        pass
                     try:
                         audio_bytes = self.vocal.render_only(sentence)
+                        _render_done_t = time.time()
                         if audio_bytes:
-                            self.wave_queue.put(audio_bytes)
+                            self.wave_queue.put((audio_bytes, {'seq': _trace_seq, 'enq_t': _enq_t, 'render_done_t': _render_done_t}))
+                            try:
+                                from jarvis_utils import bg_log as _at_bg3
+                                _wq_size = self.wave_queue.qsize()
+                                _at_bg3(f"🎵 [Audio Trace] render_done seq={_trace_seq} render={_render_done_t - _render_start_t:.2f}s wave_qsize={_wq_size} bytes={len(audio_bytes)}")
+                            except Exception:
+                                pass
                         else:
                             try:
                                 from jarvis_utils import bg_log as _bg
@@ -950,17 +1001,34 @@ Spoken English:"""
         while True:
             try:
                 try:
-                    audio_bytes = self.wave_queue.get(timeout=30.0)
+                    item = self.wave_queue.get(timeout=30.0)
                 except queue.Empty:
                     # [R7-α/B8] 30s 超时回 IDLE，但若 _render_worker 正在渲染就不动
                     if not self._render_in_progress:
                         self.state_callback("IDLE")
                     continue
 
-                if isinstance(audio_bytes, tuple):
-                    audio_bytes = audio_bytes[0]
+                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace metadata 解包
+                if isinstance(item, tuple):
+                    audio_bytes = item[0]
+                    _wq_meta = item[1] if (len(item) > 1 and isinstance(item[1], dict)) else {}
+                else:
+                    audio_bytes = item
+                    _wq_meta = {}
+                _trace_seq = _wq_meta.get('seq', -1)
+                _enq_t = _wq_meta.get('enq_t', None)
+                _render_done_t = _wq_meta.get('render_done_t', None)
 
                 self.state_callback("EXECUTING")
+                # 🩹 [P0+20-β.5.9 / 2026-05-19] Audio Trace play_start
+                _play_start_t = time.time()
+                try:
+                    from jarvis_utils import bg_log as _at_bg4
+                    _e2e = (_play_start_t - _enq_t) if _enq_t else -1
+                    _wave_wait = (_play_start_t - _render_done_t) if _render_done_t else -1
+                    _at_bg4(f"🎵 [Audio Trace] play_start seq={_trace_seq} e2e={_e2e:.2f}s wave_wait={_wave_wait:.2f}s bytes={len(audio_bytes) if audio_bytes else 0}")
+                except Exception:
+                    pass
                 try:
                     self.vocal.play_only(audio_bytes)
                 except Exception as e:
@@ -1049,6 +1117,8 @@ Spoken English:"""
         # [P0+18-c.11 / 2026-05-15] local fallback 路径也要追踪 is_subtitle_mode，
         # 否则 ---ZH--- 后续 chunk 的 ZH 内容会被 splitter 喂给 _put_audio。
         is_subtitle_mode = False
+        # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切 (BUG-3 fix)
+        _first_sent_done = False
 
         try:
             for token, done in fallback.chat_stream(local_prompt, timeout=90.0):
@@ -1071,7 +1141,8 @@ Spoken English:"""
 
                 while True:
                     # 🩹 [P0+20-β.2.7.3] 复用 _find_sentence_split_idx（含 organ.command 保护）
-                    earliest_idx = _find_sentence_split_idx(buffer, soft_split=False)
+                    # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切
+                    earliest_idx = _find_sentence_split_idx(buffer, soft_split=False, is_first_sentence=not _first_sent_done)
 
                     if earliest_idx == -1 and len(buffer) > 80:
                         for i in range(len(buffer) - 1, 20, -1):
@@ -1105,6 +1176,7 @@ Spoken English:"""
                         if sentence:
                             self._put_audio(sentence)
                             self.subtitle_queue.put(("en", sentence))
+                            _first_sent_done = True  # β.5.9
                     else:
                         break
 
@@ -1444,6 +1516,8 @@ Spoken English:"""
             _first_tool_in_chain = True
             # 与 self._last_tool_results 共引用（云端补答路径）
             self._last_tool_results = _tool_results = []
+            # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切 (cloud followup 路径)
+            _first_sent_done = False
 
             while True:
                 if getattr(self, 'is_interrupted', False):
@@ -1527,7 +1601,8 @@ Spoken English:"""
 
                         while True:
                             # 🩹 [P0+20-β.2.7.3] 复用 helper（含 organ.command 保护）
-                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
+                            # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切
+                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True, is_first_sentence=not _first_sent_done)
                             if earliest_idx == -1 and len(buffer) > 80:
                                 for i in range(len(buffer) - 1, 20, -1):
                                     if buffer[i] == ' ':
@@ -1560,6 +1635,7 @@ Spoken English:"""
                                 if sentence:
                                     self._put_audio(sentence)
                                     self.subtitle_queue.put(("en", sentence))
+                                    _first_sent_done = True  # β.5.9
                             else:
                                 break
 
@@ -2198,6 +2274,9 @@ Spoken English:"""
                 gatekeeper_triggered = False
                 _chunk_count = 0
                 _t_stream_start = time.time()
+                # 🩹 [P0+20-β.5.9 / 2026-05-19] BUG-3 fix: 首句激进切 (hard>=8/soft>=4)
+                # 让 Sir 听到首句 audio 更快. 后续句保持原阈值保 prosody.
+                _first_sent_done = False
                 
                 for chunk in response:
                     _chunk_count += 1
@@ -2292,7 +2371,8 @@ Spoken English:"""
 
                         while True:
                             # 🩹 [P0+20-β.2.7.3] 复用 helper（含 organ.command 保护）
-                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
+                            # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切
+                            earliest_idx = _find_sentence_split_idx(buffer, soft_split=True, is_first_sentence=not _first_sent_done)
 
                             if earliest_idx == -1 and len(buffer) > 80:
                                 for i in range(len(buffer) - 1, 20, -1):
@@ -2332,6 +2412,7 @@ Spoken English:"""
                                 if sentence:
                                     self._put_audio(sentence)
                                     self.subtitle_queue.put(("en", sentence))
+                                    _first_sent_done = True  # β.5.9 首句已发, 后续保守
                             else:
                                 break
 
@@ -3933,6 +4014,8 @@ No ZH translation. No closing remark. Nothing else.
             buffer = ""
             _zh_seen = False
             _silence_chosen = False
+            # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切 (stream_nudge 路径)
+            _first_sent_done = False
 
             for chunk in response:
                 if getattr(self, 'is_interrupted', False):
@@ -3977,7 +4060,8 @@ No ZH translation. No closing remark. Nothing else.
                     while True:
                         # 🩹 [P0+20-β.2.7.3 / 2026-05-17] 复用 module-level _find_sentence_split_idx
                         # （内含 organ.command 中间 . 不切的保护）
-                        earliest_idx = _find_sentence_split_idx(buffer, soft_split=True)
+                        # 🩹 [P0+20-β.5.9 / 2026-05-19] 首句激进切
+                        earliest_idx = _find_sentence_split_idx(buffer, soft_split=True, is_first_sentence=not _first_sent_done)
 
                         if earliest_idx == -1 and len(buffer) > 80:
                             for i in range(len(buffer) - 1, 20, -1):
@@ -3999,6 +4083,7 @@ No ZH translation. No closing remark. Nothing else.
                             if sentence and not _zh_seen:
                                 self._put_audio(sentence)
                                 self.subtitle_queue.put(("en", sentence))
+                                _first_sent_done = True  # β.5.9
                         else:
                             break
 
