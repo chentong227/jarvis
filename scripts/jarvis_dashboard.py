@@ -315,43 +315,76 @@ def read_sir_commitments() -> Dict:
 # ---- 贾维斯口头承诺 (PromiseLog) ----
 
 def read_jarvis_promises() -> Dict:
-    """🤝 贾维斯口头承诺 — PromiseLog"""
-    out = {'rows': [], 'pending_n': 0, 'fulfilled_n': 0, 'untracked_n': 0,
-           'total': 0, 'err': None}
+    """🤝 贾维斯口头承诺 — PromiseLog (β.5.30: 按 author 区分 jarvis/sir 双账本).
+
+    🩹 [β.5.30 / 2026-05-20] Sir 03:35 反馈"我承诺和 jarvis 承诺要分明白".
+    老版混在一起 (Sir 自己说"我两点睡"也算 Jarvis 承诺) → 言行不一信号误报.
+    修法: 返 jarvis_* (Jarvis 自己说的) + sir_* (Sir 自己说的) 双账本.
+    """
+    out = {
+        'rows': [],          # 兼容老 API: jarvis 部分
+        'pending_n': 0, 'fulfilled_n': 0, 'untracked_n': 0,
+        'total': 0,
+        # β.5.30 新: 分账本
+        'jarvis_rows': [], 'jarvis_pending_n': 0, 'jarvis_fulfilled_n': 0,
+        'jarvis_untracked_n': 0, 'jarvis_total': 0,
+        'sir_rows': [], 'sir_pending_n': 0, 'sir_fulfilled_n': 0,
+        'sir_untracked_n': 0, 'sir_total': 0,
+        'err': None,
+    }
     data = _safe_read_json(os.path.join(MEM, 'jarvis_promise_log.json'), {})
     if not isinstance(data, dict):
         out['err'] = 'promise_log 格式异常'
         return out
     promises = list(data.values())
     promises.sort(key=lambda p: -float(p.get('registered_at', 0) or 0))
-    out['total'] = len(promises)
+
+    st_zh_map = {
+        'pending': '⏳ 还没动',
+        'fulfilled': '✓ 已兑现',
+        'overdue': '⏰ 超时',
+        'untracked': '❓ 没监控到',
+        'cancelled': '🚫 已撤销',
+    }
     for p in promises:
         st = p.get('state', '?')
+        author = p.get('author', 'jarvis')  # 老数据无字段默认 jarvis
+        out['total'] += 1
+        bucket = 'sir' if author == 'sir' else 'jarvis'
         if st == 'pending':
-            out['pending_n'] += 1
+            out[f'{bucket}_pending_n'] += 1
         elif st == 'fulfilled':
-            out['fulfilled_n'] += 1
+            out[f'{bucket}_fulfilled_n'] += 1
         elif st == 'untracked':
-            out['untracked_n'] += 1
-    for p in promises[:12]:
+            out[f'{bucket}_untracked_n'] += 1
+        out[f'{bucket}_total'] += 1
+
+    # 老 API 兼容: rows/*_n 只算 jarvis (Sir 通常 view 的"言行不一"指 Jarvis)
+    out['pending_n'] = out['jarvis_pending_n']
+    out['fulfilled_n'] = out['jarvis_fulfilled_n']
+    out['untracked_n'] = out['jarvis_untracked_n']
+
+    for p in promises[:30]:
         st = p.get('state', '?')
-        st_zh = {
-            'pending': '⏳ 还没动',
-            'fulfilled': '✓ 已兑现',
-            'overdue': '⏰ 超时',
-            'untracked': '❓ 没监控到',
-            'cancelled': '🚫 已撤销',
-        }.get(st, st)
-        out['rows'].append({
+        author = p.get('author', 'jarvis')
+        row = {
             'id': p.get('id', '?'),
             'state': st,
-            'state_zh': st_zh,
+            'state_zh': st_zh_map.get(st, st),
             'kind': p.get('kind', '?'),
+            'author': author,
             'desc': (p.get('description') or '')[:80],
             'when': p.get('deadline_str') or '-',
             'age': _humanize_age_zh(float(p.get('registered_at', 0) or 0)),
             'evidence_n': len(p.get('evidence', []) or []),
-        })
+        }
+        if author == 'sir':
+            if len(out['sir_rows']) < 15:
+                out['sir_rows'].append(row)
+        else:
+            if len(out['jarvis_rows']) < 15:
+                out['jarvis_rows'].append(row)
+                out['rows'].append(row)  # 老 API 兼容
 
     # 📌 诊断 — 言行一致的关键指标
     if out['total'] == 0:

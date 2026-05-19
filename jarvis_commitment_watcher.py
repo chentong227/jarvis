@@ -699,6 +699,7 @@ class CommitmentWatcher(threading.Thread):
                         continue
                 if _hit_marker and not is_future_task_confirmed:
                     # 转 PromiseLog soft (Sir 知道发生了, 不闹)
+                    # 🩹 [β.5.30 / 2026-05-20] author='sir' (这是 Sir 自己 cmd 表态, 不是 Jarvis 承诺)
                     try:
                         from jarvis_promise_log import get_default_log as _gpl
                         _log = _gpl()
@@ -709,6 +710,7 @@ class CommitmentWatcher(threading.Thread):
                             jarvis_reply='',
                             turn_id='',
                             lang='zh' if re.search(r'[\u4e00-\u9fa5]', description) else 'en',
+                            author='sir',
                         )
                     except Exception:
                         pass
@@ -815,6 +817,7 @@ class CommitmentWatcher(threading.Thread):
 
             if not _has_time_anchor and not _has_predicate:
                 # 转 PromiseLog soft (Sir 仍知道发生了, 不到点出声)
+                # 🩹 [β.5.30 / 2026-05-20] author='sir' (这个路径是 Sir cmd 推进来, 不是 Jarvis reply 承诺)
                 try:
                     from jarvis_promise_log import get_default_log
                     _log = get_default_log()
@@ -825,6 +828,7 @@ class CommitmentWatcher(threading.Thread):
                         jarvis_reply='',
                         turn_id='',
                         lang='zh' if re.search(r'[\u4e00-\u9fa5]', description) else 'en',
+                        author='sir',
                     )
                 except Exception:
                     pass

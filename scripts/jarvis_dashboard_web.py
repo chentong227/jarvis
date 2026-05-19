@@ -211,39 +211,71 @@ HTML_TEMPLATE = r"""
   </div>
 </section>
 
-<!-- 🩹 [β.5.28-fix9 / 2026-05-20] Sir 03:33 反馈"Jarvis 口头答应没做到, 没地方显示" -->
-<!-- 言行不一区: 显眼 untracked + pending promise + 一键清残留 -->
-<section class="max-w-7xl mx-auto px-6 pt-8" x-show="(promise.untracked_n || 0) > 0 || (promise.pending_n || 0) > 0">
+<!-- 🩹 [β.5.28-fix9/β.5.30 / 2026-05-20] 言行一致审计双账本 (Jarvis + Sir) -->
+<section class="max-w-7xl mx-auto px-6 pt-8"
+         x-show="(promise.jarvis_total || 0) > 0 || (promise.sir_total || 0) > 0">
   <div class="flex items-center justify-between mb-3">
     <h2 class="text-xl font-bold flex items-center gap-2">
       <span>⚖️</span>
       <span>言行一致审计</span>
-      <span class="badge"
-            :class="(promise.untracked_n || 0) > 3 ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'"
-            x-text="'untracked ' + (promise.untracked_n || 0) + ' · pending ' + (promise.pending_n || 0) + ' · ✓' + (promise.fulfilled_n || 0)"></span>
     </h2>
     <button onclick="window.dashboardResetPromise(this)"
-            title="清空贾维斯口头承诺残留 (保留已兑现的)"
+            title="清空所有 pending/untracked 承诺 (保留已兑现)"
             class="px-3 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-600 transition text-xs font-medium">
       🧹 清残留 (留 ✓)
     </button>
   </div>
-  <div class="glass rounded-2xl p-5 border border-rose-500/20 shadow-lg">
-    <p x-show="promise.diagnosis" class="text-sm text-rose-300 mb-3" x-text="'📌 ' + promise.diagnosis"></p>
-    <div class="space-y-2 max-h-80 overflow-y-auto scrollbar-thin">
-      <template x-for="p in (promise.rows || [])" :key="p.id">
-        <div class="flex items-start gap-3 p-2 rounded-lg hover:bg-slate-800/50">
-          <span class="text-sm"
-                :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-rose-400' : 'text-amber-400')"
-                x-text="p.state_zh"></span>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm text-slate-200 truncate" x-text="p.desc"></p>
-            <p class="text-xs text-slate-500" x-text="p.age + ' · ' + p.when + ' · evidence=' + p.evidence_n"></p>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <!-- Jarvis 承诺 (机器人答应却没做) -->
+    <div class="glass rounded-2xl p-5 border border-rose-500/20 shadow-lg"
+         x-show="(promise.jarvis_total || 0) > 0">
+      <h3 class="font-semibold flex items-center gap-2 mb-3">
+        <span>🤖</span>
+        <span>Jarvis 答应过</span>
+        <span class="badge"
+              :class="(promise.jarvis_untracked_n || 0) > 3 ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'"
+              x-text="'untracked ' + (promise.jarvis_untracked_n || 0) + ' · pending ' + (promise.jarvis_pending_n || 0) + ' · ✓' + (promise.jarvis_fulfilled_n || 0)"></span>
+      </h3>
+      <p class="text-xs text-slate-400 mb-2">机器人嘴说要做的事 (没做到 = 言行不一)</p>
+      <div class="space-y-1 text-xs max-h-72 overflow-y-auto scrollbar-thin">
+        <template x-for="p in (promise.jarvis_rows || [])" :key="p.id">
+          <div class="flex items-start gap-2 p-2 rounded hover:bg-slate-800/50">
+            <span :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-rose-400' : 'text-amber-400')"
+                  x-text="p.state_zh"></span>
+            <div class="flex-1 min-w-0">
+              <p class="text-slate-200 truncate" x-text="p.desc"></p>
+              <p class="text-slate-500 text-[10px]" x-text="p.age + ' · ' + p.when"></p>
+            </div>
           </div>
-          <span class="text-xs font-mono text-slate-600" x-text="p.kind"></span>
-        </div>
-      </template>
+        </template>
+      </div>
     </div>
+
+    <!-- Sir 承诺 (Sir 自己说过要做的事) -->
+    <div class="glass rounded-2xl p-5 border border-blue-500/20 shadow-lg"
+         x-show="(promise.sir_total || 0) > 0">
+      <h3 class="font-semibold flex items-center gap-2 mb-3">
+        <span>👤</span>
+        <span>你自己说过</span>
+        <span class="badge bg-blue-500/20 text-blue-300"
+              x-text="'pending ' + (promise.sir_pending_n || 0) + ' · ✓' + (promise.sir_fulfilled_n || 0) + (promise.sir_untracked_n > 0 ? ' · 漏 ' + promise.sir_untracked_n : '')"></span>
+      </h3>
+      <p class="text-xs text-slate-400 mb-2">你自己 cmd 表过态的 (Jarvis 看见, 但不主动催)</p>
+      <div class="space-y-1 text-xs max-h-72 overflow-y-auto scrollbar-thin">
+        <template x-for="p in (promise.sir_rows || [])" :key="p.id">
+          <div class="flex items-start gap-2 p-2 rounded hover:bg-slate-800/50">
+            <span :class="p.state === 'fulfilled' ? 'text-emerald-400' : (p.state === 'untracked' ? 'text-slate-500' : 'text-blue-400')"
+                  x-text="p.state_zh"></span>
+            <div class="flex-1 min-w-0">
+              <p class="text-slate-200 truncate" x-text="p.desc"></p>
+              <p class="text-slate-500 text-[10px]" x-text="p.age + ' · ' + p.when"></p>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
   </div>
 </section>
 

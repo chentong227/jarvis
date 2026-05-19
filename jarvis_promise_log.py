@@ -63,6 +63,11 @@ class Promise:
     registered_at: float = field(default_factory=time.time)
     fulfilled_at: float = 0.0
     evidence: List[Dict] = field(default_factory=list)   # [{when, kind, what}]
+    # 🩹 [β.5.30 / 2026-05-20] Sir 03:35 反馈"我承诺和 jarvis 承诺要分明白".
+    # author='jarvis' = Jarvis 自己 reply 承诺 (SelfPromiseDetector 注册).
+    # author='sir'    = Sir 自己 cmd 表态 (CommitmentWatcher 转 PromiseLog soft).
+    # 老数据无字段 → 默认 'jarvis' (兼容 - 老 Promise 主要来自 SelfPromiseDetector).
+    author: str = 'jarvis'
 
     def add_evidence(self, kind: str, what: str) -> None:
         self.evidence.append({
@@ -84,13 +89,47 @@ class PromiseExecutionLog:
         self.promises: Dict[str, Promise] = {}
         self._lock = threading.Lock()
         self._load()
+        # 🩹 [β.5.30 / 2026-05-20] backfill author 字段 (老数据无字段 → 推断).
+        # 启发: jarvis_reply 空 → sir (CommitmentWatcher 转的 Sir cmd, 填空 reply).
+        #       jarvis_reply 非空 → jarvis (SelfPromiseDetector 检出必填 reply).
+        self._backfill_authors()
+
+    def _backfill_authors(self) -> int:
+        """老数据 author 字段缺失 → 按 jarvis_reply 推断回填. 返回回填条数."""
+        n = 0
+        try:
+            for p in self.promises.values():
+                if getattr(p, 'author', None) in ('jarvis', 'sir'):
+                    continue  # 已有 author 字段 (新数据) 跳过
+                # 推断: jarvis_reply 非空 = jarvis 自己说 (SelfPromiseDetector)
+                # 空 reply = 来自 CommitmentWatcher 转 Sir cmd
+                if (p.jarvis_reply or '').strip():
+                    p.author = 'jarvis'
+                else:
+                    p.author = 'sir'
+                n += 1
+            if n > 0:
+                try:
+                    self._persist()
+                except Exception:
+                    pass
+                bg_log(
+                    f"📝 [PromiseLog] backfill author 字段 {n} 条 "
+                    f"(reply 空 → sir, reply 非空 → jarvis)"
+                )
+        except Exception:
+            pass
+        return n
 
     def _new_id(self) -> str:
         return 'p_' + uuid.uuid4().hex[:8]
 
     def register(self, description: str, kind: str = 'soft',
                   deadline_str: str = '', jarvis_reply: str = '',
-                  turn_id: str = '', lang: str = '') -> str:
+                  turn_id: str = '', lang: str = '',
+                  author: str = 'jarvis') -> str:
+        # 🩹 [β.5.30 / 2026-05-20] author 字段: 'jarvis' (默认, Jarvis 自己 reply 承诺) /
+        # 'sir' (Sir 自己 cmd 表态, 由 CommitmentWatcher 转 PromiseLog 时标).
         # 🩹 [β.2.9.7 / 2026-05-18] Sir 09:06 实测痛点: InconsistencyWatcher 反复
         # 提醒同一旧承诺. 根因之一: register 没 dedup, 每次 startup / 测试 / 同
         # session 内同 desc + deadline_str 重复 register 新 ID, 老的也仍 pending.
@@ -135,6 +174,7 @@ class PromiseExecutionLog:
                 id=pid, description=description[:300], kind=kind,
                 deadline_str=deadline_str, jarvis_reply=jarvis_reply[:1200],
                 turn_id=turn_id, lang=lang,
+                author=author if author in ('jarvis', 'sir') else 'jarvis',
             )
             self.promises[pid] = p
             self._evict_old_locked()
@@ -338,7 +378,12 @@ class PromiseExecutionLog:
                 data = json.load(f) or {}
             for pid, pd in data.items():
                 try:
+                    # 🩹 [β.5.30 / 2026-05-20] 记原 dict 是否有 author 字段
+                    # (有 = 新数据 author 真. 无 = 老数据 dataclass 默认 jarvis 不准, 需 backfill)
+                    _had_author = 'author' in pd
                     p = Promise(**pd)
+                    if not _had_author:
+                        p.author = '__unknown__'  # 临时标记, backfill 见此就重判
                     self.promises[pid] = p
                 except Exception:
                     continue
