@@ -301,7 +301,9 @@ class ReturnSentinel(threading.Thread):
                     description=f"ReturnSentinel wanted greet but blocked: {skip_reason}",
                     source='ReturnSentinel',
                     metadata=meta,
-                    salience=0.55,
+                    # [β.5.8-fix] 同 SmartNudge: skip 信号 sal=0.25 不进默认 SWM render.
+                    # 真正 Sir 起床 (afk_return raw) sal=0.75+ 仍优先注入.
+                    salience=0.25,
                 )
             except Exception:
                 pass

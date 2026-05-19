@@ -200,7 +200,11 @@ class SmartNudgeSentinel(threading.Thread):
                     description=f"SmartNudge skipped tick: {skip_reason}",
                     source='SmartNudge',
                     metadata=meta,
-                    salience=0.4,  # tick skip 是背景信号
+                    # [β.5.8-fix / 2026-05-19] Sir 14:00 实测 BUG: salience=0.4 让 tick skip
+                    # 进 SWM (default floor 0.3) → 主脑读了一堆 'block' → over-silence Sir
+                    # 起床第一句. 降到 0.2 让 tick skip 不进默认 SWM render. 真正重要的
+                    # state (freeze_active/sleep_mode) 仍由 NudgeGate.can_speak 发 sal=0.5+.
+                    salience=0.2,
                 )
             except Exception:
                 pass

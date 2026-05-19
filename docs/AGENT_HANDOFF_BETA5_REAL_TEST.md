@@ -46,8 +46,36 @@ sentinel → NudgeGate.can_speak           sentinel → publish 'gate_advice' �
 | `9d6000c` β.5.2 | OfferGuard gate_mode | 同 3 档 + jarvis_utils.read_gate_mode helper (DRY) |
 | `407dc7b` β.5.3 | **vocab 切 publish_only** | NudgeGate/OfferGuard 默认 publish_only + state_meta + 7 silence triggers |
 | `e519512` β.5.3-fix | 3 BUG fix | [SILENCE] mid-stream / gate_advice 60s dedupe / last_nudge_age_s None |
-| (待 commit) β.5.4 | Conductor publish-only signal | _check_path_a INTER_SOURCE_COOLDOWN 拦时 publish 'gate_advice' source=Conductor |
-| (待 commit) β.5.5-7 | 收尾 | ReturnSentinel/SmartNudge skip publish helpers + vocab 全切 publish_only |
+| `1548a2d` β.5.4-7 | 收尾 | Conductor + ReturnSentinel/SmartNudge skip publish helpers + vocab 全切 publish_only |
+| `03bc45e` β.5.8-fix | **Sir 实测 BUG-1 急修** ⭐ | bias-toward-voice + MUST SPEAK + 修 4 处 silence 死路 + sentinel skip sal 0.4→0.2 |
+
+## ⭐ β.5.8-fix (Sir 14:00 实测发现 BUG-1 后急修)
+
+**症状**: Sir 98min AFK 起床 + first_today + return_greeting → 主脑选 [SILENCE] (该说也不说)
+
+**4 处 silence 死路全修**:
+1. `[REACTION SPACE]` prompt: bias-toward-silence → **DEFAULT IS VOICE** + MUST SPEAK 5 类
+2. `[TRUTH ANCHOR — RULES 段]`: "silence on unknown beats invented detail" → **but still SPEAK**
+3. `[TRUTH ANCHOR — return_greeting]`: 加 **BUT STILL GREET / Don't go silent**
+4. `[SOUL TO USE]`: "skip silently" → "**still reply normally**"
+
+**3 处 sentinel skip salience 降**:
+- SmartNudge tick skip: 0.4 → **0.2** (低于 SWM floor 0.3)
+- ReturnSentinel skip: 0.55 → **0.25**
+- Conductor cooldown skip: 0.5 → **0.25**
+
+**MUST SPEAK 5 类 (永不 silence)**:
+- ★ `return_greeting` AND `afk_minutes >= 60` — Sir 长时离开必问候
+- ★ `morning_greeting` OR (return_greeting + crosses_sleep=true)
+- ★ `commitment_overdue` / `wakeup_reminder`
+- ★ SWM 含 Sir question/request 在 last 30s
+- ★ sentinel directive 是 one-shot critical event
+
+**ALLOW SILENCE 缩到 4 类 (only explicit Sir reject)**:
+1. SWM `freeze_active=true` (Sir said "standby"/"stop")
+2. SWM `sleep_mode=true` AND nudge_type 非 SLEEP_ALLOWED_TYPES
+3. Sir 60s 内显式 "stop"/"shut up"/"安静"/"别说了"
+4. Directive 自相矛盾 (evidence-contradict)
 
 ---
 

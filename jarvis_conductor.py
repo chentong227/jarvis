@@ -275,7 +275,8 @@ class Conductor(threading.Thread):
                                         'has_shield_alert': bool(snapshot.get('shield_alert', {}).get('active')),
                                         'has_wellness_alert': bool(snapshot.get('wellness_alert', {}).get('active')),
                                     },
-                                    salience=0.5,
+                                    # [β.5.8-fix] cooldown 信号 sal=0.25 不进默认 SWM render
+                                    salience=0.25,
                                 )
                     except Exception:
                         pass

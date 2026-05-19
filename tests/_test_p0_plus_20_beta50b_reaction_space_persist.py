@@ -58,7 +58,7 @@ class TestP0Plus20Beta50BDirectiveReactionSpace(unittest.TestCase):
         anchors = [
             'gate_advice',           # SWM gate 建议拦
             'last 60s',              # 最近 60s 已建议拦
-            "Sir's recent utterance",  # Sir 短回应
+            "Sir's last utterance",  # [β.5.8-fix] 改 recent → last
             'evidence',              # evidence 冲突
         ]
         for anchor in anchors:

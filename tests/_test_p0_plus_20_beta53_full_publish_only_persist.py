@@ -199,45 +199,49 @@ class TestP0Plus20Beta53ReactionSpaceEnhanced(unittest.TestCase):
             return f.read()
 
     def test_explains_publish_only_semantics(self):
-        """reaction_space 必须解释 publish_only sentinel 行为."""
+        """reaction_space 必须教主脑读 sentinel directive + SWM evidence.
+        [β.5.8-fix] β.5.3 旧 'publish_only sentinels' 说法被砍 (主脑不需知 vocab 模式),
+        改成显式 evidence + sentinel directive 说法."""
         src = self._get_src()
         idx = src.find('[REACTION SPACE')
-        self.assertGreater(idx, 0)
-        block = src[idx:idx+3000]
-        self.assertIn('publish_only', block,
-            'reaction_space 必须解释 publish_only 语义')
-        self.assertIn('no longer hard-block', block,
-            'reaction_space 应说明 sentinel 不再 hard-block')
+        block = src[idx:idx+5500]
+        self.assertIn('directive', block,
+            'reaction_space 必须解释 directive 概念')
+        self.assertIn('sentinel', block,
+            'reaction_space 应提及 sentinel')
 
     def test_lists_gate_advice_metadata_schema(self):
-        """reaction_space 应列 gate_advice metadata 字段."""
+        """reaction_space 应列核心 gate_advice metadata 字段.
+        [β.5.8-fix] 砍 block_reason (主脑不需细看), 只保 freeze_active/sleep_mode/cooldown_remaining_s 这三关键 state."""
         src = self._get_src()
         idx = src.find('[REACTION SPACE')
-        block = src[idx:idx+3000]
-        for field in ('decision', 'block_reason', 'freeze_active',
+        block = src[idx:idx+5500]
+        for field in ('decision', 'freeze_active',
                       'sleep_mode', 'cooldown_remaining_s'):
             self.assertIn(field, block,
                 f'reaction_space 应列 {field} 字段说明')
 
     def test_has_priority_ordered_silence_triggers(self):
-        """reaction_space 必须列 priority-ordered silence triggers."""
+        """reaction_space 必须列 priority-ordered silence triggers.
+        [β.5.8-fix] 改 7 → 4 trigger (narrow + explicit only)."""
         src = self._get_src()
         idx = src.find('[REACTION SPACE')
-        block = src[idx:idx+3500]
-        # 数字编号 1. 2. 3. (priority order)
-        for trigger_num in ('1.', '2.', '3.', '4.', '5.', '6.', '7.'):
+        block = src[idx:idx+5500]
+        # β.5.8-fix: 至少 4 个 silence trigger
+        for trigger_num in ('1.', '2.', '3.', '4.'):
             self.assertIn(trigger_num, block,
-                f'reaction_space 应有 {trigger_num} 顺位 silence trigger')
+                f'reaction_space 应有 {trigger_num} silence trigger')
 
-    def test_has_bias_toward_silence(self):
-        """reaction_space 必须有 'When in doubt: prefer [SILENCE]' 类指导."""
+    def test_has_bias_toward_voice(self):
+        """[β.5.8-fix] reaction_space 必须 bias-toward-voice (反 BUG-1 over-silence)."""
         src = self._get_src()
         idx = src.find('[REACTION SPACE')
-        block = src[idx:idx+3500]
-        self.assertIn('When in doubt', block,
-            'reaction_space 必须 bias-toward-silence: When in doubt')
-        self.assertIn('prefer [SILENCE]', block,
-            'reaction_space 必须明确 prefer [SILENCE]')
+        block = src[idx:idx+5500]
+        # 新 bias: DEFAULT IS VOICE + SPEAK when in doubt
+        self.assertIn('DEFAULT IS VOICE', block,
+            'reaction_space 必须 DEFAULT IS VOICE (β.5.8-fix)')
+        self.assertIn('When in doubt: SPEAK', block,
+            'reaction_space 必须 "When in doubt: SPEAK" (β.5.8-fix)')
 
 
 # ==========================================================================
