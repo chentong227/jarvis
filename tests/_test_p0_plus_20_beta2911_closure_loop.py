@@ -27,6 +27,29 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+# 🩹 [β.5.18 / 2026-05-19] β.4.9 把 severity_delta 改成 vocab-driven (jarvis_safety
+# _load_severity_delta + memory_pool/severity_vocab.json per_concern 覆盖). 老
+# β.2.9.11 testcase 期硬编码 -0.2/+0.1 默认值, vocab 现在覆盖到 -0.25/+0.05.
+# 用 setUpModule mock _load_severity_delta 返默认让单元测试独立于 vocab 配置.
+_severity_delta_patch = None
+
+
+def setUpModule():
+    global _severity_delta_patch
+    def _default_delta(cid, verdict):
+        return -0.20 if verdict == 'fulfilled' else 0.10
+    _severity_delta_patch = patch(
+        'jarvis_safety._load_severity_delta', side_effect=_default_delta)
+    _severity_delta_patch.start()
+
+
+def tearDownModule():
+    global _severity_delta_patch
+    if _severity_delta_patch is not None:
+        _severity_delta_patch.stop()
+        _severity_delta_patch = None
+
+
 class TestInferConcernLink(unittest.TestCase):
     """infer_concern_link 通用 — 复用 reflector vocab 反查"""
 

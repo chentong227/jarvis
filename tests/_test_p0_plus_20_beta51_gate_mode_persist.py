@@ -171,12 +171,21 @@ class TestP0Plus20Beta51CanSpeakModes(unittest.TestCase):
         self.assertEqual(gate_events[0]['metadata'].get('decision'), 'block')
 
     def test_publish_only_mode_never_blocks(self):
-        """publish_only mode: 永远 return True, 仍 publish."""
+        """publish_only mode: 非 Sir 显式硬规状态下永真, 仍 publish.
+
+        🩹 [β.5.18 / 2026-05-19] 老 β.5.1 设计 "永真无例外" 升级为
+        "永真但 Sir 显式状态例外 (freeze/sleep)". 此 test 改用 cooldown 测
+        publish_only override 行为 (cooldown 是 sentinel 内部建议非 Sir 显式硬规).
+        freeze 例外另由 β.5.18 testcase 专测.
+        """
         self._set_mode('publish_only')
-        # 即使 freeze 也不 block
-        self.gate.freeze_for(60.0, source='test')
+        # 用 cooldown (不是 freeze) 测 publish_only override
+        # 第 1 次 mark_spoke 让另一中心触发 cooldown
+        self.gate.mark_spoke('companion')
+        # 第 2 次不同中心: hard mode 会拦, publish_only 应放行
         result = self.gate.can_speak('guardian', is_urgent=False)
-        self.assertTrue(result, 'publish_only mode 永远 return True')
+        self.assertTrue(result,
+            'publish_only mode 非 Sir 显式状态下永真 (cooldown 不拦)')
         snap = self.bus.snapshot()
         gate_events = [e for e in snap if e['type'] == 'gate_advice']
         # publish 应包含 gate_mode='publish_only' meta

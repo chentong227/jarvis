@@ -18,10 +18,32 @@ import os
 import sys
 import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+# 🩹 [β.5.18 / 2026-05-19] 老测试预设 OfferGuard hard 行为, β.5.x 默认 publish_only.
+# 用 setUpModule/tearDownModule 全模块 mock read_gate_mode 返 'hard' 让老 testcase
+# 不破坏 (单元级测 OfferGuard 内部 hard 评估逻辑). β.5.16 testcase
+# TestBeta516SentinelBehaviorActuallyPublishOnly 专测 publish_only 新行为.
+_gate_mode_patch = None
+
+
+def setUpModule():
+    global _gate_mode_patch
+    _gate_mode_patch = mock.patch(
+        'jarvis_utils.read_gate_mode', return_value='hard')
+    _gate_mode_patch.start()
+
+
+def tearDownModule():
+    global _gate_mode_patch
+    if _gate_mode_patch is not None:
+        _gate_mode_patch.stop()
+        _gate_mode_patch = None
+
 
 from jarvis_skill_registry import (
     SkillRegistry,

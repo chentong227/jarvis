@@ -149,11 +149,18 @@ class TestP0Plus20Beta53PublishOnlyNoHardBlock(unittest.TestCase):
         ConversationEventBus.register_global(None)
 
     def test_freeze_does_not_hard_block_in_publish_only(self):
-        """publish_only mode + freeze → 仍 return True."""
+        """β.5.18 升级: publish_only mode + freeze → 仍 hard 拦 (Sir 显式急停优先).
+
+        🩹 [β.5.18 / 2026-05-19] 老 β.5.3 设计 "publish_only 永真包括 freeze"
+        升级为 "publish_only 永真但 Sir 显式状态 (freeze/sleep) 例外". 因 freeze
+        是 Sir 显式急停 / 拒绝 / 告别, 准则 5 言出必行 — 即便 publish_only 模式也
+        不能让主脑 override. 主脑 SWM 仍能通过 gate_advice metadata 看 freeze_active
+        状态 (test_freeze_published_to_swm_with_state_meta 验证 publish 仍发生).
+        """
         self.gate.freeze_for(60.0, source='test_user_reject')
         result = self.gate.can_speak('guardian', is_urgent=False)
-        self.assertTrue(result,
-            'publish_only mode: freeze 时 can_speak 仍 return True (不 hard 拦)')
+        self.assertFalse(result,
+            'β.5.18: publish_only mode + freeze → 仍 hard 拦 (Sir 显式状态守)')
 
     def test_freeze_published_to_swm_with_state_meta(self):
         """publish_only mode + freeze → publish gate_advice 含 freeze_active=True."""

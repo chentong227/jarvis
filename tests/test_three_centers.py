@@ -5,8 +5,30 @@ import json
 import time
 import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# 🩹 [β.5.18 / 2026-05-19] 老 NudgeGate/Conductor 测试预设 hard cooldown 行为, β.5.x
+# 默认 publish_only (cooldown 不拦, 主脑自决). 全模块 mock read_gate_mode 返 hard
+# 让老 testcase 测内部 hard 评估不破坏. β.5.18 已专测 freeze/sleep 即使 publish_only
+# 也 hard 拦 (Sir 显式状态守). β.5.x publish_only 新行为另由 β.5.13/14/15/16 专测覆盖.
+_gate_mode_patch = None
+
+
+def setUpModule():
+    global _gate_mode_patch
+    _gate_mode_patch = mock.patch(
+        'jarvis_utils.read_gate_mode', return_value='hard')
+    _gate_mode_patch.start()
+
+
+def tearDownModule():
+    global _gate_mode_patch
+    if _gate_mode_patch is not None:
+        _gate_mode_patch.stop()
+        _gate_mode_patch = None
 
 from PyQt5.QtWidgets import QApplication
 _app = QApplication.instance()

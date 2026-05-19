@@ -842,13 +842,18 @@ class NudgeGate:
             except Exception:
                 pass
 
-        # [β.5.18 / 2026-05-19] publish_only 永不 hard 拦, 但 hard_freeze 例外:
-        # Sir 显式急停 / 拒绝 / 告别 → freeze_for(180/300/600s) → 准则 5 "言出必行"
-        # 最后一道防线, 即便 publish_only 模式也不能让主脑 override. 主脑 SWM 仍能
-        # 通过 gate_advice metadata.freeze_active=True 看到状态, 自决不说.
+        # [β.5.18 / 2026-05-19] publish_only 永不 hard 拦, 但 Sir 显式状态例外:
+        # 1. hard_freeze (Sir 急停 / 拒绝 / 告别 → freeze_for(180/300/600s))
+        # 2. sleep_mode (Sir 显式 activate_sleep_mode, 仅白名单类型允许)
+        # 这两类是 Sir 显式硬规, 准则 5 言出必行的最后防线, 即便 publish_only 模式
+        # 也不能让主脑 override. 主脑 SWM 仍能通过 gate_advice metadata 看状态自决.
         if gate_mode == 'publish_only':
             if state_meta.get('freeze_active'):
                 return False  # hard_freeze 永远拦, 守 Sir 显式拒绝
+            # sleep_mode 拦截非白名单类型 (return_greeting 等仍允许)
+            if (state_meta.get('sleep_mode')
+                    and nudge_type not in self.SLEEP_ALLOWED_TYPES):
+                return False  # sleep_mode 拦非白名单, 守 Sir 显式睡眠
             return True
         return result
 

@@ -81,6 +81,42 @@ class TestBeta518FreezeHardLock(unittest.TestCase):
             'freeze 过期后 publish_only 恢复永真')
 
 
+class TestBeta518SleepModeHardLock(unittest.TestCase):
+    """[β.5.18 扩展] sleep_mode 跟 hard_freeze 同等性质, 也不被 publish_only override.
+
+    Sir activate_sleep_mode 是显式状态 (跟 freeze_for 同一律: Sir 显式硬规),
+    publish_only 应允许白名单类型 (return_greeting), 拦其他.
+    """
+
+    def setUp(self):
+        from jarvis_nerve import NudgeGate
+        import jarvis_utils as u
+        u.reset_gate_mode_cache()
+        self.gate = NudgeGate(cooldown_seconds=90)
+
+    def test_sleep_mode_blocks_offer_help_in_publish_only(self):
+        """publish_only 模式下 sleep_mode + nudge_type='offer_help' → 拦."""
+        self.gate.activate_sleep_mode()
+        self.assertFalse(
+            self.gate.can_speak('guardian', nudge_type='offer_help'),
+            'sleep_mode 拦非白名单类型 (publish_only 不 override)')
+
+    def test_sleep_mode_blocks_urgent_in_publish_only(self):
+        """publish_only + sleep + is_urgent + nudge_type 非白名单 → 拦."""
+        self.gate.activate_sleep_mode()
+        self.assertFalse(
+            self.gate.can_speak('guardian', is_urgent=True,
+                                  nudge_type='commitment_check'),
+            'sleep_mode + urgent + 非白名单 publish_only 仍拦')
+
+    def test_sleep_mode_allows_return_greeting_in_publish_only(self):
+        """publish_only + sleep + 白名单类型 (return_greeting) → 允许."""
+        self.gate.activate_sleep_mode()
+        self.assertTrue(
+            self.gate.can_speak('guardian', nudge_type='return_greeting'),
+            'sleep_mode 白名单类型 (return_greeting) 仍允许')
+
+
 class TestBeta518MarkerComment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
