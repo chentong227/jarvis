@@ -572,6 +572,21 @@ class VoiceListenThread(QThread):
         for phrase in wake_phrases:
             cmd = re.sub(phrase, '', cmd)
 
+        # 🩹 [P0+20-β.5.11 / 2026-05-19] 纯语气词 + jarvis → 视作空唤醒走 reflex 短路径
+        # Sir 真机痛点: "hey jarvis" 被识成 cmd='hey' 送 LLM 跑全主脑, 应走快唤醒.
+        # 设计意图: 任意词+jarvis 中"任意词"若是纯 filler/呼语 (hey/hi/yo/嘿/喂...),
+        # 不应被当 LLM cmd, 而该降级为空唤醒, 让 fallback `cmd = "jarvis"` 接住走 reflex.
+        # 注: 实词 ("jarvis 帮我开 cursor" → cmd='帮我开 cursor') 仍走 LLM 唤醒, 不影响.
+        filler_addressing_words = [
+            # 英文呼语 / 语气词
+            r'\bhey\b', r'\bhi\b', r'\bhiya\b', r'\byo\b', r'\boi\b',
+            r'\bhello\b', r'\bhallo\b', r'\bhola\b', r'\bok\b', r'\bokay\b',
+            # 中文呼语 / 语气词
+            r'嘿', r'喂', r'嗨', r'哟', r'哎', r'唉', r'喔', r'噢', r'哈喽', r'哈罗',
+        ]
+        for filler in filler_addressing_words:
+            cmd = re.sub(filler, '', cmd)
+
         cmd = re.sub(r'[，。,.!?？！\s]+', ' ', cmd).strip()
 
         if not cmd or len(cmd) <= 1:

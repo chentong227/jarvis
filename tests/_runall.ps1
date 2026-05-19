@@ -154,7 +154,10 @@ $tests = @(
     "_test_p0_plus_20_beta53_fix_persist",
     "_test_p0_plus_20_beta54_conductor_publish_persist",
     "_test_p0_plus_20_beta55_full_publish_only_complete_persist",
-    "_test_p0_plus_20_beta58_over_silence_fix_persist"
+    "_test_p0_plus_20_beta58_over_silence_fix_persist",
+    "_test_p0_plus_20_beta59_tts_first_sentence_fast_split_persist",
+    "_test_p0_plus_20_beta510_prompt_cache_persist",
+    "_test_p0_plus_20_beta511_hey_jarvis_fast_wake_persist"
 )
 
 foreach ($t in $tests) {
