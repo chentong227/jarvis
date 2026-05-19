@@ -259,18 +259,26 @@ HTML_TEMPLATE = r"""
       </div>
     </div>
 
-    <!-- 默契 -->
+    <!-- 默契 + 共同经历 (Sir 通过的 thread 落地处) -->
     <div class="glass rounded-2xl p-5 border border-slate-700/30 shadow-lg">
       <div class="flex items-center justify-between mb-3">
         <h3 class="font-semibold flex items-center gap-2"><span>💞</span>你们之间</h3>
         <span class="badge bg-slate-700/50"
-              x-text="((relation.jokes||[]).length) + '梗 ' + ((relation.protocols||[]).length) + '默'"></span>
+              x-text="((relation.jokes||[]).length) + '梗·' + ((relation.protocols||[]).length) + '默·' + ((relation.threads||[]).length) + '经历'"></span>
       </div>
-      <div class="space-y-2 text-xs">
-        <template x-for="j in (relation.jokes || []).slice(0, 5)" :key="j.phrase">
+      <div class="space-y-2 text-xs max-h-72 overflow-y-auto scrollbar-thin">
+        <template x-for="j in (relation.jokes || []).slice(0, 4)" :key="j.phrase">
           <div>
             <p class="text-emerald-300">😂 "<span x-text="j.phrase"></span>"</p>
             <p class="text-slate-500 ml-5" x-text="j.birth"></p>
+          </div>
+        </template>
+        <!-- 🩹 [β.5.28-fix5] 共同经历 - Sir 通过的 thread 显示位 -->
+        <template x-for="t in (relation.threads || []).slice(0, 6)" :key="t.id">
+          <div>
+            <p class="text-pink-300">📖 <span x-text="t.title"></span></p>
+            <p x-show="t.what" class="text-slate-500 ml-5 text-xs" x-text="t.what"></p>
+            <p class="text-slate-600 ml-5 text-[10px]" x-text="(t.last_milestone || t.started) + ' · ' + t.n_highlights + ' 高光'"></p>
           </div>
         </template>
         <template x-for="u in (relation.unfinished || []).slice(0, 3)" :key="u.topic">

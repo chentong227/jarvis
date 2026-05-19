@@ -458,8 +458,14 @@ def read_concerns() -> Dict:
 # ---- L2 Relational (你们之间的默契) ----
 
 def read_relational() -> Dict:
-    """💞 你们之间的默契 — RelationalState L2"""
-    out = {'jokes': [], 'protocols': [], 'unfinished': [], 'review_n': 0, 'err': None}
+    """💞 你们之间的默契 — RelationalState L2
+
+    🩹 [β.5.28-fix5 / 2026-05-20] Sir 03:11 反馈"拍板 y 后显示在哪? 什么地方都没增加".
+    Root cause: 老版漏读 shared_history_threads (共同经历). Sir 通过的 thread → state=active
+    但 read 不出来 → Sir 看不到. 修法: 加 'threads' 字段.
+    """
+    out = {'jokes': [], 'protocols': [], 'unfinished': [], 'threads': [],
+           'review_n': 0, 'err': None}
     data = _safe_read_json(os.path.join(MEM, 'relational_state.json'), {})
     if not isinstance(data, dict):
         out['err'] = 'relational 格式异常'
@@ -495,6 +501,25 @@ def read_relational() -> Dict:
             'topic': (u.get('topic') or '')[:70],
             'last': _humanize_age_zh(
                 float(u.get('last_referenced', u.get('last_touched', 0)) or 0)),
+        })
+    # 🩹 [β.5.28-fix5] 共同经历 - Sir 通过的 thread 落地处!
+    for t in _items('shared_history_threads')[:10]:
+        if not isinstance(t, dict) or t.get('state', 'active') != 'active':
+            continue
+        # 取 highlights[0].what 作为简介
+        hl = t.get('highlights') or []
+        what = ''
+        if hl and isinstance(hl, list) and isinstance(hl[0], dict):
+            what = (hl[0].get('what') or '')[:100]
+        out['threads'].append({
+            'id': t.get('id', '?'),
+            'title': (t.get('title') or '')[:60],
+            'what': what,
+            'started': _humanize_age_zh(
+                float(t.get('started_at', t.get('created_at', 0)) or 0)),
+            'last_milestone': _humanize_age_zh(
+                float(t.get('last_milestone_at', t.get('last_updated', 0)) or 0)),
+            'n_highlights': len(hl) if isinstance(hl, list) else 0,
         })
     review = _safe_read_json(os.path.join(MEM, 'relational_review.json'), [])
     if isinstance(review, list):
