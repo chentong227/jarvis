@@ -349,6 +349,17 @@
       "source_marker": "P0+20-beta.5.40-E1",
       "note": "CompanionRhythm 时段建议 SWM directive (Sir 方向 E.1)",
       "source": "seed"
+    },
+    {
+      "id": "physio_state_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 5,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.40-A2",
+      "note": "PhysioProxy energy/focus/stress SWM directive (Sir 方向 A.2)",
+      "source": "seed"
     }
   ]
 }

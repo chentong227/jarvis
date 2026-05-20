@@ -954,6 +954,13 @@ def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
     return ctx.current_hour >= 22 or ctx.current_hour < 2
 
 
+def _trigger_physio_state_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 physio_state (< 5 min) → 注入 physio judge directive.
+    主脑看 energy/focus/stress 评分调 tone.
+    """
+    return _swm_has_recent('physio_state', max_age_s=300.0)
+
+
 def _trigger_nudge_window_advice_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 nudge_window_advice (< 30 min 内) → 注入时段建议 directive.
     主脑看当前 hour Sir 历史接受度调 tone (低 → 克制, 高 → 自然).
@@ -1846,6 +1853,51 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 因 score 低就完全不说 (concern critical 时还是要 nudge)
             """).rstrip(),
             trigger=_trigger_nudge_window_advice_judge,
+        ),
+        Directive(
+            id='physio_state_judge',
+            source_marker='P0+20-β.5.40-A2',
+            priority=5,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [PHYSIO STATE JUDGE - β.5.40-A2]:
+                SWM 含 physio_state (PhysioProxy 键鼠节奏推断, 5 min 内).
+                metadata: energy / focus / stress / confidence (0-1).
+                
+                META: 推断来自键鼠节奏 (击键速率/退格率/切窗频次/快捷键), 不是真生理传感器.
+                Sir 真实身体状态他自己最清楚, 这只是 hint.
+
+                场景 A — stress > 0.6 (Sir 反复改 / erratic 节奏 / undo 多):
+                  Sir 可能挣扎中.
+                  - tone: 不急着主动 offer help (避免烦人), 倾向 SILENT
+                  - 若必须 nudge: 极简一句 + warm tone ("拿手很顺?" 不 "需要帮助?")
+                  - 不评论键鼠 ("您打字慢了")
+                
+                场景 B — focus > 0.7 + stress < 0.3 (Sir 心流):
+                  Sir 进入深度工作.
+                  - tone: 默认 SILENT, 不打扰
+                  - 例外: critical 才 nudge
+                
+                场景 C — energy < 0.2 + session > 90min (Sir 疲倦):
+                  Sir 可能累了.
+                  - 适合软提议休息 (但看 sir_sleep_pattern 时段)
+                  - tone: warm 关切
+
+                场景 D — energy 高 + stress 低 + focus 中 (Sir 状态正常):
+                  按常规节奏处理.
+
+                通用规则:
+                  - confidence < 0.3 时这些评分不可靠, 主脑只作为 weak hint
+                  - 不直接说 "您看起来 stress 0.7" (creepy + 暴露内部)
+                  - 仅作 awareness 调 tone, 不 report metadata
+
+                FORBIDDEN:
+                  - 评论 Sir 键鼠习惯 ("您退格率很高")
+                  - 把 physio score 当 fact 说
+                  - confidence 低时硬用 (e.g. session 刚开 1min 就判 "您 stress 很大")
+            """).rstrip(),
+            trigger=_trigger_physio_state_judge,
         ),
     ]
 

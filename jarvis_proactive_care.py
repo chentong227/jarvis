@@ -398,6 +398,20 @@ class CareConcernSensor:
         except Exception:
             pass
 
+        # 🩹 [β.5.40-A2 / 2026-05-20] Sir 方向 A.2 — physio_state publish.
+        # 用 PhysicalEnvironmentProbe snap 已有 key/mouse fields 算 energy/focus/stress
+        # publish 'physio_state' SWM 让主脑看 (stress 高时 tone 关切, focus 高时静默)
+        # cooldown 60s 内不重复. 数据少 confidence < 0.1 不 publish.
+        try:
+            from jarvis_physio_proxy import get_physio_proxy
+            if self.nerve is not None:
+                bus = getattr(self.nerve, 'event_bus', None)
+                if bus is not None:
+                    pp = get_physio_proxy(event_bus=bus)
+                    pp.compute_and_publish(snap)
+        except Exception:
+            pass
+
         # 🩹 [β.5.40-E1 / 2026-05-20] Sir 方向 E.1 — nudge_window_advice publish.
         # 每 tick 读 nudge_window_vocab.json 当前 hour 的 receptive score,
         # publish 'nudge_window_advice' 到 SWM 让主脑看. score < 0.3 时主脑应更克制.
