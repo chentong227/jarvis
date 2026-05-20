@@ -1244,6 +1244,8 @@ class ConversationEventBus:
         'intent_resolved': 600,                    # turn-level mutation 报告 (主脑必看)
         # [β.5.43-F / 2026-05-20] Error Self-Healing Bus
         'system_error_visible': 600,               # ErrorBus 主动暴露 module 错误
+        # [β.5.43-E / 2026-05-20] Silence Intelligence — Sir thinking pause
+        'sir_thinking_pause': 60,                  # 短 TTL (turn 内有效, 主脑 reply 后清)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1294,6 +1296,8 @@ class ConversationEventBus:
         'intent_resolved': 0.90,           # turn 级 mutation 报告, 极重要
         # [β.5.43-F / 2026-05-20] Error Bus — severity 决 salience
         'system_error_visible': 0.75,      # 默认 moderate, severe 时 publish 用 0.92
+        # [β.5.43-E / 2026-05-20] Silence Intel — 主脑可顺嘴 ack, 不强制
+        'sir_thinking_pause': 0.55,
     }
 
     def __init__(self, max_events: int = 60):

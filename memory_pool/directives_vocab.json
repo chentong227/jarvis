@@ -426,6 +426,17 @@
       "source_marker": "P0+20-beta.5.43-fix4",
       "note": "Sir 18:55 \u8a00\u884c\u4e0d\u4e00\u7ea2\u7ebf \u2014 \u4e3b\u8111\u4e0d\u80fd\u8bf4 'I've corrected/saved/updated' \u9664\u975e\u672c\u8f6e\u771f\u8c03\u4e86 mutation tool. always-on priority 12 \u6781\u9876.",
       "source": "seed"
+    },
+    {
+      "id": "thinking_pause_aware_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 8,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.43-E",
+      "note": "Sir 17:10 6 \u7f3a\u53e3 E silence intelligence \u2014 SWM \u542b sir_thinking_pause (uh/\u55ef/let me think) \u2192 \u4e3b\u8111\u9ed8\u8ba4\u6c89\u9ed8\u6216\u6781\u77ed ack, \u4e0d\u6253\u65ad\u601d\u7ef4.",
+      "source": "seed"
     }
   ]
 }

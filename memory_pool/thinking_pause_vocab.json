@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-20T19:13:00+08:00",
+  "purpose": "Sir 17:10 真理 (6 缺口 E silence intelligence) — Sir 说话过程中 thinking pause 词汇. 主脑感知 → 不急着答复内容, 给 Sir 时间.",
+  "design_note": "准则 6 vocab 持久化: 词表不再写死 .py source. Sir 实测发现新词时走 scripts/silence_vocab_dump.py 加. 词表 mtime 变 → recompile cache. publish-only — 主脑层 directive 决定怎么反应 (mhm / 短回应 / 完全不打断), 不强制硬编码行为.",
+  "groups": {
+    "en_thinking_fillers": {
+      "description": "英文 thinking pause filler — 短词或填充词 (uh, um, hmm, well, let me...)",
+      "verbs": [
+        "uh",
+        "um",
+        "umm",
+        "uhh",
+        "hmm",
+        "hmmm",
+        "well",
+        "let me think",
+        "let me see",
+        "hold on",
+        "wait a second",
+        "wait a moment",
+        "give me a sec",
+        "give me a moment",
+        "one moment",
+        "you know",
+        "i mean",
+        "actually...",
+        "so..."
+      ]
+    },
+    "zh_thinking_fillers": {
+      "description": "中文 thinking pause filler",
+      "verbs": [
+        "嗯",
+        "嗯嗯",
+        "嗯嗯嗯",
+        "啊",
+        "呃",
+        "呃...",
+        "唉",
+        "让我想想",
+        "让我想一想",
+        "让我看看",
+        "等等",
+        "等一下",
+        "等下",
+        "稍等",
+        "等会",
+        "我想想",
+        "我看看",
+        "我考虑下",
+        "我考虑一下"
+      ]
+    },
+    "patterns": {
+      "description": "正则模式 — trailing ellipsis / 短句 < 4 字含 filler",
+      "patterns": [
+        "^.{1,8}\\.\\.\\.$",
+        "^.{1,6}…$"
+      ]
+    }
+  },
+  "thresholds": {
+    "short_utterance_max_chars": 12,
+    "thinking_pause_confidence_min": 0.6
+  },
+  "history": [
+    {
+      "ts": "2026-05-20T19:13:00+08:00",
+      "marker": "β.5.43-E",
+      "action": "init",
+      "note": "Sir 17:10 真理 (6 缺口 E silence intelligence) 立. 主脑感知 Sir 在思考, 不急答复. publish-only, 不阻塞主路径."
+    }
+  ]
+}

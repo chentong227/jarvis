@@ -899,6 +899,24 @@ class VoiceListenThread(QThread):
             self._detect_sir_struggle(cmd)
         except Exception:
             pass
+        # 🩹 [β.5.43-E / 2026-05-20] Silence Intelligence — thinking pause 检测
+        # Sir 17:10 真理 (6 缺口 E): Sir 说 'uh / 嗯 / let me think' → publish SWM, 
+        # 主脑 directive 决定怎么反应 (短 'mhm' / 不打断). publish-only, 不阻塞 emit.
+        try:
+            from jarvis_silence_intel import is_thinking_pause, publish_thinking_pause_event
+            _is_pause, _evidence = is_thinking_pause(cmd)
+            if _is_pause:
+                publish_thinking_pause_event(cmd, _evidence)
+                try:
+                    from jarvis_utils import bg_log as _si_bg
+                    _si_bg(
+                        f"⏸️ [SilenceIntel] thinking pause detected (conf="
+                        f"{_evidence.get('confidence', 0):.2f}): \"{cmd[:40]}\""
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
         self.text_ready.emit(cmd)
 
     def run(self):

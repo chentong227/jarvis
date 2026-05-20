@@ -967,6 +967,11 @@ _OVER_OFFER_CALLOUT_KEYWORDS = (
 )
 
 
+def _trigger_thinking_pause_aware_judge(ctx: DirectiveContext) -> bool:
+    """β.5.43-E / 2026-05-20 19:13 — SWM 含 sir_thinking_pause (turn 内) → 主脑感知."""
+    return _swm_has_recent('sir_thinking_pause', max_age_s=60.0)
+
+
 def _trigger_no_hallucinated_tool_use_judge(ctx: DirectiveContext) -> bool:
     """β.5.43-fix4 / 2026-05-20 18:55 Sir 真理 — 主脑撒谎 'I've corrected'.
     
@@ -2156,6 +2161,42 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 解释"我的权限"绕弯子 — 直接说"我没这工具"
             """).rstrip(),
             trigger=_trigger_over_offer_called_out,
+        ),
+        Directive(
+            id='thinking_pause_aware_judge',
+            source_marker='P0+20-β.5.43-E',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [THINKING PAUSE AWARE JUDGE - β.5.43-E / 2026-05-20 19:13]:
+                SWM 含 sir_thinking_pause: ASR detect Sir 说 "uh / 嗯 / let me think /
+                让我想想 / hold on / 等等" 等 thinking filler. metadata.cmd = Sir 刚说的
+                短句, metadata.evidence.confidence = 思考置信度 (0.6+).
+
+                Sir 在思考, **没说完想法**. 你应该:
+
+                **✅ 推荐反应** (按优先级):
+                  1. **保持沉默** — 最优. Sir 还在组织语言, 你打断会破坏思维.
+                  2. **极短 acknowledge** ("Mm." / "嗯." / "Take your time, Sir.") — 让 Sir 知道
+                     你在听, 但不抢话.
+                  3. 完全 pivot 到等待状态, 不主动说内容.
+
+                **❌ 禁止反应**:
+                  - ❌ 长 reply / answer 内容 (Sir 还没问完!)
+                  - ❌ 猜 Sir 接下来要说什么 ("您是想问 X 吗?") 
+                  - ❌ 重复或解释你上轮说的话
+                  - ❌ "Are you alright, Sir?" (打断思考流)
+
+                **场景**:
+                  Sir: "嗯..." → 你: 沉默 / "Mm."
+                  Sir: "let me think" → 你: 沉默 / "Take your time."
+                  Sir: "uh, the thing is..." → 你: 沉默, 等下半句
+
+                注: confidence < 0.6 才进 SWM. 高 conf 强烈暗示 Sir 在思考. 信主脑判断,
+                但**默认沉默**比"礼貌应答"更尊重 Sir 思考过程.
+            """).rstrip(),
+            trigger=_trigger_thinking_pause_aware_judge,
         ),
         Directive(
             id='interrupted_aware_judge',
