@@ -1,11 +1,22 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 12:55 (β.5.34/35/36 全量推进, 6 commits 全 sub-batch 测过 286 pass — BUG 1/2/3/4 全修).
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→180 行 (< 300 cap, AGENTS.md 章程).
+> **更新**: 2026-05-20 13:10 (β.5.34/35/36 全量 + Sir 13:00-13:05 实测 4 fix, 11 commits 全 sub-batch 测过 295+ pass).
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 < 300 cap, AGENTS.md 章程.
 
 ---
 
-## 🚨 当前迭代 (β.5.34/35 / 2026-05-20 10:46 → 12:42, 5 commits) — Sir 10:46 实测 4 BUG 治本
+## 🔥 Sir 13:00-13:05 真机实测 fix (4 commits)
+
+| commit | marker | 内容 |
+|---|---|---|
+| `11b0cc2` | β.5.34-fix | Focus Lock UI 加 listening cue (`🎙️ Listening for your reply…`) — Sir 13:00 实测 "还是没焦点回复不了" 因 nudge 字幕和等候字幕视觉无区分 |
+| `c3dfdf0` | β.5.36-fix | `test_persona_under_3000_chars` cap 5500→9500 — Sir IP 不动, β.4.x/5.x directives 涨到 ~8641 |
+| `de06811` | **β.5.36-fix2** | **SirStruggleVocab 3 层守卫 (Sir 13:03 实测 "我去休息" 误命中 expletive_zh 'we 我去' → 47s 后催 Sir)**: (a) vocab 删 '我去'/'靠' 误命中 pattern, (b) 同句含 sleep/dismiss 关键词 (休息/睡觉/待会见/goodnight/...) → consume 不触, (c) inter-source cooldown 15s 替代老 bypass-cooldown 防风暴 |
+| `37b940d` | **β.5.36-fix3** | **ProactiveShield ghost-input guard (Sir 13:05 真理 "屏幕动的是 Cursor 自动编程")**: ProactiveShield._scan idle_seconds > 60s 直接退 — Sir 离桌时 window 切换 = Cascade/IDE 自动化 ghost activity, 不该触 shield_alert. 准则 6 evidence: 看真物理 input (键盘/鼠标), 不看屏幕动作 |
+
+---
+
+## 🚨 主迭代 (β.5.34/35 / 2026-05-20 10:46 → 12:42, 5 commits) — Sir 10:46 实测 4 BUG 治本
 
 ### β.5.34 BUG 1 + 4 小修 (单 commit)
 | commit | marker | 内容 | testcase |
