@@ -1,7 +1,7 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 12:42 (β.5.34 BUG 1+4 小修 + β.5.35-A/B/C/D BUG 2 大修, 5 commits 全 sub-batch 测过 182 pass).
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→167 行 (< 300 cap, AGENTS.md 章程).
+> **更新**: 2026-05-20 12:55 (β.5.34/35/36 全量推进, 6 commits 全 sub-batch 测过 286 pass — BUG 1/2/3/4 全修).
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→180 行 (< 300 cap, AGENTS.md 章程).
 
 ---
 
@@ -31,14 +31,26 @@
 | **BUG 2-help L7** | 24h 后 STM 含 ≥30 user_voice → propose 新 struggle phrase | `sir_struggle_vocab.json` `review_queue` 非空 | `python scripts/struggle_vocab_dump.py --review-list` |
 | **BUG 2-shield** | 屏幕看到 error keyword (β.4.X 触发 offer_help 误推) | 改触发 screen_tease (调皮观察, 非"need help") | log `Tease Screen` not `Offer Help` |
 
-### β.5.36 (待 Sir 实测稳定后启动) — BUG 3 工具名泄漏大修
-| sub-step | 内容 | 工期估 |
-|---|---|---|
-| E | `memory_pool/intent_to_tool_map.json` + `scripts/intent_map_dump.py` CLI | 1.5h |
-| F | `skill_registry.to_prompt_block` 改双轨 (intent + 禁工具名) | 1h |
-| G | `jarvis_intent_router.py` 后端 `<TOOL_CALL>{intent}` 解析 + 调用 + SWM evidence 回流 | 3h |
-| H | Audio Guard 扩到 subtitle / STM path | 0.5h |
-| I | regression test (~20 testcase) | 2h |
+### β.5.36 BUG 3 工具名泄漏大修 (单 commit, 5 sub-step 合并)
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `41cbf68` | **β.5.36-E/F/G/H/I** | **BUG 3 intent channel + tool name scrub 大修** — E: `memory_pool/intent_to_tool_map.json` (15 seed intent: check_top_cpu/mute_audio/dashboard_open/...) + `scripts/intent_map_dump.py` CLI. F: `jarvis_skill_registry.to_prompt_block` 改双轨 — intent_map 存在 → SEMANTIC CAPABILITIES (intent 列表 + `<TOOL_CALL>` directive + NEVER speak tool names), fallback 老 SKILLS 块也删 "MUST reference by name" 改成 NEVER speak. G: `jarvis_intent_router.py` 新 (IntentParser 提取 `<TOOL_CALL>{intent}` tag + IntentRouter.route_and_invoke_all 翻 tool 名 + 调 fast_call + 结果回流 event_bus, dangerous intent skip 走 PROMISE 路径) + chat_bypass stream_chat/stream_nudge 末尾 hook + worker.run 启动 init_default_intent_router 注入 fast_call. H: `jarvis_utils.scrub_internal_names` helper (剥 organ.command + `<TOOL_CALL>` tag) + `jarvis_ui._poll_queue` 'zh'/'en' branch 调 scrub 防漏给 Sir 看到. I: 33 新 testcase (intent_map schema/CLI + IntentParser corrupt/multi/case + IntentRouter resolve/invoke/dangerous_skip + scrub_internal_names 全 organ + UI/chat_bypass/worker wiring) + 5 老 `_test_r8_axis3_l2_capability_phrasing.py` 改 fallback path. | 33+15 pass |
+
+### Sir 真机实测 check list — 重启 Jarvis 后完整跑
+
+| BUG | 操作 | 预期 | log/CLI 验证 |
+|---|---|---|---|
+| **BUG 1** 早安 | 跨夜 AFK + 起床第一句 | morning briefing 列 1-2 件 concerns/threads/unfinished (β.5.34) | log `MORNING BRIEFING POSTURE` |
+| **BUG 4** Focus | 收 nudge (offer_help/proactive_care/sleep_due) | UI 字幕持续显示, 90s 内不喊唤醒词直接说 | log `[Focus Lock]` + subtitle stays |
+| **BUG 2-tease** | 切 IDE/文档/SO/IDE 等 5 类窗口 | screen_tease 调皮 (不再一周静音) (β.5.35-A) | `scripts/screen_tease_vocab_dump.py --active-only` |
+| **BUG 2-tease L7** | 24h 后 | `screen_tease_vocab.json` `review_queue` propose 新 category (β.5.35-B) | `scripts/screen_tease_vocab_dump.py --review-list` |
+| **BUG 2-help** | 说"卡住"/"搞不定"/"fuck"/"怎么办" | 30-90s 内 offer_help (引 Sir 原话, β.5.35-C) | log `🆘 [SirStruggle] phrase=...` |
+| **BUG 2-help L7** | 24h 后 | `sir_struggle_vocab.json` propose 新 struggle phrase (β.5.35-D) | `scripts/struggle_vocab_dump.py --review-list` |
+| **BUG 2-shield** | 屏幕含 error keyword (cascade/cursor IDE 错误) | log `Tease Screen` (不是 `Offer Help`, β.5.35-C 语义解耦) | log `🎯 [Focus Lock] screen_tease` |
+| **BUG 3-prompt** | 主脑收 offer_help nudge | LLM prompt 含 `SEMANTIC CAPABILITIES (β.5.36 intent channel)`, 不含 `process_hands.X` 工具名 (β.5.36-F) | grep `[Nudge SOUL inject] mode=nudge` 看 prompt 渲染 |
+| **BUG 3-tts** | LLM 偶尔违规说工具名 | Audio Guard 替换 'a quick check' (β.4.X) | log `🔇 [Audio Guard / Tool Name]` |
+| **BUG 3-subtitle** | LLM 偶尔违规说工具名 | 字幕 overlay 已 scrub 工具名 + `<TOOL_CALL>` tag (β.5.36-H) | UI 字幕不见 `process_hands.X` |
+| **BUG 3-intent** | LLM 主动 emit `<TOOL_CALL>{intent="check_top_cpu"}` | intent_router 后端翻 `process_hands.get_top_cpu` 执行 + event_bus publish 结果 (β.5.36-G) | log `🔧 [IntentRouter] check_top_cpu=✅` |
 
 ---
 
