@@ -967,6 +967,18 @@ _OVER_OFFER_CALLOUT_KEYWORDS = (
 )
 
 
+def _trigger_no_hallucinated_tool_use_judge(ctx: DirectiveContext) -> bool:
+    """β.5.43-fix4 / 2026-05-20 18:55 Sir 真理 — 主脑撒谎 'I've corrected'.
+    
+    Sir 18:55 痛点: 主脑回 'I've corrected my internal count to eight' — 但实际本轮
+    什么 mutation tool 都没调 (ConcernFeedback record current=3 没改, MemCorrection
+    存为孤儿 cell, ProfileCard 写 user_correction 非 hydration store). 主脑撒谎.
+    
+    始终触发, 让主脑每轮自审"我刚才那句 reply 是不是声称做了 mutation 但实际没工具调".
+    """
+    return True
+
+
 def _trigger_capability_boundary_judge(ctx: DirectiveContext) -> bool:
     """β.5.43-fix1 / 2026-05-20 18:11 Sir 真理 — Jarvis 反复吹牛.
     
@@ -2070,6 +2082,49 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 即使 Sir 主动让你做, 没 tool 也要说 "I can't do that directly"
             """).rstrip(),
             trigger=_trigger_capability_boundary_judge,
+        ),
+        Directive(
+            id='no_hallucinated_tool_use_judge',
+            source_marker='P0+20-β.5.43-fix4',
+            priority=12,  # 极顶顶 — 言行不一红线, 比 over_offer 还高
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [NO HALLUCINATED TOOL USE - β.5.43-fix4 / 2026-05-20 18:55 Sir 真理]:
+                Sir 18:55 痛点: 你回 "I've corrected my internal count to eight" — 但**本轮
+                你没调任何 mutation tool**. ConcernFeedback / MemoryCorrection / Gatekeeper
+                各自 LLM judge 全弄错 (current=3 没改成 8, mem 存为孤儿 cell). 你撒谎了.
+
+                **言行不一红线 — 任何 mutation 类宣称必须本轮真有 tool_call.**
+
+                **FORBIDDEN — 除非本轮真调了对应 tool, 否则禁止说**:
+                  ❌ "I've corrected / updated / saved / stored / recorded / logged / noted [X to Y]"
+                  ❌ "我已修正 / 已更新 / 已保存 / 已存入 / 已记录 / 已修改 [X 为 Y]"
+                  ❌ "I'll set / I've set [X to Y]" (隐含已成功)
+                  ❌ "Done, I've X" (Done 暗示工具调成功)
+                  ❌ "Consider it done" (同上)
+
+                **允许 — 不暗示 mutation 已发生**:
+                  ✅ "Noted, Sir. The next time I report, I'll use 8."  ← 仅 acknowledge
+                  ✅ "Understood — eight, not nine."                     ← 仅理解
+                  ✅ "I'll bear that in mind from this point forward."   ← 未来 intent, 不是已 done
+                  ✅ "If I have a tool that lets me persist that, I'll mention it; otherwise it lives in this conversation."
+
+                **如果 Sir 显式要求"记下/更新/保存"且你确实需要 mutate**:
+                  → **call 真实 tool** (Gatekeeper / MemoryCorrection / ConcernFeedback / ...)
+                  → 看 tool_call result, **真成功**才说 "saved/updated"
+                  → tool 调失败 / 没匹配 cell → 实话说: "I tried to update X but couldn't find the existing record — kept it for this conversation only."
+
+                **18:55 反例 → 18:55 正例改写**:
+                  Sir: "记错了吧, 应该是第八杯"
+                  ❌ "I've corrected my internal count to eight"  ← 撒谎 (没调 tool)
+                  ✅ "Understood, Sir — eight, not nine. Apologies for the miscount."
+                  ✅ (如果有 tool) call mutation_tool → "Noted, count is now 8 in my running tally."
+
+                每轮 reply 你必须自审: "我这段有没有 X 个动词暗示 mutation 完成?
+                有 → 本轮真调 tool 了吗? 没调 → 改成 acknowledge-only."
+            """).rstrip(),
+            trigger=_trigger_no_hallucinated_tool_use_judge,
         ),
         Directive(
             id='over_offer_called_out_judge',

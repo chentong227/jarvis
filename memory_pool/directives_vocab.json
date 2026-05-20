@@ -415,6 +415,17 @@
       "source_marker": "P0+20-beta.5.43-fix1",
       "note": "Sir utterance \u542b'\u5439\u725b/\u522b\u5439/\u505a\u4e0d\u5230' \u2014 \u4e3b\u8111\u7acb\u523b acknowledge \u4e0d\u518d promise",
       "source": "seed"
+    },
+    {
+      "id": "no_hallucinated_tool_use_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 12,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.43-fix4",
+      "note": "Sir 18:55 \u8a00\u884c\u4e0d\u4e00\u7ea2\u7ebf \u2014 \u4e3b\u8111\u4e0d\u80fd\u8bf4 'I've corrected/saved/updated' \u9664\u975e\u672c\u8f6e\u771f\u8c03\u4e86 mutation tool. always-on priority 12 \u6781\u9876.",
+      "source": "seed"
     }
   ]
 }
