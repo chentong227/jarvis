@@ -239,6 +239,39 @@
       "source_marker": "P0+20-β.3.0",
       "note": "",
       "source": "seed"
+    },
+    {
+      "id": "sleep_confirmation_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS for full text)",
+      "priority": 9,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 90,
+      "source_marker": "P0+20-beta.5.37-D",
+      "note": "SWM evidence directive (Sir 14:39)",
+      "source": "seed"
+    },
+    {
+      "id": "ghost_activity_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS for full text)",
+      "priority": 8,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 90,
+      "source_marker": "P0+20-beta.5.37-D",
+      "note": "SWM evidence directive (Sir 14:39)",
+      "source": "seed"
+    },
+    {
+      "id": "sir_intent_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS for full text)",
+      "priority": 9,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 90,
+      "source_marker": "P0+20-beta.5.37-D",
+      "note": "SWM evidence directive (Sir 14:39)",
+      "source": "seed"
     }
   ]
 }

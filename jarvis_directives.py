@@ -877,6 +877,52 @@ def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
 
 
 # ============================================================
+# 🩹 [β.5.37-D / 2026-05-20] Sir 14:39 校正 SWM evidence directive trigger
+# 准则 6 三维耦合 — 主脑看 SWM evidence 自决 sleep/ghost/struggle, 不再 sentinel hard decide.
+# 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md §5.
+# ============================================================
+
+def _swm_has_recent(etype: str, max_age_s: float = 600.0) -> bool:
+    """SWM (event_bus.top_n) 是否含 etype 类型且 < max_age_s 秒内."""
+    try:
+        from jarvis_utils import get_event_bus as _geb
+        _bus = _geb()
+        if _bus is None:
+            return False
+        top = _bus.top_n(n=20)
+        for e in top:
+            if e.get('type') == etype:
+                age = e.get('_age_s', 9999)
+                if age <= max_age_s:
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def _trigger_sleep_confirmation_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 sleep_intent_signal (< 10 min 内) → 注入 sleep confirmation judge directive.
+    主脑看 evidence 自决 confirm sleep / 等待 / 不响应.
+    """
+    return _swm_has_recent('sleep_intent_signal', max_age_s=600.0)
+
+
+def _trigger_ghost_activity_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 ghost_activity_observed 或 sir_afk_detected (< 15 min) → 注入 ghost activity
+    judge directive. 让主脑不把屏幕动当 Sir 操作.
+    """
+    return (_swm_has_recent('ghost_activity_observed', max_age_s=900.0)
+            or _swm_has_recent('sir_afk_detected', max_age_s=900.0))
+
+
+def _trigger_sir_intent_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 sir_struggle_observed (< 5 min) → 注入 struggle vs dismiss judge directive.
+    让主脑判 Sir 真 struggle 还是 dismiss / casual context.
+    """
+    return _swm_has_recent('sir_struggle_observed', max_age_s=300.0)
+
+
+# ============================================================
 # 🩹 [β.4.6 / 2026-05-18] L3 Directive vocab — text+metadata 提到 JSON
 #
 # 设计 (Sir Session 5 半化方案, 准则 6.5):
@@ -1347,6 +1393,109 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 → Sir 周末会看到统计.
             """).rstrip(),
             trigger=_trigger_past_action_honesty,
+        ),
+        # ============================================================
+        # 🩹 [β.5.37-D / 2026-05-20] SWM evidence directive (Sir 14:39 准则 6)
+        # 主脑看 SWM evidence 自决 sleep_confirm / ghost / struggle, 不再 sentinel hard decide.
+        # ============================================================
+        Directive(
+            id='sleep_confirmation_judge',
+            source_marker='P0+20-β.5.37-D',
+            priority=9,
+            ttl_days=90,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [SLEEP CONFIRMATION JUDGE - β.5.37-D]:
+                SWM 含 sleep_intent_signal (Sir 最近一句被检测含 sleep 意图).
+                你需要看 SWM evidence + Sir 当前一句 + STM 自决:
+
+                场景 A — 高 score (>= 0.70):
+                  系统已自动进入 sleep mode, 你只需简短 acknowledge ("晚安, Sir").
+
+                场景 B — 中 score (0.50-0.70):
+                  Sir 意图模糊. 你可以:
+                    (1) 问一句 "您准备休息了吗?" 让 Sir 明确
+                    (2) 直接 acknowledge 并等待 Sir 进一步表态
+                    (3) 看 SWM sir_afk_detected → 如果 Sir 刚回归 (afk > 30min) → 信号 stale,
+                        当新对话处理 (不问 confirm)
+
+                场景 C — 低 score (0.30-0.50):
+                  Sir 可能只是闲聊提到 "睡" 字 (e.g. "我睡得不好"). 不要 confirm sleep.
+                  自然对话即可.
+
+                CRITICAL — Sir 14:33 实测 BUG 治本:
+                  Sir 起床后说 "嗯,哦,而且睡的也不太好,起来之后心脏很疼哎" 是
+                  *报告身体状况*, 不是确认 sleep. 你要看完整意思, 不要被 "睡" 字
+                  误导. 主关心 Sir 健康, 不进 sleep mode.
+
+                FORBIDDEN:
+                  - 看到 "嗯" "对" "好" 等 hesitation word 就当 sleep 确认
+                  - 看到 "睡" 字就硬触 sleep mode (要看上下文)
+            """).rstrip(),
+            trigger=_trigger_sleep_confirmation_judge,
+        ),
+        Directive(
+            id='ghost_activity_judge',
+            source_marker='P0+20-β.5.37-D',
+            priority=8,
+            ttl_days=90,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [GHOST ACTIVITY JUDGE - β.5.37-D]:
+                SWM 含 ghost_activity_observed 或 sir_afk_detected.
+                这表示: 屏幕在动 (window switches / file changes) 但 Sir 真在 idle
+                (键盘鼠标 idle > 60s + IDE/Cascade 在 fg).
+
+                Sir 真理: "屏幕动的是 Cursor 自动编程的, 不是我."
+                屏幕活动 ≠ Sir 在场. 你看到 ghost_activity_observed 时:
+
+                FORBIDDEN — 不要在 reply 中:
+                  - 提 Sir "正在用 Cursor / Windsurf / IDE 编程"
+                  - 说 "您终端激活了 / 您屏幕上的东西"
+                  - 把 cascade 的窗口切换误认为 Sir 工作
+                  - 例: return_greeting 时说 "我看您 Windsurf 终端激活了" — 错!
+                       Sir 真睡了 1.5h, 是 Cascade 跑代码动屏幕
+
+                正确做法:
+                  - 只引用 SWM 中 last_real_input_ts 之后的 events (Sir 真操作)
+                  - return_greeting: 看 sir_afk_detected metadata 的 afk 时长真实评价
+                    e.g. 85min = "您小睡了一会"; 5min = "您出去了一下"
+                  - 不评论屏幕活动 (除非 Sir 主动提)
+            """).rstrip(),
+            trigger=_trigger_ghost_activity_judge,
+        ),
+        Directive(
+            id='sir_intent_judge',
+            source_marker='P0+20-β.5.37-D',
+            priority=9,
+            ttl_days=90,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [SIR INTENT JUDGE - β.5.37-D]:
+                SWM 含 sir_struggle_observed (Sir 最近一句含 struggle vocab keyword).
+                你看 metadata.struggle_text 全文 + Sir 当前一句, 自决是真 struggle
+                还是 dismiss / casual context.
+
+                场景 A — 真 struggle (offer help):
+                  "搞不定 X 了" / "stuck on Y" / "怎么办" + 上下文是技术/工作问题
+                  → 你可以 offer help: "需要我帮您看看吗?" / "Want me to take a look?"
+
+                场景 B — dismiss / 闲聊 (don't offer help):
+                  "我去休息" — "去" 不是 struggle, 是 dismiss leaving
+                  "靠在椅子上" — "靠" 不是 expletive, 是 lean
+                  "看不懂这电视剧" — casual comment, 不是技术 struggle
+                  "搞不定老婆" — joke / 私事, 不是工作 struggle
+                  → 自然回应 / acknowledge / 不主动 offer help
+
+                判别:
+                  - struggle_text 含 dismiss/sleep/casual 上下文 → 场景 B
+                  - struggle_text 是工作/技术问题 → 场景 A
+
+                CRITICAL — Sir 13:03 实测 BUG 治本:
+                  Sir 说 "我要去休息一下" 含 "我去" 被老 vocab 误命中, struggle_text
+                  里完整看到是去休息 → 场景 B → 不该 offer help 催 Sir.
+            """).rstrip(),
+            trigger=_trigger_sir_intent_judge,
         ),
     ]
 
