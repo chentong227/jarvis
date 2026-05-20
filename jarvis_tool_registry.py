@@ -36,7 +36,11 @@ def _fail(error: str) -> Dict[str, Any]:
 def tool_concern_progress_update(
     concern_id: str,
     current: Optional[float] = None,
-    progress: Optional[float] = None,  # 🩹 [P0 / 2026-05-20 23:15] alias — LLM 经常 pass 'progress' 不 'current'
+    progress: Optional[float] = None,   # 🩹 [P0] alias 1
+    value: Optional[float] = None,      # 🩹 [P3 BUG#5] alias 2
+    count: Optional[float] = None,      # 🩹 [P3 BUG#5] alias 3
+    amount: Optional[float] = None,     # 🩹 [P3 BUG#5] alias 4
+    done: Optional[float] = None,       # 🩹 [P3 BUG#5] alias 5
     target: float = 0,
     unit: str = '',
     raw_text: str = '',
@@ -45,20 +49,24 @@ def tool_concern_progress_update(
     nerve=None,
     **kw,
 ) -> Dict[str, Any]:
-    """update Sir's progress on a concern. Args: concern_id (req), current (or alias 'progress'), target (opt), unit (opt).
+    """update Sir's progress on a concern. Pass 'current' (preferred) or aliases 'progress/value/count/amount/done'.
 
-    Example: {concern_id: 'sir_hydration_habit', current: 8, target: 8, unit: '杯'}
-    Alt: {concern_id: '...', progress: 8, target: 8}  (alias for current)
+    Args: concern_id (req), current/progress/value/count/amount/done (opt — pick one), target (opt), unit (opt).
+    Example (preferred): {concern_id: 'sir_hydration_habit', current: 8, target: 8, unit: '杯'}
+    Aliases (LLM may use any): progress/value/count/amount/done — all map to current internally.
 
     Sir reports progress → real mutation in ConcernsLedger.daily_progress + severity.
     """
     if not concern_id:
         return _fail('concern_id required')
-    # 🩹 [P0] current / progress alias resolution — LLM often passes either
+    # 🩹 [P0+P3 BUG#5] current alias resolution — LLM often picks any of these names
     if current is None:
-        current = progress
+        for _alias in (progress, value, count, amount, done):
+            if _alias is not None:
+                current = _alias
+                break
     if current is None and not raw_text and severity_delta == 0.0:
-        return _fail('require at least one of: current, progress, raw_text, severity_delta')
+        return _fail('require at least one of: current/progress/value/count/amount/done, raw_text, severity_delta')
     try:
         if nerve is None:
             try:

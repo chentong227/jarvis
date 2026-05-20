@@ -4413,27 +4413,52 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                         )
                                                 except Exception:
                                                     pass
-                                                # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测 BUG：
-                                                # Jarvis 说 "I shall update my internal profile" 但实际只更新
-                                                # hippocampus 不调 profile_card → 名实不符。
-                                                # 同步调 profile_card.apply_correction 让长期画像也得信号。
-                                                # confidence=0.4 让 profile_card 自己决定累计权重。
+                                                # 🩹 [β.2.7.8 / 2026-05-17 + P3-BUG#2 / 2026-05-20 23:40]
+                                                # 治 Sir 实测 BUG: Jarvis 说 "I shall update my internal profile"
+                                                # 但实际只更新 hippocampus 不调 profile_card → 名实不符.
+                                                #
+                                                # P3 BUG#2 升级: 迁到 MemoryGateway 统一 mutation 路径 +
+                                                # 真 receipt 持久化 + SWM publish. 老 apply_correction 仍调
+                                                # (兼容 ProfileCard 内部 cache + dedup), 但 Gateway 真有效.
                                                 try:
-                                                    if hasattr(self.jarvis, 'profile_card') and self.jarvis.profile_card:
-                                                        self.jarvis.profile_card.apply_correction(
-                                                            'memory_correction',
-                                                            'preferences.user_correction',
-                                                            str(old_val)[:160],
-                                                            str(new_val)[:160],
-                                                            0.4,
+                                                    from jarvis_memory_gateway import update_sir_field as _gw
+                                                    _turn_id_mc = ''
+                                                    try:
+                                                        from jarvis_utils import TraceContext as _TCmc
+                                                        _turn_id_mc = _TCmc.get_turn_id() or ''
+                                                    except Exception:
+                                                        pass
+                                                    _receipt = _gw(
+                                                        field_path='preferences.user_correction',
+                                                        new_value=str(new_val)[:160],
+                                                        old_value=str(old_val)[:160],
+                                                        source='worker.memory_correction',
+                                                        confidence=0.5,
+                                                        turn_id=_turn_id_mc,
+                                                        nerve=self.jarvis,
+                                                    )
+                                                    try:
+                                                        from jarvis_utils import bg_log as _gw_bg
+                                                        _gw_bg(
+                                                            f"📇 [MemoryGateway] memory_correction "
+                                                            f"{_receipt.mutation_id} → {_receipt.layer_targeted} "
+                                                            f"{'✓' if _receipt.ok else '✗ ' + _receipt.error[:60]}"
                                                         )
-                                                        try:
-                                                            from jarvis_utils import bg_log as _pc_bg
-                                                            _pc_bg(f"📇 [ProfileCard] 同步 memory_correction → field=preferences.user_correction")
-                                                        except Exception:
-                                                            pass
+                                                    except Exception:
+                                                        pass
                                                 except Exception:
-                                                    pass
+                                                    # fallback to legacy direct call (defensive)
+                                                    try:
+                                                        if hasattr(self.jarvis, 'profile_card') and self.jarvis.profile_card:
+                                                            self.jarvis.profile_card.apply_correction(
+                                                                'memory_correction',
+                                                                'preferences.user_correction',
+                                                                str(old_val)[:160],
+                                                                str(new_val)[:160],
+                                                                0.4,
+                                                            )
+                                                    except Exception:
+                                                        pass
                                             try:
                                                 if category_conflict:
                                                     queries = []

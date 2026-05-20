@@ -3543,6 +3543,28 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             bg_log(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)")
         except Exception:
             print(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)", file=sys.stderr)
+
+        # 🩹 [P3-BUG#1 / 2026-05-20 23:30] stream_chat 主对话 reply 也 record 进
+        # RecentNudgeMemory. P2 Gap12 只 wire 在 stream_nudge, 主对话漏了 → 主脑
+        # 下次 nudge 看不到自己主对话刚说啥 → 仍可能重复主题. 修.
+        # channel='main_chat' 区别 sentinel nudge, 跨 channel 主脑看完整全貌.
+        try:
+            if final_reply and final_reply.strip():
+                from jarvis_recent_nudge_memory import record_nudge as _rn3
+                _turn_id_for_rn = ''
+                try:
+                    from jarvis_utils import TraceContext as _TC3
+                    _turn_id_for_rn = _TC3.get_turn_id() or ''
+                except Exception:
+                    pass
+                _rn3(
+                    channel='main_chat',
+                    content=final_reply,
+                    trigger=str(user_input or '')[:60],
+                    turn_id=_turn_id_for_rn,
+                )
+        except Exception:
+            pass
         # 🩹 [β.2.7.6 / 2026-05-17] 暂存 timing 供 jarvis_worker 打精炼版终端 log
         try:
             self._last_stream_timing = {

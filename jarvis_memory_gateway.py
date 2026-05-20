@@ -109,6 +109,12 @@ class MemoryMutationGateway:
             with self._lock:
                 with open(self.receipt_path, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(receipt.to_dict(), ensure_ascii=False) + '\n')
+            # 🩹 [P3-BUG#7 / 2026-05-20 23:38] rotation 防长期膨胀 (cheap check)
+            try:
+                from jarvis_jsonl_rotator import maybe_rotate as _mr
+                _mr(self.receipt_path, size_mb_cap=10.0)
+            except Exception:
+                pass
         except Exception:
             pass
 

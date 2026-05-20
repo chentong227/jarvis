@@ -501,7 +501,7 @@ def trace_reply(jarvis_reply: str,
                   classify_vocab_path: Optional[str] = None,
                   evidence_vocab_path: Optional[str] = None,
                   include_swm_tool_called: bool = True,
-                  swm_lookback_s: float = 60.0) -> dict:
+                  swm_lookback_s: float = 180.0) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:

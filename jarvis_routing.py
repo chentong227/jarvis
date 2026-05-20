@@ -502,6 +502,7 @@ class ProfileCard:
         
         self._correction_weights = {
             'intent_resolver': 0.9,   # 🩹 [P0 / 2026-05-20 23:18] IntentResolver LLM judged → high trust (effective 0.81 > 0.20 阈值)
+            'worker.memory_correction': 0.7,  # 🩹 [P3-BUG#2 / 2026-05-20 23:40] worker memory_correction 经 MemoryGateway → 真持久化 (0.5*0.7=0.35)
             'habit_clock': 0.30,
             'status_ledger': 0.25,
             'causal_chain': 0.20,

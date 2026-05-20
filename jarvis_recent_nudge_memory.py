@@ -135,6 +135,12 @@ class RecentNudgeMemoryStore:
                 for r in self._records:
                     f.write(json.dumps(r.to_dict(), ensure_ascii=False) + '\n')
             os.replace(tmp, self.path)
+            # 🩹 [P3-BUG#7 / 2026-05-20 23:38] rotation 防长期膨胀
+            try:
+                from jarvis_jsonl_rotator import maybe_rotate as _mr
+                _mr(self.path, size_mb_cap=10.0)
+            except Exception:
+                pass
         except Exception:
             pass
 
