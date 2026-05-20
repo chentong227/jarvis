@@ -344,6 +344,90 @@ class VoiceListenThread(QThread):
         self._suppress_wave = False
         # [R7-β5] 共享 subtitle_queue 引用，main 段事后注入（push 'listening_start' / 'listening_done'）
         self._subtitle_queue = None
+        # 🩹 [β.5.35-C / 2026-05-20] Sir struggle detector — offer_help 真触发源
+        # Sir 反馈: 老 ProactiveShield 看屏幕 error keyword 触 offer_help 误触多 (Sir 没在挣扎).
+        # 修法: 看 **Sir 嘴里说的话** (asr 出口) 命中 struggle vocab → 写 self.last_struggle_at,
+        # Conductor path_b 读这个 fresh signal 决定是否真触发 offer_help.
+        # vocab: memory_pool/sir_struggle_vocab.json / CLI: scripts/struggle_vocab_dump.py
+        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        self._struggle_vocab_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'memory_pool', 'sir_struggle_vocab.json'
+        )
+        self._struggle_vocab_cache = None
+        self._struggle_vocab_mtime = 0.0
+        self.last_struggle_at = 0.0           # 最近一次命中 struggle 的时间戳
+        self.last_struggle_phrase_id = ''     # 命中的 phrase id (e.g. 'stuck_zh')
+        self.last_struggle_severity = ''      # 'low' / 'medium' / 'high'
+        self.last_struggle_text = ''          # Sir 原话片段 (用于 directive evidence)
+
+    def _load_struggle_vocab(self) -> list:
+        """β.5.35-C: 读 memory_pool/sir_struggle_vocab.json, mtime cache.
+
+        返回 active phrases list, 每条 {'id', 'patterns', 'severity'}.
+        失败 / 文件不存在 → 返 [], fail-safe (不触发, 跟硬编码 0 命中一致).
+        """
+        try:
+            if not os.path.exists(self._struggle_vocab_path):
+                return []
+            mtime = os.path.getmtime(self._struggle_vocab_path)
+            if mtime == self._struggle_vocab_mtime and self._struggle_vocab_cache is not None:
+                return self._struggle_vocab_cache
+            with open(self._struggle_vocab_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            active = [p for p in data.get('phrases', [])
+                      if p.get('state', 'active') == 'active' and p.get('patterns')]
+            self._struggle_vocab_cache = active
+            self._struggle_vocab_mtime = mtime
+            return active
+        except Exception:
+            return self._struggle_vocab_cache or []
+
+    def _detect_sir_struggle(self, cmd: str) -> bool:
+        """β.5.35-C: cmd 命中 struggle vocab → set self.last_struggle_*. 返 bool.
+
+        命中规则: 任一 phrase 的任一 pattern 是 cmd.lower() 的子串 → 命中.
+        同一轮多 phrase 命中: 取 severity 最高的 (high > medium > low).
+        """
+        if not cmd or not isinstance(cmd, str):
+            return False
+        lower_cmd = cmd.lower().strip()
+        if len(lower_cmd) < 2:
+            return False
+        active = self._load_struggle_vocab()
+        if not active:
+            return False
+        # 找命中 + 最高 severity
+        sev_rank = {'high': 3, 'medium': 2, 'low': 1, '': 0}
+        best_match = None
+        best_rank = 0
+        for phrase in active:
+            patterns = phrase.get('patterns', [])
+            for pat in patterns:
+                if pat.lower() in lower_cmd:
+                    sev = phrase.get('severity', 'medium')
+                    rank = sev_rank.get(sev, 0)
+                    if rank > best_rank:
+                        best_match = (phrase, pat)
+                        best_rank = rank
+                    break  # 同 phrase 第一个命中即用
+        if best_match is None:
+            return False
+        phrase, pat = best_match
+        self.last_struggle_at = time.time()
+        self.last_struggle_phrase_id = phrase.get('id', '')
+        self.last_struggle_severity = phrase.get('severity', 'medium')
+        self.last_struggle_text = cmd[:160]  # cap 160 char
+        try:
+            from jarvis_utils import bg_log
+            bg_log(
+                f"🆘 [SirStruggle] phrase={self.last_struggle_phrase_id} "
+                f"sev={self.last_struggle_severity} pattern='{pat}' "
+                f"text='{cmd[:60]}'"
+            )
+        except Exception:
+            pass
+        return True
 
     def _publish_listening_done(self):
         """[R7-β5] ASR 结果被丢弃（hallucination/too_short/echo）时清掉 Listening… 指示。"""
@@ -789,6 +873,13 @@ class VoiceListenThread(QThread):
             _anchor = get_default_self_anchor()
             if _anchor is not None:
                 _anchor.record_turn()
+        except Exception:
+            pass
+        # 🆘 [β.5.35-C / 2026-05-20] Sir struggle detector — offer_help 真触发源
+        # 看 cmd 命中 struggle vocab → 写 self.last_struggle_at 让 Conductor 决策时读.
+        # 失败/异常静默, 主路径不阻塞.
+        try:
+            self._detect_sir_struggle(cmd)
         except Exception:
             pass
         self.text_ready.emit(cmd)

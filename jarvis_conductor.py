@@ -139,6 +139,10 @@ class Conductor(threading.Thread):
             'Warn Late Night': 'late_night',
             'Knowledge Archive': 'atmosphere',
             'Context Switch Alert': 'context_switch_alert',
+            # 🩹 [β.5.35-C / 2026-05-20] Sir 反馈语义重排: shield_alert (屏幕动作模式)
+            # 改走 screen_tease (调皮观察) 而非 offer_help. offer_help 真触发源是
+            # Sir 嘴里说困难 (SirStruggleVocab path_a 直触).
+            'Tease Screen': 'screen_tease',
         }
         
         # 拦截原因诊断（限频 30s 防刷屏）
@@ -230,6 +234,39 @@ class Conductor(threading.Thread):
         #   morning_greeting → ReturnSentinel.first_active_today
         #   work_switch      → SmartNudgeSentinel.flow_end
         #   breath_check     → 与 JARVIS 管家人设不符（管家不做周期性情感关怀）
+
+        # 🆘 [β.5.35-C / 2026-05-20] Sir struggle signal 优先路径 (offer_help 真触发源)
+        # Sir 反馈: 老 ProactiveShield 看屏幕 error 触 offer_help 误触多. 修法:
+        # 看 voice_thread.last_struggle_at fresh (≤ 90s) → 直触 offer_help.
+        # bypass inter-source cooldown (Sir 显式说困难必须响应, 紧急超 60s 节流).
+        # vocab: memory_pool/sir_struggle_vocab.json / doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        try:
+            vt = getattr(self.worker, 'voice_thread', None)
+            if vt is not None and self._daily_action_count < 12:
+                _struggle_at = getattr(vt, 'last_struggle_at', 0.0) or 0.0
+                _struggle_age = time.time() - _struggle_at
+                if _struggle_at > 0 and _struggle_age <= 90.0:
+                    # 防同一 struggle 反复触发 — 同一 struggle 只触一次, 触后清
+                    vt.last_struggle_at = 0.0  # consume
+                    return {
+                        'source': 'SirStruggleVocab',
+                        'alert_type': getattr(vt, 'last_struggle_phrase_id', '') or 'sir_struggle',
+                        'action': 'Offer Help',
+                        'reason': (
+                            f"Sir struggle vocab hit: {getattr(vt, 'last_struggle_phrase_id', '?')} "
+                            f"(sev={getattr(vt, 'last_struggle_severity', '?')}, "
+                            f"age={_struggle_age:.0f}s)"
+                        ),
+                        'tone': 'gentle',
+                        'nudge_type': 'offer_help',
+                        # struggle context 透传给 stream_nudge directive 用
+                        'struggle_phrase_id': getattr(vt, 'last_struggle_phrase_id', ''),
+                        'struggle_severity': getattr(vt, 'last_struggle_severity', ''),
+                        'struggle_text': getattr(vt, 'last_struggle_text', ''),
+                    }
+        except Exception:
+            pass
+
         shield_alert = snapshot.get('shield_alert', {})
         wellness_alert = snapshot.get('wellness_alert', {})
         
@@ -295,13 +332,20 @@ class Conductor(threading.Thread):
         
         if shield_alert.get('active') and self._daily_action_count < 12 and _is_alert_fresh(shield_alert):
             PhysicalEnvironmentProbe._shield_alert = {'active': False}
+            # 🩹 [β.5.35-C / 2026-05-20] Sir 反馈语义重排:
+            # 老逻辑: ProactiveShield 屏幕 frustration 信号 → offer_help (太硬, 误触多).
+            # 新逻辑: 屏幕动作模式 → screen_tease (调皮观察, 不主动给方案);
+            # offer_help 真触发源 = Sir 嘴里说困难 (上方 SirStruggleVocab path).
+            # 这样 screen_tease 与 offer_help 语义解耦, Sir 不再被屏幕 error 误推.
             return {
                 'source': 'ProactiveShield',
                 'alert_type': shield_alert.get('type', 'unknown'),
-                'action': 'Offer Help',
-                'reason': f"效率断崖检测: {shield_alert.get('type', 'unknown')}",
+                'action': 'Tease Screen',
+                'reason': f"屏幕动作模式: {shield_alert.get('type', 'unknown')}",
                 'tone': 'gentle',
-                'nudge_type': 'offer_help',
+                'nudge_type': 'screen_tease',
+                # 把屏幕 frustration 类型透传给 stream_nudge directive
+                'screen_category': 'frustration_' + str(shield_alert.get('type', 'screen')),
             }
         
         if wellness_alert.get('active') and self._daily_action_count < 12 and _is_alert_fresh(wellness_alert):
@@ -440,6 +484,13 @@ class Conductor(threading.Thread):
             "afk_minutes": _afk_min,
             "is_afk_long": _is_afk_long,
         }
+        # 🩹 [β.5.35-C / 2026-05-20] struggle context 透传给 stream_nudge directive
+        # (SirStruggleVocab path 触发的 offer_help 需要 Sir 原话 + phrase_id evidence)
+        for _k in ('struggle_phrase_id', 'struggle_severity', 'struggle_text',
+                   'screen_category'):
+            _v = alert_info.get(_k)
+            if _v:
+                nudge_context[_k] = _v
 
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
@@ -647,8 +698,10 @@ class Conductor(threading.Thread):
             # 需要先重新接通 ProactiveCompanion 的 setter。
 
             if shield_alert.get('active'):
+                # 🩹 [β.5.35-C / 2026-05-20] 同 path_a 语义重排: shield_alert → screen_tease
+                # (屏幕动作模式不再硬推 offer_help, 改调皮观察)
                 return {
-                    'action': 'Offer Help',
+                    'action': 'Tease Screen',
                     'reason': f"shield_alert:{shield_alert.get('type','unknown')}",
                     'confidence': 0.9,
                     'message_tone': 'gentle',

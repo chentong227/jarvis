@@ -3780,13 +3780,28 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
                 f"One of them might be worth a brief mention if anything stands out to you."
             ),
             "offer_help": (
-                # 删 6 段 "CRITICAL — TONE VARIATION / PHRASING VARIETY / EMOTIONAL PERCEPTION"
-                # 句式锁清单. 保留 anti-pollution (tool name 禁令 — 这是 integrity 规则).
-                f"Sir seems to be stuck on an error or debugging issue. "
-                f"You can offer help if you have a real way to help.\n\n"
+                # 🩹 [β.5.35-C / 2026-05-20] Sir 反馈语义重排:
+                # 老 directive 假设 "Sir 在 debug 报错" → 这是屏幕信号 (β.5.35 已转 screen_tease).
+                # 新 offer_help 触发源 = Sir 嘴里说困难 (SirStruggleVocab path_a 直触),
+                # nudge_context 含 struggle_phrase_id / struggle_severity / struggle_text.
+                # directive 改 evidence-driven: 引用 Sir 原话 + severity. 不再 prescribe phrasing.
+                # vocab: memory_pool/sir_struggle_vocab.json / doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+                (
+                    f"Sir 显式表达困难, struggle vocab 命中:\n"
+                    f"  phrase_id: {nudge_context.get('struggle_phrase_id', '?')}\n"
+                    f"  severity: {nudge_context.get('struggle_severity', 'medium')}\n"
+                    f"  Sir 原话: \"{nudge_context.get('struggle_text', '(no text)')[:120]}\"\n\n"
+                    if nudge_context.get('struggle_phrase_id')
+                    else f"Sir may need help (signal from screen/context, not explicit voice).\n\n"
+                )
+                + f"主脑参考 Sir 原话 + SOUL inject (skill registry / window / SWM) 自决:\n"
+                f"  - severity=high: 直接表达 \"在听, Sir, 需要什么?\" / 引用 Sir 原话回应\n"
+                f"  - severity=medium: 委婉问 \"need a hand?\" 等 Sir 主导\n"
+                f"  - 无具体 phrase (screen-only signal): 调皮观察 (这是 screen_tease 风格, 但 Sir 已让 offer_help 收到说明真的觉得该插话)\n\n"
                 f"[INTEGRITY — Sir 准则 5]: NEVER mention internal tool names "
                 f"(process_hands.X / file_operator.Y / fast_call / organ name / "
-                f"snake_case identifier). Speak human language only."
+                f"snake_case identifier). Speak human language only. 引用 Sir 原话 OK, "
+                f"但不要照搬太死 — butler 不学舌."
             ),
             "suggest_break": suggest_break_directive,
             "context_switch_alert": "Sir is rapidly switching between windows and contexts.",

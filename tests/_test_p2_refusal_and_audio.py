@@ -96,12 +96,18 @@ class TestStrongRefusalPatterns(unittest.TestCase):
                           f"_STRONG_REFUSAL_PATTERNS 必须包含 '{phrase}'")
 
     def test_detect_help_refusal_uses_strong_pattern(self):
+        """🩹 [β.5.35 / 2026-05-20] regex 跟上 refusal_vocab 持久化重构.
+        老 regex 锁 `is_strong_refusal = any(... _STRONG_REFUSAL_PATTERNS)`,
+        β.4.X 已重构: vocab 持久化后用 `_strong` 局部变量 (从 vocab dict 拿).
+        允许两种写法 (`_strong` 或直接 `_STRONG_REFUSAL_PATTERNS`).
+
+        regex 注意: `p.lower()` 内含 `)`, 不能用 `[^)]*` (会卡在第一个 `)`).
+        用 `.*?` 非贪婪即可 (同一行内匹配, 不跨行)."""
         self.assertIn('_STRONG_REFUSAL_PATTERNS', self.src)
-        # 必须在 _detect_help_refusal 里有 is_strong_refusal 分支
         self.assertRegex(
             self.src,
-            r'is_strong_refusal\s*=\s*any\([^)]*_STRONG_REFUSAL_PATTERNS',
-            "_detect_help_refusal 必须用 _STRONG_REFUSAL_PATTERNS 判断强拒绝"
+            r'is_strong_refusal\s*=\s*any\(.*?(_strong|_STRONG_REFUSAL_PATTERNS)',
+            "_detect_help_refusal 必须用 _strong / _STRONG_REFUSAL_PATTERNS 判强拒绝"
         )
 
     def test_strong_refusal_triggers_300s_freeze(self):
