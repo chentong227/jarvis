@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-20T16:13:00",
+    "purpose": "Sir nudge-receptive 时段习惯 - 准则 6 sensor evidence (β.5.40-E1)",
+    "doc": "docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md §E1",
+    "auto_propose": "L7 jarvis_companion_rhythm_reflector 每日 03:30 扫 STM 算 hour bucket",
+    "edit_via": "scripts/nudge_window_dump.py --show / --set-weekday H R / --set-weekend H R / --reset / --recompute",
+    "min_samples_per_hour": 3,
+    "consumer": [
+      "jarvis_proactive_care (severity dampen at low-rec hour)",
+      "ProactiveCare publish nudge_window_advice SWM → 主脑看"
+    ],
+    "history_max": 200
+  },
+  "weekday_hourly_receptive": {
+    "0": null, "1": null, "2": null, "3": null, "4": null, "5": null,
+    "6": null, "7": null, "8": null, "9": null, "10": null, "11": null,
+    "12": null, "13": null, "14": null, "15": null, "16": null, "17": null,
+    "18": null, "19": null, "20": null, "21": null, "22": null, "23": null
+  },
+  "weekend_hourly_receptive": {
+    "0": null, "1": null, "2": null, "3": null, "4": null, "5": null,
+    "6": null, "7": null, "8": null, "9": null, "10": null, "11": null,
+    "12": null, "13": null, "14": null, "15": null, "16": null, "17": null,
+    "18": null, "19": null, "20": null, "21": null, "22": null, "23": null
+  },
+  "samples_count": {
+    "weekday": {},
+    "weekend": {}
+  },
+  "history": [],
+  "last_computed_ts": 0,
+  "source": "\u672a\u586b\u5145 \u2014 Sir \u4e00\u5468\u5b9e\u6d4b \u540e L7 reflector \u81ea\u52a8\u91c7\u96c6 + \u8ba1\u7b97"
+}

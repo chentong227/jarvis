@@ -398,6 +398,41 @@ class CareConcernSensor:
         except Exception:
             pass
 
+        # 🩹 [β.5.40-E1 / 2026-05-20] Sir 方向 E.1 — nudge_window_advice publish.
+        # 每 tick 读 nudge_window_vocab.json 当前 hour 的 receptive score,
+        # publish 'nudge_window_advice' 到 SWM 让主脑看. score < 0.3 时主脑应更克制.
+        try:
+            from jarvis_companion_rhythm_reflector import get_current_hour_receptive_score
+            score = get_current_hour_receptive_score()
+            if score is not None and self.nerve is not None:
+                bus = getattr(self.nerve, 'event_bus', None)
+                if bus is not None:
+                    now_local = time.localtime()
+                    is_weekday = now_local.tm_wday < 5
+                    bus.publish(
+                        etype='nudge_window_advice',
+                        description=(
+                            f"hour={now_local.tm_hour}h receptive_score={score:.2f} "
+                            f"({'weekday' if is_weekday else 'weekend'})"
+                        ),
+                        source='CompanionRhythm',
+                        salience=0.55 if score < 0.3 else 0.35,
+                        metadata={
+                            'kind': 'nudge_receptive_window',
+                            'hour': now_local.tm_hour,
+                            'is_weekday': is_weekday,
+                            'receptive_score': round(score, 3),
+                            'advice': (
+                                'low_receptive_consider_silent' if score < 0.3
+                                else 'normal_receptive' if score < 0.7
+                                else 'high_receptive_engage_natural'
+                            ),
+                        },
+                        ttl=3600.0,
+                    )
+        except Exception:
+            pass
+
         return n
 
     def _signal(self, concern_id: str, rule_id: str,

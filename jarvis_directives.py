@@ -954,6 +954,13 @@ def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
     return ctx.current_hour >= 22 or ctx.current_hour < 2
 
 
+def _trigger_nudge_window_advice_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 nudge_window_advice (< 30 min 内) → 注入时段建议 directive.
+    主脑看当前 hour Sir 历史接受度调 tone (低 → 克制, 高 → 自然).
+    """
+    return _swm_has_recent('nudge_window_advice', max_age_s=1800.0)
+
+
 def _trigger_ambient_state_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 ambient_state (< 5 min 内) → 注入 ambient context directive.
     主脑看 ambient (laughter/sigh/humming/video/conversation) 自决响应.
@@ -1801,6 +1808,44 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 评论 Sir 看什么视频 (ambient=video_playing)
             """).rstrip(),
             trigger=_trigger_ambient_state_judge,
+        ),
+        Directive(
+            id='nudge_window_advice_judge',
+            source_marker='P0+20-β.5.40-E1',
+            priority=5,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [NUDGE WINDOW ADVICE - β.5.40-E1]:
+                SWM 含 nudge_window_advice (CompanionRhythmReflector 历史学习, 30 min 内).
+                metadata.receptive_score ∈ [0, 1] = Sir 在当前 hour 历史 nudge 接受率.
+                advice ∈ {low_receptive_consider_silent, normal_receptive, high_receptive_engage_natural}.
+
+                场景 A — advice='low_receptive_consider_silent' (score < 0.3):
+                  Sir 历史上这个时段容易拒/烦. 你应该:
+                  - 默认偏 SILENT, 强需求 (commitment overdue / critical health) 才说
+                  - 说话时 tone 极简, 一句到点不绕弯
+                  - 不主动提建议, 不闲聊
+
+                场景 B — advice='normal_receptive' (0.3 ≤ score < 0.7):
+                  正常 nudge 节奏. 按主脑常规判断.
+
+                场景 C — advice='high_receptive_engage_natural' (score ≥ 0.7):
+                  Sir 此时段乐意聊. 你可以:
+                  - tone 自然舒展, 多一句关切 / 轻问 OK
+                  - 适合分享 inside_jokes / 长 thread 回顾
+                  - 不必过度克制
+
+                通用规则:
+                  - score 是 L7 reflector 7d STM 学的, **不是硬规则** — 主脑可结合 SOUL/concerns 综合判
+                  - 不直接说 "您这时段我学过的接受度低" (creepy + 暴露内部)
+                  - 用作 awareness 调 tone, 不 report metadata
+
+                FORBIDDEN:
+                  - 把 receptive_score 当 fact 说出来
+                  - 因 score 低就完全不说 (concern critical 时还是要 nudge)
+            """).rstrip(),
+            trigger=_trigger_nudge_window_advice_judge,
         ),
     ]
 

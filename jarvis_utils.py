@@ -1219,6 +1219,9 @@ class ConversationEventBus:
         'afk_return': 300,                 # ReturnSentinel _on_return raw signal
         'self_critique': 600,              # MetaSelfReflector 自评结果
         'utterance_appended': 60,          # _append_stm 末尾新对话 (短 TTL, 仅作 trigger)
+        # [β.5.40 / 2026-05-20] Sir 方向 A.1/E.1 新 etype:
+        'ambient_state': 180,              # ambient_audio sensor (laughter/sigh/...)
+        'nudge_window_advice': 3600,       # CompanionRhythm 当前 hour receptive 建议
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1245,6 +1248,9 @@ class ConversationEventBus:
         'persona_note': 0.40,
         'sensor_change': 0.30,
         'utterance_appended': 0.20,
+        # [β.5.40 / 2026-05-20] Sir 方向 A.1/E.1 新:
+        'ambient_state': 0.45,             # 背景听感 (默认低, 但场景特殊 publish 时可调高)
+        'nudge_window_advice': 0.35,       # 时段建议 (调 ProactiveCare publish 时 score 低 → 0.55)
     }
 
     def __init__(self, max_events: int = 60):

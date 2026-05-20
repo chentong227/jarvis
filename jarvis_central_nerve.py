@@ -789,6 +789,32 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.40-E1 / 2026-05-20] CompanionRhythmReflector L7 daemon (Sir 方向 E.1)
+        # 每日 03:30 LLM 扫近 7 天 STM 算每 hour nudge-receptive score,
+        # 写 memory_pool/nudge_window_vocab.json. ProactiveCare 看 vocab + publish
+        # nudge_window_advice SWM. 主脑 prompt 看 evidence 调 tone.
+        self.companion_rhythm_reflector = None
+        try:
+            from jarvis_companion_rhythm_reflector import CompanionRhythmReflector
+            def _crr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.companion_rhythm_reflector = CompanionRhythmReflector(
+                stm_provider=_crr_stm_provider,
+            )
+            if self.companion_rhythm_reflector is not None and not self.companion_rhythm_reflector.is_alive():
+                self.companion_rhythm_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _crr_bg
+                _crr_bg("📈 [CompanionRhythmReflector] L7 daemon ready (β.5.40-E1)")
+            except Exception:
+                pass
+        except Exception as _crr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[CompanionRhythmReflector] 初始化失败（非致命）：{_crr_e}")
+            except Exception:
+                pass
+
         # 🩹 [β.5.40-B1 / 2026-05-20] InsideJokeReflector L7 daemon (Sir 方向 B.1)
         # 每日 03:30 LLM 扫近 7 天 STM, 提取 Sir 重复梗/称呼 (≥2 evidence + conf ≥ 0.8)
         # propose 到 relational_state.inside_jokes review queue. Sir CLI 拍板 → active.
