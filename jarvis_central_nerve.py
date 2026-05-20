@@ -1574,6 +1574,18 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [β.5.45 / 2026-05-20 22:00] Sir Lifetime Milestones inject
+        # Sir 21:56 真理: lifetime anchor (declaration / insight) 不是 commitment,
+        # 不要 nudge, replay only when Sir asks. 主脑看 pinned + 最近 3 条 entries,
+        # 严格按 each entry's instruction_for_jarvis 处理 (do_not_use_against_sir).
+        try:
+            from jarvis_milestones import render_prompt_block as _ms_render
+            _ms_block = _ms_render(max_recent=3)
+            if _ms_block:
+                _parts.append(_ms_block)
+        except Exception:
+            pass
+
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
         # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]

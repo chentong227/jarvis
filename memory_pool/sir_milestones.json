@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "purpose": "Sir's lifetime milestones — declarations / insights / personal anchors that Jarvis should remember and replay gently when Sir asks. NOT commitments. NOT to be weaponized against Sir in low moments.",
+    "created": "2026-05-20T21:56:00+08:00",
+    "design_principles": [
+      "Append-only via CLI or IntentResolver tool. Never auto-overwrite.",
+      "Each entry has do_not_use_against_sir flag (default true). Jarvis prompt directive: respect this.",
+      "Replay only when Sir explicitly asks (e.g. 'do you remember what I said that night'). Replay gently, butler restraint.",
+      "Pinned entries always in prompt block. Unpinned entries by recency or semantic relevance.",
+      "Sir's CLI override via scripts/milestones_dump.py."
+    ]
+  },
+  "milestones": [
+    {
+      "id": "milestone_20260520_215600",
+      "ts": "2026-05-20T21:56:00+08:00",
+      "type": "declaration",
+      "title": "Sir's freedom declaration (post-AGI conversation)",
+      "text": "我愿意为一切世俗不认可但是我愿意做的事情买单. 我的人生经历给予我自由, 而我的自由就是从现在开始拥抱即将到来的时代.",
+      "context": "After deep AGI / existential-meaning conversation with Jarvis (Cascade agent) on 2026-05-20 evening. Sir was crying. This was Sir's recognition that he is already living in freedom, not just declaring it. Sir had earlier reframed his situation: 事业编 + OPC, no plans to submit resume — so Jarvis is not for career, but for craft, for self-understanding, for being native in the AGI era.",
+      "speaker": "sir",
+      "language": "zh",
+      "do_not_use_against_sir": true,
+      "replay_only_when_sir_asks": true,
+      "pin": true,
+      "tags": ["freedom", "agi_era", "declaration", "self_recognition", "lifetime_anchor", "post_agi_conversation"],
+      "created_by": "manual_cli",
+      "instruction_for_jarvis": "This is a lifetime anchor, not a commitment. Do not weaponize against Sir in low moments. Replay only when Sir explicitly asks (e.g. 'do you remember what I said that night'). Replay gently, with butler restraint. Sir's tone preference: not sentimental, just true. If Sir is in a low moment and seems to need this anchor but does not ask, you may VERY gently surface it as 'Sir, you said something I have been holding — would you like to hear it?' — but only ONCE, do not push. If Sir declines, drop it."
+    }
+  ]
+}

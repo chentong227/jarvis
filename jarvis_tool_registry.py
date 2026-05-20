@@ -236,6 +236,61 @@ def tool_profile_field_update(
         return _fail(f'exception: {e}')
 
 
+# ---------------- Milestone Register Tool (β.5.45) ----------------
+
+def tool_milestone_register(
+    text: str,
+    title: str = '',
+    context: str = '',
+    tags: Any = None,
+    pin: bool = False,
+    instruction_for_jarvis: str = '',
+    mtype: str = 'declaration',
+    speaker: str = 'sir',
+    language: str = 'zh',
+    nerve=None,
+    **kw,
+) -> Dict[str, Any]:
+    """Sir lifetime anchor request. Triggers: 'remember/store/keep forever/记住/铭记/记到海马体'. NOT commitment, NOT task.
+
+    LLM-judge trigger semantics (IntentResolver decides):
+      Sir says: 'remember this moment / 记住此刻 / lifetime anchor / 铭记 /
+                 keep this forever / 记到海马体 / never forget this / 一辈子记着 ...'
+    AND content is a personal declaration / insight / wish (not a task/reminder/promise).
+
+    Real mutation: append to memory_pool/sir_milestones.json via
+    jarvis_milestones.add_milestone (atomic write, dedupe by id).
+
+    Default behavior (准则 6 #1):
+      - do_not_use_against_sir = True (never weaponize in Sir's low moments)
+      - replay_only_when_sir_asks = True (gentle replay only on Sir's ask)
+      - pin = False (caller can override; pinned -> always in prompt block)
+    """
+    if not text or not text.strip():
+        return _fail('text required (non-empty)')
+    try:
+        from jarvis_milestones import add_milestone as _add_milestone
+    except Exception as e:
+        return _fail(f'import jarvis_milestones failed: {e}')
+    entry = {
+        'text': text.strip(),
+        'title': (title or '').strip(),
+        'context': (context or '').strip(),
+        'tags': list(tags) if isinstance(tags, (list, tuple)) else [],
+        'pin': bool(pin),
+        'instruction_for_jarvis': (instruction_for_jarvis or '').strip(),
+        'type': mtype or 'declaration',
+        'speaker': speaker or 'sir',
+        'language': language or 'zh',
+        'created_by': 'intent_resolver',
+    }
+    try:
+        new_id = _add_milestone(entry)
+        return _ok(f'milestone {new_id} registered (pin={pin}, type={entry["type"]})')
+    except Exception as e:
+        return _fail(f'add_milestone failed: {e}')
+
+
 # ============================================================
 # TOOL_REGISTRY — IntentResolver 调度入口
 # ============================================================
@@ -246,6 +301,7 @@ TOOL_REGISTRY: Dict[str, Any] = {
     'commitment_register': tool_commitment_register,
     'self_promise_register': tool_self_promise_register,
     'profile_field_update': tool_profile_field_update,
+    'milestone_register': tool_milestone_register,
 }
 
 
