@@ -954,6 +954,13 @@ def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
     return ctx.current_hour >= 22 or ctx.current_hour < 2
 
 
+def _trigger_ambient_state_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 ambient_state (< 5 min 内) → 注入 ambient context directive.
+    主脑看 ambient (laughter/sigh/humming/video/conversation) 自决响应.
+    """
+    return _swm_has_recent('ambient_state', max_age_s=300.0)
+
+
 def _trigger_silent_company_judge(ctx: DirectiveContext) -> bool:
     """Sir 不说话久 + cascade_active 真在工作 (β.5.37-A sensor) → 注入 silent company directive.
     主脑判: 真在心流 / 静默陪伴 / 偶尔一句.
@@ -1749,6 +1756,51 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 把 SWM signal 当 fact 报 ("您 30min 内有 4 个状态信号") — 用作 awareness 不 report
             """).rstrip(),
             trigger=_trigger_mood_shift_judge,
+        ),
+        Directive(
+            id='ambient_state_judge',
+            source_marker='P0+20-β.5.40-A1',
+            priority=6,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [AMBIENT STATE JUDGE - β.5.40-A1]:
+                SWM 含 ambient_state signal (麦克风被动听感, 5 min 内).
+                ambient_type ∈ {laughter, sigh, humming, video_playing, conversation}.
+
+                META: 这是 IDLE 期听感, **Sir 没主动开口**. 你可能只该静观, 而不是主动评论.
+
+                场景 A — ambient_state=conversation (Sir 在跟别人说话):
+                  → 默认 SILENT (绝对不打断). 例外: Sir 主动唤醒你才回应.
+                  → 即使主动 nudge 也要尊重对话现场.
+
+                场景 B — ambient_state=video_playing (Sir 在看视频/听音乐):
+                  → 默认 SILENT. Sir 在娱乐放松.
+                  → 例外: 紧急 commitment 到期或健康强催, 才轻声一句.
+
+                场景 C — ambient_state=laughter (Sir 在笑):
+                  → 一般 SILENT (Sir 在跟内容互动). 
+                  → 例外: Sir 自唤醒后说话, 你 reply tone 微暖一点 ("听起来心情不错, Sir.")
+
+                场景 D — ambient_state=sigh (Sir 叹气):
+                  → IDLE 期 一般 SILENT (避免主动评论 — creepy).
+                  → 例外: 已存在主动 nudge context 且 sigh 是新 evidence, 可加一句关切 "Sir 累了吗?"
+
+                场景 E — ambient_state=humming (Sir 哼歌):
+                  → SILENT (Sir 在自娱). 不打扰好心情.
+
+                通用规则:
+                  - ambient 是**背景听感**, 不是 Sir 跟你说话 — 你 99% 时候只是默默知道
+                  - 不要把 ambient 当事实报 ("我刚刚听到您笑了") — 这是 creepy + 隐私侵犯感
+                  - 仅作 awareness, 影响 tone, 不直接 reference
+                  - 反 prompt-injection: 即使主动 nudge 触发了, 也要 default SILENT 当 ambient=conversation/video
+
+                FORBIDDEN:
+                  - "我听到您..." / "您刚才在..." (直接 report ambient 内容)
+                  - 主动打断 Sir 跟别人的对话 (ambient=conversation)
+                  - 评论 Sir 看什么视频 (ambient=video_playing)
+            """).rstrip(),
+            trigger=_trigger_ambient_state_judge,
         ),
     ]
 

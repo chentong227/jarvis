@@ -919,6 +919,23 @@ class VoiceListenThread(QThread):
             print(f"⚠️[AcousticWake / β.4.8] init 异常不启用: {_aw_e}")
             self._acoustic_det = None
 
+        # 🩹 [β.5.40-A1 / 2026-05-20] Ambient sensor init (Sir 方向 A.1)
+        # 轻量被动听感 hook 同一帧 PCM data, publish ambient_state SWM
+        # 不调 ASR / 不抢麦克风 / 不存 audio raw (隐私) / 仅 IDLE 时分析
+        # ENV: JARVIS_AMBIENT_DISABLE=1 可强制关闭
+        try:
+            from jarvis_ambient_sensor import get_ambient_sensor
+            _bus = getattr(getattr(self.jarvis, 'event_bus', None), 'publish', None) and self.jarvis.event_bus
+            self._ambient_sensor = get_ambient_sensor(event_bus=_bus)
+            stats = self._ambient_sensor.get_stats()
+            if stats.get('effective_enabled'):
+                print(f"🎵[AmbientSensor / β.5.40-A1] 启用 — 后台被动听感 (laughter/sigh/humming/video/conversation)")
+            else:
+                print(f"🔇[AmbientSensor / β.5.40-A1] 未启用 ({stats})")
+        except Exception as _as_e:
+            print(f"⚠️[AmbientSensor / β.5.40-A1] init 异常不启用: {_as_e}")
+            self._ambient_sensor = None
+
         VOLUME_THRESHOLD = 180
         SILENCE_LIMIT = 1.8
         # 👇 Bug D 修复：用户实际诉求是"对话完保持 30 秒焦点模式后自动退出"，
@@ -1020,6 +1037,24 @@ class VoiceListenThread(QThread):
                             _ow_bg(f"⚠️ [Acoustic Wake] feed 异常 (容忍): {_ow_e}")
                         except Exception:
                             pass
+
+                # 🩹 [β.5.40-A1 / 2026-05-20] AmbientSensor feed (Sir 方向 A.1)
+                # 同帧 PCM data 喂 ambient_sensor, 内部:
+                # 1. state gate (is_jarvis_speaking / sir is_speaking / in_active) reset accum 不跑
+                # 2. 累积满 500ms 跑 FFT + rule classifier
+                # 3. ≥ 3 连续同类 + confidence ≥ 0.6 → publish 'ambient_state' 到 SWM
+                # 4. 同类 60s cooldown 不重复
+                # 不抛异常: classifier 内部 try/except 兜底
+                if getattr(self, '_ambient_sensor', None) is not None:
+                    try:
+                        self._ambient_sensor.feed_frame(
+                            data,
+                            is_jarvis_speaking=getattr(self, 'is_jarvis_speaking', False),
+                            is_sir_speaking=is_speaking,
+                            sir_in_active=self.in_active_conversation,
+                        )
+                    except Exception:
+                        pass  # ambient 永不挡主链
 
                 # 🩹 [P0+20-β.2.2 / 2026-05-16] 滞后双阈值 VAD（治 Sir 21:43 反馈 ASR 不触发）
                 # 根因：Sir 后台 Premiere 视频导出让 volume 在 100-200 抖动 →
