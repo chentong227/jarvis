@@ -111,6 +111,36 @@ class ConcernFeedbackJudge:
                         f"timing='{entry.get('optimal_timing', '')}' "
                         f"turn={turn_id[:20]}"
                     )
+                    # 🩹 [β.5.44-B / 2026-05-20 19:05] publish_intent (β.5.0 三维耦合)
+                    # Sir 18:55 真理: IntentResolver 看 progress candidate 知道 ledger 已 mutate.
+                    # 主脑下轮 prompt [INTENT RESOLVED] block 看到 → 不再撒谎 "I've corrected".
+                    try:
+                        from jarvis_utils import get_event_bus as _b544_geb
+                        _b544_bus = _b544_geb()
+                        if _b544_bus is not None:
+                            _prog = entry.get('progress') or {}
+                            _b544_bus.publish(
+                                etype='sir_intent_progress_candidate',
+                                description=(
+                                    f'concern {cid} progress updated: '
+                                    f'{_prog.get("current", "?")}/{_prog.get("target", "?")}'
+                                ),
+                                source='ConcernFeedback',
+                                salience=0.65,
+                                metadata={
+                                    'confidence': 0.80,  # LLM 已 judge has_relevance
+                                    'turn_id': turn_id,
+                                    'judgement': {
+                                        'concern_id': cid,
+                                        'progress': _prog,
+                                        'severity_delta': _sev_d,
+                                        'optimal_timing': entry.get('optimal_timing', ''),
+                                        'mutated_already': True,
+                                    },
+                                },
+                            )
+                    except Exception:
+                        pass
         except Exception as e:
             bg_log(f"⚠️ [ConcernFeedback] judge err: {e}")
         finally:

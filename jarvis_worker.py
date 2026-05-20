@@ -3894,6 +3894,31 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                         )
                                     except Exception:
                                         pass
+                                    # 🩹 [β.5.44-B / 2026-05-20 19:06] publish_intent (β.5.0 三维耦合)
+                                    # 让 IntentResolver 看 commit candidate, 主脑下轮 prompt 知道 Gatekeeper 抓到什么.
+                                    if _has_c:
+                                        try:
+                                            from jarvis_utils import get_event_bus as _b544_geb
+                                            _b544_bus = _b544_geb()
+                                            if _b544_bus is not None:
+                                                _b544_bus.publish(
+                                                    etype='sir_intent_commit_candidate',
+                                                    description=f'Sir commitment: {_desc_dbg} | due {_ddl_dbg}',
+                                                    source='GatekeeperLLM',
+                                                    salience=0.65,
+                                                    metadata={
+                                                        'confidence': 0.85,  # Gatekeeper LLM 已 judge
+                                                        'judgement': {
+                                                            'description': _desc_dbg,
+                                                            'deadline': _ddl_dbg,
+                                                            'raw_cmd': str(cmd)[:200],
+                                                            'mutated_already': True,  # 下面会 add_commitment
+                                                            'source_gate': 'gatekeeper',
+                                                        },
+                                                    },
+                                                )
+                                        except Exception:
+                                            pass
                                     if isinstance(commitment, dict) and commitment.get("has_commitment"):
                                         desc = commitment.get("description", "")
                                         deadline = commitment.get("deadline", "")
@@ -4347,6 +4372,29 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                     bg_log(f"🔧 [Memory Correction] '{old_val}' → '{new_val}'")
                                                 except Exception:
                                                     print(f"║ 🔧 [Memory Correction] '{old_val}' → '{new_val}'")
+                                                # 🩹 [β.5.44-B / 2026-05-20 19:05] publish_intent (β.5.0 三维耦合)
+                                                # Sir 18:55 真理: 让 IntentResolver 看 mutation candidate, 主脑 prompt 知道真改了什么
+                                                try:
+                                                    from jarvis_utils import get_event_bus as _b544_geb
+                                                    _b544_bus = _b544_geb()
+                                                    if _b544_bus is not None:
+                                                        _b544_bus.publish(
+                                                            etype='sir_intent_correction_candidate',
+                                                            description=f'memory correction: {str(old_val)[:60]} → {str(new_val)[:60]}',
+                                                            source='MemoryCorrectionGate',
+                                                            salience=0.65,
+                                                            metadata={
+                                                                'confidence': 0.85,  # gate 已确认有 correction
+                                                                'judgement': {
+                                                                    'old_value': str(old_val)[:200],
+                                                                    'new_value': str(new_val)[:200],
+                                                                    'mutated_already': True,  # 旧路径已 mutate
+                                                                    'source_gate': 'memory_correction',
+                                                                },
+                                                            },
+                                                        )
+                                                except Exception:
+                                                    pass
                                                 # 🩹 [β.2.7.8 / 2026-05-17] 治 Sir 实测 BUG：
                                                 # Jarvis 说 "I shall update my internal profile" 但实际只更新
                                                 # hippocampus 不调 profile_card → 名实不符。

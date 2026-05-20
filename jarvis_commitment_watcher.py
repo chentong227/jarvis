@@ -1016,6 +1016,31 @@ class CommitmentWatcher(threading.Thread):
                 _cw_bg_log(f"📝 [CommitmentWatcher{_src_tag}] 已注册: {description} @ {dl_str} (DB#{_new_db_id})")
             except Exception:
                 pass
+            # 🩹 [β.5.44-B / 2026-05-20 19:07] publish_intent (β.5.0 三维耦合)
+            # 让 IntentResolver 看 deadline candidate, 主脑下轮知道有承诺已注册.
+            try:
+                from jarvis_utils import get_event_bus as _b544_geb
+                _b544_bus = _b544_geb()
+                if _b544_bus is not None:
+                    _b544_bus.publish(
+                        etype='sir_intent_deadline_candidate',
+                        description=f'commitment registered: {str(description)[:60]} @ {dl_str}',
+                        source=f'CommitmentWatcher.{source}',
+                        salience=0.65,
+                        metadata={
+                            'confidence': 0.90,  # add_commitment 已成功
+                            'judgement': {
+                                'description': str(description)[:200],
+                                'deadline_str': dl_str,
+                                'deadline_ts': float(deadline_ts),
+                                'source': source,
+                                'db_id': _new_db_id,
+                                'mutated_already': True,
+                            },
+                        },
+                    )
+            except Exception:
+                pass
 
     # [P0-3 / 2026-05-15] 新增：更新/取消 commitment 的接口，让 Memory Correction 能联动。
     # 旧代码 self.commitments 是 in-memory list，只有 append/remove(已 nudged) 两种操作，

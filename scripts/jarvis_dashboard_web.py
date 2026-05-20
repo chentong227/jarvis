@@ -1105,6 +1105,84 @@ def api_reply_feedback():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/intent_resolved')
+def api_intent_resolved():
+    """🩹 [β.5.44-F / 2026-05-20 19:08] IntentResolver 最近 mutation log
+    
+    Sir 18:55 真理可视化: '这轮 Jarvis 做了什么'. 让 Sir 看到 SWM 里
+    intent_resolved + tool_called events 时序, 知道哪轮真调了 tool, 调成功 / 失败.
+    
+    Query params:
+      - hours: 回看小时数 (default 2)
+      - limit: 最多条数 (default 30)
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return jsonify({
+                'ok': True,
+                'events': [],
+                'note': 'event_bus not initialized',
+            })
+        hours = float(request.args.get('hours', 2))
+        limit = int(request.args.get('limit', 30))
+        within = max(60, min(86400, hours * 3600))
+        try:
+            events = bus.recent_events(
+                within_seconds=within,
+                types={'intent_resolved', 'tool_called'},
+            )
+        except Exception:
+            events = []
+        # 排序: 新 → 老, 截 limit
+        events_sorted = sorted(
+            events, key=lambda e: e.get('ts', 0), reverse=True
+        )[:limit]
+        # 简化 output (避免 metadata 太大)
+        out = []
+        for ev in events_sorted:
+            meta = ev.get('metadata') or {}
+            entry = {
+                'ts': ev.get('ts', 0),
+                'etype': ev.get('etype', '?'),
+                'source': ev.get('source', '?'),
+                'description': ev.get('description', '')[:200],
+                'turn_id': meta.get('turn_id', '')[:30],
+            }
+            if ev.get('etype') == 'tool_called':
+                entry['tool_name'] = meta.get('name', '?')
+                entry['ok'] = meta.get('ok', False)
+                entry['error'] = meta.get('error', '')[:200]
+                entry['args'] = meta.get('args', {})
+                entry['reason'] = meta.get('reason', '')[:120]
+            elif ev.get('etype') == 'intent_resolved':
+                entry['tool_calls_count'] = len(meta.get('tool_calls', []))
+                entry['tool_calls'] = meta.get('tool_calls', [])
+                entry['sir_utterance'] = meta.get('sir_utterance_excerpt', '')[:200]
+                entry['candidates_count'] = meta.get('candidates_count', 0)
+            out.append(entry)
+        # 统计
+        n_ir = sum(1 for e in out if e.get('etype') == 'intent_resolved')
+        n_tc = sum(1 for e in out if e.get('etype') == 'tool_called')
+        n_tc_ok = sum(1 for e in out
+                       if e.get('etype') == 'tool_called' and e.get('ok'))
+        return jsonify({
+            'ok': True,
+            'events': out,
+            'stats': {
+                'intent_resolved_count': n_ir,
+                'tool_called_count': n_tc,
+                'tool_called_ok_count': n_tc_ok,
+                'tool_called_fail_count': n_tc - n_tc_ok,
+            },
+            'hours': hours,
+            'total': len(out),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/items')
 def api_items_list():
     """list actionable items, optional filter by category/state."""
@@ -1517,6 +1595,188 @@ def page_items():
     """β.5.41-C 新 3-pane UI: 所有 Sir 拍板事项 + 修正/删除."""
     from flask import make_response
     resp = make_response(render_template_string(_ITEMS_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# 🩹 [β.5.44-F / 2026-05-20 19:09] IntentResolver 可视化 page
+# Sir 18:55 真理: 看每轮 Jarvis 真做了什么 mutation, 验证主脑有没有撒谎
+_INTENT_RESOLVED_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Jarvis · Intent Resolved Log</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", monospace; background: #0e1116;
+           color: #d1d5db; margin: 0; padding: 1rem; }
+    .header { background: #161b22; padding: 1rem; border-radius: 6px;
+              border: 1px solid #30363d; margin-bottom: 1rem; }
+    .header h1 { margin: 0 0 0.5rem 0; color: #58a6ff; font-size: 1.3rem; }
+    .header p { margin: 0; color: #8b949e; font-size: 0.9rem; }
+    .stats { display: flex; gap: 1rem; margin: 1rem 0; }
+    .stat-box { flex: 1; background: #161b22; padding: 0.8rem; border-radius: 6px;
+                border: 1px solid #30363d; text-align: center; }
+    .stat-box .num { font-size: 1.8rem; font-weight: bold; color: #58a6ff; }
+    .stat-box .label { font-size: 0.85rem; color: #8b949e; margin-top: 0.3rem; }
+    .stat-box.ok .num { color: #3fb950; }
+    .stat-box.fail .num { color: #f85149; }
+    .event-list { background: #161b22; padding: 1rem; border-radius: 6px;
+                  border: 1px solid #30363d; }
+    .event { padding: 0.7rem; margin-bottom: 0.6rem; border-radius: 4px;
+             border-left: 3px solid #30363d; background: #0d1117; font-size: 0.9rem; }
+    .event.intent_resolved { border-left-color: #58a6ff; }
+    .event.tool_called.ok { border-left-color: #3fb950; }
+    .event.tool_called.fail { border-left-color: #f85149; }
+    .event-header { display: flex; justify-content: space-between;
+                    margin-bottom: 0.3rem; font-weight: bold; }
+    .event-ts { color: #8b949e; font-size: 0.85rem; font-weight: normal; }
+    .event-meta { color: #8b949e; font-size: 0.83rem; margin-top: 0.3rem; }
+    .event-tool-calls { margin-top: 0.5rem; padding-left: 1rem;
+                        border-left: 2px solid #30363d; }
+    .tool-call-line { padding: 0.2rem 0; font-size: 0.85rem; }
+    .tool-call-line.ok { color: #3fb950; }
+    .tool-call-line.fail { color: #f85149; }
+    .empty { color: #8b949e; text-align: center; padding: 2rem; }
+    .refresh-btn { background: #238636; color: white; border: none; padding: 0.5rem 1rem;
+                   border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    .refresh-btn:hover { background: #2ea043; }
+    .args-json { background: #0a0d13; padding: 0.4rem; border-radius: 3px;
+                 color: #c9d1d9; font-size: 0.78rem; margin-top: 0.3rem;
+                 word-break: break-all; }
+    .hours-selector { background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+                      padding: 0.4rem; border-radius: 4px; margin-right: 0.5rem; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🧭 Intent Resolved Log — Sir 18:55 真理可视化</h1>
+    <p>每轮 Sir 说完话, IntentResolver 集中 LLM judge → 真调 tool → 主脑下轮看 result. 
+       这个页面让 Sir 看到哪轮真调了 tool, 调成功还是失败, 主脑有没有撒谎.</p>
+    <p style="margin-top: 0.5rem;">
+      <a href="/">← 主面板</a> | <a href="/items">items page</a>
+    </p>
+  </div>
+  
+  <div style="margin-bottom: 1rem;">
+    <label>回看时长:
+      <select id="hours-sel" class="hours-selector" onchange="loadEvents()">
+        <option value="0.5">30 分钟</option>
+        <option value="1">1 小时</option>
+        <option value="2" selected>2 小时</option>
+        <option value="6">6 小时</option>
+        <option value="24">24 小时</option>
+      </select>
+    </label>
+    <button class="refresh-btn" onclick="loadEvents()">🔄 刷新</button>
+    <span id="status" style="margin-left: 1rem; color: #8b949e;"></span>
+  </div>
+  
+  <div class="stats" id="stats-box">
+    <div class="stat-box"><div class="num" id="n-ir">-</div><div class="label">turn 数 (intent_resolved)</div></div>
+    <div class="stat-box ok"><div class="num" id="n-ok">-</div><div class="label">tool 成功</div></div>
+    <div class="stat-box fail"><div class="num" id="n-fail">-</div><div class="label">tool 失败</div></div>
+    <div class="stat-box"><div class="num" id="n-total">-</div><div class="label">总 events</div></div>
+  </div>
+  
+  <div class="event-list" id="events">
+    <div class="empty">loading...</div>
+  </div>
+  
+  <script>
+    function fmtTs(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('zh-CN', {hour12: false});
+    }
+    function loadEvents() {
+      const hours = document.getElementById('hours-sel').value;
+      document.getElementById('status').textContent = 'loading...';
+      fetch('/api/intent_resolved?hours=' + hours + '&limit=50')
+        .then(r => r.json())
+        .then(data => {
+          if (!data.ok) {
+            document.getElementById('events').innerHTML = 
+              '<div class="empty">error: ' + (data.error || 'unknown') + '</div>';
+            return;
+          }
+          const stats = data.stats || {};
+          document.getElementById('n-ir').textContent = stats.intent_resolved_count || 0;
+          document.getElementById('n-ok').textContent = stats.tool_called_ok_count || 0;
+          document.getElementById('n-fail').textContent = stats.tool_called_fail_count || 0;
+          document.getElementById('n-total').textContent = data.total || 0;
+          const events = data.events || [];
+          if (events.length === 0) {
+            document.getElementById('events').innerHTML = 
+              '<div class="empty">这段时间内没有 IntentResolver activity — 主脑还没被触发, 或没 mutation 需求.</div>';
+          } else {
+            let html = '';
+            events.forEach(e => {
+              const cls = e.etype === 'tool_called'
+                ? (e.ok ? 'tool_called ok' : 'tool_called fail')
+                : 'intent_resolved';
+              const icon = e.etype === 'tool_called'
+                ? (e.ok ? '✓' : '✗')
+                : '🧭';
+              html += '<div class="event ' + cls + '">';
+              html += '<div class="event-header">';
+              html += '<span>' + icon + ' ' + (e.etype) + ' — ' + (e.source) + '</span>';
+              html += '<span class="event-ts">' + fmtTs(e.ts) + '</span>';
+              html += '</div>';
+              html += '<div>' + (e.description || '').replace(/</g, '&lt;') + '</div>';
+              if (e.etype === 'tool_called') {
+                html += '<div class="event-meta">tool: <b>' + (e.tool_name || '?') + '</b>';
+                if (e.error) html += ' · error: ' + e.error;
+                if (e.reason) html += ' · reason: ' + e.reason;
+                html += '</div>';
+                if (e.args && Object.keys(e.args).length > 0) {
+                  html += '<div class="args-json">' + JSON.stringify(e.args) + '</div>';
+                }
+              } else if (e.etype === 'intent_resolved') {
+                if (e.sir_utterance) {
+                  html += '<div class="event-meta">Sir: "' + 
+                          e.sir_utterance.replace(/</g, '&lt;') + '"</div>';
+                }
+                html += '<div class="event-meta">candidates=' + (e.candidates_count || 0) + 
+                        ', tool_calls=' + (e.tool_calls_count || 0) + '</div>';
+                if (e.tool_calls && e.tool_calls.length > 0) {
+                  html += '<div class="event-tool-calls">';
+                  e.tool_calls.forEach(tc => {
+                    const lcls = tc.ok ? 'ok' : 'fail';
+                    const licon = tc.ok ? '✓' : '✗';
+                    html += '<div class="tool-call-line ' + lcls + '">' + licon + ' ' + 
+                            (tc.name || '?') + (tc.error ? ' (' + tc.error + ')' : '') + '</div>';
+                  });
+                  html += '</div>';
+                }
+              }
+              html += '</div>';
+            });
+            document.getElementById('events').innerHTML = html;
+          }
+          document.getElementById('status').textContent = 
+            'updated ' + new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        })
+        .catch(err => {
+          document.getElementById('events').innerHTML = 
+            '<div class="empty">fetch error: ' + err.message + '</div>';
+        });
+    }
+    loadEvents();
+    setInterval(loadEvents, 30000);  // 30s 自动刷新
+  </script>
+</body>
+</html>
+"""
+
+
+@app.route('/intent_resolved')
+def page_intent_resolved():
+    """🩹 [β.5.44-F / 2026-05-20 19:09] Sir 18:55 真理可视化 page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_INTENT_RESOLVED_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp

@@ -393,6 +393,38 @@ class SelfPromiseDetector:
         with self._lock:
             self._stats['registered'] += registered
 
+        # 🩹 [β.5.44-B / 2026-05-20 19:06] publish_intent (β.5.0 三维耦合)
+        # 让 IntentResolver 看 Jarvis self-promise candidate, 主脑下轮知道 PromiseLog 已 register.
+        if registered > 0:
+            try:
+                from jarvis_utils import get_event_bus as _b544_geb
+                _b544_bus = _b544_geb()
+                if _b544_bus is not None:
+                    _b544_bus.publish(
+                        etype='sir_intent_promise_candidate',
+                        description=f'Jarvis self-promise(s) detected: {registered}/{len(promises)}',
+                        source='SelfPromiseDetector',
+                        salience=0.60,
+                        metadata={
+                            'confidence': 0.75,  # regex+vocab 已 confirm
+                            'turn_id': turn_id,
+                            'judgement': {
+                                'detected_count': len(promises),
+                                'registered_count': registered,
+                                'promises': [
+                                    {
+                                        'description': p.get('description', '')[:120],
+                                        'kind': p.get('kind', '?'),
+                                    }
+                                    for p in promises[:3]  # 最多 3 条避免 metadata 大
+                                ],
+                                'mutated_already': True,
+                            },
+                        },
+                    )
+            except Exception:
+                pass
+
         return {'registered': registered, 'detected': len(promises), 'skipped_reason': None}
 
     def _register_one_promise(self, p: Dict, commitment_watcher,
