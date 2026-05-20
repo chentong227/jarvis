@@ -699,7 +699,29 @@ Example: Coding|Working in VS Code on a Python project"""
             'shield_alert': dict(cls._shield_alert),
             'companion_alert': dict(cls._companion_alert),
             'wellness_alert': dict(cls._wellness_alert),
+            # 🩹 [β.5.43-fix3-㋮ / 2026-05-20 18:55] active 窗口是否卡顿 (IsHungAppWindow API)
+            # Sir 18:49 痛点: Jarvis 答应 "windsurf 卡了主动提醒", 但没 sensor.
+            # Windows IsHungAppWindow 5s 内 active window 不响应 → True. 触发 ProactiveCare nudge.
+            'active_window_unresponsive': cls._check_active_window_unresponsive(),
         }
+
+    @classmethod
+    def _check_active_window_unresponsive(cls) -> bool:
+        """[β.5.43-fix3-㋮] Windows IsHungAppWindow 检测前台窗口是否卡顿.
+        
+        evidence-only, 不做反应. ProactiveCare 看到 → publish concern → 主脑判断.
+        失败/无 win32gui 返 False (容错).
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return False
+            # IsHungAppWindow: TRUE 当窗口 5s 内不处理消息
+            return bool(user32.IsHungAppWindow(hwnd))
+        except Exception:
+            return False
 
     @classmethod
     def get_sensor_snapshot(cls) -> dict:

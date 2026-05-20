@@ -10,6 +10,7 @@
         "monitor",
         "remind",
         "keep an? eye on",
+        "keep an? (?:closer|watchful|vigilant|extra)\\s+eye on",
         "keep watch over",
         "integrate reminders",
         "issue proactive",
@@ -19,7 +20,15 @@
         "stay vigilant",
         "follow up",
         "check in",
-        "keep tabs on"
+        "keep tabs on",
+        "intervene if",
+        "intervene when",
+        "alert you if",
+        "alert you when",
+        "notify you if",
+        "notify you when",
+        "let you know if",
+        "let you know when"
       ]
     },
     "zh_soft_verbs": {
@@ -54,6 +63,12 @@
       "marker": "β.5.19-C",
       "action": "init",
       "note": "从 jarvis_self_promise.py 源码迁移 _EN_SOFT_PROMISE_VERBS + _ZH_SOFT_PROMISE_VERBS 到此 json. py 仅保留 _SEED_*_SOFT_PROMISE_VERBS fallback. 复杂 PROMISE_PATTERNS regex 留源码 (递归边界)."
+    },
+    {
+      "ts": "2026-05-20T18:57:00+08:00",
+      "marker": "β.5.43-fix3-㋯",
+      "action": "add_verbs",
+      "note": "Sir 18:49 痛点: Jarvis 说 'I shall keep a closer eye on the telemetry and intervene if env stalled' — PromiseLog 抓不到这条 (vocab 没 'closer eye' 和 'intervene if'), 漏判. 加 8 个 verb: keep .* eye 变体 + intervene if/when + alert/notify/let-know if/when. 同时 SirRequestReflector (β.5.43-fix3-㋭) 作主路径绕过 PromiseLog 直接 propose concern, vocab 仅作 PromiseLog 兜底."
     }
   ]
 }

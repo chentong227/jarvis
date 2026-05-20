@@ -789,6 +789,34 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.43-fix3-㋭ / 2026-05-20 18:52] SirRequestReflector L7 daemon
+        # Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
+        # 此 daemon 60s tick, LLM judge STM 看 Sir 是否要求 long-watch X,
+        # 命中 → propose concern 进 review queue, Sir dashboard 一键激活.
+        self.sir_request_reflector = None
+        try:
+            from jarvis_sir_request_reflector import SirRequestReflector
+            def _srr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.sir_request_reflector = SirRequestReflector(
+                key_router=self.key_router,
+                stm_provider=_srr_stm_provider,
+                concerns_ledger=getattr(self, 'concerns_ledger', None),
+            )
+            if self.sir_request_reflector is not None and not self.sir_request_reflector.is_alive():
+                self.sir_request_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _srr_bg
+                _srr_bg("🪞 [SirRequestReflector] L7 watch-request daemon ready (β.5.43-fix3-㋭)")
+            except Exception:
+                pass
+        except Exception as _srr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SirRequestReflector] 初始化失败（非致命）：{_srr_e}")
+            except Exception:
+                pass
+
         # 🩹 [β.5.40-E1 / 2026-05-20] CompanionRhythmReflector L7 daemon (Sir 方向 E.1)
         # 每日 03:30 LLM 扫近 7 天 STM 算每 hour nudge-receptive score,
         # 写 memory_pool/nudge_window_vocab.json. ProactiveCare 看 vocab + publish

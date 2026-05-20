@@ -1229,6 +1229,9 @@ class ConversationEventBus:
         'reply_interrupted': 180,          # interrupt_all 抓 Sir cut reply (β.5.43-C)
         # [β.5.43-fix2 / 2026-05-20] 承诺动态影响关心权重 (B 修法):
         'sir_progress_evidence': 86400,    # ConcernFeedback 写 progress 统一 publish (24h)
+        # [β.5.43-fix3 / 2026-05-20] Sir 主动 watch 请求 + 进程卡顿 sensor:
+        'active_window_hung': 300,         # PhysicalEnvProbe IsHungAppWindow (5min)
+        'sir_watch_request_proposed': 3600, # SirRequestReflector propose 新 concern (1h)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1265,6 +1268,9 @@ class ConversationEventBus:
         'reply_interrupted': 0.75,         # 被 Sir 打断 — 主脑必看 (高 salience)
         # [β.5.43-fix2 / 2026-05-20] 承诺统一 SWM source:
         'sir_progress_evidence': 0.65,     # Sir 主动反馈 progress, 主脑要看
+        # [β.5.43-fix3 / 2026-05-20]:
+        'active_window_hung': 0.70,        # 窗口卡顿 — 主脑要看 (Sir 可能 frustrated)
+        'sir_watch_request_proposed': 0.70, # 新 watch concern 进 review queue, 主脑可顺嘴提
     }
 
     def __init__(self, max_events: int = 60):

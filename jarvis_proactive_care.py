@@ -497,6 +497,35 @@ class CareConcernSensor:
         except Exception:
             pass
 
+        # 🩹 [β.5.43-fix3-㋮ / 2026-05-20 18:55] active_window_unresponsive publish
+        # Sir 18:49 痛点: Jarvis 答应 "windsurf 卡了主动提醒". 
+        # PhysicalEnvProbe _check_active_window_unresponsive 调 IsHungAppWindow.
+        # 仅 publish SWM (publish-only, 不直接加 concern severity), 让主脑/SirRequestReflector
+        # 的 watch concern 自然 trigger.
+        try:
+            if snap.get('active_window_unresponsive'):
+                from jarvis_utils import get_event_bus as _geb
+                _bus = _geb()
+                if _bus is not None:
+                    _bus.publish(
+                        etype='active_window_hung',
+                        description=(
+                            f"前台窗口 5s 内不响应: "
+                            f"{snap.get('window_title', '?')[:80]} "
+                            f"(proc={snap.get('process_name', '?')})"
+                        ),
+                        source='PhysicalEnvProbe',
+                        salience=0.7,
+                        metadata={
+                            'window_title': snap.get('window_title', ''),
+                            'process_name': snap.get('process_name', ''),
+                            'work_category': snap.get('work_category', ''),
+                        },
+                        ttl=300.0,  # 5min
+                    )
+        except Exception:
+            pass
+
         return n
 
     def _signal(self, concern_id: str, rule_id: str,
