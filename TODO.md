@@ -43,6 +43,29 @@
 
 ---
 
+## 🎁 β.5.38 — 方向 C 主脑 directive 库扩 (Sir 选)
+
+> 利用 β.5.37 架构杠杆, 5 个新 SWM evidence directive. 主脑看 SWM evidence + 时间 + Sir 当前一句 自决场景 A/B/C/D contextual.
+
+| commit | directive | 触发 | 主脑自决 |
+|---|---|---|---|
+| `0ac082b` | `morning_mood_judge` | 6-10am + `is_first_active_today` | 看 afk 评 Sir 睡眠 → 个性化简报 (不死板 "Good morning") |
+| 同 | `late_night_care_judge` | ≥ 23:00 / < 02:00 | deep work 静默 / 困住柔声 offer / 凌晨温柔提醒 |
+| 同 | `silent_company_judge` | 主动 nudge 无 user_input + ghost/afk SWM | 默认 SILENCE, 例外: urgency ≥ 0.85 |
+| 同 | `callback_recall_judge` | Sir 输入含 "那个/上次/that one" | 先找 referent (STM/callback/concerns), 不瞎猜 |
+| 同 | `mood_shift_judge` | 30min 内 ≥ 3 类 state signal | 多信号 = 复杂 context, tone 一致 |
+
+**testcase**: 14/14 pass + 215 regression pass.
+
+**Sir 真机体感**:
+- 早上不再 "Good morning, Sir" 死板模板
+- 深夜不再频繁催睡
+- Sir 心流时 SILENCE 不打扰
+- 模糊指代不瞎猜
+- 多信号变化 tone 自适应
+
+---
+
 ## ✅ Sir β.5.37 真机实测 check list (重启后跑)
 
 > Sir 重启 Jarvis 后看下面 11 行是否 OK. 出 BUG 报告我修 directive (不动 sensor/sentinel架构).
@@ -59,6 +82,11 @@
 [ ] 9. SleepDetector 中置信 score (0.5-0.7) → 不再硬 set pending state, log 显示 "(主脑判): ... (signal 已 publish to SWM)"
 [ ] 10. Grep latest.log "sleep_intent_signal|ghost_activity_observed|sir_struggle_observed|shield_observation" 各类 SWM 信号都能看到
 [ ] 11. directive registry: scripts/registry_dump.py list 含 sleep_confirmation_judge / ghost_activity_judge / sir_intent_judge (state=active)
+[ ] 12. β.5.38 早上 6-10am 首次说话 → morning_mood_judge fire, 不再 "Good morning, Sir" 死板
+[ ] 13. β.5.38 ≥ 23:00 chat → late_night_care_judge fire, 主脑场景 A/B/C 自决
+[ ] 14. β.5.38 心流期主动 nudge (无 user_input) + ghost SWM → silent_company_judge → 主脑 emit <SILENT>
+[ ] 15. β.5.38 Sir 说 "把那个文档打开" → callback_recall_judge fire, 主脑先找 referent
+[ ] 16. β.5.38 30min 内 ≥ 3 类 SWM signal → mood_shift_judge fire, 主脑 tone 一致维持
 ```
 
 **真机出 BUG 时 报告我**:
