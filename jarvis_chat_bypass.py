@@ -4483,6 +4483,29 @@ No ZH translation. No closing remark. Nothing else.
                 pass
 
             print("\n╚" + "═"*63 + "\n")
+
+            # 🩹 [P2-Gap12 / 2026-05-20 23:50] Record this nudge in RecentNudgeMemory
+            # Sir 22:38/22:44 真痛点: 6 channel nudge 重复 "shower" 主题. 加 record
+            # 让 _assemble_prompt 下次 inject [RECENT JARVIS NUDGES] block, 主脑看
+            # 自己刚说过啥不重复.
+            try:
+                if final_reply and final_reply.strip():
+                    from jarvis_recent_nudge_memory import record_nudge as _rn
+                    _channel = (nudge_context or {}).get('nudge_type', 'unknown')
+                    _trigger = (nudge_context or {}).get('source', '')
+                    _turn_id = ''
+                    try:
+                        from jarvis_utils import TraceContext as _TC
+                        _turn_id = _TC.get_turn_id() or ''
+                    except Exception:
+                        pass
+                    _rn(channel=_channel,
+                        content=final_reply,
+                        trigger=_trigger,
+                        turn_id=_turn_id)
+            except Exception:
+                pass
+
             if '_nudge_key_name' in dir():
                 self.key_router.release(_nudge_key_name)
             return final_reply

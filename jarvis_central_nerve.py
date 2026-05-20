@@ -1589,6 +1589,18 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [P2-Gap12 / 2026-05-20 23:50] Recent Jarvis nudges across all channels
+        # Sir 22:38/22:44 真痛点: ReturnSentinel + ProactiveCare 6min 内两次 nudge
+        # 都 reference "shower", 6 channel 互不知重复. 加 [RECENT JARVIS NUDGES]
+        # 让主脑看自己跨 channel 刚说过啥, 自决不重复主题. 准则 6: 不教硬规.
+        try:
+            from jarvis_recent_nudge_memory import to_prompt_block as _rn_block
+            _rn_text = _rn_block(within_seconds=1800, max_show=5)
+            if _rn_text:
+                _parts.append(_rn_text)
+        except Exception:
+            pass
+
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
         # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]
