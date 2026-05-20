@@ -3388,8 +3388,12 @@ class JarvisWorkerThread(QThread):
                             sq = getattr(self.voice_thread, '_subtitle_queue', None)
                             if sq is not None:
                                 sq.put(("focus", True))
-                                # β.5.34-fix: listening cue 让 Sir 一眼看出 "Jarvis 在等"
-                                sq.put(("user", "🎙️ Listening for your reply… (90s)"))
+                                # 🩹 [β.5.38-fix / 2026-05-20 15:18] Sir 实测 BUG:
+                                # 老 emit ("user", "🎙️ Listening...") 用 user 通道 → UI line 252-267
+                                # 强制清空 _en_words + _zh_text → Jarvis nudge 字幕立刻被清掉!
+                                # Sir 看不到 nudge 内容, 只看到 "🎙️ Listening...".
+                                # 修法: 改用 silent_nudge 通道, 走 show_user_speech("💭 ...") 不清字幕.
+                                sq.put(("silent_nudge", "🎙️ Listening for your reply…"))
                         except Exception:
                             pass
                         print(f"🎯 [Focus Lock] {nudge_type} 焦点模式已激活 (90s)，等待 Sir 回复...")
