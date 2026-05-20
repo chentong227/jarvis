@@ -865,15 +865,18 @@ def _trigger_dashboard_intent(ctx: DirectiveContext) -> bool:
 
 
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
-    """🩹 [β.3.0 BUG#4 / 2026-05-18] past-action 诚信 directive 触发.
-    Sir 输入像在请求一个动作 (与 tool_overture 同样 vocab) → 注入诚信约束,
-    主脑别在 tool result 来之前就说"已 X".
-    复用 tool intent vocab (action verb 命中 → 主脑会触发 FAST_CALL → 必须诚信).
+    """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
+    past-action 诚信 directive 触发.
+
+    P4 升级: 改 always return True. Sir 23:43:47 真测 "好的好的 he" 不命中 action
+    verb → past_action_honesty 不 inject → 主脑没看 UNSOLICITED 老账 callback ban
+    (fix3 ac53148 加的) → 主脑自由 callback 道歉 "Regarding my previous claim of
+    updating settings, I must correct myself..." (Sir 没问! unsolicited).
+
+    Priority 10 顶级红线必须 always-on (跟 capability_boundary_judge 同档).
+    增加 ~1500 chars prompt, 但治 Sir 反复痛点 (22:04 / 22:19 / 23:02 / 23:43).
     """
-    if not ctx.user_input:
-        return False
-    t = ctx.user_input.lower().strip()
-    return any(w in t for w in get_tool_intent_patterns())
+    return True
 
 
 # ============================================================
