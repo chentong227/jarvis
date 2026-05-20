@@ -84,9 +84,11 @@ class TestP0Plus20Beta412DirectiveMorningEvidence(unittest.TestCase):
             return f.read()
 
     def test_directive_contains_morning_context_block(self):
+        """🩹 [β.5.34 / 2026-05-20] 命名从 [MORNING CONTEXT] 改 [MORNING BRIEFING POSTURE]
+        反映 Sir 反向反馈 (列工作而非抑制)."""
         src = self._get_chat_bypass_src()
-        self.assertIn('MORNING CONTEXT', src,
-            'return_greeting directive 必须含 [MORNING CONTEXT] evidence 块')
+        self.assertIn('MORNING BRIEFING POSTURE', src,
+            'return_greeting directive 必须含 [MORNING BRIEFING POSTURE] evidence 块 (β.5.34)')
         self.assertIn('is_first_today', src,
             'directive 必须引用 is_first_today 字段')
 
@@ -110,13 +112,35 @@ class TestP0Plus20Beta412DirectiveMorningEvidence(unittest.TestCase):
             self.assertNotIn(phrase, directive,
                 f'directive 不应硬编码句式: {phrase}')
 
-    def test_directive_lightweight_check_in_guidance(self):
-        """morning evidence 应该建议 lightweight status check, 不重提工作."""
+    def test_directive_morning_briefing_evidence_based(self):
+        """🩹 [β.5.34 / 2026-05-20] Sir 反向反馈: '早安跟回归没区别, 可以多说点
+        (我们之间的事/没做的事/今天注意的事)'. β.4.12 的'抑制工作'策略推翻,
+        改 morning briefing 风格 — 主脑参考 SOUL inject evidence (concerns/threads/
+        unfinished/attention) 自决要不要列, 不再硬抑制. test 跟决策走.
+
+        准则 6 evidence-based: directive 必须显式引用 SOUL inject 的几大 evidence
+        让主脑能 anchor briefing 内容, 不能再用'should NOT bring up'这种硬抑制."""
         src = self._get_chat_bypass_src()
-        self.assertIn('lightweight', src,
-            'morning directive 必须建议 lightweight check-in')
-        self.assertIn("hasn't had coffee yet", src,
-            'morning directive 必须 anchor "Sir hasnt had coffee yet" 防止重提工作')
+        # 提取 return_greeting directive 块
+        start = src.find('"return_greeting":')
+        end = src.find('"commitment_check":', start)
+        directive = src[start:end]
+        # 必须出现"MORNING BRIEFING POSTURE" — β.5.34 命名
+        self.assertIn('MORNING BRIEFING POSTURE', directive,
+            'morning directive 必须用 β.5.34 [MORNING BRIEFING POSTURE] 段')
+        # 必须显式提到 4 大 evidence 让主脑 anchor 内容
+        for kw in ('concerns', 'threads', 'unfinished', 'attention'):
+            self.assertIn(kw, directive.lower(),
+                f'morning directive 必须显式引用 SOUL inject {kw} 让主脑 anchor briefing')
+        # 反例: 不能再用 β.4.12 的硬抑制句式 (Sir 已推翻)
+        forbidden_β412 = [
+            "should NOT be the opening",
+            "Bring up pending threads ONLY if Sir asks",
+            "hasn't had coffee yet",
+        ]
+        for phrase in forbidden_β412:
+            self.assertNotIn(phrase, directive,
+                f'β.5.34 推翻 β.4.12 抑制策略, directive 不该再有: {phrase!r}')
 
 
 # ==========================================================================

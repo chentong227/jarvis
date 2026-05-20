@@ -3259,6 +3259,19 @@ class JarvisWorkerThread(QThread):
                                 )
                         except Exception:
                             pass
+                        # 🩹 [β.5.34 / 2026-05-20] Sir 10:46 实测 BUG: "依然没保持焦点模式".
+                        # 根因: focus_lock 后端激活 (in_active_conversation=True / soft_focus_until)
+                        # 但 UI overlay 从来没收到 ("focus", True) 信号 → SubtitleOverlay.set_focus_mode
+                        # 从未被调用 → 字幕淡出消失 → Sir 视觉上看不到 "Jarvis 在等" → 没意识到该回应.
+                        # 修法: nudge 触发 focus_lock 时同步 emit ("focus", True) 让 overlay 持续显示.
+                        # 配对的 ("focus", False) 在 line 876 (timeout) / 1072 (dismiss) / 1220 (告别)
+                        # / 1314 (focus 超时) 已有, 关闭路径完备.
+                        try:
+                            sq = getattr(self.voice_thread, '_subtitle_queue', None)
+                            if sq is not None:
+                                sq.put(("focus", True))
+                        except Exception:
+                            pass
                         print(f"🎯 [Focus Lock] {nudge_type} 焦点模式已激活 (90s)，等待 Sir 回复...")
                     continue
                 

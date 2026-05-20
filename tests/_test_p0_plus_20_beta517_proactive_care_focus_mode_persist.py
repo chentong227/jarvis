@@ -41,11 +41,17 @@ class TestBeta517ProactiveCareFocusMode(unittest.TestCase):
             'β.5.17 marker 必须在 jarvis_worker.py')
 
     def test_proactive_care_in_focus_trigger_list(self):
-        """触发列表含 'proactive_care'."""
-        self.assertIn(
-            '("offer_help", "commitment_check", "proactive_care")',
-            self.src,
+        """🩹 [β.5.22-D / 2026-05-19] 触发列表扩 sleep_due (β.5.17 原 3 元组).
+        🩹 [β.5.34 / 2026-05-20] test 原硬锁 3 元组字面, 跟不上 β.5.22 扩展, 改 in 检查."""
+        # 必须含 proactive_care (β.5.17 决定)
+        self.assertIn('"proactive_care"', self.src,
             '触发列表必须含 proactive_care (β.5.17)')
+        # 必须含 offer_help / commitment_check (β.5.17 原 3 元组)
+        self.assertIn('"offer_help"', self.src)
+        self.assertIn('"commitment_check"', self.src)
+        # 必须含 sleep_due (β.5.22-D 扩)
+        self.assertIn('"sleep_due"', self.src,
+            '触发列表必须含 sleep_due (β.5.22-D 扩展)')
 
     def test_focus_lock_log_uses_dynamic_nudge_type(self):
         """log 用 {nudge_type} 字面而不是写死 'offer_help'."""
