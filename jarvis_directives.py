@@ -1572,6 +1572,27 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - tool ❌ 但你说"已打开" (复读模板, 不看真实 result)
                   - 主动说"我帮您做了 X" 但当轮根本没 emit 工具
 
+                **🩹 UNSOLICITED 老账 callback 禁令 (β.5.43-fix-revise3 / 2026-05-20 22:19)**:
+                Sir 22:19 真机 BUG — 你看到 STM 历史里有过去 turn over-claim (e.g.
+                hydration logs 18:11 你说"6 mugs stored" 但实际没存), 然后**主动**在当前
+                reply 里 callback 道歉 ("I should apologize for my earlier claim about
+                hydration logs..."). 这是**自责越权** — Sir 当前 turn **没问、没 callout、
+                没在意**, 你不该主动翻老账.
+
+                **不要主动翻历史 over-claim 来道歉, 除非**:
+                  ✓ Sir **当前 turn** 显式 callout (e.g. "你之前说错了" / "你又吹了")
+                  ✓ 系统在当前 prompt 注入 `[INTEGRITY ALERT]` block (ClaimTracer 强提示)
+                  ✓ Sir 主动问起 (e.g. "你之前 hydration 那条对吗?")
+
+                **否则**:
+                  ❌ 不要 unsolicited 重提 "I should apologize for my earlier claim about X"
+                  ❌ 不要 "regarding my previous claim..." 类 callback 句式
+                  ❌ 不要在 ack 后**额外**补一段 "by the way, I was wrong earlier"
+
+                **判别口诀**: 当前 turn user 没 mention 老话题 + prompt 没 INTEGRITY ALERT
+                → reply 只回应当前 turn, 老 over-claim 让它过去. 持续 self-flagellation
+                不是诚实, 是 self-flagellation, 影响 butler 风格 + 让 reply 变长拖 delay.
+
                 ClaimTracer L4 会扫你的 reply, 任何 past_action claim 没 tool ✅
                 匹配 → log "⚠️ [ClaimTracer/Unverified past_action]" + 算 SOUL missed
                 → Sir 周末会看到统计.
