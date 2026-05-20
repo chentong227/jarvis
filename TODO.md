@@ -32,6 +32,32 @@
 
 ---
 
+## 🌟 β.5.40 — Sir 长期方向 A.1/B.1/E.1/A.2 全做 (除 D, ~10h, 4 commit)
+
+> Sir 决定: "全做, 除了 D, 按推荐顺序全部往下, 但是算法要精准". 4 个长期方向 100% 不动 TTFT (全后台 daemon / sensor / publish-only SWM).
+
+| commit | 方向 | 内容 | testcase |
+|---|---|---|---|
+| `8a07d44` | **A.1 ambient_audio** | `jarvis_ambient_sensor.py` Hook AuditoryCortex 同帧 PCM data (不抢麦克风) + FFT classifier (laughter/sigh/humming/video/conversation) + 500ms window + ≥ 3 连续 + conf ≥ 0.6 才 publish + 60s 同类 cooldown + 隐私只判状态不存 audio. SWM etype `ambient_state` + `ambient_state_judge` directive (5 场景: conversation/video/laughter/sigh/humming) | 17 |
+| `b9a69cb` | **B.1 InsideJoke** | `jarvis_inside_joke_reflector.py` L7 daemon 03:30-06:00 跑 LLM 扫近 7d STM 提取 Sir 重复梗/称呼 (≥ 2 evidence + conf ≥ 0.8 严格) → propose `relational_state.inside_jokes review` (Sir CLI 拍板 → active) | 13 |
+| `85d5c18` | **E.1 CompanionRhythm** | `jarvis_companion_rhythm_reflector.py` L7 daemon 算每 hour Sir nudge-receptive score (engaged/rejected/silent), 写 `memory_pool/nudge_window_vocab.json` + `scripts/nudge_window_dump.py` CLI. ProactiveCare 每 tick publish `nudge_window_advice` SWM (score < 0.3 → 主脑克制). `nudge_window_advice_judge` directive (3 场景: low/normal/high receptive) | 27 |
+| `fc082b3` | **A.2 physio_proxy** | `jarvis_physio_proxy.py` 用 PhysicalEnvProbe 已有 key/mouse/backspace/switch fields 算 energy/focus/stress 评分. ProactiveCare 每 tick publish `physio_state` SWM. `physio_state_judge` directive (4 场景: stress 高/心流/疲倦/正常) | 18 |
+
+**total 75/75 + 41 β.5.37-39 regression (116/116 pass), 0 退化.**
+
+**Sir 真机体感 (要重启才生效, 大部分要数据累积一周)**:
+- **A.1 ambient**: Sir 跟别人聊天 / 看视频 → Jarvis 自动 SILENT 不打断 (主脑 `ambient_state_judge`)
+- **B.1 inside_joke**: Sir 自创"家具党"梗用 ≥ 2 次 → 一周后 03:30 L7 daemon propose, Sir 拍板后 Jarvis 适时引用. **Sir 强调"算法要精准"**: ≥ 2 evidence + conf ≥ 0.8 严格
+- **E.1 rhythm**: Sir 周一 14:00 历史拒 nudge 多 → 之后周一 14:00 主脑 tone 极简偏 SILENT. **Sir CLI**: `python scripts/nudge_window_dump.py --show` 看表 / `--set-weekday 14 0.2` 手设
+- **A.2 physio**: Sir 反复改 + undo 多 (stress > 0.6) → 主脑不急 offer help, tone warm 静默. Sir 心流 (focus > 0.7 + stress < 0.3) → SILENT
+
+**SWM evidence (β.5.40 新 3 etype)**:
+- `ambient_state` (TTL 180s, salience 0.45)
+- `nudge_window_advice` (TTL 3600s, salience 0.35)
+- `physio_state` (TTL 180s, salience 0.45)
+
+---
+
 ## 🔥 Sir 13:00 真机实测 fix (β.5.34 保留)
 
 | commit | marker | 内容 |
@@ -129,6 +155,15 @@
 [ ] 24. β.5.39-fix2 Sir 没履行 deadline 过了 5min → 还是会 commitment_check nudge (老路径正常工作)
 [ ] 25. β.5.39-fix dashboard 反思区显示真 review 数 (不再因 _meta 误算 = 2)
 [ ] 26. β.5.39-fix dashboard 含 5 新 vocab review_queue (screen_tease/struggle/directives/sleep_pattern/behavior_inference)
+[ ] 27. β.5.40-A1 启动正常 → log `🎵[AmbientSensor / β.5.40-A1] 启用`
+[ ] 28. β.5.40-A1 Sir 跟人说话 / 看视频 → log `🎵 [AmbientSensor] conversation/video_playing` + 主脑 silent
+[ ] 29. β.5.40-B1 启动正常 → log `😄 [InsideJokeReflector] L7 daemon ready (β.5.40-B1)`
+[ ] 30. β.5.40-B1 一周后看 `python scripts/relational_dump.py` inside_jokes 出现新 review entries (Sir 拍板后 active)
+[ ] 31. β.5.40-E1 启动正常 → log `📈 [CompanionRhythmReflector] L7 daemon ready (β.5.40-E1)`
+[ ] 32. β.5.40-E1 一周后 `python scripts/nudge_window_dump.py --show` 显示某些 hour 有 score (不再全 null)
+[ ] 33. β.5.40-A2 启动正常 → log `💪 [PhysioProxy] energy=X.X focus=X.X stress=X.X` 每 60s 一次 (Sir 在使用电脑)
+[ ] 34. β.5.40-A2 Sir 心流 (focus > 0.7) → 主脑 SILENT, Sir stress > 0.6 → tone 关切不急 offer
+[ ] 35. β.5.40 4 新 SWM signal 都进 SWM: Grep latest.log `ambient_state|nudge_window_advice|physio_state` 有真发
 ```
 
 **真机出 BUG 时 报告我**:
