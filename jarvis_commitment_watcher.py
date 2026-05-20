@@ -144,14 +144,50 @@ def infer_expected_behavior(description: str) -> Optional[dict]:
     准则 6: vocab 表驱动, 不针对 sleep/break 写专门 if 分支.
     🩹 [β.2.9.12] vocab 来源动态: memory_pool/behavior_inference_vocab.json,
     Sir 改 json 后下次调本函数即生效 (mtime cache 自动 reload).
+    🩹 [β.5.39-fix / 2026-05-20] Sir 15:22 真理: vocab 默认 30min threshold 对
+    Sir 真说 "休息 5 分钟" 来说太严. 修法: 优先 parse description 显式时间
+    (user evidence > vocab default), 用真时间覆盖 idle_min threshold.
     """
     if not description:
         return None
     t = description.lower()
-    for kws, behavior in get_behavior_patterns():
+    behavior = None
+    for kws, b in get_behavior_patterns():
         if any(k in t for k in kws):
-            return dict(behavior)  # 返副本防意外 mutate
-    return None
+            behavior = dict(b)  # 返副本防意外 mutate
+            break
+    if behavior is None:
+        return None
+    # 优先 parse description 显式时间 (user evidence > vocab default)
+    if behavior.get('kind') == 'idle_min':
+        import re as _re
+        # 中文: X 分钟 / X 分 / X 小时
+        m_zh = _re.search(r'(\d+)\s*(?:分钟|分(?!\w)|min(?:ute)?s?)', t)
+        if m_zh:
+            try:
+                behavior['threshold'] = max(1, int(m_zh.group(1)))
+                behavior['_threshold_source'] = 'description_explicit'
+                return behavior
+            except Exception:
+                pass
+        m_hr = _re.search(r'(\d+)\s*(?:小时|hours?|hrs?|h)', t)
+        if m_hr:
+            try:
+                behavior['threshold'] = max(1, int(m_hr.group(1)) * 60)
+                behavior['_threshold_source'] = 'description_explicit'
+                return behavior
+            except Exception:
+                pass
+        # 中文数字 (半小时 / 一小时)
+        if '半小时' in t or 'half hour' in t or 'half an hour' in t:
+            behavior['threshold'] = 30
+            behavior['_threshold_source'] = 'description_explicit'
+            return behavior
+        if '一小时' in t or 'one hour' in t or 'an hour' in t:
+            behavior['threshold'] = 60
+            behavior['_threshold_source'] = 'description_explicit'
+            return behavior
+    return behavior
 
 import time
 import threading

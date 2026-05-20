@@ -558,8 +558,10 @@ def read_relational() -> Dict:
     if isinstance(review, list):
         out['review_n'] = len(review)
     elif isinstance(review, dict):
+        # 🩹 [β.5.39-fix / 2026-05-20] 排除 _meta 等下划线 key, 防 review_n=2 误算
         out['review_n'] = sum(
-            len(v) for v in review.values() if isinstance(v, (list, dict))
+            len(v) for k, v in review.items()
+            if not k.startswith('_') and isinstance(v, (list, dict))
         )
 
     # 📌 诊断
@@ -1325,6 +1327,53 @@ def read_review_queues() -> Dict:
                 'proposed_value': prop,
                 'created_iso': i.get('when'),
                 'cli': "python scripts/cooldown_vocab_dump.py review",
+            })
+
+    # ====== 5a. 🩹 [β.5.39-fix / 2026-05-20] 新 vocab review sources (β.5.35/36/39)
+    # 这些 vocab 都有 review_queue 段, 但老 dashboard 没 cover.
+    # 全部走 generic _scan_vocab_review_queue 简化.
+    for vocab_name, kind_label, cli_cmd, preview_extractor in [
+        ('screen_tease_vocab.json', '🪞 屏幕调侃',
+         'python scripts/screen_tease_vocab_dump.py --review-list',
+         lambda it: f"{it.get('category', '?')}: {', '.join(it.get('keywords', [])[:3])}"),
+        ('sir_struggle_vocab.json', '🆘 Sir 困境词',
+         'python scripts/struggle_vocab_dump.py --review-list',
+         lambda it: f"{it.get('id', '?')}: {', '.join(it.get('patterns', [])[:3])}"),
+        ('directives_vocab.json', '📜 主脑 directive',
+         'python scripts/registry_dump.py --review',
+         lambda it: f"{it.get('id', '?')}: {(it.get('text', '') or '')[:80]}"),
+        ('sir_sleep_pattern_vocab.json', '💤 入睡习惯',
+         'python scripts/sleep_pattern_dump.py --show',
+         lambda it: f"{it.get('kind', '?')}: cur={it.get('current')} → prop={it.get('proposed')}"),
+        ('behavior_inference_vocab.json', '⏱️ 履约推断',
+         'python scripts/behavior_vocab_dump.py review',
+         lambda it: f"{it.get('id', '?')}: {', '.join(it.get('keywords', [])[:3])}"),
+    ]:
+        vpath = os.path.join(MEM, vocab_name)
+        vdata = _safe_read_json(vpath, {})
+        if not isinstance(vdata, dict):
+            continue
+        rq = vdata.get('review_queue') or []
+        if not isinstance(rq, list):
+            continue
+        for it in rq:
+            if not isinstance(it, dict):
+                continue
+            try:
+                preview = preview_extractor(it)
+            except Exception:
+                preview = it.get('id', '?')
+            if not preview or len(preview.strip()) < 3:
+                continue
+            out['items'].append({
+                'kind': vocab_name.replace('.json', ''),
+                'kind_zh': kind_label,
+                'id': it.get('id', '?'),
+                'preview': preview.strip()[:200],
+                'rationale': (it.get('rationale') or it.get('source') or it.get('note') or '')[:300],
+                'source': it.get('source', 'L7 reflector'),
+                'created_iso': it.get('proposed_at_iso') or _ts_to_iso(it.get('proposed_at') or it.get('created_at')),
+                'cli': cli_cmd,
             })
 
     # ====== 5. 🩹 [β.5.33 / 2026-05-20] Cross-session callback review ======
