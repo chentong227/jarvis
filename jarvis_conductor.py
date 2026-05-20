@@ -236,72 +236,35 @@ class Conductor(threading.Thread):
         #   breath_check     → 与 JARVIS 管家人设不符（管家不做周期性情感关怀）
 
         # 🆘 [β.5.35-C / 2026-05-20] Sir struggle signal 优先路径 (offer_help 真触发源)
-        # Sir 反馈: 老 ProactiveShield 看屏幕 error 触 offer_help 误触多. 修法:
-        # 看 voice_thread.last_struggle_at fresh (≤ 90s) → 直触 offer_help.
-        # 🩹 [β.5.36-fix2 / 2026-05-20 13:05] Sir 实测 BUG 链:
-        #   - vocab "我去" pattern 误命中 "我去休息" → 47s 后催 Sir
-        #   - 同句含 sleep intent ("休息"/"睡"/"goodnight"/"待会见") → Sir 在 dismiss 不在求助
-        # 修法 3 层守卫:
-        #   a) vocab 删 "我去"/"靠" 误命中 pattern (memory_pool/sir_struggle_vocab.json)
-        #   b) struggle_text 含 sleep/dismissal intent → 不触 offer_help
-        #   c) cooldown 15s (替代老 bypass-cooldown), 防同一 struggle 信号 90s 内反复触发
-        # vocab: memory_pool/sir_struggle_vocab.json / doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        # 🔄 [β.5.37 / 2026-05-20 14:43] Sir 14:39 校正: fix2 (b)/(c) 硬编码 sleep_dismiss
+        # keyword list + 15s cooldown 阈值违反准则 6. 已 revert. 改为 publish-only:
+        # voice_thread struggle 信号 publish 到 SWM, 主脑看 [Sir 说了 X / 这是 struggle 还是 dismiss]
+        # 自决是否 emit offer_help. 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md.
+        # 暂时回到 β.5.35-C 原版 + (a) vocab 删 "我去"/"靠" 保留 (memory_pool/sir_struggle_vocab.json).
         try:
             vt = getattr(self.worker, 'voice_thread', None)
             if vt is not None and self._daily_action_count < 12:
                 _struggle_at = getattr(vt, 'last_struggle_at', 0.0) or 0.0
                 _struggle_age = time.time() - _struggle_at
                 if _struggle_at > 0 and _struggle_age <= 90.0:
-                    # β.5.36-fix2 (b): sleep / dismissal intent guard
-                    # Sir 同句含 "休息"/"睡"/"goodnight"/"待会见" → 是 dismiss 不是求助, 跳过
-                    _sleep_dismiss_kw = (
-                        '休息', '睡觉', '去睡', '我睡', '困了', '困死',
-                        '待会见', '回头见', '一会儿见', '稍后', '晚安', 'goodnight',
-                        'good night', 'rest', 'going to bed', 'going to sleep',
-                    )
-                    _struggle_text = (getattr(vt, 'last_struggle_text', '') or '').lower()
-                    if any(kw.lower() in _struggle_text for kw in _sleep_dismiss_kw):
-                        vt.last_struggle_at = 0.0  # consume — Sir 已 dismiss
-                        try:
-                            from jarvis_utils import bg_log as _b
-                            _b(
-                                f"🛑 [SirStruggle/SleepGuard] struggle hit but Sir 同句 dismiss "
-                                f"('{_struggle_text[:60]}'), skip offer_help (β.5.36-fix2)"
-                            )
-                        except Exception:
-                            pass
-                        # 不 return, continue 到下方 shield_alert / wellness 检查
-                    # β.5.36-fix2 (c): inter-source cooldown 15s — 防同一 struggle 反复触发
-                    # 老 β.5.35-C bypass cooldown 太激进, 改成 15s short cooldown (允许急迫但防风暴)
-                    elif _struggle_age <= 15.0:
-                        try:
-                            from jarvis_utils import bg_log as _b
-                            _b(
-                                f"⏰ [SirStruggle/Cooldown] struggle hit but {_struggle_age:.0f}s < 15s, "
-                                f"defer (β.5.36-fix2)"
-                            )
-                        except Exception:
-                            pass
-                        # cooldown 内不触, 不 consume (留 future age > 15s 再触)
-                    else:
-                        # 防同一 struggle 反复触发 — 同一 struggle 只触一次, 触后清
-                        vt.last_struggle_at = 0.0  # consume
-                        return {
-                            'source': 'SirStruggleVocab',
-                            'alert_type': getattr(vt, 'last_struggle_phrase_id', '') or 'sir_struggle',
-                            'action': 'Offer Help',
-                            'reason': (
-                                f"Sir struggle vocab hit: {getattr(vt, 'last_struggle_phrase_id', '?')} "
-                                f"(sev={getattr(vt, 'last_struggle_severity', '?')}, "
-                                f"age={_struggle_age:.0f}s)"
-                            ),
-                            'tone': 'gentle',
-                            'nudge_type': 'offer_help',
-                            # struggle context 透传给 stream_nudge directive 用
-                            'struggle_phrase_id': getattr(vt, 'last_struggle_phrase_id', ''),
-                            'struggle_severity': getattr(vt, 'last_struggle_severity', ''),
-                            'struggle_text': getattr(vt, 'last_struggle_text', ''),
-                        }
+                    # 防同一 struggle 反复触发 — 同一 struggle 只触一次, 触后清
+                    vt.last_struggle_at = 0.0  # consume
+                    return {
+                        'source': 'SirStruggleVocab',
+                        'alert_type': getattr(vt, 'last_struggle_phrase_id', '') or 'sir_struggle',
+                        'action': 'Offer Help',
+                        'reason': (
+                            f"Sir struggle vocab hit: {getattr(vt, 'last_struggle_phrase_id', '?')} "
+                            f"(sev={getattr(vt, 'last_struggle_severity', '?')}, "
+                            f"age={_struggle_age:.0f}s)"
+                        ),
+                        'tone': 'gentle',
+                        'nudge_type': 'offer_help',
+                        # struggle context 透传给 stream_nudge directive 用
+                        'struggle_phrase_id': getattr(vt, 'last_struggle_phrase_id', ''),
+                        'struggle_severity': getattr(vt, 'last_struggle_severity', ''),
+                        'struggle_text': getattr(vt, 'last_struggle_text', ''),
+                    }
         except Exception:
             pass
 

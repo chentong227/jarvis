@@ -196,29 +196,11 @@ class ProactiveShield(threading.Thread):
         try:
             # 🩹 [β.5.36-fix3 / 2026-05-20] Sir 13:05 实测真理:
             # "屏幕动的是 Cursor 自动编程的, 不是我".
-            # ProactiveShield 看 window_history switches 误判 Sir 在场 (Cascade IDE 改文件
-            # 也算 window 变化). 修法: 看 GetLastInputInfo idle_seconds — Sir 真离桌
-            # (idle > 60s) 时所有 window 切换都是后台进程 / IDE 自动化, 不该触 shield_alert.
-            # 准则 6 evidence: 看真物理 input (键盘/鼠标), 不看屏幕动作.
-            try:
-                snapshot_idle = PhysicalEnvironmentProbe.get_sensor_snapshot() or {}
-                idle_seconds = int(snapshot_idle.get('idle_seconds', 0) or 0)
-                if idle_seconds > 60:
-                    # Sir 离桌 — 屏幕动是 ghost activity, 直接退
-                    try:
-                        from jarvis_utils import bg_log as _bg_ghost
-                        # 限频 60s 一次防刷屏
-                        if now - self._last_diag_print_time > 60:
-                            self._last_diag_print_time = now
-                            _bg_ghost(
-                                f"👻 [Shield/GhostInputGuard] idle_seconds={idle_seconds} > 60, "
-                                f"屏幕动 = Cascade/IDE 自动化, skip shield_alert (β.5.36-fix3)"
-                            )
-                    except Exception:
-                        pass
-                    return
-            except Exception:
-                pass
+            # 🔄 [β.5.37 / 2026-05-20 14:43] Sir 14:39 校正: fix3 硬编码 idle 60s 阈值 +
+            # 架构方向错 — 不该 sentinel 自己 guard, 应该 sensor 区分真 input vs ghost activity
+            # 并 publish 信号让主脑看. 已 revert. 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md.
+            # 架构改造后, PhysicalEnvironmentProbe.cascade_active_pid + idle_seconds_real 直接
+            # 进 frustration_score breakdown, 让评分自然 0 化, 不再 sentinel hard skip.
 
             history = list(PhysicalEnvironmentProbe.window_history)
             if len(history) < 10:

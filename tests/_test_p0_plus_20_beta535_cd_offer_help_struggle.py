@@ -240,11 +240,14 @@ class TestBeta535COfferHelpDirectiveRewrite(unittest.TestCase):
 
 
 # ==========================================================================
-# β.5.36-fix2: 误命中守卫 (Sir 13:03 实测 "我去休息" 误触发)
+# β.5.36-fix2: 误命中守卫 — 仅保留 vocab JSON 守卫
+# ⚠️ [β.5.37 / 2026-05-20 14:44] Sir 14:39 校正: fix2 (b)/(c) sleep_dismiss_kw +
+# 15s cooldown 硬编码已 revert. 替代方案见 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md
+# (publish-only + 主脑 directive 自决). 这里仅保留 vocab JSON 守卫 (准则 6 OK 部分).
 # ==========================================================================
 
-class TestBeta536Fix2GuardsAgainstFalseTrigger(unittest.TestCase):
-    """🩹 β.5.36-fix2: 3 层守卫防误触发 offer_help."""
+class TestBeta536Fix2VocabGuard(unittest.TestCase):
+    """🩹 β.5.36-fix2 (a) only: vocab JSON 删 '我去'/'靠' 误命中 pattern."""
 
     def test_vocab_no_woqu_pattern(self):
         """vocab `expletive_zh` 必须不含 '我去' (Sir 13:03 实测误命中 '我去休息')."""
@@ -256,28 +259,6 @@ class TestBeta536Fix2GuardsAgainstFalseTrigger(unittest.TestCase):
                     "expletive_zh 必须不含 '我去' (β.5.36-fix2 删, 误命中 '我去休息')")
                 self.assertNotIn('靠', p['patterns'],
                     "expletive_zh 不含 '靠' (β.5.36-fix2 删, 误命中 '靠在椅子')")
-
-    def test_conductor_sleep_intent_guard(self):
-        """jarvis_conductor.py 必须有 sleep / dismissal intent guard."""
-        with open(os.path.join(ROOT, 'jarvis_conductor.py'), 'r', encoding='utf-8') as f:
-            src = f.read()
-        self.assertIn('β.5.36-fix2', src,
-            'β.5.36-fix2 marker 必须在 jarvis_conductor.py')
-        self.assertIn('SleepGuard', src,
-            'SleepGuard log marker 必须存在')
-        # 必须含 sleep/dismiss 关键词列表
-        for kw in ('休息', '睡觉', 'goodnight', 'rest'):
-            self.assertIn(kw, src,
-                f'sleep_dismiss_kw 必须含 {kw}')
-
-    def test_conductor_short_cooldown_replaces_bypass(self):
-        """jarvis_conductor.py SirStruggleVocab path 必须 15s short cooldown 替代老 bypass."""
-        with open(os.path.join(ROOT, 'jarvis_conductor.py'), 'r', encoding='utf-8') as f:
-            src = f.read()
-        # cooldown 数字必须出现 (15.0 或 15 + cooldown 关键词)
-        self.assertIn('15.0', src, 'cooldown 阈值 15.0 必须存在')
-        self.assertIn('SirStruggle/Cooldown', src,
-            'SirStruggle/Cooldown log marker 必须存在')
 
 
 if __name__ == '__main__':
