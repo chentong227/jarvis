@@ -3511,6 +3511,32 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 )
         except Exception:
             pass
+        # 🩹 [β.5.44-CE / 2026-05-20 19:02] IntentResolver fire turn-end
+        # Sir 18:55 真理重构 — turn 末尾异步跑 IntentResolver, 看 Sir utterance + 
+        # SWM candidates + 当前 state, LLM 决定调哪些 mutation tool. 结果 publish 
+        # 'intent_resolved' SWM, 主脑下轮 prompt 看 [INTENT RESOLVED THIS TURN] 
+        # 知道真做了什么, 不再撒谎说 "I've corrected" 当本轮零 mutation.
+        try:
+            from jarvis_intent_resolver import get_intent_resolver as _gir
+            _resolver = _gir()
+            if _resolver is not None and prompt:
+                # 取 Sir 原话 (prompt 末段往往含 user_input)
+                _sir_utt_for_ir = ''
+                try:
+                    # 简易抽取: 找 [USER INPUT] 或最后一行
+                    for _ln in (prompt or '').split('\n')[-12:]:
+                        _ln = _ln.strip()
+                        if _ln and not _ln.startswith('[') and not _ln.startswith('==='):
+                            _sir_utt_for_ir = _ln
+                except Exception:
+                    pass
+                if _sir_utt_for_ir and len(_sir_utt_for_ir) >= 4:
+                    _resolver.resolve_turn_async(
+                        turn_id=_turn_id_now,
+                        sir_utterance=_sir_utt_for_ir,
+                    )
+        except Exception:
+            pass
         _t_total = time.time() - _t0
         try:
             from jarvis_utils import bg_log

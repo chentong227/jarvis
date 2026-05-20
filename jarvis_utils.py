@@ -1232,6 +1232,16 @@ class ConversationEventBus:
         # [β.5.43-fix3 / 2026-05-20] Sir 主动 watch 请求 + 进程卡顿 sensor:
         'active_window_hung': 300,         # PhysicalEnvProbe IsHungAppWindow (5min)
         'sir_watch_request_proposed': 3600, # SirRequestReflector propose 新 concern (1h)
+        # [β.5.44 / 2026-05-20] IntentResolver 重构 — Sir 一句话 7 模块 publish-only
+        # 然后 IntentResolver 集中 LLM judge 决定调 tool. 主脑看 tool_called 报告.
+        'sir_intent_commit_candidate': 60,         # Gatekeeper publish
+        'sir_intent_progress_candidate': 60,       # ConcernFeedback publish
+        'sir_intent_correction_candidate': 60,     # MemoryCorrection publish
+        'sir_intent_profile_update_candidate': 60, # ProfileCard publish
+        'sir_intent_promise_candidate': 60,        # SelfPromiseDetector publish
+        'sir_intent_deadline_candidate': 60,       # CommitmentWatcher publish
+        'tool_called': 300,                        # IntentResolver 真调 tool 后 publish
+        'intent_resolved': 600,                    # turn-level mutation 报告 (主脑必看)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1271,6 +1281,15 @@ class ConversationEventBus:
         # [β.5.43-fix3 / 2026-05-20]:
         'active_window_hung': 0.70,        # 窗口卡顿 — 主脑要看 (Sir 可能 frustrated)
         'sir_watch_request_proposed': 0.70, # 新 watch concern 进 review queue, 主脑可顺嘴提
+        # [β.5.44 / 2026-05-20] IntentResolver:
+        'sir_intent_commit_candidate': 0.55,
+        'sir_intent_progress_candidate': 0.55,
+        'sir_intent_correction_candidate': 0.60,    # correction 略重要 (Sir 直接说"记错了")
+        'sir_intent_profile_update_candidate': 0.50,
+        'sir_intent_promise_candidate': 0.55,
+        'sir_intent_deadline_candidate': 0.60,
+        'tool_called': 0.85,               # 真 mutation 发生, 主脑必看
+        'intent_resolved': 0.90,           # turn 级 mutation 报告, 极重要
     }
 
     def __init__(self, max_events: int = 60):

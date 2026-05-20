@@ -789,6 +789,45 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.44-CD / 2026-05-20 19:02] IntentResolver + TOOL_REGISTRY 挂载
+        # Sir 18:55 真理重构 — 7 个 module publish-only, IntentResolver 集中 LLM judge
+        # 决定调 tool. 主脑看 [INTENT RESOLVED] block 知道哪个 tool 真成功.
+        self.intent_resolver = None
+        try:
+            from jarvis_intent_resolver import IntentResolver, register_intent_resolver
+            from jarvis_tool_registry import get_tool_registry
+            _tools = get_tool_registry()
+            # tools 需 nerve ref, wrap 注入 self
+            _wrapped_tools = {}
+            for _name, _fn in _tools.items():
+                def _make_wrapper(_orig_fn):
+                    def _wrapped(**kw):
+                        kw.setdefault('nerve', self)
+                        return _orig_fn(**kw)
+                    _wrapped.__doc__ = (_orig_fn.__doc__ or '')
+                    return _wrapped
+                _wrapped_tools[_name] = _make_wrapper(_fn)
+            self.intent_resolver = IntentResolver(
+                key_router=self.key_router,
+                central_nerve=self,
+                tool_registry=_wrapped_tools,
+            )
+            register_intent_resolver(self.intent_resolver)
+            try:
+                from jarvis_utils import bg_log as _ir_bg
+                _ir_bg(f"🧭 [IntentResolver] ready ({len(_wrapped_tools)} tools)")
+            except Exception:
+                pass
+            # 全局 nerve ref 给 tool fn (从 _GLOBAL_NERVE 拿)
+            import jarvis_central_nerve as _self_mod
+            _self_mod._GLOBAL_NERVE = self
+        except Exception as _ir_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntentResolver] 初始化失败（非致命）：{_ir_e}")
+            except Exception:
+                pass
+
         # 🩹 [β.5.43-fix3-㋭ / 2026-05-20 18:52] SirRequestReflector L7 daemon
         # Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
         # 此 daemon 60s tick, LLM judge STM 看 Sir 是否要求 long-watch X,
@@ -1532,6 +1571,37 @@ class CentralNerve:
                     _corr_lines.append(_line)
                 _corrections_block = '\n'.join(_corr_lines)
                 _parts.append(_corrections_block)
+        except Exception:
+            pass
+
+        # 🩹 [β.5.44-E / 2026-05-20 19:02] IntentResolver 报告 — Sir 18:55 真治本
+        # Sir 痛点: 主脑撒谎 "I've corrected my count" 但本轮零 mutation tool 调用.
+        # 修法: IntentResolver 真调 tool 后 publish 'tool_called' + 'intent_resolved' SWM.
+        # 主脑看 [INTENT RESOLVED THIS TURN] 知道哪个 tool 真成功 / 真失败,
+        # reply 基于真实 mutation result — 不再撒谎.
+        try:
+            _bus = getattr(self, 'event_bus', None)
+            if _bus is not None:
+                _ir_events = _bus.recent_events(
+                    within_seconds=60.0,
+                    types={'intent_resolved'},
+                )
+                if _ir_events:
+                    _ir = _ir_events[-1]  # 最新一条 (本 turn)
+                    _meta = _ir.get('metadata') or {}
+                    _tcs = _meta.get('tool_calls') or []
+                    if _tcs:
+                        _ir_lines = ['[INTENT RESOLVED THIS TURN / 系统真做了什么]']
+                        _ir_lines.append('  IntentResolver 看完 Sir utterance + module candidates, 调了下面 tool:')
+                        for _tc in _tcs[:6]:
+                            _status = '✓ 成功' if _tc.get('ok') else f"✗ 失败 ({_tc.get('error', '?')[:60]})"
+                            _ir_lines.append(f"  - {_tc.get('name', '?')}: {_status}")
+                        _ir_lines.append(
+                            '  ⚠️ Reply 务必 reflect 真实 result: tool ✓ → 可说 "noted/recorded"; '
+                            'tool ✗ → 必须说 "I tried but couldn\'t..." / "kept in conversation only"; '
+                            '没 tool 调 → 不能说任何 mutation verb (corrected/saved/updated 等).'
+                        )
+                        _parts.append('\n'.join(_ir_lines))
         except Exception:
             pass
 
