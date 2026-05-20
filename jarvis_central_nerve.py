@@ -831,6 +831,29 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [Gap 1 / P5-ToM / 2026-05-21 00:55] ToMReflector + SirMentalState 初始化
+        # Sir 22:10 真理: lifetime anchor 不是 commitment, 不要 nudge.
+        # Layer 6 ToM 让主脑读 Sir 言外之意 (surface/deeper/unspoken need 3 层).
+        # ToMReflector daemon 每 turn 后 LLM judge → propose hypothesis update.
+        # 主脑下轮 prompt 看 [SIR'S MIND RIGHT NOW] block 自决 reply 深度.
+        self.tom_reflector = None
+        try:
+            from jarvis_sir_mental_model import ToMReflector, get_default_store
+            # ensure store loaded
+            _ = get_default_store()
+            self.tom_reflector = ToMReflector(key_router=self.key_router)
+            try:
+                from jarvis_utils import bg_log as _tom_bg
+                _tom_bg("🧠 [ToMReflector] Layer 6 — Sir Mental Model ready")
+            except Exception:
+                pass
+        except Exception as _tom_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ToMReflector] 初始化失败（非致命）：{_tom_e}")
+            except Exception:
+                pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35] ReplyPreFlight 初始化
         # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
         # P0+P1+P2+P3+P4 修了多层但主脑仍 callback. PreFlight 后置审计 + SWM publish
@@ -1689,6 +1712,18 @@ class CentralNerve:
                     '  [rule] Reference these exactly. Never invent timestamps / quotas / billing.'
                 )
                 _parts.append('\n'.join(_pc_block))
+        except Exception:
+            pass
+
+        # 🩹 [Gap 1 / P5-ToM / 2026-05-21 01:00] SIR'S MIND RIGHT NOW block (Layer 6)
+        # Jarvis 对 Sir 当下心智的 hypothesis (surface/deeper/unspoken need + 
+        # emotional + relational temp). 主脑看 hypothesis 自决 reply 深度.
+        # 跟 SelfAnchor (Layer 0 我是谁) / RelationalState (Layer 2 我们之间) 互补.
+        try:
+            from jarvis_sir_mental_model import render_prompt_block as _tom_block
+            _tom_text = _tom_block(include_unspoken=True)
+            if _tom_text:
+                _parts.append(_tom_text)
         except Exception:
             pass
 

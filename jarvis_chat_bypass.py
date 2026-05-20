@@ -3566,6 +3566,39 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🩹 [Gap 1 / P5-ToM / 2026-05-21 01:05] ToMReflector async trigger
+        # Sir 22:10 真理: Jarvis 应读 Sir 言外之意 (surface/deeper/unspoken need).
+        # 每 turn 后 LLM judge → propose hypothesis update. 主脑下轮看 [SIR'S MIND]
+        # block 自决 reply 深度. async fire-and-forget, 不阻塞.
+        try:
+            _tom = getattr(self.jarvis, 'tom_reflector', None) if hasattr(self, 'jarvis') else None
+            if _tom is not None and final_reply and final_reply.strip() and clean_user_input:
+                _turn_id_tom = ''
+                try:
+                    from jarvis_utils import TraceContext as _TCtom
+                    _turn_id_tom = _TCtom.get_turn_id() or ''
+                except Exception:
+                    pass
+                # context summary: brief STM + concerns hint
+                _ctx_summary = ''
+                try:
+                    _stm_for_tom = list(getattr(self.jarvis, 'short_term_memory', []) or [])[-2:]
+                    if _stm_for_tom:
+                        _ctx_summary = (
+                            f"recent STM ({len(_stm_for_tom)} turns), "
+                            f"hour={time.strftime('%H')}"
+                        )
+                except Exception:
+                    pass
+                _tom.reflect_async(
+                    sir_utterance=clean_user_input,
+                    jarvis_reply=final_reply,
+                    turn_id=_turn_id_tom,
+                    context_summary=_ctx_summary,
+                )
+        except Exception:
+            pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:30] Reply PreFlight 后置审计
         # Sir 22:04 / 22:19 / 23:02 / 23:43 / 23:49 反复 5 次 unsolicited apology callback
         # P0+P1+P2+P3+P4 修了多层但主脑仍 callback (cluster 淹). 真治: PreFlight
