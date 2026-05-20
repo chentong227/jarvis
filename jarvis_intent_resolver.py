@@ -327,6 +327,19 @@ class IntentResolver:
             with self._lock:
                 self._stats['last_error'] = plan['_error']
             result['reason'] = plan['_error']
+            # 🩹 [β.5.43-F] LLM fail → ErrorBus 主动暴露
+            try:
+                from jarvis_error_bus import report_error, SEVERITY_MODERATE
+                report_error(
+                    module='intent_resolver',
+                    kind='llm_judge_fail',
+                    detail=plan['_error'][:200],
+                    severity=SEVERITY_MODERATE,
+                    recoverable=True,
+                    suggested_action='check key_router quota or LLM model availability',
+                )
+            except Exception:
+                pass
             return result
 
         tool_calls = plan.get('tool_calls', [])
@@ -389,6 +402,21 @@ class IntentResolver:
             except Exception as e:
                 ok = False
                 err = str(e)[:200]
+
+            # 🩹 [β.5.43-F / 2026-05-20] tool fail → ErrorBus 主动暴露
+            if not ok:
+                try:
+                    from jarvis_error_bus import report_error, SEVERITY_MODERATE
+                    report_error(
+                        module='intent_resolver',
+                        kind=f'tool_fail.{name}',
+                        detail=f'{err} (args={json.dumps(args, ensure_ascii=False)[:100]})',
+                        severity=SEVERITY_MODERATE,
+                        recoverable=True,
+                        suggested_action=f'check {name} preconditions or skip this turn',
+                    )
+                except Exception:
+                    pass
 
             if bus is not None:
                 try:

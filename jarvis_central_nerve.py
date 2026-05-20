@@ -1574,6 +1574,38 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
+        # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
+        # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]
+        # block 让主脑看到最近 10min moderate+ 错误, reply 时可主动 surface.
+        try:
+            from jarvis_error_bus import get_error_bus as _eb_get, SEVERITY_MODERATE
+            _eb = _eb_get()
+            _errs = _eb.recent_errors(
+                within_seconds=600,
+                min_severity=SEVERITY_MODERATE,
+                max_n=8,
+            )
+            if _errs:
+                _err_lines = ['[SYSTEM ERRORS / 最近 10min, moderate+]']
+                _err_lines.append('  ⚠️ 下面 module 真出错了, 不是想象的, 你 reply 时可主动 surface:')
+                for _e in _errs[:8]:
+                    _sev_icon = {'minor': '⚪', 'moderate': '🟡', 'severe': '🔴'}.get(
+                        _e.get('severity', '?'), '?'
+                    )
+                    _recov = '可自愈' if _e.get('recoverable') else '需 Sir 介入'
+                    _err_lines.append(
+                        f"  {_sev_icon} [{_e.get('module', '?')}] {_e.get('kind', '?')}: "
+                        f"{_e.get('detail', '')[:120]} ({_recov})"
+                    )
+                _err_lines.append(
+                    '  指引: 如果错误与 Sir 当前请求相关 → 主动告诉 Sir "我刚刚 X 出了问题"; '
+                    '不相关 → 静默不强提 (Sir 不需要听 backlog 错误流水帐).'
+                )
+                _parts.append('\n'.join(_err_lines))
+        except Exception:
+            pass
+
         # 🩹 [β.5.44-E / 2026-05-20 19:02] IntentResolver 报告 — Sir 18:55 真治本
         # Sir 痛点: 主脑撒谎 "I've corrected my count" 但本轮零 mutation tool 调用.
         # 修法: IntentResolver 真调 tool 后 publish 'tool_called' + 'intent_resolved' SWM.

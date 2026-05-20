@@ -1105,6 +1105,51 @@ def api_reply_feedback():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/system_errors')
+def api_system_errors():
+    """🩹 [β.5.43-F / 2026-05-20 19:10] System Error Banner
+    
+    Sir 17:10 真理 (6 缺口 F): 让 Sir 看到哪些 module 静默 fail.
+    
+    Query params:
+      - hours: 回看小时数 (default 1)
+      - min_severity: minor / moderate / severe (default moderate)
+      - limit: 最多条数 (default 30)
+    """
+    try:
+        from jarvis_error_bus import get_error_bus, SEVERITY_MINOR
+        bus = get_error_bus()
+        hours = float(request.args.get('hours', 1))
+        min_sev = (request.args.get('min_severity', 'moderate') or 'moderate').strip()
+        limit = int(request.args.get('limit', 30))
+        within = max(60, min(86400, hours * 3600))
+        errors = bus.recent_errors(
+            within_seconds=within,
+            min_severity=min_sev,
+            max_n=limit,
+        )
+        # 统计
+        by_sev = {'minor': 0, 'moderate': 0, 'severe': 0}
+        by_module = {}
+        for e in errors:
+            by_sev[e.get('severity', 'minor')] = by_sev.get(e.get('severity', 'minor'), 0) + 1
+            m = e.get('module', '?')
+            by_module[m] = by_module.get(m, 0) + 1
+        return jsonify({
+            'ok': True,
+            'errors': errors,
+            'stats': {
+                'total': len(errors),
+                'by_severity': by_sev,
+                'by_module': by_module,
+                'bus_stats': bus.stats(),
+            },
+            'hours': hours,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/intent_resolved')
 def api_intent_resolved():
     """🩹 [β.5.44-F / 2026-05-20 19:08] IntentResolver 最近 mutation log
