@@ -70,6 +70,21 @@
 
 **准则 6 递归边界 (β.3.5 立)**: testcase 红线 / 系统级常量 (`TICK_INTERVAL` / `_NON_RETRYABLE_KEYWORDS` / HTTP 错误码黑名单 / `_COLOR_PATTERNS` ANSI regex) / `< 400 行` 核心 .md (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md`) 是 **"持久化的硬规"** — 不再下钻 vocab 化, 防止递归到地心.
 
+**准则 6 — 新 module 引入 4 问 (β.5.44 立, Sir 原话设计原思路: "耦合数据, LLM 决策")**: 加新 module / sentinel / sensor / reflector 前, 4 问筛一遍, 全 Yes 才加, 任何 No → 不加或先解决 No 再加:
+
+| # | 问 | Yes 标准 | No 后果 |
+|---|---|---|---|
+| 1 | **数据 publish 进 SWM?** | 用 `ConversationEventBus.publish()` 把 raw signal 送进 SWM, 不直接 mutate state | 行为强耦合, 主脑看不到证据, 难调试 |
+| 2 | **决策让 LLM 做?** | python 只 sense + publish, 决策让主脑 / IntentResolver / L7 reflector 判 | 硬编码 if/else, 违反准则 6 |
+| 3 | **配置持久化 + CLI 可改?** | 配置进 `memory_pool/*.json` + 配套 `scripts/<thing>_dump.py` | 配置死在 .py source, Sir 改不动 |
+| 4 | **和已有 module 正交?** | 不重复功能 / 不抢同一 reaction space / 不和已有 sensor 重复采集 | 形态冗余, 维护翻倍, 行为冲突 |
+
+**历史反例 anchor** (违反 4 问导致后续 refactor 的真实 case, 后人引以为戒):
+- **β.5.43 前**: `Conductor / NudgeGate / OfferGuard / SmartNudge / Wellness` 5 sentinel 各自 hard gate 决策 → 违反 #1/#2 → β.5.0 三维耦合 refactor 改 publish-only + 主脑集中决策
+- **β.5.44 前**: `ConcernFeedback / MemoryCorrection / Gatekeeper / SelfPromise / CommitmentWatcher` 5 处 mutation 各自做, 主脑不知道 → 违反 #4 (功能重复, 没正交) → β.5.44 `IntentResolver` 集中
+
+**判别口诀**: **"加之前先问 4 问, 全 Yes 才加"**. 不是禁止加 module, 是加之前**确认形态对**, 不为"觉得该有"就加. 加错 module 比不加 module 代价高 — refactor 要补救 5 个 sentinel / 5 处 mutation, 这是 β.5.0 + β.5.44 两次大 refactor 的教训.
+
 ### 准则 7 — Sir 元否决权 (META-PRINCIPLE, β.3.5 立)
 
 任何章程在 Sir 显式创新或方向调整冲突时, **Sir 元否决权优先, 章程让步**。Agent 看到冲突: 提示"这与 §X 准则冲突"即可, Sir 拍板后立刻执行不再 hedge。Sir 是项目唯一仲裁者, 章程是 Sir 工程治理的工具, **不是反制 Sir 的枷锁**。
