@@ -1,6 +1,6 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 02:47 (β.5.22-27 + dashboard web + ui_control web 路由 + wake_filler vocab + sensor None guard — 13 commits / β.5.22 33/33 + β.5.23 23/23 + β.5.24 20/20 + β.5.25 web 19/19 全绿).
+> **更新**: 2026-05-20 10:33 (β.5.31-33 - TIME ANCHOR 防时间幻觉 + dismissal 光速 wake 30s grace + Cross-session callback PROACTIVITY_NEXT §E 落地, 5 commits 全 sub-batch 测过).
 > **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→156 行 (< 300 cap, AGENTS.md 章程).
 
 ---
@@ -36,6 +36,16 @@
 | `e01e868` | β.5.25-route | `ui_control.dashboard_open` 改默认开 web (port 8765 探测复用 + 启动失败 fallback tkinter) + dashboard_close 双 kill (web wmic + tkinter taskkill). Sir 现在语音"打开面板"开 web 浏览器 | - |
 | (修 BUG 1) | β.5.24-fix2 | tkinter 加回 messagebox.showinfo 完成弹窗 (Sir "默契活动无反应" root cause = 反馈不显眼) | - |
 
+### β.5.31-33 Sir 03:36-03:55 实测 BUG 治本 (5 sub-step)
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `ce66f71` | β.5.31 | TIME ANCHOR 防时间幻觉 (`stream_nudge` 加 `[TIME ANCHOR]` 段反推 Sir 上句时间 + 距今 min) + 短 cmd 不臆造关怀 RULE (准则 5 严重 BUG: Sir 03:42 实测"十几分钟早就过去了" / Sir 03:36 实测 "ber" → 关心手部疲劳) | sub-batch ✓ |
+| `ff5f95a` | β.5.31-fix | Sir 反问"为什么是模板?" → 准则 6 服从, 删 prescriptive RULE 改 [ASR QUALITY FACT] 事实段, LLM 自决 ask repeat / acknowledge ambiguity | 同上 |
+| `73154cf` | β.5.32 | web layout 重构 (删 Jarvis 承诺卡 - 上面言行一致区已含; 长期惦记/你们之间 50/50 grid; 系统健康单独下行) + dismissal 光速 wake 30s grace lock (Sir 03:55 实测"只 1 分钟"询问光速触发 - NudgeGate.deactivate_sleep_mode 加 30s minimum lock + `_check_short_sleep` 加 30s grace early return) | 同上 |
+| `dfbefd2` | **β.5.33** | **Cross-session memory callback PROACTIVITY_NEXT §E 落地** - `jarvis_cross_session_callback.py` 新 (CallbackStore + parse_natural_time_to_iso 周X/明天/后天/HH:MM) + SoulArchivist prompt 加 propose_cross_session_callbacks 数组提取 + dashboard read_review_queues 加 callback source + action_activate/reject 路由 + `_apply_callback_proposal` 写 `pending_callbacks.jsonl` + CommitmentWatcher `_consume_pending_callbacks` (启动时 + 每 5min) 转 hard commitment | 同上 |
+
+**测试现状** (2026-05-20 10:33): pytest 全 collect IO error (PowerShell pipe 老问题, 非测试失败). Sub-batch 分批跑确认 β.5.31-33 引入 0 fail. 老 pre-existing fail: `test_persona_under_3000_chars` (Sir IP 不动) + `proactive_care_level_preset` 2 (vocab 化后 preset 阈值不匹配老 assert).
+
 ---
 
 ## 📌 文档遗留尾巴清单 (Sir 02:33 全扫结果)
@@ -45,8 +55,8 @@
 | `JARVIS_VOICE_PIPELINE_LATENCY.md §7.3` | filler list 20 条仍 `.py` 硬编码 (β.5.11 留尾), 应迁 `memory_pool/wake_filler_vocab.json` + CLI | 中 | 准则 6 违规, ~30min |
 | `INTEGRITY_STACK.md §L1/L2/L3` | 标 ❌/⚠️ 但 β.4.1-4.5 已做 (L4 ClaimTracer enforce / L5 闭环 / L6 dashboard / L7 reflector) | 低 | **文档 stale** - 仅需 sync ❌→✅ |
 | `INTEGRITY_STACK.md §L0.5` | 14 directive 全迁 JSON (β.2.9.12 立, 部分迁) | 中 | 进行中 (registry_dump.py 已建) |
-| `FOUNDATION_AUDIT.md §STM` | STM source 区分 (reflector 幻觉 root cause) | 中 | 未做 |
-| `PROACTIVITY_NEXT.md §E` | Cross-session memory callback | 低 | 未做 |
+| `FOUNDATION_AUDIT.md §STM` | STM source 区分 (reflector 幻觉 root cause) | 中 | **✅ 已做** (β.5.29 STM source append 4 worker + 3 sentinels + nerve API) |
+| `PROACTIVITY_NEXT.md §E` | Cross-session memory callback | 低 | **✅ 已做 β.5.33** (SoulArchivist propose → review → activate → commitment_watcher 到点 nudge) |
 | `JARVIS_PROACTIVITY_NEXT.md` 整体 | 5 大方向 A-E | 低 | 长期规划 |
 | **ProactiveCare sensor=None 老 BUG** | `⚠️ tick err 'NoneType' object has no attribute 'tick'` - daemon bootstrap 路径漏初始化 | 低 | 非阻塞, 主路径 OK, 派生 signal 失效 |
 | TODO.md 章程 cap | 当前 ~680 行 > 300 行 cap | 高 | β.4/4.6/4.7/4.8 段应滚 docs/TODO_ARCHIVE.md |
