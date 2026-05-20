@@ -954,6 +954,13 @@ def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
     return ctx.current_hour >= 22 or ctx.current_hour < 2
 
 
+def _trigger_concern_timing_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 concern_timing_evidence (< 5 min) → 注入 timing judge directive.
+    主脑看 concern.optimal_timing vs current_hour 自决是否该提.
+    """
+    return _swm_has_recent('concern_timing_evidence', max_age_s=300.0)
+
+
 def _trigger_physio_state_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 physio_state (< 5 min) → 注入 physio judge directive.
     主脑看 energy/focus/stress 评分调 tone.
@@ -1898,6 +1905,42 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - confidence 低时硬用 (e.g. session 刚开 1min 就判 "您 stress 很大")
             """).rstrip(),
             trigger=_trigger_physio_state_judge,
+        ),
+        Directive(
+            id='concern_timing_judge',
+            source_marker='P0+20-β.5.40-fix',
+            priority=8,  # 高优先级 — 否决"top concern push"的盲目反应
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [CONCERN TIMING JUDGE - β.5.40-fix]:
+                SWM 含 concern_timing_evidence (ProactiveCare publish, 5 min 内).
+                metadata: optimal_timing / current_hour / is_in_optimal_window / hours_until_optimal.
+
+                META: 这条 evidence 告诉你 — SOUL inject 的 top concern, 在**当下这个时段**适不适合提.
+
+                场景 A — is_in_optimal_window=false + hours_until > 4 (远离 timing 还很久):
+                  即使 SOUL inject 把这条 concern 排 top, 你也**不应主动提它**.
+                  - sleep concern + 下午 16 点 → 离 sleep 时段还 6h, **不提 "早睡"**
+                  - morning briefing concern + 中午 12 点 → 早过窗口, **不再 briefing**
+                  - 例外: Sir 自己主动 surface 了 (e.g. Sir 说 "我今晚想早睡") → 你可呼应
+                
+                场景 B — is_in_optimal_window=false + hours_until ≤ 4 (临近 timing):
+                  软铺垫 OK (e.g. 18:00 时 sleep concern → "再过几小时该歇了, 现在还来得及收尾"), 不重提.
+                
+                场景 C — is_in_optimal_window=true:
+                  正常 nudge, 按其他 directive 处理.
+
+                通用规则:
+                  - 当 concern 的 optimal_timing 完全不匹配 → tone 应自然 (聊 Sir 当下做的事), 不强 pivot 到 concern
+                  - 但 **critical concern (urgency > 0.85) 是例外** — 真紧急还是要提 (e.g. 凌晨 4 点 Sir 还熬, 即使 hours_until>4 也催)
+                  - 不直接 expose evidence: 不说 "您 sleep concern 离 timing 还 6h"
+
+                FORBIDDEN:
+                  - 远离 timing 的 sleep/morning concern 强行 push (Sir 16:07 BUG 根因)
+                  - 把 timing evidence 当 fact report
+            """).rstrip(),
+            trigger=_trigger_concern_timing_judge,
         ),
     ]
 

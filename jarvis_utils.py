@@ -1223,6 +1223,7 @@ class ConversationEventBus:
         'ambient_state': 180,              # ambient_audio sensor (laughter/sigh/...)
         'nudge_window_advice': 3600,       # CompanionRhythm 当前 hour receptive 建议
         'physio_state': 180,               # physio_proxy energy/focus/stress 评分
+        'concern_timing_evidence': 300,    # ProactiveCare top concern timing 信号 (β.5.40-fix)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1253,6 +1254,7 @@ class ConversationEventBus:
         'ambient_state': 0.45,             # 背景听感 (默认低, 但场景特殊 publish 时可调高)
         'nudge_window_advice': 0.35,       # 时段建议 (调 ProactiveCare publish 时 score 低 → 0.55)
         'physio_state': 0.45,              # 键鼠节奏推断 (stress 高时 publish 时 → 0.55)
+        'concern_timing_evidence': 0.55,   # concern timing (远离 timing 时 publish 调 0.65)
     }
 
     def __init__(self, max_events: int = 60):

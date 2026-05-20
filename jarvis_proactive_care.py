@@ -40,6 +40,56 @@ _SIR_SLEEP_PATTERN_CACHE: dict = {}
 _SIR_SLEEP_PATTERN_MTIME: float = 0.0
 
 
+def _compute_concern_timing_evidence(concern, now_ts: float):
+    """🩹 [β.5.40-fix / 2026-05-20 16:30] Sir 真理: 不硬 dampen, 让主脑看 evidence 自决.
+    
+    For concern with optimal_timing, compute timing evidence dict (None if no optimal_timing).
+    主脑 directive `concern_timing_judge` 看此 evidence 决定是否该提 (远离 timing 别提).
+    
+    Returns dict 含:
+      - optimal_timing: 'before_sleep' / 'morning' / 'evening' / 'now'
+      - current_hour: 0-23
+      - is_in_optimal_window: bool
+      - hours_until_optimal: int (负=已过, 0=在窗口, 正=离窗口还有多久)
+    """
+    tm = getattr(concern, 'optimal_timing', '') or ''
+    if not tm:
+        return None
+    hour = time.localtime(now_ts).tm_hour
+    ev = {'optimal_timing': tm, 'current_hour': hour}
+    if tm == 'before_sleep':
+        # 22-1 (含)
+        ev['is_in_optimal_window'] = (hour >= 22 or hour <= 1)
+        if hour >= 22:
+            ev['hours_until_optimal'] = 0
+        elif hour <= 1:
+            ev['hours_until_optimal'] = 0
+        else:
+            ev['hours_until_optimal'] = 22 - hour
+    elif tm == 'morning':
+        ev['is_in_optimal_window'] = (6 <= hour <= 10)
+        if hour < 6:
+            ev['hours_until_optimal'] = 6 - hour
+        elif hour > 10:
+            ev['hours_until_optimal'] = 24 - hour + 6
+        else:
+            ev['hours_until_optimal'] = 0
+    elif tm == 'evening':
+        ev['is_in_optimal_window'] = (18 <= hour <= 21)
+        if hour < 18:
+            ev['hours_until_optimal'] = 18 - hour
+        elif hour > 21:
+            ev['hours_until_optimal'] = 24 - hour + 18
+        else:
+            ev['hours_until_optimal'] = 0
+    elif tm == 'now':
+        ev['is_in_optimal_window'] = True
+        ev['hours_until_optimal'] = 0
+    else:
+        return None
+    return ev
+
+
 def _load_sir_sleep_pattern() -> dict:
     """读 memory_pool/sir_sleep_pattern_vocab.json typical_sleep_hour 段.
     返 {'weekday': float|None, 'weekend': float|None, 'tolerance_hours': float}.
@@ -1432,6 +1482,29 @@ class ProactiveCareEngine(threading.Thread):
                     },
                     salience=min(0.95, 0.4 + top_u * 0.5),  # urgency 越高 salience 越高
                 )
+
+                # 🩹 [β.5.40-fix / 2026-05-20 16:30] Sir 真理: 16:07 sleep nudge BUG.
+                # 准则 6 evidence-driven: 不动 compute_urgency 硬 dampen 公式, 改 publish
+                # concern_timing_evidence 让主脑看 → 主脑 directive 自决是否提
+                # 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md
+                _timing_ev = _compute_concern_timing_evidence(top_c, now_ts)
+                if _timing_ev:
+                    _swm.publish(
+                        etype='concern_timing_evidence',
+                        description=(
+                            f"concern={_cid} optimal={_timing_ev['optimal_timing']} "
+                            f"current_h={_timing_ev['current_hour']} "
+                            f"in_window={_timing_ev['is_in_optimal_window']} "
+                            f"hours_until={_timing_ev['hours_until_optimal']:+d}"
+                        ),
+                        source='ProactiveCare',
+                        salience=0.65 if not _timing_ev['is_in_optimal_window'] else 0.40,
+                        metadata={
+                            'concern_id': _cid,
+                            **_timing_ev,
+                        },
+                        ttl=300.0,
+                    )
         except Exception:
             pass
 
