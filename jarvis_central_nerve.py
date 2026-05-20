@@ -760,6 +760,35 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.35-D / 2026-05-20] StruggleReflector L7 vocab daemon
+        # Sir BUG 2 续: offer_help 触发源重设 (β.5.35-C 加 sir_struggle_vocab + worker detector).
+        # β.5.35-D 加 L7 daemon: 24h 1 跑 LLM 看 STM [src=user_voice] propose 新
+        # struggle phrase 进 review_queue, Sir CLI struggle_vocab_dump.py 拍板.
+        # stm_provider 复用 WeeklyReflector 同款 lambda (line 661 上下文).
+        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        self.struggle_reflector = None
+        try:
+            from jarvis_struggle_reflector import StruggleReflector
+            def _struggle_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.struggle_reflector = StruggleReflector(
+                key_router=self.key_router,
+                stm_provider=_struggle_stm_provider,
+            )
+            if self.struggle_reflector is not None and not self.struggle_reflector.is_alive():
+                self.struggle_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _strr_bg
+                _strr_bg("🪞 [StruggleReflector] L7 vocab daemon ready (β.5.35-D)")
+            except Exception:
+                pass
+        except Exception as _strr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[StruggleReflector] 初始化失败（非致命）：{_strr_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
