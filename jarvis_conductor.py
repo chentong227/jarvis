@@ -525,6 +525,16 @@ class Conductor(threading.Thread):
         self.worker.push_command(cmd)
         if self.gate:
             self.gate.mark_spoke('guardian')
+
+        # 🩹 [P4-Case3 / 2026-05-20 23:59] SoftFocus wire (Sir 23:11 真痛点)
+        # Sir 23:32 真测: Conductor late_night nudge fire 后无 [Focus Mode], Sir 想短回应
+        # 还要喊 Jarvis. ProactiveCare 已 wire SoftFocus, Conductor missed.
+        try:
+            _rs = getattr(self.worker, 'return_sentinel', None)
+            if _rs is not None and hasattr(_rs, 'open_soft_focus'):
+                _rs.open_soft_focus(duration_s=60.0, reason='conductor_nudge')
+        except Exception:
+            pass
         
         self._last_action_time = time.time()
         self._daily_action_count += 1
@@ -691,6 +701,16 @@ class Conductor(threading.Thread):
         self.worker.push_command(cmd)
         if self.gate:
             self.gate.mark_spoke('guardian')
+
+        # 🩹 [P4-Case3 / 2026-05-20 23:59] SoftFocus wire (Sir 23:11 真痛点)
+        # Sir 23:32 真测: Conductor late_night nudge fire 后无 [Focus Mode], Sir 想短回应
+        # 还要喊 Jarvis. ProactiveCare 已 wire SoftFocus, Conductor missed.
+        try:
+            _rs = getattr(self.worker, 'return_sentinel', None)
+            if _rs is not None and hasattr(_rs, 'open_soft_focus'):
+                _rs.open_soft_focus(duration_s=60.0, reason='conductor_nudge')
+        except Exception:
+            pass
         
         self._last_action_time = time.time()
         self._daily_action_count += 1

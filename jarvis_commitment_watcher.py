@@ -286,7 +286,7 @@ class CommitmentWatcher(threading.Thread):
                         'db_id': row.get('id', 0),
                         'deadline_ts': row.get('deadline_ts', 0.0),
                         'description': row.get('description', ''),
-                        'grace_minutes': row.get('grace_minutes', 10),
+                        'grace_minutes': row.get('grace_minutes', 2),  # 🩹 [P4-Case1 / 2026-05-20 23:55] default 10→2 (Sir 期待 commitment 准点 fire)
                         'nudged': row.get('nudged', False),
                         'source_text': row.get('source_text', ''),
                         'created_at': row.get('created_at', time.time()),
@@ -389,7 +389,7 @@ class CommitmentWatcher(threading.Thread):
                                 _new_db_id = hippo.add_commitment_row(
                                     description=description,
                                     deadline_ts=deadline_ts,
-                                    grace_minutes=10,
+                                    grace_minutes=2,  # 🩹 [P4-Case1 / 2026-05-20 23:55] default 10→2
                                     source_text=user_text[:200] if user_text else '',
                                     created_at=time.time(),
                                 )
@@ -399,7 +399,7 @@ class CommitmentWatcher(threading.Thread):
                             'db_id': _new_db_id,
                             'deadline_ts': deadline_ts,
                             'description': description,
-                            'grace_minutes': 10,
+                            'grace_minutes': 2,  # 🩹 [P4-Case1] default 10→2
                             'nudged': False,
                             'source_text': user_text[:200],
                             'created_at': time.time()
@@ -970,7 +970,7 @@ class CommitmentWatcher(threading.Thread):
                     _new_db_id = hippo.add_commitment_row(
                         description=description,
                         deadline_ts=deadline_ts,
-                        grace_minutes=10,
+                        grace_minutes=2,  # 🩹 [P4-Case1] default 10→2
                         source_text=(user_text or f"[Commitment] {description}")[:200],
                         created_at=time.time(),
                     )
@@ -988,7 +988,7 @@ class CommitmentWatcher(threading.Thread):
                 'db_id': _new_db_id,
                 'deadline_ts': deadline_ts,
                 'description': description,
-                'grace_minutes': 10,
+                'grace_minutes': 2,  # 🩹 [P4-Case1] default 10→2
                 'nudged': False,
                 'source_text': _sxt,
                 'source': source,  # 🩹 β.2.7.3: 'user_text' | 'self_promise'

@@ -1601,6 +1601,70 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [P4-Case4 / 2026-05-20 23:58] PENDING COMMITMENTS — 治 23:38 hallucinate "11:59"
+        # Sir 23:38 case: Sir 忘了自己说几点睡, 问 Jarvis, 主脑回 "11:59 PM" hallucinate.
+        # Sir 真说 23:30. 主脑没看 commitment 数据自己编 time.
+        # 修: 注入真 commitment + promise 数据 (description + deadline + age) 让主脑 reference.
+        try:
+            _pc_lines = []
+            # CommitmentWatcher.commitments (hard, with deadline_ts)
+            try:
+                _cw = getattr(self, 'commitment_watcher', None)
+                if _cw is not None:
+                    _cw_list = list(getattr(_cw, 'commitments', []) or [])
+                    _now = time.time()
+                    _active_cw = [
+                        c for c in _cw_list
+                        if not c.get('nudged') and float(c.get('deadline_ts', 0)) > 0
+                    ]
+                    _active_cw = sorted(_active_cw, key=lambda c: float(c.get('deadline_ts', 0)))[:6]
+                    for _c in _active_cw:
+                        _dl_ts = float(_c.get('deadline_ts', 0))
+                        _gap_min = int((_dl_ts - _now) / 60)
+                        _dl_str = time.strftime('%H:%M', time.localtime(_dl_ts))
+                        _gap_str = (
+                            f'{_gap_min}min ago' if _gap_min < 0
+                            else f'in {_gap_min}min' if _gap_min < 60
+                            else f'in {_gap_min // 60}h'
+                        )
+                        _src = _c.get('source', 'sir')
+                        _pc_lines.append(
+                            f"  - [{_src}] '{_c.get('description', '')[:60]}' "
+                            f"@ {_dl_str} ({_gap_str})"
+                        )
+            except Exception:
+                pass
+            # PromiseLog (hard kind, has deadline_str)
+            try:
+                from jarvis_promise_log import get_default_log as _pl_get
+                _plog = _pl_get()
+                if _plog is not None and hasattr(_plog, '_promises'):
+                    for _pid, _p in (_plog._promises or {}).items():
+                        if (_p.get('state') == 'pending'
+                                and _p.get('kind') == 'hard'
+                                and _p.get('deadline_str')):
+                            _desc = _p.get('description', '')[:60]
+                            _dl_s = _p.get('deadline_str', '')[:20]
+                            _author = _p.get('author', '?')
+                            _pc_lines.append(
+                                f"  - [PromiseLog/{_author}] '{_desc}' deadline={_dl_s}"
+                            )
+            except Exception:
+                pass
+
+            if _pc_lines:
+                _pc_block = [
+                    '[PENDING COMMITMENTS / NEAR DEADLINE — your real data, do not hallucinate]',
+                    '  Use this when Sir asks "what time did I say" / "any commitment now" / etc.',
+                ]
+                _pc_block.extend(_pc_lines[:8])
+                _pc_block.append(
+                    '  [rule] Reference these exactly. Never invent timestamps / quotas / billing.'
+                )
+                _parts.append('\n'.join(_pc_block))
+        except Exception:
+            pass
+
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
         # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]
