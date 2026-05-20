@@ -32,7 +32,46 @@
 
 ---
 
-## 🌟 β.5.40 — Sir 长期方向 A.1/B.1/E.1/A.2 全做 (除 D, ~10h, 4 commit)
+## � β.5.42 — Sir 新定位大方向 (design 已立, 等 Sir 拍板 sprint)
+
+> Sir 16:30 真理: "脱离繁重数据工作流, 给予 Jarvis (1) 稳固交互地基 (2) 真用鼠标键盘操作复杂工作流".
+>
+> Sir 不在家时 Jarvis 代劳 PR 剪辑 / PS 封面 / Figma 等没对外 API 但 Sir 常用桌面软件.
+
+| commit | 内容 |
+|---|---|
+| `af7eaa3` | **β.5.42 design doc** `@d:\Jarvis\docs\JARVIS_DESKTOP_COPILOT_DESIGN.md` (225 行, 4 模块 P0-P3) — Vision LLM + workflow vocab + intent router + 远程触发. MVP (P0+P1) 估 8-13h, 全部 20-30h |
+
+**4 模块**:
+- **A**: Screen Vision (Gemini 2.5 Pro 看屏幕找元素坐标)
+- **B**: desktop_workflow_vocab.json (PR/PS/Figma workflow codify)
+- **C**: Intent router 扩 + Safety gate (Sir-not-present 5s preview, dangerous 二次确认)
+- **D**: 远程触发 (Telegram/微信 bot, Sir 出门也可)
+
+**约束 (Sir 真理)**:
+- 不动 LLM 重模块的交互地基 (Sir 澄清: 那些是地基, 不是繁重工作流)
+- 不做 ETL / 数据流 (让 Cascade 做)
+- vision 找元素 ≥ 0.85 confidence 才点
+- Sir-可中止 preview 5s 黄金窗口
+
+---
+
+## 🔧 β.5.40-fix — Sir 16:07 sleep nudge BUG (准则 6 evidence-driven)
+
+| commit | 内容 |
+|---|---|
+| `a3089bc` | **不动 compute_urgency 硬 dampen**. ProactiveCare publish `concern_timing_evidence` SWM 让主脑看. 加 `concern_timing_judge` directive (priority=8 高于其他, 否决 top concern 盲目反应). 主脑看 evidence 自决: 16:07 sleep concern → in_window=False, hours_until=+6 → 不主动提"早睡" |
+
+**Sir 体感 (重启后生效)**:
+- 下午 16:07 主脑看 SOUL inject 含 sir_sleep_streak top → 但看 SWM `concern_timing_evidence` → 知道远离 timing → 不再推 "早睡"
+- 临近 22:00 (hours_until ≤ 4) → 主脑软铺垫 OK
+- 在窗口内 (22-1) → 正常 nudge
+
+**testcase**: 14/14 pass (含 `test_compute_urgency_unchanged` 验证准则 6 没硬编码).
+
+---
+
+## � β.5.40 — Sir 长期方向 A.1/B.1/E.1/A.2 全做 (除 D, ~10h, 4 commit)
 
 > Sir 决定: "全做, 除了 D, 按推荐顺序全部往下, 但是算法要精准". 4 个长期方向 100% 不动 TTFT (全后台 daemon / sensor / publish-only SWM).
 
@@ -164,6 +203,7 @@
 [ ] 33. β.5.40-A2 启动正常 → log `💪 [PhysioProxy] energy=X.X focus=X.X stress=X.X` 每 60s 一次 (Sir 在使用电脑)
 [ ] 34. β.5.40-A2 Sir 心流 (focus > 0.7) → 主脑 SILENT, Sir stress > 0.6 → tone 关切不急 offer
 [ ] 35. β.5.40 4 新 SWM signal 都进 SWM: Grep latest.log `ambient_state|nudge_window_advice|physio_state` 有真发
+[ ] 36. β.5.40-fix Sir 下午 (e.g. 16:00) 跟 Jarvis 聊天 → 主脑不再推 "早睡 / early night" (看 SWM `concern_timing_evidence` 知道远离 timing). Grep log `concern_timing_evidence`+ `in_window=False`
 ```
 
 **真机出 BUG 时 报告我**:
