@@ -3565,6 +3565,86 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 )
         except Exception:
             pass
+
+        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:30] Reply PreFlight 后置审计
+        # Sir 22:04 / 22:19 / 23:02 / 23:43 / 23:49 反复 5 次 unsolicited apology callback
+        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback (cluster 淹). 真治: PreFlight
+        # 检 reply 是否 unsolicited / hallucinate / tone mismatch. async, publish SWM
+        # 'preflight_verdict' event, 主脑下轮 prompt [PREFLIGHT FEEDBACK] block 看自纠.
+        # env JARVIS_PREFLIGHT=1 启用 (default off, Sir gradual rollout).
+        try:
+            from jarvis_reply_preflight import is_enabled as _pf_enabled
+            if _pf_enabled() and final_reply and final_reply.strip():
+                _turn_id_pf = ''
+                try:
+                    from jarvis_utils import TraceContext as _TCpf
+                    _turn_id_pf = _TCpf.get_turn_id() or ''
+                except Exception:
+                    pass
+                # async fire-and-forget (1.5s timeout in PreFlight LLM call)
+                def _async_preflight():
+                    try:
+                        from jarvis_reply_preflight import get_default_preflight
+                        from jarvis_utils import get_event_bus, bg_log
+                        _pf = get_default_preflight()
+                        if _pf is None:
+                            return
+                        # state summary brief — Sir mental hint + recent topic
+                        _state_lines = []
+                        try:
+                            _stm = list(getattr(self.jarvis, 'short_term_memory', []) or [])[-3:]
+                            if _stm:
+                                _state_lines.append(
+                                    f"recent STM: {len(_stm)} turns, last_sir='{(_stm[-1].get('user') or '')[:60]}'"
+                                )
+                        except Exception:
+                            pass
+                        _state = '\n'.join(_state_lines) or '(no state)'
+                        _verdict = _pf.check(
+                            sir_utterance=str(user_input or '')[:200],
+                            draft_reply=str(final_reply or '')[:500],
+                            state_summary=_state,
+                            turn_id=_turn_id_pf,
+                        )
+                        # publish SWM
+                        _v = _verdict.get('verdict', 'pass')
+                        _issues = _verdict.get('issues', []) or []
+                        _bus = get_event_bus()
+                        if _bus is not None:
+                            _bus.publish(
+                                etype='preflight_verdict',
+                                description=(
+                                    f"PreFlight {_v}: " +
+                                    (f"{'; '.join(_issues[:2])[:120]}" if _issues else '(no issue)')
+                                ),
+                                source='ReplyPreFlight',
+                                salience=0.80 if _v in ('scrap', 'edit') else 0.40,
+                                metadata={
+                                    'verdict': _v,
+                                    'issues': _issues[:3],
+                                    'turn_id': _turn_id_pf,
+                                    'sir_utterance_excerpt': str(user_input or '')[:80],
+                                    'draft_excerpt': str(final_reply or '')[:120],
+                                    'latency_ms': _verdict.get('latency_ms', 0),
+                                    'fallback': bool(_verdict.get('_fallback')),
+                                },
+                            )
+                        # log
+                        if _v in ('scrap', 'edit'):
+                            try:
+                                bg_log(
+                                    f"🛂 [PreFlight] turn={_turn_id_pf[:16]} verdict={_v} "
+                                    f"issues={_issues[:2]}"
+                                )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                import threading as _th_pf
+                _th_pf.Thread(target=_async_preflight, daemon=True,
+                              name='ReplyPreFlightAsync').start()
+        except Exception:
+            pass
         # 🩹 [β.2.7.6 / 2026-05-17] 暂存 timing 供 jarvis_worker 打精炼版终端 log
         try:
             self._last_stream_timing = {

@@ -831,6 +831,31 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35] ReplyPreFlight 初始化
+        # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
+        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback. PreFlight 后置审计 + SWM publish
+        # → 主脑下轮 [PREFLIGHT FEEDBACK] 看自纠. env JARVIS_PREFLIGHT=1 启用.
+        self.reply_preflight = None
+        try:
+            from jarvis_reply_preflight import ReplyPreFlight, register_preflight
+            self.reply_preflight = ReplyPreFlight(key_router=self.key_router)
+            register_preflight(self.reply_preflight)
+            try:
+                from jarvis_utils import bg_log as _pf_bg
+                import os as _os_pf
+                _enabled = _os_pf.environ.get('JARVIS_PREFLIGHT', '0') == '1'
+                _pf_bg(
+                    f"🛂 [ReplyPreFlight] {'enabled (env JARVIS_PREFLIGHT=1)' if _enabled else 'registered (env JARVIS_PREFLIGHT=0, dormant)'}"
+                )
+            except Exception:
+                pass
+        except Exception as _pf_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ReplyPreFlight] 初始化失败（非致命）：{_pf_e}")
+            except Exception:
+                pass
+
         # 🩹 [β.5.43-fix3-㋭ / 2026-05-20 18:52] SirRequestReflector L7 daemon
         # Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
         # 此 daemon 60s tick, LLM judge STM 看 Sir 是否要求 long-watch X,
@@ -1664,6 +1689,47 @@ class CentralNerve:
                     '  [rule] Reference these exactly. Never invent timestamps / quotas / billing.'
                 )
                 _parts.append('\n'.join(_pc_block))
+        except Exception:
+            pass
+
+        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:40] PreFlight Feedback 注入主脑
+        # 主脑看上 N turn PreFlight 自审 verdict (scrap/edit). 自纠不再 callback.
+        # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次道歉 — 这 block 让主脑学.
+        try:
+            _bus_pf = getattr(self, 'event_bus', None)
+            if _bus_pf is not None:
+                _pf_events = _bus_pf.recent_events(
+                    within_seconds=600,  # last 10min
+                    types={'preflight_verdict'},
+                ) or []
+                # only show scrap/edit verdicts (skip pass/fallback noise)
+                _interesting = [
+                    e for e in _pf_events
+                    if (e.get('metadata', {}) or {}).get('verdict') in ('scrap', 'edit')
+                ]
+                if _interesting:
+                    _pf_lines = [
+                        '[PREFLIGHT FEEDBACK — your last reply self-check (last 10min)]',
+                        '  Your past replies were judged unsolicited / hallucinatory / off-tone:',
+                    ]
+                    for _e in _interesting[-3:]:  # last 3 only
+                        _meta = _e.get('metadata', {}) or {}
+                        _v = _meta.get('verdict', '?')
+                        _issues = _meta.get('issues', []) or []
+                        _sir_excerpt = _meta.get('sir_utterance_excerpt', '')[:50]
+                        _draft_excerpt = _meta.get('draft_excerpt', '')[:80]
+                        _pf_lines.append(
+                            f"  - [{_v.upper()}] Sir said \"{_sir_excerpt}\" → "
+                            f"you drafted \"{_draft_excerpt}...\""
+                        )
+                        if _issues:
+                            _pf_lines.append(f"      issue: {'; '.join(_issues[:2])[:120]}")
+                    _pf_lines.append(
+                        '  [lesson] Avoid: unsolicited callback to old over-claims; '
+                        'inventing facts (timestamps/quotas); over-formal tone when Sir is casual. '
+                        'Just answer the current turn cleanly.'
+                    )
+                    _parts.append('\n'.join(_pf_lines))
         except Exception:
             pass
 
