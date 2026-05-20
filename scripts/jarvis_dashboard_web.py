@@ -85,6 +85,12 @@ HTML_TEMPLATE = r"""
       </div>
     </div>
     <div class="flex items-center gap-2">
+      <!-- 🩹 [β.5.41-C / 2026-05-20] Sir 拍板事项新面板入口 -->
+      <a href="/items"
+         class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 transition text-sm font-medium"
+         title="所有 Sir 拍板事项 + 修正/删除 (β.5.41)">
+        💡 我们的事
+      </a>
       <button @click="refresh()" :disabled="loading"
               class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition text-sm font-medium">
         <span x-show="!loading">🔄 刷新</span>
@@ -977,6 +983,351 @@ def api_review(action_kind: str):
     if not done.wait(timeout=15):
         return jsonify({'ok': False, 'detail': '操作超时 (>15s)'}), 504
     return jsonify(result)
+
+
+# ============================================================
+# 🩹 [β.5.41-C / 2026-05-20] Actionable Items API + UI (Sir 16:43 真理)
+# 所有 Sir 拍板事项全面出现 + 修正/删除按钮 + 实时状态 + 影响预览
+# ============================================================
+
+try:
+    import jarvis_actionable_items as _ai
+except Exception:
+    _ai = None
+
+
+@app.route('/api/items')
+def api_items_list():
+    """list actionable items, optional filter by category/state."""
+    if _ai is None:
+        return jsonify({'ok': False, 'error': 'actionable_items not available'}), 500
+    cat = request.args.get('category', '').strip() or None
+    state = request.args.get('state', '').strip() or None
+    try:
+        items = _ai.get_all_sir_actionable_items(
+            filter_category=cat, filter_state=state)
+        counts = _ai.get_category_counts()
+        return jsonify({
+            'ok': True,
+            'items': [it.to_dict() for it in items],
+            'counts': counts,
+            'total': len(items),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/items/<item_id>/<action>', methods=['POST'])
+def api_items_mutate(item_id: str, action: str):
+    """Sir 操作: modify / delete / restore / activate / reject / ack."""
+    if _ai is None:
+        return jsonify({'ok': False, 'error': 'actionable_items not available'}), 500
+    if action not in ('modify', 'delete', 'restore', 'activate', 'reject', 'ack'):
+        return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
+
+    if action == 'ack':
+        ok = _ai.mark_sir_acked(item_id)
+        return jsonify({'ok': ok, 'detail': 'sir_acked recorded'})
+
+    payload = request.get_json(silent=True) or {}
+    new_fields = payload.get('new_fields')
+    sir_note = payload.get('sir_note', '')
+    try:
+        result = _ai.mutate_actionable_item(
+            item_id, action, new_fields=new_fields, sir_note=sir_note)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    return jsonify(result)
+
+
+# 3-pane Actionable Items HTML page
+_ITEMS_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>贾维斯 · 我们的事 (β.5.41)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  body { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); min-height: 100vh; }
+  .scroll-y { max-height: calc(100vh - 90px); overflow-y: auto; }
+  .scroll-y::-webkit-scrollbar { width: 8px; }
+  .scroll-y::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+  .card { transition: all .15s; }
+  .card:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+  .toast { animation: slidein .3s ease-out; }
+  @keyframes slidein { from { transform: translateX(100%); opacity: 0; } }
+  .ack-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+</style>
+</head>
+<body class="text-slate-100" x-data="itemsApp()" x-init="loadAll()">
+  <!-- 顶 bar -->
+  <header class="bg-slate-900/80 backdrop-blur border-b border-slate-700 px-6 py-3 flex items-center justify-between sticky top-0 z-10">
+    <div class="flex items-center gap-3">
+      <h1 class="text-xl font-bold">🤖 贾维斯 · 我们的事</h1>
+      <span class="text-xs text-slate-400">β.5.41 · <span x-text="items.length"></span> items · 共 <span x-text="totalAcked"></span> 已看</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="loadAll()" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm">🔄 刷新</button>
+      <a href="/" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm">← 老 dashboard</a>
+    </div>
+  </header>
+
+  <!-- 3-pane -->
+  <div class="flex" style="height: calc(100vh - 56px);">
+    <!-- Sidebar -->
+    <aside class="w-56 bg-slate-900/50 border-r border-slate-700 p-4 scroll-y">
+      <div class="text-xs text-slate-400 uppercase tracking-wider mb-3">分类</div>
+      <button @click="setCat('')" class="w-full text-left px-3 py-2 rounded mb-1 text-sm"
+              :class="filter.cat==='' ? 'bg-blue-600 text-white' : 'hover:bg-slate-700'">
+        🌍 全部 <span class="float-right text-slate-400" x-text="totalAll"></span>
+      </button>
+      <template x-for="cat in Object.keys(counts).sort()" :key="cat">
+        <button @click="setCat(cat)" class="w-full text-left px-3 py-2 rounded mb-1 text-sm"
+                :class="filter.cat===cat ? 'bg-blue-600 text-white' : 'hover:bg-slate-700'">
+          <span x-text="catIcon(cat) + ' ' + cat"></span>
+          <span class="float-right text-slate-400" x-text="catTotal(cat)"></span>
+        </button>
+      </template>
+
+      <div class="text-xs text-slate-400 uppercase tracking-wider mt-6 mb-3">状态</div>
+      <template x-for="st in ['', 'review', 'active']" :key="st">
+        <button @click="setState(st)" class="w-full text-left px-3 py-2 rounded mb-1 text-sm"
+                :class="filter.state===st ? 'bg-purple-600 text-white' : 'hover:bg-slate-700'">
+          <span x-text="st==='' ? '全部状态' : (st==='review' ? '🔥 待拍板' : '✅ 已生效')"></span>
+        </button>
+      </template>
+    </aside>
+
+    <!-- Cards stream -->
+    <main class="flex-1 p-4 scroll-y">
+      <div class="space-y-3">
+        <template x-for="item in filteredItems" :key="item.id">
+          <div class="card bg-slate-800/70 border border-slate-700 rounded-lg p-4">
+            <div class="flex items-start justify-between mb-2">
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span x-text="catIcon(item.category)" class="text-lg"></span>
+                  <span class="text-xs uppercase tracking-wider text-slate-400" x-text="item.category"></span>
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="item.state==='review' ? 'bg-orange-700/50 text-orange-300' : item.state==='active' ? 'bg-green-700/50 text-green-300' : 'bg-slate-700 text-slate-400'"
+                        x-text="item.state"></span>
+                  <span x-show="item.auto_proposed" class="text-xs px-2 py-0.5 rounded bg-purple-700/50 text-purple-300">🤖 auto</span>
+                  <span :class="item.sir_acked ? 'bg-green-500' : 'bg-orange-500'" class="ack-dot ml-auto" :title="item.sir_acked ? '你已看过' : '未看'"></span>
+                </div>
+                <div class="text-base text-slate-100 mb-1" x-text="item.preview"></div>
+                <div class="text-xs text-slate-500" x-text="'id=' + item.id + ' · ' + (item.proposed_by || 'sir')"></div>
+              </div>
+            </div>
+            <!-- 影响 tooltip + 按钮 -->
+            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-slate-700/50">
+              <span class="text-xs text-slate-400 flex-1" x-text="'⚠️ 改影响: ' + (item.impact_if_modified || '?')"></span>
+              <button @click="openDetail(item)" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs">✏️ 修正</button>
+              <button @click="ack(item.id)" x-show="!item.sir_acked" class="px-3 py-1 bg-slate-600 hover:bg-slate-500 rounded text-xs">👁 标已看</button>
+              <button @click="del(item)" class="px-3 py-1 bg-red-700/70 hover:bg-red-600 rounded text-xs">🗑 删</button>
+              <template x-if="item.state==='review'">
+                <button @click="mutate(item.id, 'activate', null)" class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-xs">✅ 激活</button>
+              </template>
+            </div>
+          </div>
+        </template>
+        <div x-show="filteredItems.length === 0" class="text-center text-slate-500 py-12">
+          这个分类下没有 item.
+        </div>
+      </div>
+    </main>
+
+    <!-- Detail panel (修正面板, 隐藏直到 click 修正) -->
+    <aside class="w-96 bg-slate-900/50 border-l border-slate-700 p-4 scroll-y" x-show="detail">
+      <template x-if="detail">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold">修正</h3>
+            <button @click="detail=null" class="text-slate-400 hover:text-slate-100">✕</button>
+          </div>
+          <div class="text-xs text-slate-400 mb-1" x-text="'id: ' + detail.id"></div>
+          <div class="text-xs text-slate-400 mb-3" x-text="'分类: ' + detail.category + ' / 状态: ' + detail.state"></div>
+
+          <template x-for="(value, key) in editingFields" :key="key">
+            <div class="mb-3">
+              <label class="text-xs text-slate-400 uppercase" x-text="key"></label>
+              <template x-if="Array.isArray(value)">
+                <textarea x-model="editingFieldsStr[key]" rows="3"
+                          class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1"
+                          placeholder="JSON array"></textarea>
+              </template>
+              <template x-if="typeof value === 'string' && value.length > 60">
+                <textarea x-model="editingFields[key]" rows="3"
+                          class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1"></textarea>
+              </template>
+              <template x-if="typeof value === 'string' && value.length <= 60">
+                <input x-model="editingFields[key]" type="text"
+                       class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1">
+              </template>
+              <template x-if="typeof value === 'number'">
+                <input x-model.number="editingFields[key]" type="number" step="0.01"
+                       class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1">
+              </template>
+              <template x-if="typeof value === 'boolean'">
+                <select x-model="editingFields[key]" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1">
+                  <option :value="true">true</option>
+                  <option :value="false">false</option>
+                </select>
+              </template>
+            </div>
+          </template>
+
+          <div class="mb-3">
+            <label class="text-xs text-slate-400 uppercase">备注 (Sir 你的解释)</label>
+            <input x-model="editingNote" type="text" placeholder="可选, 写一句为什么"
+                   class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1">
+          </div>
+
+          <div class="bg-yellow-900/40 border border-yellow-700 rounded p-3 text-xs mb-3">
+            ⚠️ <strong>影响</strong>: <span x-text="detail.impact_if_modified"></span>
+          </div>
+
+          <div class="flex gap-2">
+            <button @click="saveModify()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm">💾 保存修正</button>
+            <button @click="detail=null" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">取消</button>
+          </div>
+        </div>
+      </template>
+      <div x-show="!detail" class="text-slate-500 text-sm text-center py-12">
+        点 ✏️ 修正 看详情<br/>所有 Sir 拍板事项实时显示 + 一键修正/删除
+      </div>
+    </aside>
+  </div>
+
+  <!-- Toast -->
+  <div x-show="toast" class="toast fixed bottom-4 right-4 bg-green-700 px-4 py-3 rounded shadow-lg" x-text="toast"></div>
+
+<script>
+function itemsApp() { return {
+  items: [],
+  counts: {},
+  filter: { cat: '', state: '' },
+  detail: null,
+  editingFields: {},
+  editingFieldsStr: {},  // for array fields
+  editingNote: '',
+  toast: '',
+  get totalAll() {
+    let n = 0;
+    for (const c in this.counts) for (const s in this.counts[c]) n += this.counts[c][s];
+    return n;
+  },
+  get totalAcked() { return this.items.filter(i => i.sir_acked).length; },
+  get filteredItems() {
+    return this.items.filter(i =>
+      (!this.filter.cat || i.category === this.filter.cat) &&
+      (!this.filter.state || i.state === this.filter.state)
+    );
+  },
+  catIcon(c) {
+    return {concern:'🎯', inside_joke:'💭', thread:'📜', protocol:'🤝',
+            unfinished:'⏱️', screen_tease:'🪞', struggle:'🆘', directive:'📡',
+            sleep_pattern:'💤', behavior_inference:'⏱️', callback:'📞',
+            cooldown:'⏰', profile:'👤'}[c] || '📌';
+  },
+  catTotal(c) {
+    if (!this.counts[c]) return 0;
+    return Object.values(this.counts[c]).reduce((a,b)=>a+b, 0);
+  },
+  setCat(c) { this.filter.cat = c; },
+  setState(s) { this.filter.state = s; },
+  async loadAll() {
+    const r = await fetch('/api/items').then(r=>r.json());
+    if (r.ok) {
+      this.items = r.items;
+      this.counts = r.counts;
+    }
+  },
+  openDetail(item) {
+    this.detail = item;
+    this.editingFields = {};
+    this.editingFieldsStr = {};
+    for (const k in item.fields) {
+      if (Array.isArray(item.fields[k])) {
+        this.editingFields[k] = item.fields[k];
+        this.editingFieldsStr[k] = JSON.stringify(item.fields[k], null, 2);
+      } else {
+        this.editingFields[k] = item.fields[k];
+      }
+    }
+    this.editingNote = '';
+  },
+  async ack(id) {
+    await fetch(`/api/items/${id}/ack`, {method:'POST'});
+    const it = this.items.find(i=>i.id===id);
+    if (it) it.sir_acked = true;
+    this.showToast('✅ 已标已看');
+  },
+  async del(item) {
+    if (!confirm(`确定删除 "${item.preview.slice(0,60)}"?\n影响: ${item.impact_if_deleted}`)) return;
+    const reason = prompt('原因 (可空)?', '');
+    const r = await fetch(`/api/items/${item.id}/delete`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({sir_note: reason || ''}),
+    }).then(r=>r.json());
+    if (r.ok) {
+      this.showToast('🗑 已删除');
+      this.loadAll();
+    } else {
+      alert('删除失败: ' + r.error);
+    }
+  },
+  async mutate(id, action, fields) {
+    const r = await fetch(`/api/items/${id}/${action}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({new_fields: fields}),
+    }).then(r=>r.json());
+    if (r.ok) {
+      this.showToast(`✅ ${action} 成功`);
+      this.loadAll();
+    } else {
+      alert(`${action} 失败: ` + r.error);
+    }
+  },
+  async saveModify() {
+    // 合并 array string fields back
+    const fields = {...this.editingFields};
+    for (const k in this.editingFieldsStr) {
+      try { fields[k] = JSON.parse(this.editingFieldsStr[k]); }
+      catch { alert(`字段 ${k} JSON 解析失败`); return; }
+    }
+    const r = await fetch(`/api/items/${this.detail.id}/modify`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({new_fields: fields, sir_note: this.editingNote}),
+    }).then(r=>r.json());
+    if (r.ok) {
+      this.showToast('✅ 已保存. ' + (this.detail.impact_if_modified || ''));
+      this.detail = null;
+      this.loadAll();
+    } else {
+      alert('保存失败: ' + r.error);
+    }
+  },
+  showToast(msg) {
+    this.toast = msg;
+    setTimeout(()=>{this.toast=''}, 3000);
+  },
+}; }
+</script>
+</body>
+</html>
+"""
+
+
+@app.route('/items')
+def page_items():
+    """β.5.41-C 新 3-pane UI: 所有 Sir 拍板事项 + 修正/删除."""
+    from flask import make_response
+    resp = make_response(render_template_string(_ITEMS_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 
 # ============================================================
