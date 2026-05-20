@@ -32,7 +32,36 @@
 
 ---
 
-## 🎯 Jarvis Future Vision — Desktop Copilot (未来构思框架, 无编号无 sprint)
+## � β.5.41 — Dashboard 重构 (Sir 16:43 真理)
+
+> Sir 16:43 关键要求: **所有 Sir 拍板的事全面出现 + 交互清晰 + 状态实时 + 让我知道操作会影响什么 + 重构 UI**
+
+| commit | sub-step | 内容 |
+|---|---|---|
+| `3493e31` | **β.5.41-A 盘点** | `docs/JARVIS_DASHBOARD_REBUILD_AUDIT.md` 21 类 Sir 可操作项盘点 (review queues 11 + active states 9 + sir_profile 1) + 缺口分析 + 4 sub-step 方案 |
+| `b218d48` | **β.5.41-B backend** | `jarvis_actionable_items.py` 统一抽象 `ActionableItem` schema (id/category/subcategory/state/preview/fields/impact_if_modified/impact_if_deleted/created_at/use_count/auto_proposed/proposed_by/sir_acked) + 11 extractors 覆盖 21 类 + 68 items 全 scan + `mutate_actionable_item` (modify/delete/restore/activate/reject) + corrections.jsonl + sir_acked tracking. 16 test pass |
+| `2c1c887` | **β.5.41-C UI** | `scripts/jarvis_dashboard_web.py` 加 `/items` 3-pane 路由 (sidebar 分类 + 滚动卡片 + 修正/删除按钮 + 影响 tooltip + Toast + Alpine 实时刷新) + 5 API endpoints (`GET /api/items` + `POST /api/items/<id>/<action>`). 老 dashboard 主页加 "💡 我们的事" 按钮入口. 8 test pass |
+| `2abcea7` | **β.5.41-D 主脑注入** | `jarvis_central_nerve._assemble_prompt` 加 `[SIR CORRECTIONS / 24h]` block. Sir 改/删 item → corrections.jsonl 写 → 主脑下轮 prompt 看 → 不再用错版本/不再 reference 已删. 1 source test pass |
+
+**total 25 test pass + 147 regression pass, 0 退化.**
+
+### Sir 体感 (重启 + 开 dashboard 后立刻生效)
+
+1. **打开 web dashboard** (http://127.0.0.1:8765) → 顶部按 "💡 我们的事" → 进 /items 页
+2. **3-pane**: 左 sidebar (21 类分组 + 数量), 中卡片流 (按 category/state filter), 右 detail (点 ✏️ 修正)
+3. **每条卡片**: emoji + category 标签 + 状态彩条 + 🤖auto/Sir 标记 + 已看/未看小圆点 + preview + id + 影响 tooltip + 3 按钮 (✏️ 修正 / 👁 标已看 / 🗑 删)
+4. **修正面板**: 显示所有可编辑字段 (string/number/array 自动 form) + 影响预览黄框 + Sir 备注框 + 💾 保存
+5. **删除**: 浏览器 confirm (含影响 tooltip) + 原因 prompt → 写 corrections.jsonl + UI 自动 reload
+6. **主脑感知**: Sir 改"家具党"为"搬家党" → 下次主脑 prompt 看 `[SIR CORRECTIONS]` → 不再用"家具党"
+
+### 影响范围 (重启即可)
+- 主页 `/` 加按钮 (不动老 dashboard 功能)
+- 新页 `/items` 全功能 (老 review_queues 还能用 `/api/review/activate/reject` 操作)
+- corrections.jsonl 自动注入主脑 prompt (chat + nudge 都看到)
+
+---
+
+## � Jarvis Future Vision — Desktop Copilot (未来构思框架, 无编号无 sprint)
 
 > Sir 16:40 真理: "**不要定位成 β.5.42 编号, 设计成未来构思和主框架设计, 我们还没确定细节如何实现, 这样太武断了**".
 >
@@ -204,6 +233,12 @@
 [ ] 34. β.5.40-A2 Sir 心流 (focus > 0.7) → 主脑 SILENT, Sir stress > 0.6 → tone 关切不急 offer
 [ ] 35. β.5.40 4 新 SWM signal 都进 SWM: Grep latest.log `ambient_state|nudge_window_advice|physio_state` 有真发
 [ ] 36. β.5.40-fix Sir 下午 (e.g. 16:00) 跟 Jarvis 聊天 → 主脑不再推 "早睡 / early night" (看 SWM `concern_timing_evidence` 知道远离 timing). Grep log `concern_timing_evidence`+ `in_window=False`
+[ ] 37. β.5.41 主页加 "💡 我们的事" 紫色按钮 → 点开 /items 3-pane (左 sidebar 21 类分组 + 中卡片流 + 右 detail panel)
+[ ] 38. β.5.41 sidebar 各 category 显示数量 + 点切换 filter, 状态过滤可选 (全部/review/active)
+[ ] 39. β.5.41 卡片 [✏ 修正] 弹出 detail panel, 含所有可编辑字段 + 影响预览黄框 + 备注框 + 💾 保存. 改一条 inside_joke phrase → 应 toast "✅ 已保存"
+[ ] 40. β.5.41 卡片 [🗑 删] confirm + 原因 prompt → toast "🗑 已删除" + 卡片消失. memory_pool/sir_corrections.jsonl 含此 delete entry
+[ ] 41. β.5.41 [👁 标已看] 点后小圆点变绿. memory_pool/sir_acked_state.json 有此 id 记录
+[ ] 42. β.5.41 Sir 改完一条后, 主脑下次对话回应中 Grep log `[SOUL inject]` 之后 prompt 应含 `[SIR CORRECTIONS / 最近 24h]` block 列出 Sir 改了什么
 ```
 
 **真机出 BUG 时 报告我**:
