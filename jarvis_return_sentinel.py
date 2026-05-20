@@ -442,6 +442,47 @@ class ReturnSentinel(threading.Thread):
             if self.gate and not self.gate.can_speak('guardian', nudge_type='return_greeting'):
                 _log(f"📞 [ReturnSentinel/Blocked] NudgeGate.can_speak 拒绝 (hard_freeze 或冲突)，未发出问候")
                 return
+
+            # 🩹 [P3-BUG#4 / 2026-05-20 23:42] publish candidate (β.5.0 三维耦合)
+            # vocab gate_mode='publish_only' 已 set, 但行为没真退化. 加 publish candidate
+            # 让 ProactiveCare/主脑下轮看到. JARVIS_RETURN_SENTINEL_RETIRE=1 时**真**退化
+            # (不 push __NUDGE__ 走主对话, 完全交 ProactiveCare 集中决策).
+            try:
+                from jarvis_utils import get_event_bus as _rs_geb
+                _rs_bus = _rs_geb()
+                if _rs_bus is not None:
+                    _rs_bus.publish(
+                        etype='sir_intent_return_greeting_candidate',
+                        description=(
+                            f"Sir AFK return: {afk_min}min, first_today={self.first_active_today}, "
+                            f"hour={current_hour}. ReturnSentinel suggests greeting."
+                        ),
+                        source='ReturnSentinel',
+                        salience=0.70,
+                        metadata={
+                            'confidence': 0.75,
+                            'afk_minutes': afk_min,
+                            'first_today': bool(self.first_active_today),
+                            'work_category': work_category,
+                            'weekday': weekday,
+                            'is_first_today': is_first_today,
+                            'current_hour': current_hour,
+                            'nudge_ctx': nudge_ctx,
+                        },
+                    )
+            except Exception:
+                pass
+
+            # 🩹 [P3-BUG#4] explicit env flag 真退化 (Sir 拍板才用)
+            try:
+                import os as _os_p3
+                if _os_p3.environ.get('JARVIS_RETURN_SENTINEL_RETIRE') == '1':
+                    _log(f"📞 [ReturnSentinel/RETIRED] env JARVIS_RETURN_SENTINEL_RETIRE=1, candidate published, NOT firing nudge")
+                    self.first_active_today = False  # 仍 consume first_today
+                    return
+            except Exception:
+                pass
+
             cmd = f"__NUDGE__:{json.dumps(nudge_ctx, ensure_ascii=False)}"
             self.worker.push_command(cmd)
             if self.gate:

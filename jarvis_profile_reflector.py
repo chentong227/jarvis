@@ -132,19 +132,24 @@ class ProfileReflector:
                 continue
         return out
 
-    def propose_from_corrections(self) -> List[ProfileProposal]:
-        """LLM propose changes. MINIMAL: only stub LLM call, real impl 留 P3.
+    def propose_from_corrections(self, use_llm: bool = True) -> List[ProfileProposal]:
+        """Propose changes from accumulated ProfileCorrections.
 
-        Real impl will:
-          - aggregate corrections by field_path
-          - count repetition (Sir said X 5 times → high confidence propose modify)
-          - LLM judge: should sir_profile.json field X change to Y? rationale?
+        🩹 [P3-BUG#3 / 2026-05-20 23:45] 真 LLM-propose 升级:
+          Phase 1 (aggregation): group corrections by field, count freq
+          Phase 2 (LLM judge): 复用 LlmReflector. 看 grouped + sir_profile current
+                              snapshot, LLM 决定 propose action (modify/add/remove)
+                              + rationale.
+          use_llm=False: 走老 aggregation stub (testcase 隔离用)
+
+        Sir CLI --activate 后, 仍只改 review queue. 真 apply sir_profile.json 留
+        P4 sprint (要含 .bak.YYYYMMDD_HHMM 备份 + Sir 二次确认).
         """
         corrections = self._scan_corrections()
         if len(corrections) < self.min_corrections:
             return []
 
-        # MINIMAL: aggregate by field, group >= 3 occurrences propose
+        # Phase 1: aggregate by field
         by_field: Dict[str, List[dict]] = {}
         for c in corrections:
             fld = c.get('field', '')
@@ -152,39 +157,163 @@ class ProfileReflector:
                 continue
             by_field.setdefault(fld, []).append(c)
 
+        # filter: only fields with >= 3 occurrences
+        candidate_fields = {fld: g for fld, g in by_field.items() if len(g) >= 3}
+        if not candidate_fields:
+            return []
+
+        # skip if any candidate already has open proposal
+        candidate_fields = {
+            fld: g for fld, g in candidate_fields.items()
+            if not any(p.field_path == fld and p.state == 'review' for p in self._proposals)
+        }
+        if not candidate_fields:
+            return []
+
+        # Phase 2: LLM judge (or aggregation stub if use_llm=False)
+        if use_llm:
+            new_proposals = self._llm_propose(candidate_fields)
+        else:
+            new_proposals = self._aggregation_propose_stub(candidate_fields)
+
+        with self._lock:
+            self._proposals.extend(new_proposals)
+            self._persist_review_queue()
+        return new_proposals
+
+    def _aggregation_propose_stub(self,
+                                    candidate_fields: Dict[str, List[dict]]
+                                    ) -> List[ProfileProposal]:
+        """Stub aggregation (use_llm=False fallback)."""
         new_proposals = []
-        for fld, group in by_field.items():
-            if len(group) < 3:
-                continue
-            # check if this field already has open proposal
-            if any(p.field_path == fld and p.state == 'review' for p in self._proposals):
-                continue
-            # most-frequent new_value
+        for fld, group in candidate_fields.items():
             value_counts: Dict[str, int] = {}
             for c in group:
                 v = str(c.get('new', ''))
                 value_counts[v] = value_counts.get(v, 0) + 1
             top_value = max(value_counts.items(), key=lambda kv: kv[1])
-            prop = ProfileProposal(
+            new_proposals.append(ProfileProposal(
                 proposal_id=f'prop_{uuid.uuid4().hex[:8]}',
                 field_path=fld,
                 action='modify',
                 new_value=top_value[0],
-                old_value='',  # could read sir_profile to get
                 rationale=(
-                    f'Sir mentioned this {len(group)} times in corrections '
-                    f'(top value "{top_value[0][:40]}" {top_value[1]}x). '
-                    f'Consider updating sir_profile.json {fld}.'
+                    f'[stub] Sir mentioned this {len(group)} times. '
+                    f'Top value "{top_value[0][:40]}" {top_value[1]}x.'
                 ),
-                evidence_corrections=[c.get('ts', '?') for c in group[-5:]],
+                evidence_corrections=[str(c.get('ts', '?')) for c in group[-5:]],
                 proposed_at=time.time(),
                 state='review',
-            )
-            new_proposals.append(prop)
+            ))
+        return new_proposals
 
-        with self._lock:
-            self._proposals.extend(new_proposals)
-            self._persist_review_queue()
+    def _llm_propose(self,
+                      candidate_fields: Dict[str, List[dict]]) -> List[ProfileProposal]:
+        """🩹 [P3-BUG#3 / 2026-05-20 23:45] 真 LLM-propose. 复用 LlmReflector cache."""
+        try:
+            from jarvis_llm_reflector import LlmReflector
+        except Exception:
+            return self._aggregation_propose_stub(candidate_fields)
+
+        # 读 sir_profile 当前 snapshot (selected fields preview)
+        current_profile_snippet = ''
+        if os.path.exists(self.profile_path):
+            try:
+                with open(self.profile_path, 'r', encoding='utf-8') as f:
+                    _profile_data = json.load(f) or {}
+                # 仅取 candidate_fields 涉及的 keys preview
+                _preview = {}
+                for fld in list(candidate_fields.keys())[:8]:
+                    _top = fld.split('.')[0]
+                    if _top in _profile_data and _top not in _preview:
+                        _preview[_top] = str(_profile_data[_top])[:300]
+                current_profile_snippet = json.dumps(_preview, ensure_ascii=False, indent=2)[:1500]
+            except Exception:
+                current_profile_snippet = '(profile read failed)'
+
+        # 构 LLM prompt
+        evidence_summary = []
+        for fld, group in list(candidate_fields.items())[:6]:
+            recent_values = [str(c.get('new', ''))[:60] for c in group[-5:]]
+            evidence_summary.append(
+                f"  Field '{fld}' ({len(group)}x): recent values = {recent_values}"
+            )
+        evidence_text = '\n'.join(evidence_summary)
+
+        prompt = f"""[ROLE] You are ProfileReflector. Sir has corrected himself N times in
+recent days. You decide: should sir_profile.json be updated?
+
+[CURRENT sir_profile.json snippet (relevant fields)]
+{current_profile_snippet or '(empty)'}
+
+[ACCUMULATED CORRECTIONS (>= 3 times each field)]
+{evidence_text}
+
+[YOUR JOB]
+For each field, decide:
+- action: 'modify' (change existing value) | 'add' (new field) | 'archive' (deprecated) | 'skip' (don't propose now)
+- new_value: the final value (consolidate from recent values)
+- confidence: 0.0-1.0
+- rationale: 1-2 sentence why
+
+[OUTPUT JSON ONLY, no markdown]
+{{
+  "proposals": [
+    {{"field_path": "...", "action": "modify|add|archive|skip",
+      "new_value": "...", "confidence": 0.8,
+      "rationale": "..."}}
+  ]
+}}
+
+If skip all: {{"proposals": []}}
+"""
+
+        reflector = LlmReflector()
+        result = reflector.reflect(
+            model='flash',
+            system_prompt='You are ProfileReflector helping Sir evolve his personal profile.',
+            user_prompt=prompt,
+            cache_ttl=600,  # 10min cache same input
+        )
+        if not result or not result.get('success'):
+            return self._aggregation_propose_stub(candidate_fields)
+
+        # parse raw_text → JSON
+        raw = (result.get('raw_text') or '').strip()
+        if raw.startswith('```'):
+            lines = raw.split('\n')
+            if len(lines) >= 3:
+                raw = '\n'.join(lines[1:-1])
+        try:
+            parsed = json.loads(raw)
+            proposals_data = parsed.get('proposals', []) if isinstance(parsed, dict) else []
+        except Exception:
+            return self._aggregation_propose_stub(candidate_fields)
+
+        new_proposals = []
+        for pd in proposals_data[:6]:
+            try:
+                act = pd.get('action', 'modify')
+                if act == 'skip':
+                    continue
+                fld = pd.get('field_path', '')
+                if not fld or fld not in candidate_fields:
+                    continue
+                new_proposals.append(ProfileProposal(
+                    proposal_id=f'prop_{uuid.uuid4().hex[:8]}',
+                    field_path=fld,
+                    action=act,
+                    new_value=pd.get('new_value', ''),
+                    rationale=f"[LLM conf={pd.get('confidence', 0.5)}] {pd.get('rationale', '')[:300]}",
+                    evidence_corrections=[
+                        str(c.get('ts', '?'))
+                        for c in candidate_fields[fld][-5:]
+                    ],
+                    proposed_at=time.time(),
+                    state='review',
+                ))
+            except Exception:
+                continue
         return new_proposals
 
     def list_review(self) -> List[ProfileProposal]:

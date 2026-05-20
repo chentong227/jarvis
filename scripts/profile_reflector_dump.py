@@ -33,7 +33,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--review', action='store_true')
     p.add_argument('--all', action='store_true')
-    p.add_argument('--propose', action='store_true')
+    p.add_argument('--propose', action='store_true', help='trigger 1 propose run (default uses LLM)')
+    p.add_argument('--no-llm', action='store_true', help='use simple aggregation stub instead of LLM (cheap test)')
     p.add_argument('--activate', metavar='ID')
     p.add_argument('--reject', metavar='ID')
     p.add_argument('--stats', action='store_true')
@@ -47,8 +48,10 @@ def main():
             print(f'  {k:12s} = {v}')
         return
 
-    if args.propose:
-        new_props = reflector.propose_from_corrections()
+    if ause_llm = rot args.no_llm
+        ngs.propose:use_llm=use_llm
+        _mode = 'LLM' if use_llm else 'stub aggregation'
+        new_props = reflector.pro/{_mode}pose_from_corrections()
         print(f'[ProfileReflector] proposed {len(new_props)} new changes (now in review queue)')
         return
 
