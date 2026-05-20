@@ -1263,7 +1263,48 @@ class CommitmentWatcher(threading.Thread):
                                     pass
                             continue
 
-                        if now > c['deadline_ts'] + c['grace_minutes'] * 60:
+                        # 🩹 [β.5.39-fix2 / 2026-05-20 15:38] Sir 实测真理:
+                        # commitment_check nudge 在 fulfillment 检测**之前** 触发 → Sir 真履行了也催!
+                        # 修法: deadline-based nudge 之前先 check fulfillment, fulfilled → skip nudge
+                        # 走 pending_ack 路径 (Sir 下次开口主脑致意).
+                        # 这是 Sir 14:39 三层架构思想延伸: 先看 sensor evidence, 不见 evidence 才 sentinel hard action.
+                        _fulfillment_done_pre_check = False
+                        try:
+                            if (not c.get('fulfillment_checked') and
+                                    now > c['deadline_ts'] + self._FULFILLMENT_GRACE_S):
+                                self._backfill_concern_link(c, now)
+                                _pre_verdict = self._check_fulfillment(c, now)
+                                if _pre_verdict == 'fulfilled':
+                                    # Sir 真履行了, mark nudged=True 不催 + 走 fulfillment 反馈
+                                    c['nudged'] = True
+                                    try:
+                                        db_id = c.get('db_id', 0)
+                                        if db_id and db_id > 0:
+                                            hippo = self._get_hippo()
+                                            if hippo is not None:
+                                                hippo.mark_commitment_nudged(db_id)
+                                    except Exception:
+                                        pass
+                                    if c.get('concern_link'):
+                                        self._on_fulfillment(c, _pre_verdict)
+                                    c['fulfillment_checked'] = True
+                                    _fulfillment_done_pre_check = True
+                                    try:
+                                        from jarvis_utils import bg_log as _ff_bg
+                                        _ff_bg(
+                                            f"✅ [CommitmentWatcher/PreCheckFulfilled] '{c.get('description', '?')[:60]}' "
+                                            f"Sir 已履行 → skip nudge (β.5.39-fix2)"
+                                        )
+                                    except Exception:
+                                        pass
+                        except Exception as _pre_e:
+                            try:
+                                from jarvis_utils import bg_log as _pre_bg
+                                _pre_bg(f"⚠️ [CommitmentWatcher/PreCheck] {_pre_e}")
+                            except Exception:
+                                pass
+
+                        if not _fulfillment_done_pre_check and now > c['deadline_ts'] + c['grace_minutes'] * 60:
                             try:
                                 idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
                                 if idle_ms < 120000:
@@ -1285,6 +1326,7 @@ class CommitmentWatcher(threading.Thread):
                         # 1. 自动 backfill concern_link (若 ProactiveCare nudge 后 120s 内创建)
                         # 2. deadline + grace 5min 后看 sensor → fulfilled/broken
                         # 3. 反馈调 ledger.record_signal + notify_concern_aligned/rejected
+                        # 🩹 [β.5.39-fix2] 此 block 已在 PreCheck 处理过 fulfilled, 这里走 broken/unknown
                         try:
                             self._backfill_concern_link(c, now)
                             if (c.get('concern_link') and

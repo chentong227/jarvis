@@ -148,5 +148,78 @@ class TestBeta539NerveHookAndDirective(unittest.TestCase):
             'late_night_care directive 必须教主脑用 distance 描述 (非硬编码 22:00)')
 
 
+# ==========================================================================
+# β.5.39-fix: infer_expected_behavior 用 description 显式时间 + dashboard 修
+# ==========================================================================
+
+class TestBeta539FixInferUsesDescriptionTime(unittest.TestCase):
+    """infer_expected_behavior 必须优先 parse description 中的 X 分钟 (user evidence)."""
+
+    def test_explicit_5_min_overrides_vocab_default(self):
+        from jarvis_commitment_watcher import infer_expected_behavior
+        r = infer_expected_behavior('我现在喝水休息5分钟')
+        self.assertEqual(r.get('threshold'), 5,
+            '显式 "5 分钟" 必须 overrides vocab default 30')
+        self.assertEqual(r.get('_threshold_source'), 'description_explicit')
+
+    def test_explicit_10_minutes_english(self):
+        from jarvis_commitment_watcher import infer_expected_behavior
+        r = infer_expected_behavior('I will rest for 10 minutes')
+        self.assertEqual(r.get('threshold'), 10)
+
+    def test_half_hour(self):
+        from jarvis_commitment_watcher import infer_expected_behavior
+        r = infer_expected_behavior('我去睡觉半小时')
+        self.assertEqual(r.get('threshold'), 30)
+
+    def test_one_hour(self):
+        from jarvis_commitment_watcher import infer_expected_behavior
+        r = infer_expected_behavior('我休息一小时')
+        self.assertEqual(r.get('threshold'), 60)
+
+    def test_no_explicit_time_falls_back_to_vocab_default(self):
+        from jarvis_commitment_watcher import infer_expected_behavior
+        r = infer_expected_behavior('我去睡觉')  # 无显式时间 → vocab default 30min
+        self.assertEqual(r.get('threshold'), 30)
+        # 没 _threshold_source (vocab default)
+        self.assertNotEqual(r.get('_threshold_source'), 'description_explicit')
+
+
+class TestBeta539FixDashboardRelationalReviewN(unittest.TestCase):
+    """dashboard read_relational review_n 必须排除 _meta 误算."""
+
+    def test_source_has_meta_filter(self):
+        """jarvis_dashboard.py read_relational 必须含 _meta 排除逻辑.
+        
+        全文 grep 该 marker — 不依赖函数体精确截取 (read_relational 含 nested def _items).
+        """
+        with open(os.path.join(ROOT, 'scripts', 'jarvis_dashboard.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        # β.5.39-fix marker 必须存在
+        self.assertIn('β.5.39-fix', src,
+            'dashboard 必须含 β.5.39-fix marker')
+        # review_n sum 必须含 startswith('_') 过滤
+        # 找 review_n 求和段
+        idx = src.find("out['review_n'] = sum(")
+        self.assertGreater(idx, 0, "应有 review_n sum 段")
+        sum_block = src[idx:idx + 200]
+        self.assertIn("startswith('_')", sum_block,
+            'review_n sum 必须排除下划线 key')
+
+
+class TestBeta539FixDashboardNewVocabReviewSources(unittest.TestCase):
+    """dashboard read_review_queues 必须 cover 5 个新 vocab review sources."""
+
+    def test_5a_block_in_dashboard_source(self):
+        with open(os.path.join(ROOT, 'scripts', 'jarvis_dashboard.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        # β.5.39-fix 5 个新 vocab
+        for vocab in ('screen_tease_vocab.json', 'sir_struggle_vocab.json',
+                       'directives_vocab.json', 'sir_sleep_pattern_vocab.json',
+                       'behavior_inference_vocab.json'):
+            self.assertIn(vocab, src,
+                f'dashboard 必须 cover {vocab} review_queue (β.5.39-fix)')
+
+
 if __name__ == '__main__':
     unittest.main()
