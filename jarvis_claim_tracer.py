@@ -444,6 +444,53 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
 # 主 API: trace 一段 reply + log unverified claims
 # ============================================================
 
+def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
+    """🩹 [P1-Gap9 / 2026-05-20 23:25] 从全局 event_bus 拿最近 N 秒的 'tool_called' events,
+    转 string 给 ClaimTracer 作 evidence.
+
+    覆盖 IntentResolver 异步调 tool 的 trace gap — 主脑下轮看 [INTENT RESOLVED] 知道
+    tool 真生效, ClaimTracer 也应该看到 SWM tool_called events 作 evidence, 不再
+    false-positive unverified 警告.
+
+    格式 (跟 _PAT_PAST_ACTION 兼容):
+      "✅ tool_name(args_snippet)" — 成功 tool, 算 verify 证据
+      "❌ tool_name(args_snippet) — error_snippet" — 失败 tool, 不算证据
+
+    Returns:
+      List[str] — 可空 (没 event_bus / 没 events 都返 [])
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return []
+        events = bus.recent_events(
+            within_seconds=within_seconds,
+            types={'tool_called'},
+        ) or []
+        results = []
+        for ev in events:
+            meta = ev.get('metadata') or {}
+            name = meta.get('name', '?')
+            args = meta.get('args') or {}
+            ok = bool(meta.get('ok', False))
+            err = str(meta.get('error', ''))[:80]
+            result_summary = str(meta.get('result_summary', ''))[:120]
+            try:
+                import json as _json
+                args_snip = _json.dumps(args, ensure_ascii=False)[:80]
+            except Exception:
+                args_snip = str(args)[:80]
+            if ok:
+                # ✅ marker so past_action claim trace can verify
+                results.append(f"✅ {name}({args_snip}) — {result_summary}")
+            else:
+                results.append(f"❌ {name}({args_snip}) — {err}")
+        return results
+    except Exception:
+        return []
+
+
 def trace_reply(jarvis_reply: str,
                   tool_results: Optional[List[str]] = None,
                   stm_recent: Optional[List[Dict]] = None,
@@ -452,7 +499,9 @@ def trace_reply(jarvis_reply: str,
                   ltm_context: str = '',
                   use_vocab: bool = True,
                   classify_vocab_path: Optional[str] = None,
-                  evidence_vocab_path: Optional[str] = None) -> dict:
+                  evidence_vocab_path: Optional[str] = None,
+                  include_swm_tool_called: bool = True,
+                  swm_lookback_s: float = 60.0) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -464,6 +513,10 @@ def trace_reply(jarvis_reply: str,
       ltm_context: [β.4.3.3] 本轮 prompt 注入的 LTM 串, 供 ltm_match
       use_vocab: [β.4.3.3] True 默认 → L1+L2 表驱; False → legacy 老硬编码
       classify_vocab_path / evidence_vocab_path: testcase 注入用, 默认走全局
+      include_swm_tool_called: [P1-Gap9 / 2026-05-20] True 默认 → 从 event_bus 拿
+                              最近 60s 'tool_called' events 作 evidence. False 关闭
+                              (testcase 隔离用).
+      swm_lookback_s: [P1-Gap9] SWM lookback 窗口, default 60s.
 
     Returns:
       {n_claims, n_verified, n_unverified, unverified_examples}
@@ -476,8 +529,16 @@ def trace_reply(jarvis_reply: str,
         return {'n_claims': 0, 'n_verified': 0, 'n_unverified': 0,
                 'unverified_examples': []}
 
-    tool_results = tool_results or []
+    tool_results = list(tool_results or [])
     stm_recent = stm_recent or []
+
+    # 🩹 [P1-Gap9 / 2026-05-20 23:25] 拼接 SWM tool_called events 进 tool_results.
+    # 治 false-positive: IntentResolver async 调 tool 成功后, 主脑下轮 reply 说
+    # "已为您 X", ClaimTracer 现在能看到 SWM 有 ✅ tool_called → verify.
+    if include_swm_tool_called:
+        swm_results = _fetch_swm_tool_results(within_seconds=swm_lookback_s)
+        if swm_results:
+            tool_results.extend(swm_results)
     # β.4.3.3: 抽 PromiseLog tags 一次 (per-reply, 不该每 claim 抽 1 次)
     promise_log_tags = _extract_promise_tags(jarvis_reply) if use_vocab else None
 

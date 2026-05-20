@@ -186,13 +186,49 @@ class IntentResolver:
         return '\n'.join(lines)
 
     def _format_tools_for_prompt(self) -> str:
+        """🩹 [P1-Gap8 / 2026-05-20 23:35] Tool Schema Strict — 用 inspect 抽 signature,
+        给 LLM 看每个 tool 的 args (名/类型/required/default), 不再凭 docstring 1 行猜.
+
+        治 Sir 22:18-23:02 4 turn 反复 fail (e.g. concern_progress_update missing
+        'current' — LLM 凭 docstring 'current=8/8' 误判 pass 'progress').
+        """
         if not self.tools:
             return '(no tools registered)'
+        import inspect as _ins
         lines = []
         for name, fn in self.tools.items():
-            # try get docstring
-            doc = (getattr(fn, '__doc__', '') or '').strip().split('\n')[0][:120]
-            lines.append(f"  - {name}: {doc}")
+            doc = (getattr(fn, '__doc__', '') or '').strip().split('\n')[0][:140]
+            # 抽真实 signature
+            try:
+                # 走到 wrap 之下的真 function
+                _real_fn = getattr(fn, '__wrapped__', None) or fn
+                sig = _ins.signature(_real_fn)
+                args_desc = []
+                for pname, param in sig.parameters.items():
+                    if pname in ('self', 'nerve', 'kw') or pname.startswith('**'):
+                        continue
+                    if param.kind == _ins.Parameter.VAR_KEYWORD:
+                        continue
+                    required = (param.default is _ins.Parameter.empty)
+                    tname = ''
+                    if param.annotation is not _ins.Parameter.empty:
+                        tname = getattr(param.annotation, '__name__', '') or str(param.annotation)
+                        tname = tname.replace('typing.', '').replace('Optional[', '').rstrip(']')[:20]
+                    if required:
+                        args_desc.append(f"{pname}<{tname or '?'}>*")
+                    else:
+                        _d = param.default
+                        _d_str = ('=' + repr(_d))[:18] if _d not in (None, '', 0, 0.0) else ''
+                        args_desc.append(f"{pname}<{tname or '?'}>{_d_str}")
+                args_line = ', '.join(args_desc) if args_desc else '(no args)'
+            except Exception:
+                args_line = '(signature introspect failed)'
+            lines.append(f"  - {name}:")
+            lines.append(f"      doc: {doc}")
+            lines.append(f"      args: {args_line}   ('*' = required)")
+        lines.append('')
+        lines.append('IMPORTANT: pass exact arg names from "args:" line above. '
+                     'Required args (*) must be provided. Optional args have default.')
         return '\n'.join(lines)
 
     def _collect_state_evidence(self) -> str:

@@ -802,9 +802,12 @@ class CentralNerve:
             for _name, _fn in _tools.items():
                 def _make_wrapper(_orig_fn):
                     def _wrapped(**kw):
-                        kw.setdefault('nerve', self)
+                        kw['nerve'] = self
                         return _orig_fn(**kw)
                     _wrapped.__doc__ = (_orig_fn.__doc__ or '')
+                    # 🩹 [P1-Gap8 / 2026-05-20 23:38] __wrapped__ 让 inspect.signature
+                    # 能找回真 function (而非 wrapper 的 **kw), IntentResolver schema 才准
+                    _wrapped.__wrapped__ = _orig_fn
                     return _wrapped
                 _wrapped_tools[_name] = _make_wrapper(_fn)
             self.intent_resolver = IntentResolver(

@@ -778,6 +778,38 @@ class ProfileCard:
                 except Exception:
                     pass
 
+        # 🩹 [P1-BlindSpot2 / 2026-05-20 23:30] publish_intent (β.5.0 三维耦合)
+        # 5 module 现仅 3 个 publish_intent: ConcernFeedback / CommitmentWatcher /
+        # SelfPromise. 缺 MemoryCorrection / ProfileCard. ProfileCard.apply_correction
+        # 是 mutation 主入口, 加 publish 让 IntentResolver / 主脑下轮 prompt 都能看到
+        # "Sir profile 真改了" candidate. 治 Sir 23:02 真"更新档案" silent fail.
+        try:
+            from jarvis_utils import get_event_bus as _ps_geb
+            _ps_bus = _ps_geb()
+            if _ps_bus is not None and effective_confidence >= 0.20:
+                _ps_bus.publish(
+                    etype='sir_intent_profile_update_candidate',
+                    description=(
+                        f'profile field {field} = "{str(new_value)[:40]}" '
+                        f'(was: "{str(old_value)[:30]}", source={source_module})'
+                    ),
+                    source='ProfileCard',
+                    salience=min(0.95, 0.50 + effective_confidence),  # 0.7+
+                    metadata={
+                        'confidence': float(effective_confidence),
+                        'judgement': {
+                            'source_module': source_module,
+                            'field': field,
+                            'old_value': str(old_value)[:100],
+                            'new_value': str(new_value)[:100],
+                            'mutated_already': True,
+                            'persisted_to_jsonl': True,
+                        },
+                    },
+                )
+        except Exception:
+            pass
+
     def _persist_correction_to_disk(self, correction: dict) -> None:
         """🩹 [β.2.9.9] 把 correction 真写到 memory_pool/profile_corrections.jsonl
         让 Sir / dashboard / Agent 都能审计 Jarvis 真改了什么.
