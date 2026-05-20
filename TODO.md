@@ -38,23 +38,31 @@
 |---|---|---|
 | `11b0cc2` | β.5.34-fix | Focus Lock UI 加 listening cue (`🎙️ Listening for your reply…`) — UI 文案非硬编码决策, 保留 |
 | `c3dfdf0` | β.5.36-fix | `test_persona_under_3000_chars` cap 5500→9500 (PERSONA 涨随 directives) |
-| ~~`de06811`~~ | ~~β.5.36-fix2~~ | **revert β.5.37-A** (硬编码 sleep_dismiss keyword + 15s cooldown) |
-| ~~`37b940d`~~ | ~~β.5.36-fix3~~ | **revert β.5.37-A** (硬编码 idle 60s skip + 架构方向错) |
 
 ---
 
-## � β.5.39 — Sir 动态催睡 3 层架构 (Sir 15:18 真理)
+## 🔥 β.5.39-fix — Sir 15:22+15:37 实测 BUG 治本 (2 commit)
 
-> **Sir 真理**: "晚上贾维斯会逐步在接近我之前睡觉时间的早一些的时候提高催睡频率, 我不喜欢硬编码."
->
-> 替代老 22:00 / 30min 倒计时 / 1800s 硬编码 → distance-based 自适应 (准则 6 vocab + sensor evidence + 主脑 directive).
+| commit | 内容 |
+|---|---|
+| `149708f` | β.5.39-fix `infer_expected_behavior` 优先 parse description 显式 "X 分钟" + dashboard `read_relational` review_n 排除 `_meta` + read_review_queues 加 5 新 vocab sources |
+| `fa5b758` | **β.5.39-fix2 真治本**: commitment_check nudge 在 fulfillment 检测**之前**触发 → Sir 真履行也催 BUG. 修法: deadline-based nudge 之前先 PreCheckFulfillment, fulfilled → skip nudge + 走 pending_ack 路径 |
+
+**Sir 真机体感 (要重启才生效)**:
+- Sir 说 "我休息 5 分钟" → fulfillment threshold 真用 **5 min** 不是 vocab 30min
+- Sir 真离桌回来 → commitment 自动 mark fulfilled → 不催 → 下次 Sir 开口 Jarvis 致意 "您喝完水了 Sir"
+- dashboard 反思区显示真 review 数 (不再因 `_meta` 误算)
+
+---
+
+## 🌙 β.5.39 — Sir 动态催睡 3 层架构
 
 | commit | 层 | 内容 |
 |---|---|---|
-| `4dba8e1` | 层 1 | `memory_pool/sir_sleep_pattern_vocab.json` (typical_sleep_hour weekday/weekend null until 5 samples) + `scripts/sleep_pattern_dump.py` CLI (show/history/set/recompute) |
-| 同 | 层 2 | `jarvis_sleep_pattern_reflector.py` L7 daemon (每日 03:00 扫 hippocampus 找 sleep events 重算中位数 + history 60 天滚动) + wire 到 `central_nerve` 启动 |
-| 同 | 层 3 | `jarvis_proactive_care.py` rule 2 改 distance 公式 (`current - typical → severity 0.0-0.10`, vocab 未填 fallback 老 1-5am 硬规则) + publish `sir_sleep_pattern` SWM signal + `_trigger_sleep_mode` hook `log_sleep_event` |
-| 同 | 层 3 | `late_night_care_judge` directive 教主脑用 `distance_h` 描述 ("您比平时晚 X min"), FORBIDDEN 硬编码 "22:00/凌晨" |
+| `4dba8e1` | 层 1 | `memory_pool/sir_sleep_pattern_vocab.json` + `scripts/sleep_pattern_dump.py` CLI |
+| 同 | 层 2 | `jarvis_sleep_pattern_reflector.py` L7 daemon (每日 03:00) + wire 到 `central_nerve` |
+| 同 | 层 3 | `jarvis_proactive_care.py` distance 公式 + publish `sir_sleep_pattern` SWM + `_trigger_sleep_mode` hook `log_sleep_event` |
+| 同 | 层 3 | `late_night_care_judge` directive 教主脑用 `distance_h` 描述, FORBIDDEN 硬编码 "22:00/凌晨" |
 
 **testcase**: 10/10 + 94 regression pass.
 
@@ -116,6 +124,11 @@
 [ ] 19. β.5.39 启动正常 → log 显示 "💤 [SleepPatternReflector] L7 vocab daemon ready"
 [ ] 20. β.5.39 Sir 真去睡 → log 显示 "💤 [SleepPattern] logged: YYYY-MM-DD H.Hh (nerve_trigger_sleep_mode)"
 [ ] 21. β.5.39 一周后 `python scripts/sleep_pattern_dump.py --show` 显示 typical_sleep_hour 有值 + ProactiveCare 用 distance 公式 (Grep "distance=" in log) + 主脑回话 "您比平时晚 X" 不再说 "已经 22:00 了"
+[ ] 22. β.5.39-fix Sir 说 "休息 5 分钟" → log `📝 [CommitmentWatcher] 已注册` + commitment 有 `expected_behavior.threshold=5` (Grep `_threshold_source: description_explicit`)
+[ ] 23. β.5.39-fix2 Sir 真离桌 ≥ 5min 回来 → log 显示 `✅ [CommitmentWatcher/PreCheckFulfilled]` + commitment_check nudge 不发 + STM 加 [pending_ack ... fulfilled] tag
+[ ] 24. β.5.39-fix2 Sir 没履行 deadline 过了 5min → 还是会 commitment_check nudge (老路径正常工作)
+[ ] 25. β.5.39-fix dashboard 反思区显示真 review 数 (不再因 _meta 误算 = 2)
+[ ] 26. β.5.39-fix dashboard 含 5 新 vocab review_queue (screen_tease/struggle/directives/sleep_pattern/behavior_inference)
 ```
 
 **真机出 BUG 时 报告我**:
