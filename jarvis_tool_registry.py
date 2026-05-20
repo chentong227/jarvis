@@ -15,7 +15,7 @@ doc: docs/JARVIS_INTENT_RESOLVER_REFACTOR.md
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: F401
 
 
 # ============================================================
@@ -35,7 +35,8 @@ def _fail(error: str) -> Dict[str, Any]:
 
 def tool_concern_progress_update(
     concern_id: str,
-    current: float,
+    current: Optional[float] = None,
+    progress: Optional[float] = None,  # 🩹 [P0 / 2026-05-20 23:15] alias — LLM 经常 pass 'progress' 不 'current'
     target: float = 0,
     unit: str = '',
     raw_text: str = '',
@@ -44,20 +45,24 @@ def tool_concern_progress_update(
     nerve=None,
     **kw,
 ) -> Dict[str, Any]:
-    """update Sir's daily progress on a concern (e.g. 'sir_hydration_habit' current=8/8).
-    
+    """update Sir's progress on a concern. Args: concern_id (req), current (or alias 'progress'), target (opt), unit (opt).
+
+    Example: {concern_id: 'sir_hydration_habit', current: 8, target: 8, unit: '杯'}
+    Alt: {concern_id: '...', progress: 8, target: 8}  (alias for current)
+
     Sir reports progress → real mutation in ConcernsLedger.daily_progress + severity.
     """
     if not concern_id:
         return _fail('concern_id required')
+    # 🩹 [P0] current / progress alias resolution — LLM often passes either
+    if current is None:
+        current = progress
+    if current is None and not raw_text and severity_delta == 0.0:
+        return _fail('require at least one of: current, progress, raw_text, severity_delta')
     try:
-        if nerve is None:
-            from jarvis_utils import get_default_event_bus  # fallback
-            nerve = None
         if nerve is None:
             try:
                 import jarvis_central_nerve as _cn
-                # try get global nerve
                 nerve = getattr(_cn, '_GLOBAL_NERVE', None)
             except Exception:
                 nerve = None
@@ -66,16 +71,16 @@ def tool_concern_progress_update(
             return _fail('no concerns_ledger')
         judgement = {
             'has_relevance': True,
-            'progress': {'current': current, 'target': target, 'unit': unit},
             'severity_delta': float(severity_delta),
             'optimal_timing': optimal_timing,
         }
-        ok = ledger.record_user_feedback(concern_id, raw_text, judgement)
+        if current is not None:
+            judgement['progress'] = {'current': current, 'target': target, 'unit': unit}
+        ok = ledger.record_user_feedback(concern_id, raw_text or '', judgement)
         if ok:
-            return _ok(
-                f'concern {concern_id} progress updated: {current}/{target} {unit}'
-            )
-        return _fail(f'ledger.record_user_feedback rejected (concern not found?)')
+            _desc = f'{current}/{target} {unit}'.strip() if current is not None else 'signal-only'
+            return _ok(f'concern {concern_id} updated: {_desc}')
+        return _fail(f'ledger.record_user_feedback rejected (concern {concern_id} not found?)')
     except Exception as e:
         return _fail(f'exception: {e}')
 
@@ -87,33 +92,37 @@ def tool_memory_correction_apply(
     new_value: str,
     field_hint: str = '',
     raw_text: str = '',
+    confidence: float = 0.9,  # 🩹 [P0 / 2026-05-20 23:15] IntentResolver LLM judged → default high
     nerve=None,
     **kw,
 ) -> Dict[str, Any]:
     """Sir corrected a previously recorded memory (e.g. '9 cups' → '8 cups').
-    
-    Real mutation: find matching ProfileCard/memory cell, update to new_value.
+
+    Args: old_value (prior), new_value (corrected), field_hint (which field, e.g. 'hydration_count').
+    Real mutation: write to memory_pool/profile_corrections.jsonl via ProfileCard.apply_correction.
     """
     if not new_value:
         return _fail('new_value required')
     try:
-        # ProfileCard apply_correction (existing API)
         if nerve is None:
             import jarvis_central_nerve as _cn
             nerve = getattr(_cn, '_GLOBAL_NERVE', None)
         profile = getattr(nerve, 'profile_card', None) if nerve else None
         if profile is None:
             return _fail('no profile_card')
-        # try canonical apply_correction
         if hasattr(profile, 'apply_correction'):
             try:
+                # 🩹 [P0 / 2026-05-20 23:15] FIX: signature was wrong — ProfileCard.apply_correction
+                # signature is (source_module, field, old_value, new_value, confidence), NOT
+                # (field_hint, new_value, raw_text). Caused 100% TypeError silent fail.
                 profile.apply_correction(
-                    old_value=old_value,
-                    new_value=new_value,
-                    field_hint=field_hint,
-                    raw_text=raw_text,
+                    source_module='intent_resolver',
+                    field=field_hint or 'memory_correction',
+                    old_value=str(old_value or '')[:100],
+                    new_value=str(new_value)[:100],
+                    confidence=float(confidence),
                 )
-                return _ok(f"corrected: {old_value} → {new_value}")
+                return _ok(f'corrected: {old_value} → {new_value} (field={field_hint or "memory_correction"})')
             except Exception as e:
                 return _fail(f'profile.apply_correction failed: {e}')
         return _fail('profile_card has no apply_correction')
@@ -204,13 +213,18 @@ def tool_self_promise_register(
 def tool_profile_field_update(
     field_path: str,
     value: Any,
+    old_value: str = '',
     raw_text: str = '',
+    confidence: float = 0.9,  # 🩹 [P0 / 2026-05-20 23:15] IntentResolver judged → high default
     nerve=None,
     **kw,
 ) -> Dict[str, Any]:
-    """Sir gave a profile preference update (e.g. 'I prefer english').
-    
-    Real mutation: update ProfileCard field directly via apply_correction.
+    """Sir gave a profile field update (e.g. field_path='preferences.height', value='1.83m').
+
+    Args: field_path (which profile field, dot-notation), value (new value), old_value (optional prior).
+    Real mutation: append to memory_pool/profile_corrections.jsonl via ProfileCard.apply_correction.
+    NOTE: Does NOT in-place mutate sir_profile.json (that's Sir's IP file, append-only audit log).
+    Sir can review via dashboard or scripts/profile_corrections_dump.py.
     """
     if not field_path:
         return _fail('field_path required')
@@ -223,12 +237,15 @@ def tool_profile_field_update(
             return _fail('no profile_card')
         if hasattr(profile, 'apply_correction'):
             try:
+                # 🩹 [P0 / 2026-05-20 23:15] FIX: signature was wrong — same as tool_memory_correction_apply
                 profile.apply_correction(
-                    field_hint=field_path,
-                    new_value=str(value),
-                    raw_text=raw_text,
+                    source_module='intent_resolver',
+                    field=field_path,
+                    old_value=str(old_value or '')[:100],
+                    new_value=str(value)[:100],
+                    confidence=float(confidence),
                 )
-                return _ok(f'profile field {field_path} = {str(value)[:60]}')
+                return _ok(f'profile field {field_path} = {str(value)[:60]} (logged to corrections.jsonl)')
             except Exception as e:
                 return _fail(f'profile.apply_correction failed: {e}')
         return _fail('profile_card has no apply_correction')

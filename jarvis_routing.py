@@ -501,6 +501,7 @@ class ProfileCard:
         self._cache_ttl = 30
         
         self._correction_weights = {
+            'intent_resolver': 0.9,   # 🩹 [P0 / 2026-05-20 23:18] IntentResolver LLM judged → high trust (effective 0.81 > 0.20 阈值)
             'habit_clock': 0.30,
             'status_ledger': 0.25,
             'causal_chain': 0.20,
