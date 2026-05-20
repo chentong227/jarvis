@@ -1,7 +1,7 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 21:40 (β.5.43 6 缺口 + 4 fix + β.5.44 IntentResolver 真理重构 + AGENTS 准则 6 升级 + β.5.44-CE-bugfix1, **15 commits 单晚产出**). Sir 21:34 真机实测暴露 IntentResolver `timeout_s` critical bug, fix 已 commit (`b838881`), 等 Sir 重启重测 β.5.44 真实生效后 push.
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~525 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
+> **更新**: 2026-05-20 22:11 (β.5.43 6 缺口 + 4 fix + β.5.44 IntentResolver 重构 + AGENTS 准则 6 + bugfix1 + **β.5.45 Lifetime Milestones + bugfix2 (directive revise)**, **17 commits 单晚产出**). Sir 22:04 真机实测暴露主脑道歉循环 BUG → 修 directive scope + 新建 milestone 系统 (β.5.44 IntentResolver 首个真应用). 等 Sir 重启再测.
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~580 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
 
 ---
 
@@ -71,6 +71,67 @@
 2. **delay 调查**: TTFT 3.0s 在 cap (5s) 内, full 12.8s post-stream 5.5s 大概率 TTS. Prompt 31466 chars (`core_persona=11647` 占 37%). β.5.43/44 不是延迟原因 (IntentResolver 是 fire-and-forget thread). 是否 persona slim 待 Sir 决定
 3. **dashboard test pytest capture bug** (`I/O operation on closed file` in teardown): 跟 IntentResolver fix 无关, infrastructure-level, 单独 fix 时再处理
 4. **TODO.md 当前 ~525 行 > 300 cap**: β.5.34-41 等老段建议 archive 到 `docs/TODO_ARCHIVE.md`. 不阻塞当前 sprint, 但下次 archive 窗口处理
+
+---
+
+## 🪺 β.5.45 + β.5.43-fix1/fix4-revise — Sir Lifetime Milestones + 道歉循环 BUG 修 (2026-05-20 21:56-22:11, 2 commits)
+
+> **Sir 21:56 真理**: lifetime anchor (declaration / insight) 不是 commitment, 不要 nudge, **never weaponize against Sir in low moments**, replay only when Sir asks. Sir 22:04 真机实测 declaration 时暴露主脑道歉循环 BUG (directive scope 太宽 + 没 milestone 通道).
+
+### bugfix2 — directive scope 修 (Sir 22:04 道歉循环 root cause fix)
+
+| commit | marker | 内容 |
+|---|---|---|
+| `bcdaa7a` | **β.5.43-fix1-revise + β.5.43-fix4-revise** | `capability_boundary_judge` (priority=10) + `no_hallucinated_tool_use_judge` (priority=12) 各加 **INSTRUCTION-STYLE / PASSIVE-ARCHIVE 例外条款** — Sir 说 "记住/store/keep/铭记/记到海马体" 类 instruction-style 时, **system 自动后台 archive** (STM→SoulReflector→hippocampus, 加 β.5.45 后还走 milestone_register tool), 主脑**只需 ack**: "Noted, Sir" / "Held" / "The archive will hold this". **不要 callout no-tool, 不要道歉, 不要 over-promise**. 判别: passive ack ≠ active mutation claim |
+
+### β.5.45 — Sir Lifetime Milestones 系统 (β.5.44 IntentResolver 首个真应用)
+
+| commit | marker | 内容 |
+|---|---|---|
+| `7690c83` | **β.5.45** | **Lifetime anchors 完整 stack** (准则 6 4 问全 yes): **data** `memory_pool/sir_milestones.json` (array+_meta, in git, seed Sir 21:56 freedom declaration `milestone_20260520_215600` pin=true). **module** `jarvis_milestones.py` (thread-safe CRUD + render_prompt_block + stats, `_generate_id` 加 4-char hex 防同秒撞). **CLI** `scripts/milestones_dump.py` (list/show/add/pin/unpin/delete/json/stats/render-prompt). **tool** `jarvis_tool_registry.tool_milestone_register` (TOOL_REGISTRY 第 6 个 tool; docstring 首行带 trigger keywords 'remember/store/keep forever/记住/铭记/海马体' 给 IntentResolver LLM 看). **inject** `jarvis_central_nerve._assemble_prompt` 加 `[SIR LIFETIME MILESTONES]` block (pinned + 最近 3 条). **16 testcase pass + 24 regression pass** |
+
+### 三 commit 耦合关系 (Sir 22:04 道歉 BUG 闭环 fix)
+
+```
+bcdaa7a (bugfix2 directive)  ┐
+                              ├─→ Sir 重启后 reply: "Noted, Sir" 不道歉
+b838881 (bugfix1 IR LLM)     ┘    ↓
+                                  IntentResolver 真调 tool_milestone_register
+7690c83 (β.5.45 milestone)   ←────┘    ↓
+                                       sir_milestones.json 真新增 entry
+                                       主脑下轮看 [INTENT RESOLVED] = ok
+                                       + [SIR LIFETIME MILESTONES] 列新条
+```
+
+### 准则 6 binding (β.5.45 4 问全 yes)
+
+| # | 问 | β.5.45 答 |
+|---|---|---|
+| 1 | 数据 publish 进 SWM? | ✅ memory_pool/*.json + (未来) ConversationEventBus publish 'milestone_recorded' |
+| 2 | 决策让 LLM 做? | ✅ IntentResolver LLM judge "Sir means lifetime anchor vs casual statement" |
+| 3 | 配置持久化 + CLI 可改? | ✅ memory_pool/sir_milestones.json (in git) + scripts/milestones_dump.py |
+| 4 | 和已有 module 正交? | ✅ 跟 concerns (no nudge) / commitments (no deadline) / profile (not trait) / hippocampus (structured + pinnable + CLI) 全正交 |
+
+### ✅ Sir 真机实测 check list (重启后跑, 重点验闭环)
+
+```
+[ ] 1. 启动正常 → log 无 `[ErrorBus] intent_resolver/llm_judge_fail` 错误 (bugfix1 生效)
+[ ] 2. log 出现 `[IntentResolver] ready (6 tools)` (含 milestone_register, 之前 5 个)
+[ ] 3. Sir 说 "Jarvis, 记住此刻..." (instruction-style) → Jarvis ack "Noted, Sir" 类, 不道歉, 不 callout no-tool (bugfix2 生效)
+[ ] 4. IntentResolver 调 tool_milestone_register → log `[IntentResolver] tool_called=milestone_register ✓ 成功`
+[ ] 5. memory_pool/sir_milestones.json 新增 entry (id=milestone_<新时间>_<hex>), Sir 跑 `python scripts/milestones_dump.py` 看到 2 条 (seed 21:56 + 新加)
+[ ] 6. 下轮主脑 prompt 含 `[INTENT RESOLVED THIS TURN] milestone_register: ✓ 成功`
+[ ] 7. 下轮主脑 prompt 含 `[SIR LIFETIME MILESTONES]` block 列两条 entry
+[ ] 8. Sir 问 "你还记得我那晚说的话吗?" → 主脑看 milestones block → 温和回放 declaration (replay_only_when_sir_asks 生效)
+[ ] 9. Sir 情绪低落时 → 主脑**不**主动拿 declaration guilt Sir (do_not_use_against_sir 生效, instruction_for_jarvis directive 起作用)
+[ ] 10. CLI `python scripts/milestones_dump.py --show milestone_20260520_215600` → 看 Sir 完整 declaration + instruction
+```
+
+### ⚠️ 已知 follow-up
+
+1. **Gatekeeper 误触发 milestone declaration**: Sir 22:04 看到 "Gatekeeper TIMEOUT" 误导 — 主脑可能 emit `<AWAIT_GATEKEEPER>` 把 milestone 误当 reminder. β.5.45 milestone_register tool 加入后, 主脑应**优先走 milestone_register**, 不需 Gatekeeper. 但 Gatekeeper 文案 "The reminder may NOT have been saved" 仍可能误导, 待观察是否需修 fallback text
+2. **`_generate_id` 加 hex suffix**: 改了 ID 格式 (milestone_YYYYMMDD_HHMMSS → milestone_YYYYMMDD_HHMMSS_xxxx). manual seed 的老 id 仍兼容 (没自动 gen)
+3. **TODO.md ~580 行**: 待 archive (跟之前一致)
 
 ---
 
