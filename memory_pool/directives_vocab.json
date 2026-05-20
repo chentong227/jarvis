@@ -272,6 +272,61 @@
       "source_marker": "P0+20-beta.5.37-D",
       "note": "SWM evidence directive (Sir 14:39)",
       "source": "seed"
+    },
+    {
+      "id": "morning_mood_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 8,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.38",
+      "note": "SWM evidence directive (Sir method C)",
+      "source": "seed"
+    },
+    {
+      "id": "late_night_care_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 8,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.38",
+      "note": "SWM evidence directive (Sir method C)",
+      "source": "seed"
+    },
+    {
+      "id": "silent_company_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 7,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.38",
+      "note": "SWM evidence directive (Sir method C)",
+      "source": "seed"
+    },
+    {
+      "id": "callback_recall_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 9,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.38",
+      "note": "SWM evidence directive (Sir method C)",
+      "source": "seed"
+    },
+    {
+      "id": "mood_shift_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 7,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.38",
+      "note": "SWM evidence directive (Sir method C)",
+      "source": "seed"
     }
   ]
 }

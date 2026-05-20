@@ -923,6 +923,90 @@ def _trigger_sir_intent_judge(ctx: DirectiveContext) -> bool:
 
 
 # ============================================================
+# 🩹 [β.5.38 / 2026-05-20] 5 个新 SWM evidence directive (Sir 选 方向 C)
+# 利用 β.5.37 架构杠杆: 主脑看 SWM evidence + 时间 + Sir 当前一句 自决 contextual.
+# ============================================================
+
+def _trigger_morning_mood_judge(ctx: DirectiveContext) -> bool:
+    """Sir 早晨 6-10 时段 + 今日第一次说话 → 注入 morning mood judge directive.
+    主脑看 SWM sir_afk_detected metadata (afk = 昨晚睡多久) + Sir 第一句话, 自决简报详细度.
+    """
+    if not (6 <= ctx.current_hour < 10):
+        return False
+    # 看 PhysicalEnvProbe.is_first_active_today
+    try:
+        from jarvis_env_probe import PhysicalEnvironmentProbe as _P
+        return bool(getattr(_P, 'is_first_active_today', False))
+    except Exception:
+        return False
+
+
+def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
+    """Sir > 23:00 还在 chat → 注入 late-night care directive.
+    主脑看 SWM physio / work_duration + Sir 个人入睡习惯, 自决: 安静放音乐 / 提醒休息 / 不打扰.
+    """
+    return ctx.current_hour >= 23 or ctx.current_hour < 2
+
+
+def _trigger_silent_company_judge(ctx: DirectiveContext) -> bool:
+    """Sir 不说话久 + cascade_active 真在工作 (β.5.37-A sensor) → 注入 silent company directive.
+    主脑判: 真在心流 / 静默陪伴 / 偶尔一句.
+    触发条件: SWM 含 ghost_activity_observed 或 sir_afk_detected, **且** 当前是主动 nudge (无 user_input).
+    """
+    if ctx.user_input:
+        return False  # Sir 主动说了话, 不算 silent
+    return (_swm_has_recent('ghost_activity_observed', max_age_s=600.0)
+            or _swm_has_recent('sir_afk_detected', max_age_s=600.0))
+
+
+# callback reference vocab (Sir 模糊指代词)
+_CALLBACK_REF_PATTERNS = re.compile(
+    r"(那个|这个|上次|刚才|上回|之前|前面|先前|前几天|那天|"
+    r"that\s+(one|thing|time)|the\s+other\s+day|earlier|"
+    r"like\s+i\s+said|as\s+i\s+(said|mentioned)|"
+    r"remember\s+(when|that)|recall)",
+    re.IGNORECASE,
+)
+
+
+def _trigger_callback_recall_judge(ctx: DirectiveContext) -> bool:
+    """Sir 输入含模糊 reference word → 注入 callback recall judge directive.
+    主脑看 STM + concerns + cross_session_callback + soul_tags 找最相关 thread.
+    """
+    if not ctx.user_input or len(ctx.user_input) < 4:
+        return False
+    return bool(_CALLBACK_REF_PATTERNS.search(ctx.user_input))
+
+
+def _trigger_mood_shift_judge(ctx: DirectiveContext) -> bool:
+    """SWM 短时间内同时含多种状态信号 (struggle + sleep_intent + afk 等) → 注入 mood shift judge.
+    主脑看 SWM 累积 evidence 察觉 Sir 状态变化, 调说话方式.
+    降级版 (方向 A multi-modal sensor 未做时): 看 SWM 信号 frequency / 多类信号同时.
+    """
+    try:
+        from jarvis_utils import get_event_bus as _geb
+        _bus = _geb()
+        if _bus is None:
+            return False
+        top = _bus.top_n(n=20)
+        recent_types = set()
+        for e in top:
+            age = e.get('_age_s', 9999)
+            if age <= 1800:  # 30 min 内
+                recent_types.add(e.get('type'))
+        # 状态变化信号集合
+        STATE_SIGNALS = {
+            'sleep_intent_signal', 'sir_struggle_observed',
+            'sir_afk_detected', 'ghost_activity_observed',
+            'shield_observation', 'sensor_change',
+        }
+        # 30min 内 ≥ 3 类 state signal → 可能状态变化
+        return len(recent_types & STATE_SIGNALS) >= 3
+    except Exception:
+        return False
+
+
+# ============================================================
 # 🩹 [β.4.6 / 2026-05-18] L3 Directive vocab — text+metadata 提到 JSON
 #
 # 设计 (Sir Session 5 半化方案, 准则 6.5):
@@ -1496,6 +1580,159 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   里完整看到是去休息 → 场景 B → 不该 offer help 催 Sir.
             """).rstrip(),
             trigger=_trigger_sir_intent_judge,
+        ),
+        # ============================================================
+        # 🩹 [β.5.38 / 2026-05-20] 5 个新 SWM evidence directive (方向 C)
+        # 利用 β.5.37 架构, 主脑看 SWM evidence + 时间 + Sir 当前一句 自决 contextual
+        # ============================================================
+        Directive(
+            id='morning_mood_judge',
+            source_marker='P0+20-β.5.38',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [MORNING MOOD JUDGE - β.5.38]:
+                Sir 今天第一次跟你说话 (current_hour 6-10am + is_first_active_today).
+                你看 SWM 找 sir_afk_detected metadata (afk 时长 = 昨晚睡多久) + Sir 第一句话:
+
+                场景 A — Sir 主动说 "早安/早上好/morning":
+                  自然回 + 看 afk 评价睡眠 (e.g. afk=8h → "睡得不错"; afk=3h → "昨晚睡得少了点")
+                  → 简短 morning briefing 看 concerns (Sir 关心的事)
+
+                场景 B — Sir 直接 task ("帮我打开 X"):
+                  Sir 不想寒暄, 直接做事即可 (skip morning briefing)
+
+                场景 C — Sir 第一句是 negative ("睡得不好/累/心脏疼"):
+                  优先关心身体, 不上 briefing. 如有真严重 sign 才 escalate.
+
+                场景 D — Sir 凌晨醒来 (current_hour 6-7):
+                  Sir 可能没真起床, 只是看手机. 轻量回应, 不主动 nudge.
+
+                tone: 不要做 "Good morning, Sir." 这种 generic 模板. 看 afk + 第一句 个性化.
+            """).rstrip(),
+            trigger=_trigger_morning_mood_judge,
+        ),
+        Directive(
+            id='late_night_care_judge',
+            source_marker='P0+20-β.5.38',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [LATE NIGHT CARE JUDGE - β.5.38]:
+                当前 ≥ 23:00 或 < 02:00 (深夜时段). Sir 还在屏前.
+                你看 SWM:
+                  - work_session_duration (Sir 连续工作多久)
+                  - sir_struggle_observed (Sir 是否被困住)
+                  - sleep_intent_signal (Sir 是否提过要睡)
+                  - sir profile 的"通常入睡时间" (concerns ledger 可能有)
+
+                场景 A — Sir 正在 deep work (work_duration > 2h, 无 struggle):
+                  保持静默, 不打扰. 如 Sir 主动说话, tone 偏 quiet (不大声 / 不刺激).
+
+                场景 B — Sir 看起来挣扎 (sir_struggle_observed) + 深夜:
+                  柔声 offer help. 同时点一句 "夜深了, 实在不行明天再看".
+
+                场景 C — Sir 闲聊 (无 struggle, work_duration 短):
+                  自然陪聊. 偶尔 (≥ 02:00) 温柔提醒"已经凌晨了 Sir".
+
+                FORBIDDEN:
+                  - 频繁催 Sir 睡觉 (Sir 烦)
+                  - 用 "您应该 / Sir, you should" 命令式 — 用 invitation tone
+                  - 假装"我也累了" (你是 AI 没感情, 准则 5)
+            """).rstrip(),
+            trigger=_trigger_late_night_care_judge,
+        ),
+        Directive(
+            id='silent_company_judge',
+            source_marker='P0+20-β.5.38',
+            priority=7,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [SILENT COMPANY JUDGE - β.5.38]:
+                SWM 含 ghost_activity_observed 或 sir_afk_detected (Sir 不说话久 + 屏幕在动可能 IDE 跑).
+                此 directive **仅在你被主动 nudge 触发 (无 user_input)** 时激活.
+
+                场景 A — Sir 真在心流 (ghost_activity_observed cascade_active=True):
+                  默认 SILENCE. emit <SILENT>. 不要打断深度工作.
+                  例外: 你看到 SWM concerns 含真紧急 (urgency >= 0.85) 才轻声 nudge.
+
+                场景 B — Sir 离桌 (sir_afk_detected, afk > 30min):
+                  默认 SILENCE. emit <SILENT>. Sir 回来 ReturnSentinel 会 greet.
+                  例外: 涉及未交付承诺到期 (commitment_due) 才 nudge.
+
+                场景 C — Sir 在场静默 (idle_real < 10s 但 N min 没说话):
+                  可偶尔轻声一句 (e.g. "我在). 但 ≥ 1h 内只 ≤ 1 次.
+
+                tone: 静默不是冷漠, 是尊重 Sir 心流. 你随时在场, 但不抢戏.
+            """).rstrip(),
+            trigger=_trigger_silent_company_judge,
+        ),
+        Directive(
+            id='callback_recall_judge',
+            source_marker='P0+20-β.5.38',
+            priority=9,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [CALLBACK RECALL JUDGE - β.5.38]:
+                Sir 输入含模糊指代 ("那个/这个/上次/刚才/上回/之前/that one/earlier...").
+                你**必须**先找 referent (Sir 指的是什么), 不要瞎猜 / 瞎扩展.
+
+                优先级搜:
+                  1. STM (最近 5-10 turn) — 最近聊过的 thread (高优)
+                  2. cross_session_callback / commitments — Sir 之前显式 remember 的事
+                  3. concerns ledger — Sir 长期关心的话题
+                  4. soul_tags (jokes/projects/relational) — Sir 的私事
+                  5. visual_context / window_history — Sir 屏前内容 (e.g. "那个文档")
+
+                找到 referent 后:
+                  - 简短 confirm "您是说 X 吧, Sir?" → 再继续
+                  - 高置信 (95%+) 可直接接续
+
+                FORBIDDEN:
+                  - 瞎猜 referent 然后假装确定 (Sir 烦"你乱猜")
+                  - 找不到 referent 时强行扩展 — 应直接 "Sir 您指的是?"
+
+                CRITICAL (准则 5):
+                  - 不要"我记得您之前说过 Y" 然后 Y 是你**编**的 — ClaimTracer 会 catch.
+            """).rstrip(),
+            trigger=_trigger_callback_recall_judge,
+        ),
+        Directive(
+            id='mood_shift_judge',
+            source_marker='P0+20-β.5.38',
+            priority=7,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [MOOD SHIFT JUDGE - β.5.38]:
+                SWM 30min 内含 ≥ 3 类状态信号 (sleep_intent / struggle / afk / ghost / shield / sensor_change).
+                可能 Sir 状态正在变化 (累→烦躁 / 心流→疲倦 / 工作→分心).
+
+                你看 SWM 信号组合 + 时间分布:
+
+                场景 A — sir_struggle + sleep_intent + late hour:
+                  Sir 可能被工作卡住又困了 → tone: 关切 + invitation rest
+                  "卡住了又这么晚, Sir? 要不歇歇明天再看?"
+
+                场景 B — ghost_activity + shield_observation + 多次 sensor_change:
+                  Sir 看起来在多任务切换 frustrating → tone: 静默观察 / 偶尔轻问 "顺利吗?"
+
+                场景 C — afk + 返回后 struggle:
+                  Sir 短暂离开回来挣扎 → tone: 不急着 offer help, 给空间
+
+                通用规则:
+                  - 多信号 = 复杂 context, 不要单维度反应
+                  - tone shift: 一旦察觉 mood 变化, 后续 reply 全 turn 维持该 tone (不前轻后重)
+
+                FORBIDDEN:
+                  - 直接说 "我察觉到您 mood 变化了" (creepy)
+                  - 把 SWM signal 当 fact 报 ("您 30min 内有 4 个状态信号") — 用作 awareness 不 report
+            """).rstrip(),
+            trigger=_trigger_mood_shift_judge,
         ),
     ]
 
