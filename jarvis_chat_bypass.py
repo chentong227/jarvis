@@ -1827,6 +1827,33 @@ Spoken English:"""
                 if '_stream_key_name' in dir():
                     self.key_router.release(_stream_key_name)
 
+                # 🔧 [β.5.36-G / 2026-05-20] 解析主脑输出的 <TOOL_CALL>{intent} 标签 → IntentRouter
+                # Sir BUG 3 修法: LLM 用 intent 解耦工具名, 后端翻译执行. 失败/未知 intent 静默,
+                # 主路径不阻塞. dangerous intent 跳过自动执行 (走 PROMISE 路径).
+                # 在 PROMISE/MEMORY_UPDATE 之前跑, 让 intent 结果尽快回流 SWM 给主脑下轮看到.
+                try:
+                    from jarvis_intent_router import IntentParser, get_default_intent_router
+                    if IntentParser.has_tool_call_tag(full_text):
+                        _router = get_default_intent_router()
+                        if _router is not None:
+                            _ir_results = _router.route_and_invoke_all(full_text)
+                            if _ir_results:
+                                try:
+                                    from jarvis_utils import bg_log as _ir_bg
+                                    _hits = sum(1 for r in _ir_results if r.get('success'))
+                                    _ir_bg(
+                                        f"🔧 [IntentRouter] {len(_ir_results)} tool calls "
+                                        f"({_hits} success): "
+                                        + ', '.join(
+                                            f"{r.get('intent_id', '?')}={'✅' if r.get('success') else '❌'}"
+                                            for r in _ir_results[:5]
+                                        )
+                                    )
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+
                 # [轴3-L3.1 / 2026-05-15] 解析主脑输出的 <PROMISE> 标签 → PlanLedger
                 # LLM 承诺 multi-step 动作时通过 PROMISE tag 落账本（awaiting_go），等 Sir 说 "go" 才执行
                 # 任何异常都被吞，绝不影响主流程
@@ -4401,6 +4428,31 @@ No ZH translation. No closing remark. Nothing else.
                         commitment_watcher=cw,
                         turn_id='nudge_' + (nudge_type or '?'),
                     )
+            except Exception:
+                pass
+
+            # 🔧 [β.5.36-G / 2026-05-20] Nudge 路径同 stream_chat 跑 IntentRouter.
+            # 主脑 nudge 也可能 emit <TOOL_CALL>{intent}, 同步执行 + 结果回流 SWM.
+            try:
+                from jarvis_intent_router import IntentParser, get_default_intent_router
+                if IntentParser.has_tool_call_tag(full_text):
+                    _router = get_default_intent_router()
+                    if _router is not None:
+                        _ir_results = _router.route_and_invoke_all(full_text)
+                        if _ir_results:
+                            try:
+                                from jarvis_utils import bg_log as _ir_bg
+                                _hits = sum(1 for r in _ir_results if r.get('success'))
+                                _ir_bg(
+                                    f"🔧 [IntentRouter/Nudge] {len(_ir_results)} tool calls "
+                                    f"({_hits} success): "
+                                    + ', '.join(
+                                        f"{r.get('intent_id', '?')}={'✅' if r.get('success') else '❌'}"
+                                        for r in _ir_results[:5]
+                                    )
+                                )
+                            except Exception:
+                                pass
             except Exception:
                 pass
 

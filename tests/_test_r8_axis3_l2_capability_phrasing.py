@@ -44,22 +44,39 @@ def _make(command='audio.list', danger=DANGER_SAFE, **k):
 # ==========================================================================
 
 class TestSkillRegistryPromptBlockDirective(unittest.TestCase):
+    """🩹 [β.5.36-F / 2026-05-20] to_prompt_block 已改双轨:
+    - intent_map 存在 → SEMANTIC CAPABILITIES (intent channel, 无工具名)
+    - intent_map 不存在 → fallback AVAILABLE SKILLS (向后兼容, 但删了"MUST reference by name")
+    本套测 fallback 路径行为 — 强 inject non-existent intent_map_path.
+    新 intent 路径行为见 _test_p0_plus_20_beta536_intent_channel.py
+    """
 
     def setUp(self):
         SkillRegistry.reset_instance_for_test()
         self.reg = get_registry()
+        # β.5.36-F: 强 fallback 路径 (绕过 intent_map.json 默认)
+        import tempfile, os as _os
+        self._tmp_dir = tempfile.mkdtemp()
+        self._no_intent_map = _os.path.join(self._tmp_dir, 'does_not_exist.json')
 
     def tearDown(self):
         SkillRegistry.reset_instance_for_test()
+        import shutil
+        try:
+            shutil.rmtree(self._tmp_dir)
+        except Exception:
+            pass
 
     def test_block_contains_header_and_directive(self):
+        """🩹 β.5.36-F: fallback 块仍有 AVAILABLE SKILLS 标题, 但删了 FORBIDDEN/MUST 句式.
+        改成 'NEVER speak tool names' (语义化禁令而非"必须报全名")."""
         self.reg.register(_make('audio.list', danger=DANGER_SAFE,
                                 description='列举音频设备'))
-        block = self.reg.to_prompt_block()
-        self.assertIn('=== AVAILABLE SKILLS ===', block)
-        self.assertIn('FORBIDDEN', block, '块必须含 FORBIDDEN generic offer 强约束')
-        self.assertIn('reference one of these', block.lower(),
-            '块必须教 LLM 必须 reference 具体 skill')
+        block = self.reg.to_prompt_block(intent_map_path=self._no_intent_map)
+        self.assertIn('AVAILABLE SKILLS', block, 'fallback 块必须含 AVAILABLE SKILLS 标题')
+        # β.5.36 改后 — 删 FORBIDDEN/MUST reference, 改成 NEVER speak tool names
+        self.assertIn('NEVER speak tool names', block,
+            'β.5.36-F: 必须显式禁止 LLM 说工具名 (replaces FORBIDDEN/MUST reference)')
 
     def test_block_lists_each_skill_with_metadata(self):
         self.reg.register(_make(
@@ -71,7 +88,7 @@ class TestSkillRegistryPromptBlockDirective(unittest.TestCase):
             description='设置媒体音量',
             args_schema={'level': {'type': 'int', 'range': [0, 100]}},
         ))
-        block = self.reg.to_prompt_block()
+        block = self.reg.to_prompt_block(intent_map_path=self._no_intent_map)
         self.assertIn('audio.list', block)
         self.assertIn('audio.set_volume', block)
         self.assertIn('safe', block, '应标 dangerous_flag')
@@ -81,14 +98,17 @@ class TestSkillRegistryPromptBlockDirective(unittest.TestCase):
         self.reg.register(_make('audio.list', danger=DANGER_SAFE))
         self.reg.register(_make('audio.set', danger=DANGER_RISKY))
         self.reg.register(_make('file.delete', danger=DANGER_DANGEROUS))
-        block = self.reg.to_prompt_block(filter_safe_only=True)
+        block = self.reg.to_prompt_block(filter_safe_only=True,
+                                          intent_map_path=self._no_intent_map)
         self.assertIn('audio.list', block)
         self.assertNotIn('audio.set', block)
         self.assertNotIn('file.delete', block)
 
     def test_empty_registry_block_has_fallback(self):
-        block = self.reg.to_prompt_block()
-        self.assertIn('no healthy skills registered', block)
+        """🩹 β.5.36-F: 空 registry → fallback 文本改成 'no skills registered'."""
+        block = self.reg.to_prompt_block(intent_map_path=self._no_intent_map)
+        self.assertIn('no skills registered', block,
+            'β.5.36-F: empty registry fallback 文本')
 
 
 # ==========================================================================
@@ -215,25 +235,36 @@ class TestEndToEndPhrasingDirective(unittest.TestCase):
         SkillRegistry.reset_instance_for_test()
 
     def test_cs2_key_health_inspector_appears_in_block(self):
-        """Cs2 验收续：注册 KeyHealthInspector 后，prompt 块必须含具体 skill 名"""
-        self.reg.register(_make(
-            'key_health_inspector.report_403_status',
-            danger=DANGER_SAFE,
-            description='排查 API key 403 健康状态：列出失败 key + 推荐恢复时机',
-        ))
-        block = self.reg.to_prompt_block(filter_safe_only=True)
-        self.assertIn('key_health_inspector.report_403_status', block,
-            'KeyHealthInspector skill 必须出现在 prompt 块中（让 LLM 知道能 offer 它）')
-        self.assertIn('排查 API key 403', block,
-            'description 必须出现，让 LLM 能用人话 reference')
+        """🩹 β.5.36-F: 老 Cs2 验收 — fallback 路径下 KeyHealthInspector 仍在块里.
+        新 intent 路径下不再列具体 skill (intent_map 控制), 见 β.5.36 test 套."""
+        import tempfile, os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            no_map = _os.path.join(tmp, 'no.json')
+            self.reg.register(_make(
+                'key_health_inspector.report_403_status',
+                danger=DANGER_SAFE,
+                description='排查 API key 403 健康状态：列出失败 key + 推荐恢复时机',
+            ))
+            block = self.reg.to_prompt_block(
+                filter_safe_only=True, intent_map_path=no_map,
+            )
+            self.assertIn('key_health_inspector.report_403_status', block,
+                'fallback 路径 KeyHealthInspector skill 必须出现')
+            self.assertIn('排查 API key 403', block,
+                'description 必须出现')
 
     def test_dangerous_skill_excluded_in_safe_block(self):
-        """安全过滤：dangerous skill 不该出现在 nudge offer 候选中"""
-        self.reg.register(_make('file.delete', danger=DANGER_DANGEROUS,
-                                description='删除文件'))
-        block = self.reg.to_prompt_block(filter_safe_only=True)
-        self.assertNotIn('file.delete', block,
-            'dangerous skill 不能出现在 safe-only block（防止 LLM 主动 offer 危险动作）')
+        """安全过滤：dangerous skill 不该出现在 nudge offer 候选中 (fallback path)."""
+        import tempfile, os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            no_map = _os.path.join(tmp, 'no.json')
+            self.reg.register(_make('file.delete', danger=DANGER_DANGEROUS,
+                                    description='删除文件'))
+            block = self.reg.to_prompt_block(
+                filter_safe_only=True, intent_map_path=no_map,
+            )
+            self.assertNotIn('file.delete', block,
+                'dangerous skill 不能出现在 safe-only block')
 
 
 if __name__ == '__main__':

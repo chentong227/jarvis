@@ -900,6 +900,71 @@ def resolve_worker_attr(worker, attr_name: str):
 # ASR 转录完成后调 is_recent_jarvis_echo(text) 比对，命中即作为回声
 # 静默丢弃。
 # ============================================================
+# ============================================================
+# 🩹 [β.5.36-H / 2026-05-20] 工具名 scrub helper — 防 BUG 3 工具名泄漏
+# Sir 反馈 BUG 3: LLM 偶尔输出 "process_hands.get_top_cpu" 给 Sir 听到/看到.
+# β.4.X 在 TTS 入口已 scrub (chat_bypass._put_audio), β.5.36-H 扩到 subtitle / STM
+# 任何路径都该用. 统一 helper 让 jarvis_ui / chat_bypass / STM commit 都能 import.
+# doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md §C.5
+# ============================================================
+import re as _re_internal_names
+
+_INTERNAL_TOOL_NAME_RE = _re_internal_names.compile(
+    r'\b(process_hands|file_operator(?:_hands)?|txt_writer_hands\w*|system_hands|'
+    r'memory_hands|fuzzy_resolver|ui_control|hippocampus|'
+    r'commitment_watcher|return_sentinel|smart_nudge|chat_bypass|'
+    r'audio_hands|window_hands|media_control_hands|notification_hands|'
+    r'screen_capture_hands)\.\w+',
+    _re_internal_names.IGNORECASE,
+)
+
+# <TOOL_CALL>{...}</TOOL_CALL> tag (β.5.36-G 加, scrub from subtitle/TTS — 主脑用 tag 内部沟通)
+_INTERNAL_TOOL_CALL_TAG_RE = _re_internal_names.compile(
+    r'<TOOL_CALL>.*?</TOOL_CALL>',
+    _re_internal_names.IGNORECASE | _re_internal_names.DOTALL,
+)
+
+
+def scrub_internal_names(text, *, replacement: str = 'a quick check') -> str:
+    """剥工具名 (organ.command) + <TOOL_CALL> tag, 返人话.
+
+    用法:
+        jarvis_ui._poll_queue 处理 'en'/'zh' subtitle text 前调一次
+        STM commit 前调一次 (可选, 主脑内部沟通可保留原文)
+        chat_bypass._put_audio 入口已有 inline (β.5.36-H 留尾, 后续可改调本 helper)
+
+    Args:
+        text: 输入字符串 (LLM 输出原文 / sentence / subtitle 内容)
+        replacement: 工具名替换文本 (默认 'a quick check' — 自然短语)
+
+    Returns:
+        scrub 后的字符串. 空输入返回空字符串.
+    """
+    if not text or not isinstance(text, str):
+        return text or ''
+    # 先剥 <TOOL_CALL> tag (整段干掉)
+    out = _INTERNAL_TOOL_CALL_TAG_RE.sub('', text)
+    # 再剥 organ.command 工具名 (替换 placeholder)
+    if _INTERNAL_TOOL_NAME_RE.search(out):
+        out = _INTERNAL_TOOL_NAME_RE.sub(replacement, out)
+        # 轻 polish: "may I run a quick check" → "a quick check" (动词 + 名词冗余)
+        out = _re_internal_names.sub(
+            r'\b(run|invoke|execute|trigger)\s+a\s+quick\s+check',
+            'a quick check', out, flags=_re_internal_names.IGNORECASE,
+        )
+    return out
+
+
+def has_internal_name(text) -> bool:
+    """快查 text 含工具名 / <TOOL_CALL> tag. 用于日志诊断."""
+    if not text or not isinstance(text, str):
+        return False
+    return bool(
+        _INTERNAL_TOOL_NAME_RE.search(text) or
+        _INTERNAL_TOOL_CALL_TAG_RE.search(text)
+    )
+
+
 class _TTSEchoRing:
     _lock = threading.Lock()
     _entries = deque(maxlen=12)

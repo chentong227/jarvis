@@ -1461,6 +1461,29 @@ class JarvisWorkerThread(QThread):
                 _tb.print_exc()
         else:
             print(f"[PromiseExecutor wire] 跳过：self.jarvis.promise_executor 为 None")
+
+        # 🔧 [β.5.36-G / 2026-05-20] IntentRouter — Sir BUG 3 防工具名泄漏后端路由.
+        # 复用 chat_bypass._execute_fast_call (与 PromiseExecutor 同源) + event_bus.
+        # 主脑 LLM 输出 <TOOL_CALL>{intent} → stream_chat/stream_nudge 末尾自动 invoke.
+        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md §C
+        try:
+            from jarvis_intent_router import init_default_intent_router
+            _cb = self.chat_bypass
+            _bus = getattr(self.jarvis, 'event_bus', None)
+            init_default_intent_router(
+                fast_call_executor=(
+                    lambda organ, command, args, _cb_ref=_cb:
+                        _cb_ref._execute_fast_call(organ, command, args)
+                ),
+                event_bus=_bus,
+            )
+            print(f"[IntentRouter wire] ✅ fast_call + event_bus 注入完成 (β.5.36-G)")
+        except Exception as _ir_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntentRouter wire] 失败 (非致命): {_ir_e}")
+            except Exception:
+                pass
         
         self.mailbox = SubconsciousMailbox()
         # ... 后面的保持不变

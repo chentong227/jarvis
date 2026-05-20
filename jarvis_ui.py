@@ -209,6 +209,12 @@ class SubtitleOverlay(QWidget):
                 elif lang == "zh":
                     if not self.subtitle_enabled:
                         continue
+                    # 🩹 [β.5.36-H / 2026-05-20] scrub 工具名 / <TOOL_CALL> tag 防漏给 Sir 看到
+                    try:
+                        from jarvis_utils import scrub_internal_names as _scrub
+                        text = _scrub(text)
+                    except Exception:
+                        pass
                     self._zh_text = text
                     self._zh_scroll_offset = 0
                     self._zh_scroll_max = 0
@@ -218,6 +224,12 @@ class SubtitleOverlay(QWidget):
                 elif lang == "en":
                     if not self.subtitle_enabled:
                         continue
+                    # 🩹 [β.5.36-H / 2026-05-20] scrub 工具名 / <TOOL_CALL> tag 防漏给 Sir 看到
+                    try:
+                        from jarvis_utils import scrub_internal_names as _scrub
+                        text = _scrub(text)
+                    except Exception:
+                        pass
                     # [R7-β post-test v3] 跨轮 / 距上次更新 > 8s 时，认为是新一轮回复，先清空再 extend
                     # 这是 Sir 实测吐槽"字是不断累加的"的根因 —— 多轮对话 / nudge 触发不会推 user 事件
                     # 导致 _en_words 一直长。这里用时间戳兜底：超过 8s 的间隔视作新轮。

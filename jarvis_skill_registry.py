@@ -394,14 +394,32 @@ class SkillRegistry:
     def to_prompt_block(self, *, filter_safe_only: bool = False,
                         only_healthy: bool = True,
                         min_success_rate: float = 0.7,
-                        max_skills: int = 50) -> str:
-        """[轴3-L2 / 2026-05-15] 渲染为 prompt 可注入的 === AVAILABLE SKILLS === 块。
+                        max_skills: int = 50,
+                        intent_map_path: Optional[str] = None) -> str:
+        """[轴3-L2 / 2026-05-15] 渲染为 prompt 可注入的 === SEMANTIC CAPABILITIES === 块。
+
+        🩹 [β.5.36-F / 2026-05-20] Sir 反馈 BUG 3 工具名泄漏修法:
+        老逻辑: 直接列 process_hands.get_top_cpu(args) → 让 LLM "MUST reference by name"
+        → LLM 自然说出工具名 (人机感强).
+        新逻辑 (双轨):
+          - LLM 看 SEMANTIC CAPABILITIES (intent_to_tool_map 翻译的语义层)
+          - LLM 输出 <TOOL_CALL>{"intent":"check_top_cpu"} 而非说工具名
+          - intent_router 后端翻 tool 名执行
+        如 intent_to_tool_map.json 不存在 / 加载失败, fallback 回老 SKILLS 块 (向后兼容).
 
         参数：
             filter_safe_only  仅列 safe 档（隐藏 risky / dangerous，给保守路径用）
             only_healthy      仅列 healthy（success_rate 达标）
             max_skills        防 prompt 爆炸，最多列 N 条
+            intent_map_path   intent_to_tool_map.json 路径 (默认 memory_pool/intent_to_tool_map.json)
         """
+        # 🩹 [β.5.36-F] 优先用 intent_to_tool_map 渲染 semantic block
+        intent_block = self._render_intent_block(filter_safe_only=filter_safe_only,
+                                                  intent_map_path=intent_map_path)
+        if intent_block:
+            return intent_block
+
+        # fallback: 老 AVAILABLE SKILLS 块 (向后兼容, 但 LLM 会被引导说工具名)
         with self._lock:
             candidates = list(self._skills.values())
 
@@ -410,7 +428,6 @@ class SkillRegistry:
         if filter_safe_only:
             candidates = [sk for sk in candidates if sk.is_safe()]
 
-        # 按 dangerous_flag 分组排序：safe → risky → dangerous，组内按 command 字母序
         danger_order = {DANGER_SAFE: 0, DANGER_RISKY: 1, DANGER_DANGEROUS: 2}
         candidates.sort(key=lambda sk: (danger_order.get(sk.dangerous_flag, 9), sk.command))
 
@@ -418,15 +435,72 @@ class SkillRegistry:
             candidates = candidates[:max_skills]
 
         if not candidates:
-            return "=== AVAILABLE SKILLS ===\n(no healthy skills registered)\n========================"
+            return "=== SEMANTIC CAPABILITIES ===\n(no skills registered)\n========================"
 
-        lines = ["=== AVAILABLE SKILLS ===",
-                 "These are the ONLY actions you can truly perform right now. "
-                 "When offering to help Sir, you MUST reference one of these by name. "
-                 "Generic offers like 'can I help' or 'shall I take a look' are FORBIDDEN."]
+        # 🩹 [β.5.36-F] 即使 fallback 路径也加 INTEGRITY 警告 — 不再要求 LLM say tool names
+        lines = ["=== AVAILABLE SKILLS (fallback, no intent_map) ===",
+                 "Reference these capabilities semantically. "
+                 "NEVER speak tool names verbatim (no 'process_hands.X' / 'audio_hands.Y' in human speech). "
+                 "Describe in human language: 'check CPU' / 'mute audio' / etc."]
         for sk in candidates:
             lines.append(f"  - {sk.render_one_line()}")
         lines.append(f"========================")
+        return '\n'.join(lines)
+
+    def _render_intent_block(self, *, filter_safe_only: bool = False,
+                             intent_map_path: Optional[str] = None) -> Optional[str]:
+        """🩹 [β.5.36-F / 2026-05-20] 渲染 SEMANTIC CAPABILITIES 块 (intent-based).
+
+        返回 None 表示 intent_map.json 不存在 / 加载失败 → caller fallback 老逻辑.
+        """
+        if intent_map_path is None:
+            intent_map_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'memory_pool', 'intent_to_tool_map.json',
+            )
+        if not os.path.exists(intent_map_path):
+            return None
+        try:
+            with open(intent_map_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            return None
+
+        intents = [c for c in data.get('intents', [])
+                   if c.get('state', 'active') == 'active' and c.get('id') and c.get('tool')]
+        if filter_safe_only:
+            intents = [c for c in intents if c.get('dangerous_flag', 'safe') == 'safe']
+        if not intents:
+            return None
+
+        # 按 danger 排序: safe → risky → dangerous, 组内 id 字母序
+        danger_order = {'safe': 0, 'risky': 1, 'dangerous': 2}
+        intents.sort(key=lambda c: (
+            danger_order.get(c.get('dangerous_flag', 'safe'), 9),
+            c.get('id', ''),
+        ))
+
+        lines = [
+            "=== SEMANTIC CAPABILITIES (β.5.36 intent channel) ===",
+            "",
+            "These are intent verbs you can declare via <TOOL_CALL> tag.",
+            "Sir 准则 5 防工具名泄漏: NEVER speak the internal tool name in human speech",
+            "(e.g. 'process_hands.X' / 'audio_hands.Y' / snake_case organ identifiers).",
+            "Speak in human terms ('let me check CPU' / 'I'll mute the audio') AND emit:",
+            "",
+            "    <TOOL_CALL>{\"intent\": \"<intent_id>\"}</TOOL_CALL>",
+            "",
+            "intent_router 后端会翻成真实 tool 调用. 你只需用 semantic intent_id.",
+            "",
+            "Available intents (Sir 拍板的, CLI: scripts/intent_map_dump.py):",
+        ]
+        for c in intents:
+            danger = c.get('dangerous_flag', 'safe')
+            danger_tag = f"[{danger}]"
+            hint = c.get('semantic_hint', '')
+            lines.append(f"  - intent='{c['id']}' {danger_tag}  — {hint}")
+        lines.append("")
+        lines.append("=== END SEMANTIC CAPABILITIES ===")
         return '\n'.join(lines)
 
     # --------------------------------------------------------------
