@@ -81,7 +81,22 @@ HTML_TEMPLATE = r"""
       <div class="text-2xl">🤖</div>
       <div>
         <h1 class="text-xl font-bold tracking-tight">J.A.R.V.I.S. Dashboard</h1>
-        <p class="text-xs text-slate-400">β.5.28-fix4 · build {{ build_ts }} · <span x-text="lastUpdate"></span></p>
+        <p class="text-xs text-slate-400">β.5.43 · build {{ build_ts }} · <span x-text="lastUpdate"></span></p>
+      </div>
+      <!-- 🩹 [β.5.43-A / 2026-05-20] Jarvis HUD 状态条 -->
+      <div class="ml-4 px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs flex items-center gap-1"
+           :title="'reason: ' + (jarvisState.reason||'') + ' / age: ' + Math.round(jarvisState.age_seconds||0) + 's'"
+           x-show="jarvisState && jarvisState.state">
+        <span x-text="jarvisState.display && jarvisState.display.emoji" class="text-base"></span>
+        <span x-text="jarvisState.display && jarvisState.display.label_zh"
+              :class="{
+                'text-green-400': jarvisState.state === 'ready',
+                'text-blue-400': jarvisState.state === 'thinking',
+                'text-yellow-300': jarvisState.state === 'speaking',
+                'text-orange-300': jarvisState.state === 'listening',
+                'text-purple-300': jarvisState.state === 'focused',
+                'text-red-400': jarvisState.state === 'error',
+              }"></span>
       </div>
     </div>
     <div class="flex items-center gap-2">
@@ -596,6 +611,8 @@ function dashboard() {
     autoRefresh: true,
     lastUpdate: '...',
     summary: { level: 'ok', emoji: '🤖', headline: '加载中...', actions: [] },
+    // 🩹 [β.5.43-A / 2026-05-20] HUD 状态条
+    jarvisState: { state: '', display: {}, reason: '', age_seconds: 0 },
     reviewItems: [],
     concerns: {},
     relation: {},
@@ -636,7 +653,18 @@ function dashboard() {
 
     async init() {
       await this.refresh();
+      this.fetchJarvisState();
       setInterval(() => { if (this.autoRefresh) this.refresh(); }, 10000);
+      // 🩹 [β.5.43-A / 2026-05-20] HUD 状态 2s 轮询 (Jarvis 状态变化要看得即时)
+      setInterval(() => { this.fetchJarvisState(); }, 2000);
+    },
+    async fetchJarvisState() {
+      try {
+        const r = await fetch('/api/state').then(r => r.json());
+        if (r.ok) {
+          this.jarvisState = r;
+        }
+      } catch (e) { /* silent */ }
     },
 
     async refresh() {
@@ -994,6 +1022,23 @@ try:
     import jarvis_actionable_items as _ai
 except Exception:
     _ai = None
+
+try:
+    import jarvis_state_tracker as _jst
+except Exception:
+    _jst = None
+
+
+@app.route('/api/state')
+def api_state():
+    """🩹 [β.5.43-A / 2026-05-20] Jarvis HUD 状态: ready/thinking/speaking/listening/focused/error."""
+    if _jst is None:
+        return jsonify({'ok': False, 'state': 'unknown', 'error': 'state_tracker not available'}), 500
+    try:
+        snap = _jst.get_state_tracker().get_snapshot()
+        return jsonify({'ok': True, **snap})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/items')

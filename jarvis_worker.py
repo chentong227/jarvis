@@ -571,6 +571,23 @@ class VoiceListenThread(QThread):
         return False
 
     def set_speaking_state(self, state_str):
+        # 🩹 [β.5.43-A / 2026-05-20] Sir 17:10 真理 — Jarvis HUD 状态条
+        # state_str: EXECUTING / THINKING / IDLE → tracker 4-way map
+        try:
+            from jarvis_state_tracker import (
+                set_state as _set_js, STATE_SPEAKING, STATE_THINKING,
+                STATE_READY, STATE_FOCUSED,
+            )
+            if state_str == "EXECUTING":
+                _set_js(STATE_SPEAKING, reason='tts_started')
+            elif state_str == "THINKING":
+                _set_js(STATE_THINKING, reason='llm_stream')
+            elif state_str == "IDLE":
+                _next = STATE_FOCUSED if self.in_active_conversation else STATE_READY
+                _set_js(_next, reason='turn_complete')
+        except Exception:
+            pass
+
         if state_str == "EXECUTING":
             self.is_jarvis_speaking = True
             set_browser_ducking(True)
@@ -1066,6 +1083,12 @@ class VoiceListenThread(QThread):
                 if volume > VOLUME_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
+                        # 🩹 [β.5.43-A] HUD: Sir 开始说话 → LISTENING
+                        try:
+                            from jarvis_state_tracker import set_state as _set_js, STATE_LISTENING
+                            _set_js(STATE_LISTENING, reason='asr_voice_detected')
+                        except Exception:
+                            pass
                         self.last_user_speech_time = time.time()
                         start_record_time = time.time() 
                         audio_frames = list(pre_roll_buffer) 
