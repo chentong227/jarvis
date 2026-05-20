@@ -1,7 +1,76 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 15:05 (β.5.37 三层架构改造 4 sub-step + Sir 14:39 校正治本, 8 commits 全 sub-batch 测过 200+ pass).
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 < 300 cap, AGENTS.md 章程.
+> **更新**: 2026-05-20 21:40 (β.5.43 6 缺口 + 4 fix + β.5.44 IntentResolver 真理重构 + AGENTS 准则 6 升级 + β.5.44-CE-bugfix1, **15 commits 单晚产出**). Sir 21:34 真机实测暴露 IntentResolver `timeout_s` critical bug, fix 已 commit (`b838881`), 等 Sir 重启重测 β.5.44 真实生效后 push.
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~525 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
+
+---
+
+## 🚀 β.5.43 (6 缺口 + 4 fix) + β.5.44 (IntentResolver 重构) + 准则 6 升级 + bugfix1 (2026-05-20 17:00-21:40, 15 commits)
+
+### β.5.43 — 6 交互地基缺口
+
+| commit | marker | 内容 |
+|---|---|---|
+| `63d4281` | **β.5.43-A** | **HUD 状态条** (`jarvis_state_tracker` singleton: ready/thinking/speaking/listening/focused/error) + worker hook + dashboard `/api/state` + bg_log + 顶部 badge 2s 轮询 |
+| `6d01518` | **β.5.43-B** | **多人对话感知**: `multi_person_aware_judge` directive (priority=9) — ambient=conversation 时主脑默 SILENT 除非 Sir 喊 wake/明确指向 |
+| `fc19f49` | **β.5.43-C** | **中断感知**: `interrupt_all` publish `reply_interrupted` SWM (含 last_reply_excerpt) + `interrupted_aware_judge` directive (priority=8) — 不复读, pivot 新话题 |
+| `1c03c87` | **β.5.43-D** | **回复反馈通道**: `jarvis_reply_feedback.py` + dashboard `/items` 抽屉 (👍👎🤐✏️) + 2 API + 主脑 prompt 注入 `[SIR LAST REPLY FEEDBACK / 24h]` block 调 tone |
+| `bb03c03` | **β.5.43-E** | **沉默智能**: `jarvis_silence_intel.py` 检测 thinking pause filler (uh/嗯/let me think) → publish `sir_thinking_pause` SWM + `thinking_pause_aware_judge` directive (priority=8) — Sir 思考时主脑短 ack 或 SILENT |
+| `69e6b36` | **β.5.43-F** | **错误自愈**: `jarvis_error_bus.py` 集中错误持久化 (`memory_pool/system_errors.jsonl`) + SWM publish + dashboard `/system_errors` 横幅 + 主脑 prompt 注入 system error block — Jarvis 主动告诉 Sir 哪里坏 |
+
+### β.5.43 — 4 fix (Sir 18:11 / 18:49 / 18:55 真机实测真理)
+
+| commit | marker | 内容 |
+|---|---|---|
+| `0cd4f10` | **β.5.43-fix1** | `capability_boundary_judge` (priority=10 always-on) + `over_offer_called_out_judge` (priority=11) — Sir 18:11 "别吹牛, 做不到时 callout". 主脑不再 offer 没工具的事 |
+| `d597acd` | **β.5.43-fix2-ABC** | 承诺动态影响 concern weight + SWM publish + dashboard urgency 显示 — Sir 18:11 履行/拒绝直接调 concern weight |
+| `8b90a76` | **β.5.43-fix3-㋭㋮㋯** | `SirRequestReflector` L7 daemon (60s tick) + active window unresponsive 检测 + promise vocab 扩 — Sir 18:49 "答应了要有机制兑现" |
+| `a2621a2` | **β.5.43-fix4** | `no_hallucinated_tool_use_judge` directive (priority=12 极顶) — Sir 18:55 "你说做了但没用 tool 是撒谎". 主脑禁声称未跑的 mutation |
+
+### β.5.44 — IntentResolver 真理重构 (Sir 19:00 "立刻重构, 跳过 E+F, ~6h")
+
+| commit | marker | 内容 |
+|---|---|---|
+| `9a3120d` | β.5.44 design | `docs/JARVIS_INTENT_RESOLVER_ARCHITECTURE.md` 架构 design doc |
+| `12d37ae` | **β.5.44-ACDE** | **核心 Phase1**: SWM etype 注册 (`sir_intent.*` / `tool_called` / `intent_resolved`) + `jarvis_intent_resolver.py` (LLM judge 哪个 tool call) + `jarvis_tool_registry.py` (5 mutation tools: `concern_progress_update` / `memory_correction_apply` / `commitment_register` / `self_promise_register` / `profile_field_update`) + `_assemble_prompt` 注入 `[INTENT RESOLVED THIS TURN]` block + nerve init + chat_bypass turn-end hook (fire-and-forget thread, 零阻塞 TTFT) |
+| `5e1d425` | **β.5.44-BF** | **publish-only 5 module + dashboard**: ConcernFeedback / MemoryCorrection / Gatekeeper / SelfPromise / CommitmentWatcher 全 publish `sir_intent_*_candidate` SWM (准则 6 #1/#2) + dashboard `/intent_resolved` 页 + API endpoint |
+
+### 准则 6 升级 — 4 问 framework
+
+| commit | marker | 内容 |
+|---|---|---|
+| `4b95645` | **AGENTS 准则 6 - 4 问** | 加新 module 前 4 问筛: 数据 publish 进 SWM? / 决策让 LLM 做? / 配置持久化 + CLI 可改? / 和已有 module 正交? 全 Yes 才加. 历史反例 anchor: β.5.43 前 5 sentinel hard gate (违反 #1/#2) + β.5.44 前 5 mutation 分散 (违反 #4). AGENTS.md 285 → 296 lines |
+
+### β.5.44-CE-bugfix1 — Sir 21:34 真机实测暴露 critical bug
+
+| commit | marker | 内容 |
+|---|---|---|
+| `b838881` | **β.5.44-CE-bugfix1** | `IntentResolver._llm_judge` 调 `safe_openrouter_call(timeout_s=...)` — **该 kwarg 不存在** (真实签名只有 `openrouter_key/model/prompt/max_tokens/temperature/max_retries/base_delay`). Primary + fallback 都 fail, `_error: "LLM both fail: safe_openrouter_call() got an unexpected keyword 'timeout_s'"`. **β.5.44 整个 sprint 从部署起未生效** — 主脑 prompt `[INTENT RESOLVED THIS TURN]` block 永远空. Sir 看到 fix1/fix4 directive 真生效是因为那是 prompt-level, 但底层 tool orchestration 一直没跑. **Fix**: 删两处 `timeout_s` kwarg, config 字段保留. **Tests**: 16/16 pass. **Trace**: log line 598 ErrorBus catch |
+
+### ✅ Sir 真机实测 check list (重启 Jarvis 后跑, 验证 β.5.43/44 真生效 + bugfix1)
+
+```
+[ ] 1. 启动正常 → log 无 `[ErrorBus] intent_resolver/llm_judge_fail` 错误
+[ ] 2. 18:55 场景 — Sir 给反馈 "其实是 X" → IntentResolver 调 memory_correction_apply 真 mutation → log `[IntentResolver] tool_called=memory_correction_apply` → 主脑下轮 prompt 含 `[INTENT RESOLVED THIS TURN]` block 列实际 tool call
+[ ] 3. 18:49 场景 — Sir 说 "请帮我惦记一下 X" → SirRequestReflector L7 daemon 60s 内 propose watch concern → log `[SirRequestReflector] propose=...`
+[ ] 4. dashboard `/intent_resolved` 页有 tool_called + intent_resolved events 列表
+[ ] 5. dashboard `/system_errors` 页有 ErrorBus 横幅 + 历史 errors
+[ ] 6. β.5.43-E SilenceIntel: Sir 说 "嗯..." / "uhh let me think" → log `[SilenceIntel] thinking_pause detected` → 主脑短 ack 或 SILENT
+[ ] 7. β.5.43-fix1: Sir 给反馈后 → Jarvis 不再说 "I've updated my records" 类 boasting
+[ ] 8. β.5.43-fix4: Jarvis 自我澄清 "I cannot directly modify your profile files" (Sir 21:34 已验 ✅)
+[ ] 9. β.5.43-A HUD: dashboard 顶部状态条切换 (ready→thinking→speaking→listening→ready)
+[ ] 10. β.5.43-B 多人: Sir 跟人说话时 Jarvis 默 SILENT (除非喊唤醒词)
+[ ] 11. β.5.43-C 中断: Sir 中断 Jarvis → 下轮主脑不复读, pivot 新话题
+[ ] 12. β.5.43-D 反馈: dashboard 抽屉 👍👎🤐✏️ 标记 → 主脑下次 tone 调
+[ ] 13. β.5.43-F 错误: 故意触发错误 → dashboard 红横幅 + 主脑下轮 mention
+```
+
+### ⚠️ 已知 follow-up (待 Sir 决定)
+
+1. **时间幻觉** (Sir 21:34 ClaimTracer 2/2 unverified `[time] '9:00 PM'`): ClaimTracer 是 post-hoc 标记, 没拦在主脑输出前. Jarvis 从自己 21:10 "现在开始禁食" 推断 "9:00 PM 已 33 分钟". 可选 fix: pre-output validator / prompt 注 `[CURRENT TIME ANCHOR]` 强制不从历史推时间
+2. **delay 调查**: TTFT 3.0s 在 cap (5s) 内, full 12.8s post-stream 5.5s 大概率 TTS. Prompt 31466 chars (`core_persona=11647` 占 37%). β.5.43/44 不是延迟原因 (IntentResolver 是 fire-and-forget thread). 是否 persona slim 待 Sir 决定
+3. **dashboard test pytest capture bug** (`I/O operation on closed file` in teardown): 跟 IntentResolver fix 无关, infrastructure-level, 单独 fix 时再处理
+4. **TODO.md 当前 ~525 行 > 300 cap**: β.5.34-41 等老段建议 archive 到 `docs/TODO_ARCHIVE.md`. 不阻塞当前 sprint, 但下次 archive 窗口处理
 
 ---
 
