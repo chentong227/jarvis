@@ -115,6 +115,16 @@ class PhysicalEnvironmentProbe:
     
     # 空闲与时间
     idle_seconds = 0.0
+    # 🩹 [β.5.37-A / 2026-05-20] Sir 14:39 校正催生 — 真物理 input sensor (准则 6 evidence)
+    # Sir 真理: "屏幕动 ≠ Sir 在场, sensor 区分真 input vs ghost activity 让主脑看"
+    last_real_input_ts = 0.0       # win32api.GetLastInputInfo() 转 Unix ts (真键鼠按)
+    idle_seconds_real = 0.0        # alias of idle_seconds (语义清晰: 真物理 idle 秒)
+    cascade_active = False         # 当前 foreground process 是否 IDE/Cascade 类 (ghost source)
+    cascade_process_name = ""      # 哪个 IDE (Cursor/Windsurf/Code/...) 当前在 fg
+    # SWM publish 限频 + 转移检测
+    _last_swm_afk_publish_ts = 0.0     # 防 sir_afk_detected 刷屏 (60s 一次)
+    _last_swm_ghost_publish_ts = 0.0   # 防 ghost_activity_observed 刷屏 (60s 一次)
+    _prev_idle_seconds_real = 0.0      # 上一 tick 值, 用于检测 < 60 → > 60 transition
     is_first_active_today = True
     _first_active_reset_day = ""
     is_night_time = False
@@ -415,6 +425,57 @@ Example: Coding|Working in VS Code on a Python project"""
                 
                 # === 空闲时长 ===
                 cls.idle_seconds = round(idle_time_ms / 1000.0, 1)
+                # 🩹 [β.5.37-A / 2026-05-20] 真物理 input sensor (准则 6 evidence)
+                cls.last_real_input_ts = current_time - (idle_time_ms / 1000.0)
+                cls.idle_seconds_real = cls.idle_seconds  # alias 语义清晰
+                # cascade ghost source 检测: 当前 fg process 是否 IDE 类
+                _IDE_PROCESS_KEYWORDS = ('cursor.exe', 'windsurf.exe', 'code.exe',
+                                          'devenv.exe', 'pycharm', 'idea',
+                                          'jetbrains', 'sublime')
+                _proc_lower = (cls.current_process_name or '').lower()
+                cls.cascade_active = any(kw in _proc_lower for kw in _IDE_PROCESS_KEYWORDS)
+                cls.cascade_process_name = cls.current_process_name if cls.cascade_active else ""
+                # SWM publish (限频): sir_afk_detected on < 60 → > 60 transition
+                try:
+                    if cls.idle_seconds_real > 60 and cls._prev_idle_seconds_real <= 60:
+                        # transition: Sir 刚离场
+                        from jarvis_utils import get_event_bus as _geb
+                        _bus = _geb()
+                        if _bus is not None and (current_time - cls._last_swm_afk_publish_ts) > 60:
+                            cls._last_swm_afk_publish_ts = current_time
+                            _bus.publish(
+                                etype='sir_afk_detected',
+                                description=f"Sir 真物理 idle={cls.idle_seconds_real:.0f}s, "
+                                            f"last_real_input @{cls.last_real_input_ts:.0f}",
+                                source='PhysicalEnvProbe',
+                                salience=0.65,
+                                metadata={
+                                    'kind': 'afk_transition',
+                                    'idle_seconds_real': cls.idle_seconds_real,
+                                    'last_real_input_ts': cls.last_real_input_ts,
+                                },
+                            )
+                    # ghost_activity_observed: Sir afk + IDE 在 fg
+                    if cls.idle_seconds_real > 60 and cls.cascade_active:
+                        from jarvis_utils import get_event_bus as _geb2
+                        _bus2 = _geb2()
+                        if _bus2 is not None and (current_time - cls._last_swm_ghost_publish_ts) > 60:
+                            cls._last_swm_ghost_publish_ts = current_time
+                            _bus2.publish(
+                                etype='ghost_activity_observed',
+                                description=f"屏幕动但 Sir 真 idle={cls.idle_seconds_real:.0f}s; "
+                                            f"fg={cls.cascade_process_name} (IDE/Cascade ghost source)",
+                                source='PhysicalEnvProbe',
+                                salience=0.6,
+                                metadata={
+                                    'kind': 'ghost_activity',
+                                    'cascade_process': cls.cascade_process_name,
+                                    'idle_seconds_real': cls.idle_seconds_real,
+                                },
+                            )
+                    cls._prev_idle_seconds_real = cls.idle_seconds_real
+                except Exception:
+                    pass
                 
                 # === 今日首次活跃 ===
                 current_day = time.strftime('%Y-%m-%d')
@@ -621,6 +682,11 @@ Example: Coding|Working in VS Code on a Python project"""
             'click_count_5min': cls.click_count_5min,
             'scroll_amount_5min': cls.scroll_amount_5min,
             'idle_seconds': cls.idle_seconds,
+            # 🩹 [β.5.37-A / 2026-05-20] 真物理 input sensor (主脑 evidence)
+            'idle_seconds_real': cls.idle_seconds_real,
+            'last_real_input_ts': cls.last_real_input_ts,
+            'cascade_active': cls.cascade_active,
+            'cascade_process_name': cls.cascade_process_name,
             'session_duration_minutes': cls.work_duration_minutes,
             'is_night_time': cls.is_night_time,
             'is_first_active_today': cls.is_first_active_today,
