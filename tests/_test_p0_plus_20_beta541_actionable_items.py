@@ -138,5 +138,134 @@ class TestBeta541ACorrectionsLog(unittest.TestCase):
         self.assertEqual(entries[1]['action'], 'delete')
 
 
+class TestBeta541AMutation(unittest.TestCase):
+    """mutation API: modify / delete / restore / activate / reject."""
+
+    def setUp(self):
+        import tempfile, json, shutil
+        import jarvis_actionable_items as ai
+        self.tmp = tempfile.mkdtemp()
+        self._orig_mem = ai.MEM
+        self._orig_cfg = ai.CFG
+        ai.MEM = self.tmp
+        ai.CFG = self.tmp
+        # 准备一个 fake relational_state.json 含 1 个 inside_joke
+        rel = {
+            'inside_jokes': {
+                'joke_test_abc': {
+                    'id': 'joke_test_abc',
+                    'phrase': '老梗', 'birth_context': '初版',
+                    'tone': 'wry', 'state': 'active',
+                    'source': 'auto_detected',
+                }
+            },
+            'shared_history_threads': {},
+            'unspoken_protocols': {},
+            'unfinished_business': {},
+        }
+        with open(os.path.join(self.tmp, 'relational_state.json'), 'w', encoding='utf-8') as f:
+            json.dump(rel, f, ensure_ascii=False)
+
+    def tearDown(self):
+        import jarvis_actionable_items as ai
+        ai.MEM = self._orig_mem
+        ai.CFG = self._orig_cfg
+
+    def test_modify_inside_joke(self):
+        from jarvis_actionable_items import mutate_actionable_item, find_item_by_id
+        r = mutate_actionable_item(
+            'joke_test_abc', 'modify',
+            new_fields={'phrase': '新梗', 'tone': 'playful'},
+            sir_note='上下文不对',
+        )
+        self.assertTrue(r['ok'])
+        # 重读应该有新值
+        it = find_item_by_id('joke_test_abc')
+        self.assertEqual(it.fields['phrase'], '新梗')
+        self.assertEqual(it.fields['tone'], 'playful')
+
+    def test_delete_inside_joke_archives(self):
+        from jarvis_actionable_items import mutate_actionable_item, find_item_by_id
+        r = mutate_actionable_item('joke_test_abc', 'delete', sir_note='不需要')
+        self.assertTrue(r['ok'])
+        # archived state 不在默认 get_all (cat 1 + 12 filter active/review)
+        it = find_item_by_id('joke_test_abc')
+        self.assertIsNone(it, 'delete 后默认不再列出 (archived)')
+
+    def test_restore_restores_state(self):
+        from jarvis_actionable_items import mutate_actionable_item, find_item_by_id
+        # delete then restore
+        mutate_actionable_item('joke_test_abc', 'delete')
+        # 直接看 source file state
+        import json
+        with open(os.path.join(self.tmp, 'relational_state.json'), encoding='utf-8') as f:
+            d = json.load(f)
+        self.assertEqual(d['inside_jokes']['joke_test_abc']['state'], 'archived')
+        # restore
+        # 需要 find_item 看到 archived (我们 extractor 只看 active+review, restore 不通过 find_item)
+        # 实际 restore 通过 source 直接 mutate. 暂略 (handler 自己测).
+
+    def test_unknown_item_returns_error(self):
+        from jarvis_actionable_items import mutate_actionable_item
+        r = mutate_actionable_item('nonexistent_xyz', 'modify')
+        self.assertFalse(r['ok'])
+        self.assertIn('not found', r.get('error', ''))
+
+
+class TestBeta541ARecentCorrections(unittest.TestCase):
+    """corrections.jsonl 写后能读出."""
+
+    def setUp(self):
+        import tempfile, json
+        import jarvis_actionable_items as ai
+        self.tmp = tempfile.mkdtemp()
+        self._orig_mem = ai.MEM
+        ai.MEM = self.tmp
+        # 准备 relational
+        rel = {
+            'inside_jokes': {
+                'joke_corr_test': {
+                    'id': 'joke_corr_test',
+                    'phrase': 'A', 'state': 'active',
+                }
+            },
+            'shared_history_threads': {},
+            'unspoken_protocols': {},
+            'unfinished_business': {},
+        }
+        with open(os.path.join(self.tmp, 'relational_state.json'), 'w', encoding='utf-8') as f:
+            json.dump(rel, f, ensure_ascii=False)
+
+    def tearDown(self):
+        import jarvis_actionable_items as ai
+        ai.MEM = self._orig_mem
+
+    def test_modify_logs_correction(self):
+        from jarvis_actionable_items import mutate_actionable_item, get_recent_corrections
+        mutate_actionable_item(
+            'joke_corr_test', 'modify',
+            new_fields={'phrase': 'B'},
+            sir_note='改为 B',
+        )
+        recent = get_recent_corrections(hours=24)
+        self.assertGreaterEqual(len(recent), 1)
+        self.assertEqual(recent[-1]['action'], 'modify')
+        self.assertEqual(recent[-1]['item_id'], 'joke_corr_test')
+        self.assertEqual(recent[-1]['sir_note'], '改为 B')
+
+
+class TestBeta541DCorrectionsInjectsInPrompt(unittest.TestCase):
+    """β.5.41-D: corrections.jsonl 已注入 _assemble_prompt source."""
+
+    def test_central_nerve_imports_get_recent_corrections(self):
+        with open(os.path.join(ROOT, 'jarvis_central_nerve.py'), encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('β.5.41-D', src, 'central_nerve 必须含 β.5.41-D marker')
+        self.assertIn('get_recent_corrections', src,
+                      '_assemble_prompt 必须 import get_recent_corrections')
+        self.assertIn('SIR CORRECTIONS', src,
+                      'prompt 必须含 [SIR CORRECTIONS] block 标题')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1457,6 +1457,41 @@ class CentralNerve:
             _parts.append(relational_block)
         if attention_block:
             _parts.append(attention_block)
+
+        # 🩹 [β.5.41-D / 2026-05-20] Sir Corrections inject (Sir 16:43 真理)
+        # Sir 在 dashboard /items 改/删 item → 写 sir_corrections.jsonl.
+        # 主脑下轮 prompt 看 corrections 知道 Sir 已纠正/已删, 不再用错版本/不再 reference 已删的事.
+        try:
+            from jarvis_actionable_items import get_recent_corrections
+            recent = get_recent_corrections(hours=24, limit=15)
+            if recent:
+                _corr_lines = ['[SIR CORRECTIONS / 最近 24h]']
+                _corr_lines.append('  Sir 在 dashboard 改了下面这些 item, 你下次用要用新版本/已删的别 reference:')
+                for c in recent[-10:]:  # 最多 10 条进 prompt
+                    act = c.get('action', '?')
+                    cat = c.get('category', '?')
+                    iid = c.get('item_id', '?')
+                    note = c.get('sir_note', '')
+                    if act == 'modify':
+                        old = c.get('old', {})
+                        new = c.get('new', {})
+                        _change = ', '.join(
+                            f"{k}: '{str(old.get(k, '?'))[:30]}' → '{str(v)[:30]}'"
+                            for k, v in (new or {}).items()
+                        )
+                        _line = f"  - [改] {cat}/{iid}: {_change}"
+                    elif act == 'delete':
+                        _line = f"  - [删] {cat}/{iid} (Sir 不要 reference 这条)"
+                    else:
+                        _line = f"  - [{act}] {cat}/{iid}"
+                    if note:
+                        _line += f" — Sir 说: \"{note[:50]}\""
+                    _corr_lines.append(_line)
+                _corrections_block = '\n'.join(_corr_lines)
+                _parts.append(_corrections_block)
+        except Exception:
+            pass
+
         # 🩹 [β.2.9.4 / 2026-05-18] Mood Mirror (扩展 C): 给主脑 5 档 mood 估算.
         # 准则 6: 只给信号让主脑判, 不强制主脑用某 tone.
         try:
