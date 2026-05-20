@@ -3380,10 +3380,16 @@ class JarvisWorkerThread(QThread):
                         # 修法: nudge 触发 focus_lock 时同步 emit ("focus", True) 让 overlay 持续显示.
                         # 配对的 ("focus", False) 在 line 876 (timeout) / 1072 (dismiss) / 1220 (告别)
                         # / 1314 (focus 超时) 已有, 关闭路径完备.
+                        # 🩹 [β.5.34-fix / 2026-05-20 13:00] Sir 真机实测 "还是没焦点回复不了" 根因:
+                        # 单 emit ("focus", True) 让 nudge 字幕不淡出 — 但字幕内容还是 nudge 话,
+                        # Sir 看不出"现在在等回应" vs "字幕没消失". 修法: 加 ("user", "🎙️ Listening...")
+                        # 提示, 用 user_speech 区显示明显的等候 UI cue (跟 nudge 字幕视觉区分).
                         try:
                             sq = getattr(self.voice_thread, '_subtitle_queue', None)
                             if sq is not None:
                                 sq.put(("focus", True))
+                                # β.5.34-fix: listening cue 让 Sir 一眼看出 "Jarvis 在等"
+                                sq.put(("user", "🎙️ Listening for your reply… (90s)"))
                         except Exception:
                             pass
                         print(f"🎯 [Focus Lock] {nudge_type} 焦点模式已激活 (90s)，等待 Sir 回复...")
