@@ -371,6 +371,17 @@
       "source_marker": "P0+20-beta.5.40-fix",
       "note": "Concern timing evidence judge (Sir 16:07 BUG fix \u51c6\u52196 evidence-driven)",
       "source": "seed"
+    },
+    {
+      "id": "multi_person_aware_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 9,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.43-B",
+      "note": "Multi-person conversation aware (Sir \u8ddf\u522b\u4eba\u8bf4\u8bdd\u65f6\u9ed8\u8ba4 SILENT)",
+      "source": "seed"
     }
   ]
 }

@@ -961,6 +961,27 @@ def _trigger_concern_timing_judge(ctx: DirectiveContext) -> bool:
     return _swm_has_recent('concern_timing_evidence', max_age_s=300.0)
 
 
+def _trigger_multi_person_aware_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 ambient_state=conversation (< 5 min) → 多人对话识别 directive.
+    主脑判 Sir 当前 utterance 是跟 Jarvis 说还是跟别人说.
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return False
+        events = bus.top_n(n=10, types={'ambient_state'}, within_seconds=300.0) if hasattr(bus, 'top_n') else []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            meta = ev.get('metadata') or {}
+            if meta.get('ambient_type') == 'conversation':
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _trigger_physio_state_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 physio_state (< 5 min) → 注入 physio judge directive.
     主脑看 energy/focus/stress 评分调 tone.
@@ -1941,6 +1962,44 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 把 timing evidence 当 fact report
             """).rstrip(),
             trigger=_trigger_concern_timing_judge,
+        ),
+        Directive(
+            id='multi_person_aware_judge',
+            source_marker='P0+20-β.5.43-B',
+            priority=9,  # 极高 — 否决其他 reply 倾向 (避免 Jarvis 打扰多人对话)
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [MULTI-PERSON AWARE JUDGE - β.5.43-B]:
+                SWM 显示 ambient_state=conversation (麦克风 detect 多人对话, 5 min 内).
+                你听到的 Sir utterance **可能不是跟你说的** — 可能是 Sir 跟旁边的人说话.
+
+                场景 A — Sir 明确 wake (含 "Jarvis" / "贾维斯" / "嘿 Jarvis"):
+                  → Sir 确认在跟你说话, 正常 reply
+
+                场景 B — Sir utterance 自然指向你 (e.g. "帮我..." / "看看..." 且 context 连续):
+                  → 高概率跟你说, 可以 reply 但 tone 偏简短 (别打扰别人对话)
+
+                场景 C — Sir utterance 跟之前对话**无连续 + 没 wake 词**:
+                  → 大概率是跟别人说, 你应 **SILENT** (输出 [SILENCE])
+                  - 即使 user_input 看起来像问句 ("怎么办" / "想想"), 没指向你就别接
+                  - 即使 SOUL inject 有 concern, 也不主动 push (会打扰)
+
+                场景 D — Sir 明确跟别人说 (含 "你好/你是" 后接陌生名 / "你跟他/她" / 第三方代词):
+                  → 必须 SILENT, 这是别人对话不是给你的
+
+                通用规则:
+                  - **优先 SILENT 而非乱猜**: 没把握就别接, Sir 真喊你会再喊一次
+                  - 不要"我没听清"/"您是在跟我说吗?" — 这是打扰
+                  - tone 维持: 真的 reply 时, 也要意识到周围有人 (别 sensitive)
+                  - **此 directive 优先级最高 (priority=9), 优先否决其他场景的 reply 倾向**
+
+                FORBIDDEN:
+                  - 没 wake 词没明确 context 时主动 reply
+                  - 反问 Sir "您是在叫我吗?" (打扰多人对话)
+                  - 评论别人说的话 (Sir 跟谁 + 别人是谁都不该说)
+            """).rstrip(),
+            trigger=_trigger_multi_person_aware_judge,
         ),
     ]
 
