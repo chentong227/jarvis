@@ -129,6 +129,24 @@ class ProactiveShield(threading.Thread):
             if snapshot.get('error_visible'):
                 score += 0.10
                 breakdown['error_visible'] = 0.10
+            # 🩹 [β.5.37-C / 2026-05-20] Ghost activity dampen (Sir 14:39 准则 6)
+            # Sensor evidence (β.5.37-A): idle_seconds_real + cascade_active
+            # Sir 真离场 (真物理 idle > 30s) + IDE/Cascade 在 fg → 屏幕切换非 Sir 操作.
+            # 不再 sentinel hard skip (fix3 revert), 改 sensor evidence 直接进评分:
+            # score *= 0.1 大幅衰减, 让评分自然不达 TRIGGER_SCORE.
+            try:
+                idle_real = float(snapshot.get('idle_seconds_real', 0) or 0)
+                cascade_active = bool(snapshot.get('cascade_active', False))
+                if idle_real > 30 and cascade_active:
+                    dampen_factor = 0.10
+                    score *= dampen_factor
+                    breakdown['ghost_activity_dampen'] = dampen_factor
+                    breakdown['_ghost_evidence'] = {
+                        'idle_seconds_real': round(idle_real, 1),
+                        'cascade_process': snapshot.get('cascade_process_name', ''),
+                    }
+            except Exception:
+                pass
         return min(1.0, score), breakdown
 
     def _apply_soul_modifiers(self, score: float) -> tuple:
@@ -276,6 +294,32 @@ class ProactiveShield(threading.Thread):
                         f"🛡️ [Shield TRIGGER] type={frustration_type} score={final_score:.2f} "
                         f"(raw={raw_score:.2f}) breakdown={breakdown} modifiers={modifiers}"
                     )
+                except Exception:
+                    pass
+                # 🩹 [β.5.37-C / 2026-05-20] SWM publish 'shield_observation' 让主脑看 evidence
+                try:
+                    from jarvis_utils import get_event_bus as _geb
+                    _bus = _geb()
+                    if _bus is not None:
+                        _bus.publish(
+                            etype='shield_observation',
+                            description=(
+                                f"frustration_type={frustration_type} score={final_score:.2f} "
+                                f"switches={switches} err_min={error_duration_min:.1f}"
+                            ),
+                            source='ProactiveShield',
+                            salience=min(0.4 + final_score * 0.5, 0.95),
+                            metadata={
+                                'kind': 'frustration_alert',
+                                'frustration_type': frustration_type,
+                                'score': round(final_score, 2),
+                                'raw_score': round(raw_score, 2),
+                                'breakdown': breakdown,
+                                'modifiers': modifiers,
+                                'switches': switches,
+                                'error_duration_min': round(error_duration_min, 1),
+                            },
+                        )
                 except Exception:
                     pass
                 self._send_shield_nudge(frustration_type, switches, error_titles)

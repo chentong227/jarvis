@@ -236,11 +236,13 @@ class Conductor(threading.Thread):
         #   breath_check     → 与 JARVIS 管家人设不符（管家不做周期性情感关怀）
 
         # 🆘 [β.5.35-C / 2026-05-20] Sir struggle signal 优先路径 (offer_help 真触发源)
-        # 🔄 [β.5.37 / 2026-05-20 14:43] Sir 14:39 校正: fix2 (b)/(c) 硬编码 sleep_dismiss
-        # keyword list + 15s cooldown 阈值违反准则 6. 已 revert. 改为 publish-only:
-        # voice_thread struggle 信号 publish 到 SWM, 主脑看 [Sir 说了 X / 这是 struggle 还是 dismiss]
-        # 自决是否 emit offer_help. 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md.
-        # 暂时回到 β.5.35-C 原版 + (a) vocab 删 "我去"/"靠" 保留 (memory_pool/sir_struggle_vocab.json).
+        # 🔄 [β.5.37-C / 2026-05-20 14:43] Sir 14:39 校正:
+        #   - fix2 (b)/(c) sleep_dismiss keyword list + 15s cooldown 硬编码已 revert
+        #   - 同时 publish 'sir_struggle_observed' 到 SWM, 主脑看 [Sir 说了 X /
+        #     这是真 struggle 还是 dismiss / 当前 SWM 还含 sir_afk_detected 等] 自决
+        # 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md §4.3.
+        # 注: Conductor 仍 return nudge_alert (let it propagate), 主脑 stream_nudge prompt
+        # 看 struggle_text + SWM evidence 自决: 真 struggle → offer help; dismiss/casual → ack-only.
         try:
             vt = getattr(self.worker, 'voice_thread', None)
             if vt is not None and self._daily_action_count < 12:
@@ -249,21 +251,47 @@ class Conductor(threading.Thread):
                 if _struggle_at > 0 and _struggle_age <= 90.0:
                     # 防同一 struggle 反复触发 — 同一 struggle 只触一次, 触后清
                     vt.last_struggle_at = 0.0  # consume
+                    _phrase_id = getattr(vt, 'last_struggle_phrase_id', '') or 'sir_struggle'
+                    _severity = getattr(vt, 'last_struggle_severity', '') or ''
+                    _struggle_text = getattr(vt, 'last_struggle_text', '') or ''
+                    # 🩹 [β.5.37-C] SWM publish for 主脑 evidence
+                    try:
+                        from jarvis_utils import get_event_bus as _geb
+                        _bus = _geb()
+                        if _bus is not None:
+                            _sev_salience = {'high': 0.85, 'medium': 0.7, 'low': 0.5, '': 0.6}
+                            _bus.publish(
+                                etype='sir_struggle_observed',
+                                description=(
+                                    f"phrase={_phrase_id} sev={_severity} "
+                                    f"text='{_struggle_text[:80]}'"
+                                ),
+                                source='SirStruggleVocab',
+                                salience=_sev_salience.get(_severity, 0.6),
+                                metadata={
+                                    'kind': 'struggle_signal',
+                                    'phrase_id': _phrase_id,
+                                    'severity': _severity,
+                                    'struggle_text': _struggle_text,
+                                    'detected_at': _struggle_at,
+                                },
+                            )
+                    except Exception:
+                        pass
                     return {
                         'source': 'SirStruggleVocab',
-                        'alert_type': getattr(vt, 'last_struggle_phrase_id', '') or 'sir_struggle',
+                        'alert_type': _phrase_id,
                         'action': 'Offer Help',
                         'reason': (
-                            f"Sir struggle vocab hit: {getattr(vt, 'last_struggle_phrase_id', '?')} "
-                            f"(sev={getattr(vt, 'last_struggle_severity', '?')}, "
-                            f"age={_struggle_age:.0f}s)"
+                            f"Sir struggle vocab hit: {_phrase_id} "
+                            f"(sev={_severity}, age={_struggle_age:.0f}s)"
                         ),
                         'tone': 'gentle',
                         'nudge_type': 'offer_help',
                         # struggle context 透传给 stream_nudge directive 用
-                        'struggle_phrase_id': getattr(vt, 'last_struggle_phrase_id', ''),
-                        'struggle_severity': getattr(vt, 'last_struggle_severity', ''),
-                        'struggle_text': getattr(vt, 'last_struggle_text', ''),
+                        'struggle_phrase_id': _phrase_id,
+                        'struggle_severity': _severity,
+                        'struggle_text': _struggle_text,
                     }
         except Exception:
             pass
