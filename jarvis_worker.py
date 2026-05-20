@@ -1888,6 +1888,42 @@ class JarvisWorkerThread(QThread):
             except Exception:
                 pass
 
+        # 🩹 [β.5.43-C / 2026-05-20] Sir 17:10 真理 — 被打断察觉.
+        # 记录被 Sir 打断的 reply, 主脑下轮 prompt 看 SWM evidence 自决 pivot/不重复.
+        try:
+            _last_reply = ''
+            try:
+                _stm = list(getattr(self.jarvis, 'short_term_memory', []) or [])[-5:]
+                for _entry in reversed(_stm):
+                    _jrv = (_entry.get('jarvis', '') or _entry.get('text', '') or '').strip()
+                    if _jrv:
+                        _last_reply = _jrv[:300]
+                        break
+            except Exception:
+                pass
+            from jarvis_utils import get_event_bus as _geb
+            _bus = _geb()
+            if _bus is not None:
+                _bus.publish(
+                    etype='reply_interrupted',
+                    description=f'Sir cut off Jarvis reply: "{_last_reply[:80]}..."',
+                    source='interrupt_all',
+                    salience=0.75,
+                    metadata={
+                        'interrupted_at': time.time(),
+                        'last_reply_excerpt': _last_reply[:300],
+                        'kind': 'manual_interrupt',
+                    },
+                    ttl=180.0,
+                )
+            try:
+                from jarvis_utils import bg_log as _ibg
+                _ibg(f"🛑 [InterruptAware] reply 被打断, last='{_last_reply[:60]}...'")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         with self.chat_bypass.audio_queue.mutex:
             self.chat_bypass.audio_queue.queue.clear()
         with self.chat_bypass.wave_queue.mutex:

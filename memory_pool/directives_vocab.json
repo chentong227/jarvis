@@ -382,6 +382,17 @@
       "source_marker": "P0+20-beta.5.43-B",
       "note": "Multi-person conversation aware (Sir \u8ddf\u522b\u4eba\u8bf4\u8bdd\u65f6\u9ed8\u8ba4 SILENT)",
       "source": "seed"
+    },
+    {
+      "id": "interrupted_aware_judge",
+      "text": "(see jarvis_directives.py _SEED_DEFS)",
+      "priority": 8,
+      "state": "active",
+      "tier_whitelist": [],
+      "ttl_days": 120,
+      "source_marker": "P0+20-beta.5.43-C",
+      "note": "Sir \u4e2d\u65ad reply \u540e\u4e3b\u8111\u4e0d\u590d\u8bfb / pivot \u65b0\u8bdd\u9898",
+      "source": "seed"
     }
   ]
 }

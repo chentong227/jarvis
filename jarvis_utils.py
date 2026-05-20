@@ -1224,6 +1224,9 @@ class ConversationEventBus:
         'nudge_window_advice': 3600,       # CompanionRhythm 当前 hour receptive 建议
         'physio_state': 180,               # physio_proxy energy/focus/stress 评分
         'concern_timing_evidence': 300,    # ProactiveCare top concern timing 信号 (β.5.40-fix)
+        # [β.5.43 / 2026-05-20] Sir 17:10 真理 — 交互地基 6 缺口:
+        'jarvis_state': 120,               # JarvisStateTracker HUD (β.5.43-A)
+        'reply_interrupted': 180,          # interrupt_all 抓 Sir cut reply (β.5.43-C)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1255,6 +1258,9 @@ class ConversationEventBus:
         'nudge_window_advice': 0.35,       # 时段建议 (调 ProactiveCare publish 时 score 低 → 0.55)
         'physio_state': 0.45,              # 键鼠节奏推断 (stress 高时 publish 时 → 0.55)
         'concern_timing_evidence': 0.55,   # concern timing (远离 timing 时 publish 调 0.65)
+        # [β.5.43 / 2026-05-20]:
+        'jarvis_state': 0.30,              # 状态变化 (e.g. ready→listening), 一般背景
+        'reply_interrupted': 0.75,         # 被 Sir 打断 — 主脑必看 (高 salience)
     }
 
     def __init__(self, max_events: int = 60):

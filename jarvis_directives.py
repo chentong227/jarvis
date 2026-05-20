@@ -961,6 +961,11 @@ def _trigger_concern_timing_judge(ctx: DirectiveContext) -> bool:
     return _swm_has_recent('concern_timing_evidence', max_age_s=300.0)
 
 
+def _trigger_interrupted_aware_judge(ctx: DirectiveContext) -> bool:
+    """SWM 含 reply_interrupted (< 3 min) → 让主脑感知上次被打断, pivot 不重复."""
+    return _swm_has_recent('reply_interrupted', max_age_s=180.0)
+
+
 def _trigger_multi_person_aware_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 ambient_state=conversation (< 5 min) → 多人对话识别 directive.
     主脑判 Sir 当前 utterance 是跟 Jarvis 说还是跟别人说.
@@ -2000,6 +2005,45 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 评论别人说的话 (Sir 跟谁 + 别人是谁都不该说)
             """).rstrip(),
             trigger=_trigger_multi_person_aware_judge,
+        ),
+        Directive(
+            id='interrupted_aware_judge',
+            source_marker='P0+20-β.5.43-C',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [INTERRUPTED AWARE JUDGE - β.5.43-C]:
+                SWM 含 reply_interrupted (Sir 中断了你上轮 reply, < 3min 内).
+                metadata.last_reply_excerpt = 你上轮说了啥 (前 300 字符).
+
+                Sir 中断意味着:
+                  - 不想听你这段了 (可能你跑题/啰嗦/或 Sir 想说新事)
+                  - **不要重复刚被打断的内容** (复读 = 沟通灾难)
+                  - **看 Sir 当前 utterance pivot 到新话题**
+
+                场景 A — Sir 中断后说了具体新话题 (e.g. 中断后 Sir 说 "对了, X"):
+                  → 完全 pivot 到 X, 忽略你之前的 reply 没说完
+                  → 不要 "我刚才说到..." (Sir 不想接)
+
+                场景 B — Sir 中断后短/含糊 (e.g. "嗯" / "停"):
+                  → SILENT (Sir 让你停, 别接)
+                  → 即使你觉得 reply 没说完, 也别 continue
+
+                场景 C — Sir 中断后明显是想问你刚才内容 (e.g. "你刚说的 Y 是什么"):
+                  → 解释 Y, 但 concise (Sir 已经打断了, 别长篇)
+
+                通用规则:
+                  - **打断 = Sir 明确反馈**: 你那段不被欣赏 — 学习 (don't repeat tone/structure)
+                  - tone shift: 中断后下条 reply 短/简, 不抢
+                  - 不要道歉 "抱歉打扰" (creepy + 浪费 token)
+
+                FORBIDDEN:
+                  - 复读被打断的 sentence
+                  - "您是要换话题吗?" (Sir 行动已说明)
+                  - 道歉 / 解释 "我以为..."
+            """).rstrip(),
+            trigger=_trigger_interrupted_aware_judge,
         ),
     ]
 
