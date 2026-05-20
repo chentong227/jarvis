@@ -1041,6 +1041,70 @@ def api_state():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/recent_replies')
+def api_recent_replies():
+    """🩹 [β.5.43-D / 2026-05-20] 最近 N 条 Jarvis reply (供 Sir 评价).
+    从 nerve STM 拿 jarvis assistant entries."""
+    try:
+        # 尝试从 STM 持久化文件读 (jarvis_central_nerve 持久化路径)
+        stm_path = os.path.join(ROOT, 'memory_pool', 'short_term_memory.jsonl')
+        recent = []
+        if os.path.exists(stm_path):
+            with open(stm_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                        jrv = (e.get('jarvis', '') or '').strip()
+                        if jrv and len(jrv) > 5:
+                            recent.append({
+                                'ts': e.get('ts', 0),
+                                'user_input': (e.get('user', '') or '')[:120],
+                                'reply': jrv[:300],
+                            })
+                    except Exception:
+                        pass
+        recent = recent[-12:]  # 最近 12 条
+        # 已有 feedback 标记
+        try:
+            import jarvis_reply_feedback as _rfb
+            fb_entries = _rfb.get_recent_reply_feedback(hours=48, limit=50)
+            feedback_map = {}
+            for fb in fb_entries:
+                fb_excerpt = (fb.get('reply_excerpt', '') or '')[:50]
+                if fb_excerpt:
+                    feedback_map[fb_excerpt] = fb.get('verdict', '?')
+            for r in recent:
+                excerpt = r['reply'][:50]
+                r['existing_verdict'] = feedback_map.get(excerpt, '')
+        except Exception:
+            for r in recent:
+                r['existing_verdict'] = ''
+        return jsonify({'ok': True, 'replies': recent})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/reply_feedback', methods=['POST'])
+def api_reply_feedback():
+    """🩹 [β.5.43-D / 2026-05-20] Sir 评 reply: 写 reply_feedback.jsonl."""
+    payload = request.get_json(silent=True) or {}
+    reply_excerpt = payload.get('reply_excerpt', '')
+    verdict = payload.get('verdict', '')
+    sir_note = payload.get('sir_note', '')
+    try:
+        import jarvis_reply_feedback as _rfb
+        ok = _rfb.log_reply_feedback(reply_excerpt, verdict, sir_note)
+        if ok:
+            return jsonify({'ok': True, 'detail': f'{verdict} 已记录'})
+        else:
+            return jsonify({'ok': False, 'error': f'invalid verdict {verdict}'}), 400
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/items')
 def api_items_list():
     """list actionable items, optional filter by category/state."""
@@ -1111,13 +1175,54 @@ _ITEMS_HTML = r"""
   <header class="bg-slate-900/80 backdrop-blur border-b border-slate-700 px-6 py-3 flex items-center justify-between sticky top-0 z-10">
     <div class="flex items-center gap-3">
       <h1 class="text-xl font-bold">🤖 贾维斯 · 我们的事</h1>
-      <span class="text-xs text-slate-400">β.5.41 · <span x-text="items.length"></span> items · 共 <span x-text="totalAcked"></span> 已看</span>
+      <span class="text-xs text-slate-400">β.5.41/43 · <span x-text="items.length"></span> items · 共 <span x-text="totalAcked"></span> 已看</span>
     </div>
     <div class="flex items-center gap-2">
+      <button @click="showReplies = !showReplies" class="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-sm"
+              :title="'Sir 评 Jarvis recent reply (β.5.43-D)'">
+        💬 评 Reply <span x-show="recentReplies.length > 0" x-text="'(' + recentReplies.length + ')'"></span>
+      </button>
       <button @click="loadAll()" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm">🔄 刷新</button>
       <a href="/" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-sm">← 老 dashboard</a>
     </div>
   </header>
+
+  <!-- Recent Replies 抽屉 (β.5.43-D) -->
+  <div x-show="showReplies" x-transition class="fixed top-14 right-4 w-[480px] max-h-[80vh] bg-slate-900 border border-purple-700 rounded-lg shadow-2xl p-4 z-20 overflow-y-auto">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-bold text-purple-300">💬 最近 Jarvis Reply — Sir 评一下</h3>
+      <button @click="showReplies = false" class="text-slate-400 hover:text-slate-100">✕</button>
+    </div>
+    <p class="text-xs text-slate-400 mb-3">点 👍 = 喜欢, 👎 = 不喜欢, ✏️ = 改 (主脑下次看反馈学习)</p>
+    <template x-for="(rep, i) in recentReplies" :key="i">
+      <div class="border border-slate-700 rounded p-2 mb-2">
+        <div class="text-xs text-slate-500 mb-1" x-show="rep.user_input">
+          <span class="text-green-400">Sir:</span> <span x-text="rep.user_input"></span>
+        </div>
+        <div class="text-sm text-slate-100 mb-2">
+          <span class="text-cyan-400">Jarvis:</span> <span x-text="rep.reply"></span>
+        </div>
+        <div class="flex gap-1 items-center">
+          <button @click="rateReply(rep, 'good')"
+                  :class="rep.existing_verdict === 'good' ? 'bg-green-600' : 'bg-slate-700 hover:bg-green-700'"
+                  class="px-2 py-0.5 rounded text-xs">👍</button>
+          <button @click="rateReply(rep, 'bad')"
+                  :class="rep.existing_verdict === 'bad' ? 'bg-red-600' : 'bg-slate-700 hover:bg-red-700'"
+                  class="px-2 py-0.5 rounded text-xs">👎</button>
+          <button @click="rateReply(rep, 'silent_wanted')"
+                  :class="rep.existing_verdict === 'silent_wanted' ? 'bg-orange-600' : 'bg-slate-700 hover:bg-orange-700'"
+                  class="px-2 py-0.5 rounded text-xs" title="这条不该说">🤐</button>
+          <button @click="editReply(rep)"
+                  :class="rep.existing_verdict === 'edit' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-blue-700'"
+                  class="px-2 py-0.5 rounded text-xs">✏️</button>
+          <span x-show="rep.existing_verdict" x-text="'已评: ' + rep.existing_verdict" class="text-xs text-slate-500 ml-2"></span>
+        </div>
+      </div>
+    </template>
+    <div x-show="recentReplies.length === 0" class="text-slate-500 text-sm text-center py-8">
+      暂无 reply (STM 还没积累)
+    </div>
+  </div>
 
   <!-- 3-pane -->
   <div class="flex" style="height: calc(100vh - 56px);">
@@ -1258,6 +1363,9 @@ function itemsApp() { return {
   editingFieldsStr: {},  // for array fields
   editingNote: '',
   toast: '',
+  // 🩹 [β.5.43-D / 2026-05-20] Sir 评 reply 反馈通道
+  showReplies: false,
+  recentReplies: [],
   get totalAll() {
     let n = 0;
     for (const c in this.counts) for (const s in this.counts[c]) n += this.counts[c][s];
@@ -1287,6 +1395,45 @@ function itemsApp() { return {
     if (r.ok) {
       this.items = r.items;
       this.counts = r.counts;
+    }
+    this.fetchReplies();
+  },
+  async fetchReplies() {
+    try {
+      const r = await fetch('/api/recent_replies').then(r=>r.json());
+      if (r.ok) this.recentReplies = r.replies;
+    } catch (e) { /* silent */ }
+  },
+  async rateReply(rep, verdict) {
+    const r = await fetch('/api/reply_feedback', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        reply_excerpt: rep.reply,
+        verdict: verdict,
+        sir_note: '',
+      }),
+    }).then(r=>r.json());
+    if (r.ok) {
+      rep.existing_verdict = verdict;
+      this.showToast(`✅ ${verdict} 已记录, Jarvis 下次会看`);
+    } else {
+      alert('评价失败: ' + r.error);
+    }
+  },
+  async editReply(rep) {
+    const note = prompt('改成什么 / 你想 Jarvis 改成怎样?', rep.reply);
+    if (!note || note === rep.reply) return;
+    const r = await fetch('/api/reply_feedback', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        reply_excerpt: rep.reply,
+        verdict: 'edit',
+        sir_note: note,
+      }),
+    }).then(r=>r.json());
+    if (r.ok) {
+      rep.existing_verdict = 'edit';
+      this.showToast('✏️ 已记录, Jarvis 下次会看你的版本');
     }
   },
   openDetail(item) {

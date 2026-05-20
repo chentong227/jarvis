@@ -1458,6 +1458,21 @@ class CentralNerve:
         if attention_block:
             _parts.append(attention_block)
 
+        # 🩹 [β.5.43-D / 2026-05-20] Sir reply feedback inject (Sir 17:10 真理)
+        # Sir 在 dashboard /items '评 Reply' 按 👍/👎/✏️ → 写 reply_feedback.jsonl.
+        # 主脑下轮 prompt 看 [SIR LAST REPLY FEEDBACK / 24h] block, 学 tone 偏好.
+        try:
+            from jarvis_reply_feedback import (
+                get_recent_reply_feedback, format_for_prompt
+            )
+            _fb_entries = get_recent_reply_feedback(hours=24, limit=10)
+            if _fb_entries:
+                _fb_block = format_for_prompt(_fb_entries)
+                if _fb_block:
+                    _parts.append(_fb_block)
+        except Exception:
+            pass
+
         # 🩹 [β.5.41-D / 2026-05-20] Sir Corrections inject (Sir 16:43 真理)
         # Sir 在 dashboard /items 改/删 item → 写 sir_corrections.jsonl.
         # 主脑下轮 prompt 看 corrections 知道 Sir 已纠正/已删, 不再用错版本/不再 reference 已删的事.
