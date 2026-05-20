@@ -1,0 +1,108 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-20T11:30:00",
+    "purpose": "SmartNudge screen_tease keyword vocab — 准则 6 持久化 (β.5.35-A)",
+    "doc": "docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md",
+    "updated_at": "2026-05-20T12:12:35"
+  },
+  "categories": [
+    {
+      "id": "error_debugging",
+      "state": "active",
+      "keywords": [
+        "error",
+        "exception",
+        "failed",
+        "traceback",
+        "崩溃",
+        "报错",
+        "404",
+        "500",
+        "stack trace",
+        "undefined",
+        "null pointer"
+      ],
+      "directive_hint": "Sir 屏幕在 debug 报错 — Jarvis 远场调皮观察, 不主动给方案 (offer_help 走另一条 signal)",
+      "ttl_seconds": null,
+      "source": "β.4.X manual → β.5.35-A seed",
+      "created_at": "2026-05-20T11:30:00"
+    },
+    {
+      "id": "entertainment",
+      "state": "active",
+      "keywords": [
+        "bilibili",
+        "youtube",
+        "直播",
+        "游戏",
+        "steam",
+        "netflix",
+        "视频",
+        "番剧",
+        "twitch"
+      ],
+      "directive_hint": "Sir 屏幕在看娱乐内容 — 调皮观察 (afternoon/evening)",
+      "ttl_seconds": null,
+      "source": "β.4.X manual → β.5.35-A seed",
+      "created_at": "2026-05-20T11:30:00"
+    },
+    {
+      "id": "slacking",
+      "state": "active",
+      "keywords": [
+        "reddit",
+        "twitter",
+        "微博",
+        "知乎",
+        "douyin",
+        "抖音",
+        "xiaohongshu",
+        "小红书"
+      ],
+      "directive_hint": "Sir 屏幕在社交媒体摸鱼 — 调皮观察, butler 风格",
+      "ttl_seconds": null,
+      "source": "β.4.X manual → β.5.35-A seed",
+      "created_at": "2026-05-20T11:30:00"
+    },
+    {
+      "id": "reading_docs",
+      "state": "active",
+      "keywords": [
+        "readthedocs",
+        "docs",
+        "documentation",
+        "mdn",
+        "stackoverflow",
+        "wikipedia",
+        "github.com",
+        "blog"
+      ],
+      "directive_hint": "Sir 在读文档/查 SO — Jarvis 可以问要不要找参考",
+      "ttl_seconds": null,
+      "source": "β.5.35-A seed (extends Sir 实际高频)",
+      "created_at": "2026-05-20T11:30:00"
+    },
+    {
+      "id": "ide_focus",
+      "state": "active",
+      "keywords": [
+        "Cascade",
+        "Cursor",
+        "Windsurf",
+        "VSCode",
+        "Visual Studio",
+        "PyCharm",
+        "IntelliJ",
+        "Jarvis",
+        "Sublime"
+      ],
+      "directive_hint": "Sir 在 IDE 写代码 — 核心工作状态, screen_tease 应该极少触发 (默认 silent)",
+      "ttl_seconds": null,
+      "source": "β.5.35-A seed (Sir 一周高频 ~80%+ 时间)",
+      "created_at": "2026-05-20T11:30:00"
+    }
+  ],
+  "review_queue": [],
+  "rejected_history": []
+}

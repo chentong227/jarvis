@@ -734,6 +734,32 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.35-B / 2026-05-20] ScreenTeaseReflector L7 vocab daemon
+        # Sir BUG 2: SmartNudge screen_tease 一周静音根因 = vocab 跟不上.
+        # β.5.35-A 持久化 vocab + CLI, β.5.35-B 加 L7 daemon: 24h 1 跑 LLM
+        # propose 新 category 进 review_queue, Sir CLI --review-list / --activate.
+        # 准则 7 Sir 元否决: 默认 state=review 不自动激活.
+        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        self.screen_tease_reflector = None
+        try:
+            from jarvis_screen_tease_reflector import ScreenTeaseReflector
+            self.screen_tease_reflector = ScreenTeaseReflector(
+                key_router=self.key_router,
+            )
+            if self.screen_tease_reflector is not None and not self.screen_tease_reflector.is_alive():
+                self.screen_tease_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _str_bg
+                _str_bg("🪞 [ScreenTeaseReflector] L7 vocab daemon ready (β.5.35-B)")
+            except Exception:
+                pass
+        except Exception as _str_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ScreenTeaseReflector] 初始化失败（非致命）：{_str_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)

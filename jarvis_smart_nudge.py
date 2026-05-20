@@ -166,6 +166,39 @@ class SmartNudgeSentinel(threading.Thread):
             "dormant_project": 2,
         }
         self._type_counts = {}
+        # 🩹 [β.5.35-A / 2026-05-20] screen_tease vocab 持久化 — Sir 反馈一周静音
+        # 根因: error_kw/fun_kw/slack_kw 硬编码在源码, 跟不上 Sir 真实屏幕场景.
+        # 准则 6 修法: 读 memory_pool/screen_tease_vocab.json, mtime cache 秒级生效.
+        # 配套 CLI: scripts/screen_tease_vocab_dump.py / doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
+        self._screen_tease_vocab_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'memory_pool', 'screen_tease_vocab.json'
+        )
+        self._screen_tease_vocab_cache = None
+        self._screen_tease_vocab_mtime = 0.0
+
+    def _load_screen_tease_vocab(self) -> list:
+        """β.5.35-A: 读 memory_pool/screen_tease_vocab.json, mtime cache.
+
+        返回 active categories list, 每条形如:
+            {'id': 'error_debugging', 'keywords': [...], 'directive_hint': '...'}
+        失败 / 文件不存在 / 0 active → 返 [], fail-safe 行为同 vocab=空 (不触发 nudge).
+        """
+        try:
+            if not os.path.exists(self._screen_tease_vocab_path):
+                return []
+            mtime = os.path.getmtime(self._screen_tease_vocab_path)
+            if mtime == self._screen_tease_vocab_mtime and self._screen_tease_vocab_cache is not None:
+                return self._screen_tease_vocab_cache
+            with open(self._screen_tease_vocab_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            active = [c for c in data.get('categories', [])
+                      if c.get('state', 'active') == 'active' and c.get('keywords')]
+            self._screen_tease_vocab_cache = active
+            self._screen_tease_vocab_mtime = mtime
+            return active
+        except Exception:
+            return self._screen_tease_vocab_cache or []
 
     def run(self):
         time.sleep(25)
@@ -359,17 +392,26 @@ class SmartNudgeSentinel(threading.Thread):
                         pass
 
                 if window_title:
+                    # 🩹 [β.5.35-A / 2026-05-20] vocab 持久化 — Sir 反馈一周静音根因.
+                    # 原 error_kw / fun_kw / slack_kw 硬编码 (β.4.X) 跟不上 Sir 真实场景 ←
+                    # 改读 memory_pool/screen_tease_vocab.json (mtime cache).
+                    # CLI: scripts/screen_tease_vocab_dump.py, doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
                     lower_title = window_title.lower()
-                    error_kw = ["error", "exception", "failed", "traceback", "崩溃", "报错", "404", "500", "stack trace", "undefined", "null pointer"]
-                    fun_kw = ["bilibili", "youtube", "直播", "游戏", "steam", "netflix", "视频", "番剧", "twitch"]
-                    slack_kw = ["reddit", "twitter", "微博", "知乎", "douyin", "抖音", "xiaohongshu", "小红书"]
-
-                    if any(kw in lower_title for kw in error_kw):
-                        candidates.append(("screen_tease", {"window_title": window_title, "category": "error"}))
-                    elif any(kw in lower_title for kw in fun_kw):
-                        candidates.append(("screen_tease", {"window_title": window_title, "category": "entertainment"}))
-                    elif any(kw in lower_title for kw in slack_kw):
-                        candidates.append(("screen_tease", {"window_title": window_title, "category": "slacking"}))
+                    _vocab = self._load_screen_tease_vocab()
+                    for _cat in _vocab:
+                        _cat_id = _cat.get('id', '')
+                        _kws = _cat.get('keywords', [])
+                        # vocab keyword 用 lower() 匹配 (与 lower_title 一致), 但保留原大小写写 vocab
+                        if any(kw.lower() in lower_title for kw in _kws):
+                            candidates.append((
+                                "screen_tease",
+                                {
+                                    "window_title": window_title,
+                                    "category": _cat_id,
+                                    "directive_hint": _cat.get('directive_hint', ''),
+                                },
+                            ))
+                            break  # 第一个命中即用 (vocab 顺序由 Sir CLI 控制)
 
                 if 14 <= current_hour < 17 and work_duration > 90 and work_category == "Coding":
                     candidates.append(("afternoon", {"work_duration": int(work_duration)}))
