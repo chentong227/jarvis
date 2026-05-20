@@ -1,10 +1,18 @@
-# JARVIS Desktop Copilot — Sir 新定位大方向设计 (β.5.42+)
+# JARVIS Future Vision — Desktop Copilot Framework
 
-> Sir 2026-05-20 16:30 真理: "**让 Jarvis 脱离繁重数据工作流, 给予他 (1) 稳固的交互地基 (2) 真正用鼠标键盘操作我电脑的复杂操作流程**".
+> ⚠️ **状态**: 未来构思 + 主框架设计. **不是 sprint, 没编号**. Sir 16:40 真理: "**不要定位成 β.5.42 编号, 设计成未来构思和主框架设计, 我们还没确定细节如何实现, 这样太武断了**".
 >
-> 不再扩 LLM 重模块. 聚焦"**没对外 API 但 Sir 常用的桌面软件**" — Sir 不在家时 Jarvis 代劳.
->
-> 本文档是大方向设计, 不是详细 spec. 后续以现讨论想法逐步完善后再 sprint 实施.
+> 本文档**反复迭代**, 等 Sir 真要 sprint 时再拆 detailed spec + 排编号.
+
+---
+
+## 0. 目的
+
+Sir 2026-05-20 16:30 真理: "**让 Jarvis 脱离繁重数据工作流, 给予他 (1) 稳固的交互地基 (2) 真正用鼠标键盘操作我电脑的复杂操作流程**".
+
+不再扩 LLM 重模块. 聚焦"**没对外 API 但 Sir 常用的桌面软件**" — Sir 不在家时 Jarvis 代劳.
+
+本文档主框架, **细节未敲定** — 写下来防 idea drift, 后续 Sir 拍板时再补 spec 排 sprint.
 
 ---
 
@@ -77,9 +85,9 @@ minimize / maximize / close / pin / focus / arrange / split / hide / list_window
 
 ---
 
-## 4. β.5.42 路线图 (4 大模块, ~20-30h 总)
+## 4. 主框架 — 4 大模块 (顺序 / 深度 / 选型 全未定)
 
-### 模块 A: Screen Vision 集成 (~6-10h, 最关键)
+### 模块 A: Screen Vision 集成 (最关键)
 
 **目标**: Jarvis 截图后用 vision LLM 看懂屏幕, 找到 "保存按钮 / 剪辑 timeline 起点 / 红色字体" 的精准坐标.
 
@@ -104,7 +112,7 @@ def find_element(screenshot_path, target_desc: str) -> dict | None:
     """
 ```
 
-### 模块 B: 桌面软件 Workflow Vocab (~5-8h)
+### 模块 B: 桌面软件 Workflow Vocab
 
 **目标**: 把 Sir 常用的桌面软件操作 codify 成 vocab, 主脑可调.
 
@@ -137,7 +145,7 @@ def find_element(screenshot_path, target_desc: str) -> dict | None:
 
 **主脑 prompt**: 加 `[DESKTOP WORKFLOWS]` block 列 active workflows 名 + description.
 
-### 模块 C: Intent Router 扩 + Safety Gate (~3-5h)
+### 模块 C: Intent Router 扩 + Safety Gate
 
 **目标**: 主脑 emit `<TOOL_CALL>{intent="premiere_cut_clip", time_point="00:01:23"}` → router 找 workflow → preview → execute.
 
@@ -148,13 +156,13 @@ def find_element(screenshot_path, target_desc: str) -> dict | None:
 
 **新 directive `desktop_workflow_judge`**:
 ```
-[DESKTOP WORKFLOW JUDGE - β.5.42-C]:
+[DESKTOP WORKFLOW JUDGE (future)]:
 当 Sir 说 "帮我 X" 且 X 命中 desktop_workflow_vocab → emit <TOOL_CALL>.
 重要: preview 5s 是机会窗口, 不是 fait accompli — Sir 可中止.
 危险操作 (delete/overwrite/publish) → 必须等 Sir 显式确认.
 ```
 
-### 模块 D: 远程触发 (~6-8h, 可选)
+### 模块 D: 远程触发 (可选)
 
 **目标**: Sir 出门时手机微信 / Telegram bot 发指令 → 家里 Jarvis 收 → 执行.
 
@@ -167,14 +175,15 @@ def find_element(screenshot_path, target_desc: str) -> dict | None:
 
 ---
 
-## 5. 实施优先级 (Sir 拍板)
+## 5. 实施顺序 — Sir 未拍板, 先列可能性
 
-| 阶段 | 内容 | 时长 | Sir 体感 |
-|---|---|---|---|
-| **P0** | 模块 B (workflow vocab + CLI) — 第 1 个 workflow 例 `premiere_cut_clip` 落地 | 2-3h | 内部基础, Sir 暂看不到 |
-| **P1** | 模块 A (vision integration) — Sir 第一次说 "帮我点保存" 真触发 | 6-10h | 🌟 Sir 真体感 "Jarvis 能操作软件" |
-| **P2** | 模块 C (intent router + safety gate) — 5 个常用 workflow 落地 | 3-5h | Sir 工作流真生产力 |
-| **P3** | 模块 D (远程触发) — Sir 出门也能用 | 6-8h | "Jarvis 代劳" 完整体验 |
+可能的顺序 (Sir 拍板时再敲定):
+- 先做 workflow vocab + 单一 hardcoded sample (e.g. `premiere_cut_clip`) → 看流程通不通
+- 后加 vision 集成 → Sir 真说"帮我点 X"
+- 再加 safety gate + 多 workflow
+- 最后加远程触发
+
+**或** Sir 完全另一个顺序. 本框架不锁顺序.
 
 ---
 
@@ -212,14 +221,15 @@ def find_element(screenshot_path, target_desc: str) -> dict | None:
 
 ## 9. 等 Sir 拍板的关键问题
 
-1. **优先级**: P0-P3 哪个先 sprint? (推荐 P0 + P1, 6-13h MVP)
-2. **Vision LLM 选型**: Gemini 2.5 Pro / Claude 3.5 / GPT-4o / 本地? (推荐 Gemini)
+1. **顺序**: 模块 A-D 哪个先做? (Sir 完全自由选)
+2. **Vision LLM 选型**: Gemini 2.5 Pro / Claude 3.5 / GPT-4o / 本地?
 3. **第一个 workflow**: PR 剪辑? Photoshop 导出? Figma? (Sir 决定最常用)
 4. **远程触发渠道**: Telegram bot? 微信公众号? Pushover? (Sir 已有偏好?)
 5. **dry-run preview 时长**: 5s? 10s? (Sir 调)
 6. **危险操作清单**: delete / overwrite / publish 默认全 require 确认, Sir 是否要 customize?
 
+> 任何答案都**等 Sir 真说要 sprint 时**才落地. 现在只是把构思框架记下来防 idea drift.
+
 ---
 
-**状态**: 大方向 design 完, 等 Sir 拍板 sprint 时机.
-**实现总时长**: P0+P1 (MVP) = 8-13h, 全部 P0-P3 = 20-30h.
+**状态**: 未来构思 + 主框架, **细节未确定**, 不武断排 sprint 编号. Sir 真要 sprint 时再拆 detailed spec.

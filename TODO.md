@@ -32,27 +32,27 @@
 
 ---
 
-## � β.5.42 — Sir 新定位大方向 (design 已立, 等 Sir 拍板 sprint)
+## 🎯 Jarvis Future Vision — Desktop Copilot (未来构思框架, 无编号无 sprint)
 
-> Sir 16:30 真理: "脱离繁重数据工作流, 给予 Jarvis (1) 稳固交互地基 (2) 真用鼠标键盘操作复杂工作流".
+> Sir 16:40 真理: "**不要定位成 β.5.42 编号, 设计成未来构思和主框架设计, 我们还没确定细节如何实现, 这样太武断了**".
 >
-> Sir 不在家时 Jarvis 代劳 PR 剪辑 / PS 封面 / Figma 等没对外 API 但 Sir 常用桌面软件.
+> Sir 16:30 核心: "脱离繁重数据工作流, 给予 Jarvis (1) 稳固交互地基 (2) 真用鼠标键盘操作复杂工作流".
 
-| commit | 内容 |
+| 文档 | 内容 |
 |---|---|
-| `af7eaa3` | **β.5.42 design doc** `@d:\Jarvis\docs\JARVIS_DESKTOP_COPILOT_DESIGN.md` (225 行, 4 模块 P0-P3) — Vision LLM + workflow vocab + intent router + 远程触发. MVP (P0+P1) 估 8-13h, 全部 20-30h |
+| `@d:\Jarvis\docs\JARVIS_FUTURE_VISION_DESKTOP_COPILOT.md` | **未来构思框架** (改名了, 去 sprint 编号). Sir 真要做时再拆 detailed spec |
 
-**4 模块**:
-- **A**: Screen Vision (Gemini 2.5 Pro 看屏幕找元素坐标)
+**4 模块** (顺序未定):
+- **A**: Screen Vision (vision LLM 看屏幕找元素)
 - **B**: desktop_workflow_vocab.json (PR/PS/Figma workflow codify)
-- **C**: Intent router 扩 + Safety gate (Sir-not-present 5s preview, dangerous 二次确认)
-- **D**: 远程触发 (Telegram/微信 bot, Sir 出门也可)
+- **C**: Intent router 扩 + Safety gate
+- **D**: 远程触发 (Telegram/微信 bot)
 
 **约束 (Sir 真理)**:
-- 不动 LLM 重模块的交互地基 (Sir 澄清: 那些是地基, 不是繁重工作流)
+- 不动 LLM 重模块的交互地基
 - 不做 ETL / 数据流 (让 Cascade 做)
-- vision 找元素 ≥ 0.85 confidence 才点
-- Sir-可中止 preview 5s 黄金窗口
+- 算法精准 ≥ 0.85 confidence 才点
+- Sir-可中止 preview 黄金窗口
 
 ---
 
