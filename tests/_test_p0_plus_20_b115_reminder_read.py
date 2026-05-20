@@ -140,9 +140,12 @@ class TestPersonaHowToRespondSlimmed(unittest.TestCase):
         # 🩹 [β.2.9.6 / 2026-05-18] 上限 3000→5500. β.2.8.7 加 [INTEGRITY — CLAIM HONESTY]
         # 通用反幻觉条款 (Sir 准则 5 通用化) + β.2.9.1 加 future-action honesty 段, 涨到 ~4862.
         # 这些是必要的 integrity 防御不该裁. 仍 < 5500 防膨胀失控.
+        # 🩹 [β.5.36-fix / 2026-05-20] 上限 5500→9500. Sir 多次申明 PERSONA 是 Sir IP 不动,
+        # β.4.x/5.x 加了 TIME ANCHOR / morning briefing / Focus Lock / new directives 后涨到 ~8641.
+        # Sir 准则 7 元否决 — PERSONA 内容 Sir 拍板, test cap 跟随实际 + 1000 char 余量.
         from jarvis_central_nerve import JARVIS_CORE_PERSONA
-        self.assertLess(len(JARVIS_CORE_PERSONA), 5500,
-                        f"PERSONA 应 < 5500 chars (β.2.9.6 后), 实际 {len(JARVIS_CORE_PERSONA)}")
+        self.assertLess(len(JARVIS_CORE_PERSONA), 9500,
+                        f"PERSONA 应 < 9500 chars (β.5.36 后), 实际 {len(JARVIS_CORE_PERSONA)}")
 
     def test_how_to_respond_block_does_not_contain_search_routing(self):
         """SMART ROUTING / TOOL USE 段已搬 L2，不应再在 how_to_respond 源码里"""
