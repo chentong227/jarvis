@@ -789,6 +789,35 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.40-B1 / 2026-05-20] InsideJokeReflector L7 daemon (Sir 方向 B.1)
+        # 每日 03:30 LLM 扫近 7 天 STM, 提取 Sir 重复梗/称呼 (≥2 evidence + conf ≥ 0.8)
+        # propose 到 relational_state.inside_jokes review queue. Sir CLI 拍板 → active.
+        # 主脑 prompt 看 active jokes 适时引用 → Sir "他真懂我" 体感.
+        # stm_provider 复用 short_term_memory (StruggleReflector 同款 lambda).
+        self.inside_joke_reflector = None
+        try:
+            from jarvis_inside_joke_reflector import InsideJokeReflector
+            def _ijr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.inside_joke_reflector = InsideJokeReflector(
+                key_router=self.key_router,
+                stm_provider=_ijr_stm_provider,
+                relational_store=getattr(self, 'relational_state', None),
+            )
+            if self.inside_joke_reflector is not None and not self.inside_joke_reflector.is_alive():
+                self.inside_joke_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _ijr_bg
+                _ijr_bg("😄 [InsideJokeReflector] L7 daemon ready (β.5.40-B1)")
+            except Exception:
+                pass
+        except Exception as _ijr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[InsideJokeReflector] 初始化失败（非致命）：{_ijr_e}")
+            except Exception:
+                pass
+
         # 🩹 [β.5.39 / 2026-05-20] SleepPatternReflector L7 daemon
         # 每日 03:00 扫 hippocampus + history 重算 Sir 典型入睡时间, 让 ProactiveCare distance-based 公式有数据.
         self.sleep_pattern_reflector = None
