@@ -34,6 +34,37 @@ except Exception:  # pragma: no cover
         print(msg)
 
 
+# 🩹 [β.5.39 / 2026-05-20] Sir sleep pattern vocab (准则 6 mtime cache)
+_SIR_SLEEP_PATTERN_PATH = os.path.join('memory_pool', 'sir_sleep_pattern_vocab.json')
+_SIR_SLEEP_PATTERN_CACHE: dict = {}
+_SIR_SLEEP_PATTERN_MTIME: float = 0.0
+
+
+def _load_sir_sleep_pattern() -> dict:
+    """读 memory_pool/sir_sleep_pattern_vocab.json typical_sleep_hour 段.
+    返 {'weekday': float|None, 'weekend': float|None, 'tolerance_hours': float}.
+    失败 fallback 全 None (caller 走老硬规则).
+    """
+    global _SIR_SLEEP_PATTERN_CACHE, _SIR_SLEEP_PATTERN_MTIME
+    try:
+        mt = os.path.getmtime(_SIR_SLEEP_PATTERN_PATH)
+        if mt == _SIR_SLEEP_PATTERN_MTIME and _SIR_SLEEP_PATTERN_CACHE:
+            return _SIR_SLEEP_PATTERN_CACHE
+        with open(_SIR_SLEEP_PATTERN_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        typ = data.get('typical_sleep_hour', {}) or {}
+        result = {
+            'weekday': typ.get('weekday'),
+            'weekend': typ.get('weekend'),
+            'tolerance_hours': typ.get('tolerance_hours', 1.0),
+        }
+        _SIR_SLEEP_PATTERN_CACHE = result
+        _SIR_SLEEP_PATTERN_MTIME = mt
+        return result
+    except Exception:
+        return {'weekday': None, 'weekend': None, 'tolerance_hours': 1.0}
+
+
 # ============================================================
 # Tunables (集中在顶部, 方便 Sir 调)
 # ============================================================
@@ -223,12 +254,61 @@ class CareConcernSensor:
             pass
 
         # rule 2: 凌晨 1-5 点 + 仍活跃 → sleep_streak
+        # 🩹 [β.5.39 / 2026-05-20] Sir 15:18 真理: 不要硬编码 22:00 / 凌晨 1-5,
+        # 看 sir_sleep_pattern_vocab 中 typical_sleep_hour, distance-based 自适应 urgency.
+        # 仍保留老规则做 fallback (vocab 未填充时, 凌晨硬规则触低 severity)
         try:
             hour = time.localtime().tm_hour
             idle_s = snap.get('idle_seconds', 999)
-            if 1 <= hour <= 5 and idle_s < 60:
+            # 优先: vocab evidence-based 公式
+            typical = _load_sir_sleep_pattern()
+            now_local = time.localtime()
+            is_weekday = now_local.tm_wday < 5
+            typ_hour = typical.get('weekday') if is_weekday else typical.get('weekend')
+            if typ_hour is not None and idle_s < 60:
+                # 跨午夜: 当前 hour < 6 → +24 算前一晚延续
+                current_h = hour + 24 if hour < 6 else hour
+                distance = current_h - typ_hour  # 负 = 早于平时, 正 = 晚于平时
+                if distance > 2:
+                    severity = 0.0  # 远早, 不催
+                elif distance > 1:
+                    severity = 0.03  # 轻关心
+                elif distance > 0:
+                    severity = 0.06  # 适度
+                elif distance > -1:
+                    severity = 0.10  # 接近 (前 1h)
+                else:
+                    severity = 0.04  # 还很早 (距 typical > 1h, 不催)
+                if severity > 0:
+                    if self._signal('sir_sleep_streak', 'late_night_active',
+                                      f"hour={hour}, typical={typ_hour}h, distance={distance:+.1f}h ({'weekday' if is_weekday else 'weekend'})",
+                                      severity):
+                        n += 1
+                        # publish SWM signal (sir_sleep_pattern_distance) 让主脑看
+                        try:
+                            from jarvis_utils import get_event_bus as _geb
+                            _bus = _geb()
+                            if _bus is not None:
+                                _bus.publish(
+                                    etype='sir_sleep_pattern',
+                                    description=f"current={hour}h typical={typ_hour}h dist={distance:+.1f}h ({'weekday' if is_weekday else 'weekend'})",
+                                    source='ProactiveCare',
+                                    salience=min(0.4 + abs(distance) * 0.1, 0.9),
+                                    metadata={
+                                        'kind': 'sleep_distance',
+                                        'current_hour': hour,
+                                        'typical_hour': typ_hour,
+                                        'distance_h': round(distance, 2),
+                                        'is_weekday': is_weekday,
+                                        'urgency_severity': severity,
+                                    },
+                                )
+                        except Exception:
+                            pass
+            # fallback: 老硬规则 (vocab 未填充时)
+            elif typ_hour is None and 1 <= hour <= 5 and idle_s < 60:
                 if self._signal('sir_sleep_streak', 'late_night_active',
-                                  f"active at {hour}:00 (idle={idle_s}s)", 0.06):
+                                  f"active at {hour}:00 (idle={idle_s}s) [vocab unfilled fallback]", 0.06):
                     n += 1
         except Exception:
             pass

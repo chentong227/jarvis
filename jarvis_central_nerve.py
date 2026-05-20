@@ -789,6 +789,28 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [β.5.39 / 2026-05-20] SleepPatternReflector L7 daemon
+        # 每日 03:00 扫 hippocampus + history 重算 Sir 典型入睡时间, 让 ProactiveCare distance-based 公式有数据.
+        self.sleep_pattern_reflector = None
+        try:
+            from jarvis_sleep_pattern_reflector import SleepPatternReflector
+            self.sleep_pattern_reflector = SleepPatternReflector(
+                hippocampus=getattr(self, 'hippocampus', None),
+            )
+            if self.sleep_pattern_reflector is not None and not self.sleep_pattern_reflector.is_alive():
+                self.sleep_pattern_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _spr_bg
+                _spr_bg("💤 [SleepPatternReflector] L7 vocab daemon ready (β.5.39)")
+            except Exception:
+                pass
+        except Exception as _spr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SleepPatternReflector] 初始化失败（非致命）：{_spr_e}")
+            except Exception:
+                pass
+
         # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
         # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
         # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
@@ -3174,6 +3196,22 @@ User: {new_cmd}
         detector = getattr(self, 'sleep_detector', None)
         if detector:
             detector.confirm_sleep()
+
+        # 🩹 [β.5.39 / 2026-05-20] log sleep event 到 sir_sleep_pattern_vocab
+        # 让 L7 reflector + ProactiveCare distance 公式有数据 (Sir 真理动态催睡)
+        try:
+            from jarvis_sleep_pattern_reflector import log_sleep_event
+            now = time.localtime()
+            sleep_hour = now.tm_hour + now.tm_min / 60.0
+            if now.tm_hour < 6:
+                sleep_hour += 24  # 跨午夜算 24+
+            log_sleep_event(sleep_hour, source='nerve_trigger_sleep_mode')
+        except Exception as _e_log:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [_trigger_sleep_mode] log_sleep_event err: {_e_log}")
+            except Exception:
+                pass
 
         import threading
         threading.Thread(target=self._trigger_end_of_day_archive, daemon=True).start()

@@ -942,10 +942,16 @@ def _trigger_morning_mood_judge(ctx: DirectiveContext) -> bool:
 
 
 def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
-    """Sir > 23:00 还在 chat → 注入 late-night care directive.
-    主脑看 SWM physio / work_duration + Sir 个人入睡习惯, 自决: 安静放音乐 / 提醒休息 / 不打扰.
+    """Sir 接近平时入睡时间 → 注入 late-night care directive (β.5.39 sir_sleep_pattern aware).
+    
+    优先看 SWM sir_sleep_pattern (β.5.39 ProactiveCare publish), 若 distance < 2h 即触发.
+    fallback: vocab 未填充时, current_hour >= 22 触发.
     """
-    return ctx.current_hour >= 23 or ctx.current_hour < 2
+    # 优先: SWM sir_sleep_pattern signal (β.5.39 distance-based)
+    if _swm_has_recent('sir_sleep_pattern', max_age_s=1800.0):
+        return True
+    # fallback: vocab 未填充时, 老时段硬规则
+    return ctx.current_hour >= 22 or ctx.current_hour < 2
 
 
 def _trigger_silent_company_judge(ctx: DirectiveContext) -> bool:
@@ -1620,13 +1626,19 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             ttl_days=120,
             tier_whitelist=[],
             text=_tw.dedent("""\
-                [LATE NIGHT CARE JUDGE - β.5.38]:
-                当前 ≥ 23:00 或 < 02:00 (深夜时段). Sir 还在屏前.
+                [LATE NIGHT CARE JUDGE - β.5.38 / β.5.39]:
+                Sir 接近 (或超过) 平时入睡时间. β.5.39 新加 SWM sir_sleep_pattern signal,
+                看 metadata.distance_h:
+                  - distance < -1h (远早): 不催, silence
+                  - distance -1 ~ 0h (1h 内, 提前): 轻提
+                  - distance 0 ~ 1h (刚过平时): 适度
+                  - distance > 1h (超出 1h): 强催, 关切 tone
+
                 你看 SWM:
+                  - sir_sleep_pattern (β.5.39 distance-based, 优先 - Sir 真实习惯)
                   - work_session_duration (Sir 连续工作多久)
                   - sir_struggle_observed (Sir 是否被困住)
                   - sleep_intent_signal (Sir 是否提过要睡)
-                  - sir profile 的"通常入睡时间" (concerns ledger 可能有)
 
                 场景 A — Sir 正在 deep work (work_duration > 2h, 无 struggle):
                   保持静默, 不打扰. 如 Sir 主动说话, tone 偏 quiet (不大声 / 不刺激).
@@ -1635,9 +1647,13 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   柔声 offer help. 同时点一句 "夜深了, 实在不行明天再看".
 
                 场景 C — Sir 闲聊 (无 struggle, work_duration 短):
-                  自然陪聊. 偶尔 (≥ 02:00) 温柔提醒"已经凌晨了 Sir".
+                  自然陪聊. distance > 1h 才温柔提醒"已经过您平时睡点 1h 了 Sir".
+
+                场景 D — sleep_intent_signal 有 (Sir 表态"晚点睡"):
+                  ack Sir 表态, 不重复催. 等到 distance 显著 (> 1h) 再轻提.
 
                 FORBIDDEN:
+                  - 硬编码 "22:00" "凌晨" 这种死时间 — 用 distance 描述 ("您比平时睡晚 X 分钟")
                   - 频繁催 Sir 睡觉 (Sir 烦)
                   - 用 "您应该 / Sir, you should" 命令式 — 用 invitation tone
                   - 假装"我也累了" (你是 AI 没感情, 准则 5)
