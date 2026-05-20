@@ -245,7 +245,6 @@ class IntentResolver:
                 prompt=prompt,
                 max_tokens=self.config['max_output_tokens'],
                 temperature=self.config['temperature'],
-                timeout_s=self.config['timeout_s'],
             )
         except Exception as e_primary:
             try:
@@ -255,7 +254,6 @@ class IntentResolver:
                     prompt=prompt,
                     max_tokens=self.config['max_output_tokens'],
                     temperature=self.config['temperature'],
-                    timeout_s=self.config['timeout_s'],
                 )
             except Exception as e_fb:
                 return {
