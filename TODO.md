@@ -1,11 +1,48 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 10:33 (β.5.31-33 - TIME ANCHOR 防时间幻觉 + dismissal 光速 wake 30s grace + Cross-session callback PROACTIVITY_NEXT §E 落地, 5 commits 全 sub-batch 测过).
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→156 行 (< 300 cap, AGENTS.md 章程).
+> **更新**: 2026-05-20 12:42 (β.5.34 BUG 1+4 小修 + β.5.35-A/B/C/D BUG 2 大修, 5 commits 全 sub-batch 测过 182 pass).
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 684→167 行 (< 300 cap, AGENTS.md 章程).
 
 ---
 
-## 🚧 当前迭代 (β.5.22 → β.5.25 / 2026-05-19 23:01 → 05-20 02:34, 10 commits)
+## 🚨 当前迭代 (β.5.34/35 / 2026-05-20 10:46 → 12:42, 5 commits) — Sir 10:46 实测 4 BUG 治本
+
+### β.5.34 BUG 1 + 4 小修 (单 commit)
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `8c633a4` | β.5.34 | **BUG 1 早安 morning briefing 评级反转** — `jarvis_chat_bypass.py:3710-3758` 翻转 β.4.12 "should NOT bring up" 抑制, 改 `[MORNING BRIEFING POSTURE]` evidence-only 让主脑参考 SOUL inject (concerns/threads/unfinished/attention) 自决列简报 + **BUG 4 Focus Lock UI 真激活** — `jarvis_worker.py:3262-3274` 在 focus_lock 后端激活时同步 emit `("focus", True)` → `SubtitleOverlay.set_focus_mode(True)` 触发 → UI overlay 持续显示等 Sir 回应 (而不是淡出消失) + test 跟 Sir β.5.34 决策反转 (β.4.12 推翻) + 顺手修 β.5.22-D `sleep_due` test | 13+4 pass |
+
+### β.5.35 BUG 2 大修 (4 sub-commits) — Design doc: `docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md`
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `d32da6b` | **β.5.35-A/B** | **screen_tease vocab 持久化 + L7 reflector** — `memory_pool/screen_tease_vocab.json` (5 seed: error_debugging / entertainment / slacking / reading_docs / ide_focus) + `scripts/screen_tease_vocab_dump.py` CLI (active/review/add/activate/reject/deactivate) + `jarvis_smart_nudge.py._load_screen_tease_vocab` mtime cache (替代硬编码 error_kw/fun_kw/slack_kw) + `jarvis_screen_tease_reflector.py` 新 daemon (24h 1 跑 OpenRouter cheap, 看 PhysicalEnvironmentProbe.window_history 提取 unmatched titles → propose review_queue) + central_nerve 启动 wire | 12+11 pass |
+| `24b88e4` | **β.5.35-C** | **offer_help 触发源重设 + sir_struggle_vocab** — `memory_pool/sir_struggle_vocab.json` (10 seed phrase: stuck/frustrated/asking_how/expletive/confusion × zh/en, severity high/medium) + `scripts/struggle_vocab_dump.py` CLI + `jarvis_worker.py` VoiceListenThread `_load_struggle_vocab + _detect_sir_struggle` (ASR 出口 hook 命中写 `last_struggle_at/phrase_id/severity/text`) + `jarvis_conductor.py._check_path_a` 加 SirStruggleVocab 优先路径 (fresh ≤90s 直触 offer_help, bypass cooldown) + ProactiveShield path 改 `screen_tease` 而非 offer_help (语义解耦) + `_dispatch_path_a` 透传 struggle context 到 nudge_context + `jarvis_chat_bypass.py:3782-3805` offer_help directive 改 evidence-driven 引 Sir 原话 + `_test_p2_refusal_and_audio.py` regex 顺手修 (pre-existing) | 20 pass |
+| `031231e` | **β.5.35-D** | **StruggleReflector L7 vocab daemon** — `jarvis_struggle_reflector.py` 新 (24h 1 跑 OpenRouter cheap, 看 STM `[src=user_voice]` 提取 ≥2 evidence 的新 struggle phrase → propose review_queue, Sir CLI `struggle_vocab_dump.py --review-list / --activate` 拍板) + central_nerve 启动 wire (stm_provider 复用 WeeklyReflector 风格) | 12 pass |
+
+### Sir 真机实测 check list (β.5.34/5.35 落地完, Sir 重启实测)
+
+| BUG | check 项 | 预期 | 备用 CLI |
+|---|---|---|---|
+| **BUG 1** | 早安第一次说话 (跨夜 AFK + morning_window) | Jarvis morning briefing 列 1-2 件 concerns/threads/unfinished (不是普通 welcome back) | - |
+| **BUG 4** | Sir 收到任意 nudge (offer_help / proactive_care / sleep_due) | UI 字幕 overlay 持续显示 (不淡出), 90s 内 Sir 不喊唤醒词直接说话能 ASR | log `[Focus Lock]` + UI subtitle stay |
+| **BUG 2-tease** | Sir 切到 IDE / 文档 / SO 窗口 | screen_tease 调皮观察 (不再"一周静音") | `python scripts/screen_tease_vocab_dump.py --active-only` |
+| **BUG 2-tease L7** | 24h 后看是否 propose 新 category | `screen_tease_vocab.json` `review_queue` 非空 | `python scripts/screen_tease_vocab_dump.py --review-list` |
+| **BUG 2-help** | Sir 说"卡住" / "搞不定" / "fuck" / "怎么办" | Conductor 30-90s 内 offer_help (引 Sir 原话, 不说工具名) | log `🆘 [SirStruggle] phrase=...` |
+| **BUG 2-help L7** | 24h 后 STM 含 ≥30 user_voice → propose 新 struggle phrase | `sir_struggle_vocab.json` `review_queue` 非空 | `python scripts/struggle_vocab_dump.py --review-list` |
+| **BUG 2-shield** | 屏幕看到 error keyword (β.4.X 触发 offer_help 误推) | 改触发 screen_tease (调皮观察, 非"need help") | log `Tease Screen` not `Offer Help` |
+
+### β.5.36 (待 Sir 实测稳定后启动) — BUG 3 工具名泄漏大修
+| sub-step | 内容 | 工期估 |
+|---|---|---|
+| E | `memory_pool/intent_to_tool_map.json` + `scripts/intent_map_dump.py` CLI | 1.5h |
+| F | `skill_registry.to_prompt_block` 改双轨 (intent + 禁工具名) | 1h |
+| G | `jarvis_intent_router.py` 后端 `<TOOL_CALL>{intent}` 解析 + 调用 + SWM evidence 回流 | 3h |
+| H | Audio Guard 扩到 subtitle / STM path | 0.5h |
+| I | regression test (~20 testcase) | 2h |
+
+---
+
+## 🚧 历史迭代 (β.5.22 → β.5.25 / 2026-05-19 23:01 → 05-20 02:34, 10 commits)
 
 ### β.5.22 Sir 01:22 实测 BUG 治本 (7 sub-step)
 | commit | marker | 内容 | testcase |
