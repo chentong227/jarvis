@@ -4,7 +4,7 @@
     "created_at": "2026-05-20T11:50:00",
     "purpose": "Sir 抱怨 / 困难表达 vocab — Conductor offer_help 主触发源 (β.5.35-C)",
     "doc": "docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md",
-    "updated_at": "2026-05-20T12:38:15"
+    "updated_at": "2026-05-20T13:08:23"
   },
   "phrases": [
     {
@@ -83,13 +83,19 @@
       "id": "expletive_zh",
       "state": "active",
       "patterns": [
-        "靠",
-        "我去",
+        "卧槽",
         "妈的",
-        "服了"
+        "服了",
+        "tmd",
+        "我擦"
       ],
       "severity": "medium",
-      "source": "β.5.35-C seed (轻度抱怨 marker)"
+      "source": "β.5.35-C seed → β.5.36-fix2 (Sir 13:03 实测 \"我去休息\" 误命中老 \"我去\" / \"靠\" 也容易误触, 改更精确)",
+      "rejected_patterns": [
+        "靠",
+        "我去"
+      ],
+      "rejected_reason": "Sir 13:03:32 \"我要去休息一下,我去休息一下\" → \"我去\" substring 误命中 → 47s 后误触 offer_help. \"靠\" 同样在 \"靠在椅子\" 等正常表达里误命中. 改用更明确 expletive."
     },
     {
       "id": "expletive_en",

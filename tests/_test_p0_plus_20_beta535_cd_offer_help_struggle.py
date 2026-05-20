@@ -239,5 +239,46 @@ class TestBeta535COfferHelpDirectiveRewrite(unittest.TestCase):
             '[INTEGRITY] 工具名禁令必须保留 (β.5.36 BUG 3 修)')
 
 
+# ==========================================================================
+# β.5.36-fix2: 误命中守卫 (Sir 13:03 实测 "我去休息" 误触发)
+# ==========================================================================
+
+class TestBeta536Fix2GuardsAgainstFalseTrigger(unittest.TestCase):
+    """🩹 β.5.36-fix2: 3 层守卫防误触发 offer_help."""
+
+    def test_vocab_no_woqu_pattern(self):
+        """vocab `expletive_zh` 必须不含 '我去' (Sir 13:03 实测误命中 '我去休息')."""
+        with open(STRUGGLE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        for p in data['phrases']:
+            if p['id'] == 'expletive_zh':
+                self.assertNotIn('我去', p['patterns'],
+                    "expletive_zh 必须不含 '我去' (β.5.36-fix2 删, 误命中 '我去休息')")
+                self.assertNotIn('靠', p['patterns'],
+                    "expletive_zh 不含 '靠' (β.5.36-fix2 删, 误命中 '靠在椅子')")
+
+    def test_conductor_sleep_intent_guard(self):
+        """jarvis_conductor.py 必须有 sleep / dismissal intent guard."""
+        with open(os.path.join(ROOT, 'jarvis_conductor.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('β.5.36-fix2', src,
+            'β.5.36-fix2 marker 必须在 jarvis_conductor.py')
+        self.assertIn('SleepGuard', src,
+            'SleepGuard log marker 必须存在')
+        # 必须含 sleep/dismiss 关键词列表
+        for kw in ('休息', '睡觉', 'goodnight', 'rest'):
+            self.assertIn(kw, src,
+                f'sleep_dismiss_kw 必须含 {kw}')
+
+    def test_conductor_short_cooldown_replaces_bypass(self):
+        """jarvis_conductor.py SirStruggleVocab path 必须 15s short cooldown 替代老 bypass."""
+        with open(os.path.join(ROOT, 'jarvis_conductor.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        # cooldown 数字必须出现 (15.0 或 15 + cooldown 关键词)
+        self.assertIn('15.0', src, 'cooldown 阈值 15.0 必须存在')
+        self.assertIn('SirStruggle/Cooldown', src,
+            'SirStruggle/Cooldown log marker 必须存在')
+
+
 if __name__ == '__main__':
     unittest.main()
