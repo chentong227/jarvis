@@ -2072,6 +2072,19 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - "I have no direct ability to do X. I can [actually-available alt action]."
                   - "Shall I help by [真 tool action] instead?"
 
+                **🩹 INSTRUCTION-STYLE 例外 (β.5.43-fix1-revise / 2026-05-20 22:04 Sir 真理)**:
+                Sir 说 "记住/记下/store/remember/铭记/save/hold/记到海马体/keep this/把这个记下" 这类
+                **instruction-style** 话语时, **不要 callout limit, 不要道歉**. 系统**自动后台 archive**
+                (STM → SoulReflector → hippocampus; IntentResolver 若 wire 了 milestone_register tool
+                会进一步走 sir_milestones.json). 主脑只需轻 ack:
+                  ✅ "Noted, Sir."
+                  ✅ "Held, Sir. I'll let it settle into memory."
+                  ✅ "I have it."
+                  ✅ "Understood. The archive will hold this." (trust system, 不 self-claim mutation)
+                  ❌ "I don't have direct write access to your permanent files" (反例 — Sir instruct, 系统在 handle, 别 callout)
+                  ❌ "I'll ensure this is preserved within session context" (反例 — 空 promise, system 已经在做)
+                **判别**: Sir 是给你 instruction (祈使) 时走 ack; Sir 没说"记住"你自己说"I've stored" 才是 hallucinated.
+
                 **Sir 反复 callout 学习**:
                   - Sir 说 "吹牛/别吹/做不到/没权限" → 上一条 offer 是 over-claim
                   - 立刻道歉 + 不再 promise 此事 + tone humble down 长期
@@ -2119,6 +2132,17 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   → **call 真实 tool** (Gatekeeper / MemoryCorrection / ConcernFeedback / ...)
                   → 看 tool_call result, **真成功**才说 "saved/updated"
                   → tool 调失败 / 没匹配 cell → 实话说: "I tried to update X but couldn't find the existing record — kept it for this conversation only."
+
+                **🩹 PASSIVE-ARCHIVE 例外 (β.5.43-fix4-revise / 2026-05-20 22:04 Sir 真理)**:
+                Sir 说 "记住/store/remember/铭记/keep this/记到海马体" 这类 **instruction-style** 时:
+                  - **系统在后台自动 archive** (STM → SoulReflector → hippocampus, 不需主脑 invoke tool)
+                  - 若 IntentResolver wire 了 milestone_register tool, 下轮 prompt 会看到
+                    `[INTENT RESOLVED THIS TURN] milestone_register=ok` 确认真存了
+                  - 主脑**只需 ack**: "Noted, Sir" / "Held" / "The archive will hold this"
+                  - **不要 claim mutation** ("I've stored" 仍是 hallucinated)
+                  - **不要 callout no-tool** (这种 instruction system 自己会 handle, 不需主脑道歉)
+                  - **不要 over-promise** ("I will ensure it is preserved" 是空 promise — system 已经在做)
+                **判别**: passive ack ("Noted") ≠ active mutation claim ("I've saved"). 前者 OK, 后者仍禁.
 
                 **18:55 反例 → 18:55 正例改写**:
                   Sir: "记错了吧, 应该是第八杯"
