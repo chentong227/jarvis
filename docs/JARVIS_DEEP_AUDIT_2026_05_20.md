@@ -244,3 +244,45 @@ Sir 说"26 岁", STM 写 26, profile 写 25, correction.jsonl 写 26, Hippocampu
 
 *文档作者: Sir 23:11 真授权 + Cascade 23:25 沉淀 / 2026-05-20*
 *这是今晚 23 commit 后第 1 次完整 audit. 每个 P3+ 实施完后再做一次类似 audit.*
+
+---
+
+## 8. 🆕 P3 完工状态 (Sir 23:28 拍板, Cascade 23:33 完成)
+
+### 5 of 7 BUG done (commit `e815b26`, 14 testcase, 93/93 pass)
+
+| BUG | 描述 | 状态 |
+|---|---|---|
+| **#1** | RecentNudgeMemory 半残 — stream_chat 主对话不 record | ✅ done (channel='main_chat' wired) |
+| **#2** | worker.py:4416 memory_correction 没经 MemoryGateway | ✅ done (迁 update_sir_field + weight 0.7) |
+| **#3** | ProfileReflector stub + default off | ⏸️ **deferred** — Sir IP 风险, 需 Sir 拍板真 LLM-propose + apply |
+| **#4** | publish-only audit 仅诊断没 retire | ⏸️ **deferred** — 4 sentinel refactor 风险大, 需 Sir 选先做哪 1 个 |
+| **#5** | tool_concern_progress_update 只 cover 'progress' alias | ✅ done (扩 5 alias: progress/value/count/amount/done) |
+| **#6** | ClaimTracer SWM lookback 60s 不够 | ✅ done (default 180s) |
+| **#7** | jsonl rotation 缺失 | ✅ done (新 jarvis_jsonl_rotator.py + wire 2 module) |
+
+### 14 工程项总盘 (P0+P1+P2+P3 done, Gap 1-6 + 剩余 deferred)
+
+| Tier | # 项 | 状态 |
+|---|---|---|
+| P0 (signature) | 3 | ✅ all done |
+| P1 (ClaimTracer-SWM / Schema / publish_intent) | 3 | ✅ all done |
+| P2 (Gateway / RecentNudge / Reflector / audit) | 4 | ✅ minimal done |
+| P3 (boundary BUG) | 5/7 | ⚠️ 5 done, 2 deferred |
+| Gap 1-6 (扩展架构) | 0/6 | ❌ design only |
+| 盲点 #8/#11/#14 | 0/3 | ❌ TODO |
+| **总计** | **15/26** | **58%** |
+
+### Sir 拍板待决定
+
+要么:
+- **A. 收工等真机验**: 重启 Jarvis → 真机测 → 通过后 push 28 commit
+- **B. 继续 P3 deferred**: BUG #3 (Sir IP 风险) 或 BUG #4 (大工程 refactor)
+- **C. 跳到 P4 Gap 2** (Reply PreFlight): 治根 道歉/hallucination
+- **D. 跳到 P5 Gap 1** (ToM): 扩展 Sir-aware 维度
+
+Cascade 推荐: **先 A** (验真机) → 然后 **B 中的 BUG #4 publish-only 真 refactor 1 个 sentinel** (e.g. ReturnSentinel, low risk) → 然后 P4 Gap 2.
+
+---
+
+*P3 update by Cascade / 23:33 / commit e815b26*
