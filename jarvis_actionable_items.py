@@ -108,7 +108,12 @@ def _is_acked(item_id: str, ack_state: dict = None) -> bool:
 # ============================================================
 
 def _extract_concerns(ack_state: dict) -> List[ActionableItem]:
-    """Cat 1 + 12: concerns review + active."""
+    """Cat 1 + 12: concerns review + active.
+    
+    🩹 [β.5.43-fix2-C / 2026-05-20 18:18] Sir 真理 — dashboard 显示真实 nudge 概率.
+    raw severity 反复涨 (sensor rule 累加), 但 urgency = severity * progress_mul * timing_mul
+    才是真实 nudge 阈值. 显示 urgency 给 Sir 体感对 (不再看 raw severity 一直 100).
+    """
     items = []
     data = _safe_read_json(os.path.join(MEM, 'concerns.json'), {})
     for cid, c in (data.get('concerns') or {}).items():
@@ -117,20 +122,47 @@ def _extract_concerns(ack_state: dict) -> List[ActionableItem]:
         st = c.get('state', 'active')
         if st not in ('review', 'active'):
             continue
+        sev_raw = float(c.get('severity', 0.0) or 0.0)
+        # 算 progress_mul (跟 ProactiveCare.compute_urgency 同公式)
+        prog_mul = 1.0
+        prog_pct = ''
+        dp = c.get('daily_progress', {}) or {}
+        try:
+            today_iso = time.strftime('%Y-%m-%d', time.localtime())
+            if dp.get('iso_date') == today_iso:
+                cur = float(dp.get('current', 0) or 0)
+                tgt = float(dp.get('target', 0) or 0)
+                if tgt > 0 and cur > 0:
+                    ratio = min(1.0, cur / tgt)
+                    prog_mul = max(0.3, 1.0 - ratio * 0.7)
+                    prog_pct = f' (progress {cur:.0f}/{tgt:.0f})'
+        except Exception:
+            pass
+        urgency = max(0.0, min(1.0, sev_raw * prog_mul))
         items.append(ActionableItem(
             id=cid,
             category='concern',
             subcategory=st,
             state=st,
-            preview=_truncate(f"{cid}: {c.get('what_i_watch', '')}", 100),
+            preview=_truncate(
+                f"{cid}: {c.get('what_i_watch', '')} "
+                f"[urg={urgency*100:.0f}, sev_raw={sev_raw*100:.0f}{prog_pct}]",
+                140,
+            ),
             fields={
                 'what_i_watch': c.get('what_i_watch', ''),
                 'why_i_care': c.get('why_i_care', ''),
-                'severity': c.get('severity', 0.0),
+                'severity': sev_raw,           # raw severity (sensor 累加)
+                'urgency': round(urgency, 3),  # 真实 nudge 阈值 (削 progress 后)
+                'progress_mul': round(prog_mul, 3),
+                'daily_progress': dp,
                 'optimal_timing': c.get('optimal_timing', ''),
                 'notes_for_self': c.get('notes_for_self', ''),
             },
-            impact_if_modified='Jarvis 下次 SOUL inject 看到的新文本/severity 影响主脑 nudge 倾向',
+            impact_if_modified=(
+                'Jarvis 下次 SOUL inject 看到新文本/severity 影响主脑 nudge 倾向. '
+                'urgency = severity × progress_mul × timing_mul 才是真实 nudge 概率'
+            ),
             impact_if_deleted='Jarvis 不再 watch 这个 concern, 不再 nudge',
             source_file='memory_pool/concerns.json',
             source_path=f'concerns.{cid}',
@@ -620,3 +652,349 @@ def get_recent_corrections(hours: float = 24.0, limit: int = 50) -> list:
     cutoff = time.time() - hours * 3600
     recent = [e for e in entries if float(e.get('ts', 0)) >= cutoff]
     return recent[-limit:]
+
+
+# ============================================================
+# Mutation Handlers (per-source-file)
+# ============================================================
+
+def _save_json(path: str, data: Any) -> bool:
+    try:
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        return False
+
+
+def _mutate_relational_state(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 relational_state.json 中的 inside_jokes / threads / protocols / unfinished."""
+    path = os.path.join(MEM, 'relational_state.json')
+    data = _safe_read_json(path, {})
+    parts = item.source_path.split('.')
+    if len(parts) != 2:
+        return False, f'bad source_path: {item.source_path}'
+    section, sid = parts
+    if section not in data:
+        return False, f'section {section} not in relational_state'
+    if sid not in data[section]:
+        return False, f'id {sid} not found in {section}'
+    target = data[section][sid]
+    old_snapshot = {k: target.get(k) for k in (new_fields or {})}
+
+    if action == 'modify':
+        if not new_fields:
+            return False, 'modify needs new_fields'
+        for k, v in new_fields.items():
+            target[k] = v
+    elif action == 'delete':
+        target['state'] = 'archived'
+    elif action == 'restore':
+        target['state'] = 'active'
+    elif action == 'activate':
+        if target.get('state') == 'review':
+            target['state'] = 'active'
+        else:
+            return False, f'not in review state (is {target.get("state")})'
+    elif action == 'reject':
+        if target.get('state') == 'review':
+            target['state'] = 'archived'
+        else:
+            return False, f'not in review state'
+    else:
+        return False, f'unknown action {action}'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'old': old_snapshot, 'new': new_fields or {}}
+
+
+def _mutate_concerns(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 concerns.json."""
+    path = os.path.join(MEM, 'concerns.json')
+    data = _safe_read_json(path, {})
+    parts = item.source_path.split('.', 1)
+    if len(parts) != 2:
+        return False, f'bad source_path: {item.source_path}'
+    cid = parts[1]
+    concerns = data.get('concerns') or {}
+    if cid not in concerns:
+        return False, f'concern {cid} not found'
+    target = concerns[cid]
+    old_snapshot = {k: target.get(k) for k in (new_fields or {})}
+
+    if action == 'modify':
+        if not new_fields:
+            return False, 'modify needs new_fields'
+        for k, v in new_fields.items():
+            target[k] = v
+    elif action == 'delete':
+        target['state'] = 'archived'
+    elif action == 'restore':
+        target['state'] = 'active'
+    elif action == 'activate':
+        if target.get('state') == 'review':
+            target['state'] = 'active'
+    elif action == 'reject':
+        if target.get('state') == 'review':
+            target['state'] = 'archived'
+    else:
+        return False, f'unknown action {action}'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'old': old_snapshot, 'new': new_fields or {}}
+
+
+def _mutate_vocab_list(vocab_name: str, item: ActionableItem, action: str,
+                        new_fields: dict = None) -> tuple:
+    """通用 vocab list (review_queue / phrases / categories / directives)."""
+    path = os.path.join(MEM, vocab_name)
+    data = _safe_read_json(path, {})
+    parts = item.source_path.split('.', 1)
+    if len(parts) != 2:
+        return False, f'bad source_path: {item.source_path}'
+    list_key, target_id = parts
+    arr = data.get(list_key) or []
+    if not isinstance(arr, list):
+        return False, f'{list_key} not a list'
+    target = None
+    target_idx = None
+    for i, it in enumerate(arr):
+        if isinstance(it, dict) and it.get('id') == target_id:
+            target = it
+            target_idx = i
+            break
+    if target is None:
+        return False, f'id {target_id} not in {list_key}'
+    old_snapshot = {k: target.get(k) for k in (new_fields or {})}
+
+    if action == 'modify':
+        if not new_fields:
+            return False, 'modify needs new_fields'
+        for k, v in new_fields.items():
+            target[k] = v
+    elif action == 'delete':
+        target['state'] = 'archived'
+        if list_key == 'review_queue':
+            # 从 review_queue 拿出放 rejected_history (legacy 兼容)
+            arr.pop(target_idx)
+            data.setdefault('rejected_history', []).append(target)
+    elif action == 'restore':
+        target['state'] = 'active'
+        # 从 rejected_history 回去 phrases / categories / etc 不实现 (复杂); 仅改 state
+    elif action == 'activate':
+        if list_key == 'review_queue' and target.get('state') == 'review':
+            target['state'] = 'active'
+            arr.pop(target_idx)
+            # 决定放到哪个 active list (basics: phrases / categories / directives / etc)
+            for active_key in ('phrases', 'categories', 'directives'):
+                if active_key in data and isinstance(data[active_key], list):
+                    data[active_key].append(target)
+                    break
+            else:
+                data.setdefault('phrases', []).append(target)  # fallback
+        else:
+            return False, f'not in review state'
+    elif action == 'reject':
+        if list_key == 'review_queue' and target.get('state') == 'review':
+            target['state'] = 'rejected'
+            arr.pop(target_idx)
+            data.setdefault('rejected_history', []).append(target)
+        else:
+            return False, f'not in review state'
+    else:
+        return False, f'unknown action {action}'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'old': old_snapshot, 'new': new_fields or {}}
+
+
+def _mutate_callback(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 cross_session_callback.json."""
+    path = os.path.join(MEM, 'cross_session_callback.json')
+    data = _safe_read_json(path, {})
+    cbs = data.get('callbacks') or {}
+    cid = item.id
+    if cid not in cbs:
+        return False, f'callback {cid} not found'
+    target = cbs[cid]
+    old_snapshot = {k: target.get(k) for k in (new_fields or {})}
+
+    if action == 'modify':
+        for k, v in (new_fields or {}).items():
+            target[k] = v
+    elif action == 'delete':
+        target['state'] = 'archived'
+    elif action == 'restore':
+        target['state'] = 'active'
+    elif action == 'activate':
+        if target.get('state') == 'review':
+            target['state'] = 'active'
+    elif action == 'reject':
+        if target.get('state') == 'review':
+            target['state'] = 'archived'
+    else:
+        return False, f'unknown action {action}'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'old': old_snapshot, 'new': new_fields or {}}
+
+
+def _mutate_sir_profile(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 sir_profile.json. Only modify supported, no delete (太危险)."""
+    path = os.path.join(CFG, 'sir_profile.json')
+    data = _safe_read_json(path, {})
+    field_name = item.source_path  # top-level field
+    old_value = data.get(field_name)
+
+    if action == 'modify':
+        if not new_fields or field_name not in new_fields:
+            return False, f'modify needs new_fields[{field_name}]'
+        data[field_name] = new_fields[field_name]
+    elif action == 'delete':
+        # Sir 删 profile field — 不真删, 设 null (避免 schema 破坏)
+        data[field_name] = None
+    else:
+        return False, f'action {action} not supported on sir_profile (only modify/delete)'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'old': {field_name: old_value}, 'new': new_fields or {field_name: None}}
+
+
+def _mutate_directive_review_event(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 directive_review.json 中的事件 (priority drop / etc)."""
+    path = os.path.join(MEM, 'directive_review.json')
+    arr = _safe_read_json(path, [])
+    if not isinstance(arr, list):
+        return False, 'directive_review not a list'
+    # item.id 形如 'dir_review:<id>_<enq_at[:10]>'
+    raw_id = item.id.split(':', 1)[1] if ':' in item.id else item.id
+    target = None
+    target_idx = None
+    for i, e in enumerate(arr):
+        eid_concat = f"{e.get('id', '?')}_{e.get('enqueued_at', '')[:10]}"
+        if eid_concat == raw_id:
+            target = e
+            target_idx = i
+            break
+    if target is None:
+        return False, f'event {raw_id} not found'
+
+    if action in ('delete', 'reject', 'activate'):
+        arr.pop(target_idx)  # 单一动作: 移除事件
+    else:
+        return False, f'action {action} not supported on directive_review event'
+
+    if not _save_json(path, arr):
+        return False, 'save failed'
+    return True, {'removed_entry': target}
+
+
+def _mutate_cooldown_review(item: ActionableItem, action: str, new_fields: dict = None) -> tuple:
+    """处理 proactive_care_cooldown_vocab.json review_queue."""
+    path = os.path.join(MEM, 'proactive_care_cooldown_vocab.json')
+    data = _safe_read_json(path, {})
+    arr = data.get('review_queue') or []
+    # item.id 形如 'cooldown:<key>'
+    key = item.id.split(':', 1)[1] if ':' in item.id else item.id
+    target_idx = None
+    target = None
+    for i, e in enumerate(arr):
+        if e.get('key') == key:
+            target = e
+            target_idx = i
+            break
+    if target is None:
+        return False, f'cooldown review for {key} not found'
+
+    if action == 'activate':
+        # apply proposed value to current
+        cur = data.setdefault('current', {})
+        cur[key] = target.get('proposed')
+        # archive event
+        arr.pop(target_idx)
+        data.setdefault('history', []).append({
+            'when': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'key': key,
+            'old': target.get('current'),
+            'new': target.get('proposed'),
+            'source': 'sir_activate',
+        })
+    elif action in ('delete', 'reject'):
+        arr.pop(target_idx)
+    else:
+        return False, f'action {action} not supported on cooldown review'
+
+    if not _save_json(path, data):
+        return False, 'save failed'
+    return True, {'cooldown_action': action}
+
+
+# Source file → mutation handler
+_MUTATION_DISPATCH = {
+    'memory_pool/concerns.json': _mutate_concerns,
+    'memory_pool/relational_state.json': _mutate_relational_state,
+    'memory_pool/screen_tease_vocab.json': lambda i, a, n: _mutate_vocab_list('screen_tease_vocab.json', i, a, n),
+    'memory_pool/sir_struggle_vocab.json': lambda i, a, n: _mutate_vocab_list('sir_struggle_vocab.json', i, a, n),
+    'memory_pool/directives_vocab.json': lambda i, a, n: _mutate_vocab_list('directives_vocab.json', i, a, n),
+    'memory_pool/sir_sleep_pattern_vocab.json': lambda i, a, n: _mutate_vocab_list('sir_sleep_pattern_vocab.json', i, a, n),
+    'memory_pool/behavior_inference_vocab.json': lambda i, a, n: _mutate_vocab_list('behavior_inference_vocab.json', i, a, n),
+    'memory_pool/cross_session_callback.json': _mutate_callback,
+    'memory_pool/proactive_care_cooldown_vocab.json': _mutate_cooldown_review,
+    'memory_pool/directive_review.json': _mutate_directive_review_event,
+    'jarvis_config/sir_profile.json': _mutate_sir_profile,
+}
+
+
+def mutate_actionable_item(item_id: str, action: str,
+                            new_fields: dict = None,
+                            sir_note: str = '') -> dict:
+    """主 mutation API. Sir 改/删/恢复/激活/拒绝 一条 actionable item.
+
+    Args:
+        item_id: ActionableItem.id
+        action: 'modify' / 'delete' / 'restore' / 'activate' / 'reject'
+        new_fields: dict (action='modify' 必填; 其他可省)
+        sir_note: Sir 的备注 (写入 corrections.jsonl)
+
+    Returns:
+        {'ok': True, 'detail': '...', 'changes': {...}} or {'ok': False, 'error': '...'}
+    """
+    item = find_item_by_id(item_id)
+    if item is None:
+        return {'ok': False, 'error': f'item {item_id} not found'}
+
+    handler = _MUTATION_DISPATCH.get(item.source_file)
+    if handler is None:
+        return {'ok': False, 'error': f'no mutation handler for {item.source_file}'}
+
+    try:
+        ok, detail = handler(item, action, new_fields)
+    except Exception as e:
+        return {'ok': False, 'error': f'mutation exception: {type(e).__name__}: {e}'}
+
+    if not ok:
+        return {'ok': False, 'error': str(detail)}
+
+    # 写 corrections log
+    _log_correction(
+        action, item,
+        old=detail.get('old', {}) if isinstance(detail, dict) else {},
+        new=new_fields or {},
+        sir_note=sir_note,
+    )
+
+    return {
+        'ok': True,
+        'detail': f'{action} succeeded',
+        'changes': detail,
+        'item_id': item_id,
+        'category': item.category,
+    }

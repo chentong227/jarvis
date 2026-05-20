@@ -503,6 +503,25 @@ class CareConcernSensor:
                   what: str, severity_delta: float) -> bool:
         if not self._can_signal(concern_id, rule_id):
             return False
+        # 🩹 [β.5.43-fix2-A / 2026-05-20 18:18] Sir 真理 — 承诺动态影响 severity.
+        # Sir 反馈 progress 后 (e.g. "喝了 6/8 杯"), ProactiveCare _signal 仍 raw
+        # 加 severity (long_session +0.03 等) → 即使 ConcernFeedback 削 severity,
+        # 下次 tick 又涨回. 修: 看 daily_progress, progress 高 → 削 severity_delta.
+        try:
+            c = self.ledger.concerns.get(concern_id)
+            if c is not None:
+                dp = getattr(c, 'daily_progress', {}) or {}
+                today_iso = time.strftime('%Y-%m-%d', time.localtime())
+                if dp.get('iso_date') == today_iso:
+                    cur = float(dp.get('current', 0) or 0)
+                    tgt = float(dp.get('target', 0) or 0)
+                    if tgt > 0 and cur > 0 and severity_delta > 0:
+                        ratio = min(1.0, cur / tgt)
+                        # progress 100% → delta * 0.1 (基本不加), 50% → * 0.65, 0% → * 1.0
+                        dampen = max(0.1, 1.0 - 0.7 * ratio)
+                        severity_delta = severity_delta * dampen
+        except Exception:
+            pass
         try:
             ok = bool(self.ledger.record_signal(concern_id, what, severity_delta))
         except Exception:

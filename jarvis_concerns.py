@@ -300,7 +300,37 @@ class ConcernsLedger:
 
             c.last_updated = now
             self._dirty = True
-            return True
+
+        # 🩹 [β.5.43-fix2-B / 2026-05-20 18:18] Sir 真理 — 统一 SWM evidence
+        # ConcernFeedback 写 progress 后 publish 'sir_progress_evidence' SWM, 让
+        # CommitmentWatcher / Memory Correction / ProfileCard 等 consumer 看同一
+        # source, 避免多点 LLM 各自提取数据不一致.
+        try:
+            from jarvis_utils import get_event_bus as _geb
+            _bus = _geb()
+            if _bus is not None and prog and isinstance(prog, dict):
+                _bus.publish(
+                    etype='sir_progress_evidence',
+                    description=(
+                        f'Sir progress on {concern_id}: '
+                        f'{prog.get("current", "?")} / {prog.get("target", "?")} '
+                        f'{prog.get("unit", "")}'
+                    ),
+                    source='ConcernFeedback',
+                    salience=0.65,
+                    metadata={
+                        'concern_id': concern_id,
+                        'progress': prog,
+                        'optimal_timing': judgement.get('optimal_timing', ''),
+                        'severity_delta': sev_d,
+                        'raw_text_excerpt': str(raw_text or '')[:200],
+                    },
+                    ttl=86400.0,  # 24h
+                )
+        except Exception:
+            pass
+
+        return True
 
     def record_alignment(self, concern_id: str, aligned: bool) -> bool:
         """[P0+20-β.2.6 / 2026-05-17] Layer 5 SoulAlignmentEvaluator 调。

@@ -1227,6 +1227,8 @@ class ConversationEventBus:
         # [β.5.43 / 2026-05-20] Sir 17:10 真理 — 交互地基 6 缺口:
         'jarvis_state': 120,               # JarvisStateTracker HUD (β.5.43-A)
         'reply_interrupted': 180,          # interrupt_all 抓 Sir cut reply (β.5.43-C)
+        # [β.5.43-fix2 / 2026-05-20] 承诺动态影响关心权重 (B 修法):
+        'sir_progress_evidence': 86400,    # ConcernFeedback 写 progress 统一 publish (24h)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1261,6 +1263,8 @@ class ConversationEventBus:
         # [β.5.43 / 2026-05-20]:
         'jarvis_state': 0.30,              # 状态变化 (e.g. ready→listening), 一般背景
         'reply_interrupted': 0.75,         # 被 Sir 打断 — 主脑必看 (高 salience)
+        # [β.5.43-fix2 / 2026-05-20] 承诺统一 SWM source:
+        'sir_progress_evidence': 0.65,     # Sir 主动反馈 progress, 主脑要看
     }
 
     def __init__(self, max_events: int = 60):
