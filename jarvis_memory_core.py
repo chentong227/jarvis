@@ -1110,6 +1110,37 @@ class SleepIntentDetector:
         print(f"[SleepDetector] Score={total:.2f} (sem={scores['semantic']:.2f} kw={scores['keyword']:.2f} "
               f"tod={scores['time_of_day']:.2f} gap={scores['activity_gap']:.2f} trend={scores['input_trend']:.2f})")
 
+        # 🩹 [β.5.37-B / 2026-05-20] SleepDetector publish-only (Sir 14:39 校正 准则 6)
+        # 不论 score 高/中/低, 都 publish 'sleep_intent_signal' 到 SWM 给主脑看自决.
+        # 主脑看 SWM evidence 自决:
+        #   - 高 score (>=0.70) 仍下行 hard 'sleep' 触发 _trigger_sleep_mode (Sir 真明确说了)
+        #   - 中 score (0.50-0.70) 不再 set pending 状态, 主脑看到 signal 自决问不问 / 等不等
+        #   - 低 score 也 publish 给主脑 awareness
+        try:
+            from jarvis_utils import get_event_bus as _geb
+            _bus = _geb()
+            if _bus is not None and total >= 0.3:
+                _bus.publish(
+                    etype='sleep_intent_signal',
+                    description=(
+                        f"score={total:.2f} sem={scores['semantic']:.2f} "
+                        f"kw={scores['keyword']:.2f} tod={scores['time_of_day']:.2f}"
+                    ),
+                    source='SleepDetector',
+                    salience=min(0.30 + total * 0.6, 0.95),
+                    metadata={
+                        'kind': 'sleep_intent',
+                        'score': round(total, 2),
+                        'breakdown': {k: round(v, 2) for k, v in scores.items()},
+                        'user_input': user_input[:120],
+                        'detected_at': self._last_detect_time,
+                        'threshold_sleep': self.SLEEP_THRESHOLD,
+                        'threshold_confirm': self.CONFIRM_THRESHOLD,
+                    },
+                )
+        except Exception:
+            pass
+
         if total >= self.SLEEP_THRESHOLD:
             return 'sleep'
         elif total >= self.CONFIRM_THRESHOLD:
@@ -1201,7 +1232,13 @@ class SleepIntentDetector:
         return 0.0
 
     def handle_confirmation_response(self, user_input: str) -> bool:
-        """处理用户对确认问题的回复, 返回 True 表示确认睡觉"""
+        """处理用户对确认问题的回复, 返回 True 表示确认睡觉.
+        
+        ⚠️ [β.5.37-B / 2026-05-20 DEPRECATED] Sir 14:39 校正: 准则 6 publish-only 改造后
+        本函数不再被 _detect_sleep_intent 调用. SleepDetector.detect publish 'sleep_intent_signal'
+        到 SWM, 主脑看 evidence 自决问 Sir 或等待. 函数留作未来 backup, 当前 dead code.
+        详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md §4.1.
+        """
         if not self._pending_confirmation:
             return False
         text = user_input.lower().strip()

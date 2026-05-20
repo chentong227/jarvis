@@ -3137,19 +3137,26 @@ User: {new_cmd}
         if not detector:
             return
 
-        if detector.is_pending_confirmation:
-            confirmed = detector.handle_confirmation_response(user_input)
-            if confirmed:
-                print(f"[CentralNerve] 用户确认休眠意图: '{user_input}'")
-                self._trigger_sleep_mode()
-            return
+        # 🩹 [β.5.37-B / 2026-05-20] SleepDetector publish-only 重构
+        # Sir 14:39 校正: 不再 handle_confirmation_response 硬 keyword match.
+        # 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md §4.1.
+        # 老路径 (硬 confirm match) revert:
+        #   if detector.is_pending_confirmation: handle_confirmation_response... ← 已删
+        # 新路径: detect() publish 'sleep_intent_signal' 到 SWM, 主脑看 evidence 自决.
+        # 仅高置信 'sleep' (score >= 0.70) 仍 hard trigger (Sir 真明确说了, 省 LLM 来回).
+        # 中置信 'confirm' (0.50-0.70) 不再 set pending, 主脑看 SWM signal 自决问 Sir or wait.
 
         result = detector.detect(user_input)
         if result == 'sleep':
             print(f"[CentralNerve] 高置信度休眠意图: '{user_input}'")
             self._trigger_sleep_mode()
         elif result == 'confirm':
-            detector.request_confirmation()
+            # β.5.37-B: 不再 request_confirmation set pending state.
+            # detect() 已 publish 'sleep_intent_signal' 到 SWM. 主脑看到自决:
+            # - 可问 Sir "您要睡了吗?"
+            # - 可等待 Sir 进一步表态
+            # - 可看到 [sir_afk_detected] 决定不再追问
+            print(f"[CentralNerve] 中置信度休眠意图 (主脑判): '{user_input[:60]}' (signal 已 publish to SWM)")
 
     # [P0+12 / 2026-05-15] 语义清晰别名 — 与 Worker 的"睡眠窗口意图"区分
     def _detect_deep_sleep_request(self, user_input: str):
