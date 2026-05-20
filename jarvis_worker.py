@@ -3464,7 +3464,8 @@ class JarvisWorkerThread(QThread):
                     # 决定要 voice 发声的 proactive_care 应当跟 offer_help 等同待遇 (用户期望回应).
                     # 🩹 [β.5.22-D / 2026-05-19] sleep_due (β.5.22-G 新类型) 也加入 focus list -
                     # 到点提醒 Sir "您说的时间到了" 主脑期待 Sir 回应 ("好我马上睡" / "再 10 分钟").
-                    if nudge_type in ("offer_help", "commitment_check", "proactive_care", "sleep_due") and hasattr(self, 'return_sentinel') and self.return_sentinel:
+                    # 🩹 [P4-edge-C / 2026-05-21 00:05] 加 'late_night' (Sir 23:32 真测无 focus)
+                    if nudge_type in ("offer_help", "commitment_check", "proactive_care", "sleep_due", "late_night") and hasattr(self, 'return_sentinel') and self.return_sentinel:
                         self.return_sentinel.soft_focus_active = True
                         self.return_sentinel.soft_focus_until = time.time() + 90.0
                         self.return_sentinel._soft_focus_reason = nudge_type

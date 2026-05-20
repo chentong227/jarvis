@@ -1638,16 +1638,18 @@ class CentralNerve:
             try:
                 from jarvis_promise_log import get_default_log as _pl_get
                 _plog = _pl_get()
-                if _plog is not None and hasattr(_plog, '_promises'):
-                    for _pid, _p in (_plog._promises or {}).items():
-                        if (_p.get('state') == 'pending'
-                                and _p.get('kind') == 'hard'
-                                and _p.get('deadline_str')):
-                            _desc = _p.get('description', '')[:60]
-                            _dl_s = _p.get('deadline_str', '')[:20]
-                            _author = _p.get('author', '?')
+                # 🩹 [P4-edge-A] Promise 字段是 self.promises 不是 _promises;
+                # Promise 是 dataclass 不是 dict, 用 attr access 而不是 .get()
+                if _plog is not None and hasattr(_plog, 'promises'):
+                    for _pid, _p in (_plog.promises or {}).items():
+                        _state = getattr(_p, 'state', '')
+                        _kind = getattr(_p, 'kind', '')
+                        _dl_s = getattr(_p, 'deadline_str', '')
+                        if _state == 'pending' and _kind == 'hard' and _dl_s:
+                            _desc = (getattr(_p, 'description', '') or '')[:60]
+                            _author = getattr(_p, 'author', '?')
                             _pc_lines.append(
-                                f"  - [PromiseLog/{_author}] '{_desc}' deadline={_dl_s}"
+                                f"  - [PromiseLog/{_author}] '{_desc}' deadline={_dl_s[:20]}"
                             )
             except Exception:
                 pass
