@@ -43,7 +43,31 @@
 
 ---
 
-## 🎁 β.5.38 — 方向 C 主脑 directive 库扩 (Sir 选)
+## � β.5.39 — Sir 动态催睡 3 层架构 (Sir 15:18 真理)
+
+> **Sir 真理**: "晚上贾维斯会逐步在接近我之前睡觉时间的早一些的时候提高催睡频率, 我不喜欢硬编码."
+>
+> 替代老 22:00 / 30min 倒计时 / 1800s 硬编码 → distance-based 自适应 (准则 6 vocab + sensor evidence + 主脑 directive).
+
+| commit | 层 | 内容 |
+|---|---|---|
+| `4dba8e1` | 层 1 | `memory_pool/sir_sleep_pattern_vocab.json` (typical_sleep_hour weekday/weekend null until 5 samples) + `scripts/sleep_pattern_dump.py` CLI (show/history/set/recompute) |
+| 同 | 层 2 | `jarvis_sleep_pattern_reflector.py` L7 daemon (每日 03:00 扫 hippocampus 找 sleep events 重算中位数 + history 60 天滚动) + wire 到 `central_nerve` 启动 |
+| 同 | 层 3 | `jarvis_proactive_care.py` rule 2 改 distance 公式 (`current - typical → severity 0.0-0.10`, vocab 未填 fallback 老 1-5am 硬规则) + publish `sir_sleep_pattern` SWM signal + `_trigger_sleep_mode` hook `log_sleep_event` |
+| 同 | 层 3 | `late_night_care_judge` directive 教主脑用 `distance_h` 描述 ("您比平时晚 X min"), FORBIDDEN 硬编码 "22:00/凌晨" |
+
+**testcase**: 10/10 + 94 regression pass.
+
+**Sir 真机体感**:
+- 第一周: vocab unfilled → 走 fallback 老硬规则 (1-5am 凌晨)
+- L7 reflector 每日 03:00 扫 sleep events 累计 ≥ 5 → typical_sleep_hour 自动生成
+- 之后 ProactiveCare 看 distance 自适应: distance > 2h 不催, distance ~ 0 → 1h 适度, distance > 1h 强催
+- 主脑回话: "您比平时晚 30 分钟" 不是 "已经凌晨了"
+- Sir CLI 随时 `python scripts/sleep_pattern_dump.py --set-weekday 24 --set-weekend 25.5` 手改典型时间
+
+---
+
+## � β.5.38 — 方向 C 主脑 directive 库扩 (Sir 选)
 
 > 利用 β.5.37 架构杠杆, 5 个新 SWM evidence directive. 主脑看 SWM evidence + 时间 + Sir 当前一句 自决场景 A/B/C/D contextual.
 
@@ -87,6 +111,11 @@
 [ ] 14. β.5.38 心流期主动 nudge (无 user_input) + ghost SWM → silent_company_judge → 主脑 emit <SILENT>
 [ ] 15. β.5.38 Sir 说 "把那个文档打开" → callback_recall_judge fire, 主脑先找 referent
 [ ] 16. β.5.38 30min 内 ≥ 3 类 SWM signal → mood_shift_judge fire, 主脑 tone 一致维持
+[ ] 17. β.5.38-fix BUG #1 修: nudge 字幕真显示 (Jarvis 说的中英文出现在 UI overlay, 不被 listening cue 清掉)
+[ ] 18. β.5.38-fix BUG #2 修: Sir 说 "晚上会早点睡" 不再误判 sleep intent + 1800s 倒数 (排除"早点/晚点"副词)
+[ ] 19. β.5.39 启动正常 → log 显示 "💤 [SleepPatternReflector] L7 vocab daemon ready"
+[ ] 20. β.5.39 Sir 真去睡 → log 显示 "💤 [SleepPattern] logged: YYYY-MM-DD H.Hh (nerve_trigger_sleep_mode)"
+[ ] 21. β.5.39 一周后 `python scripts/sleep_pattern_dump.py --show` 显示 typical_sleep_hour 有值 + ProactiveCare 用 distance 公式 (Grep "distance=" in log) + 主脑回话 "您比平时晚 X" 不再说 "已经 22:00 了"
 ```
 
 **真机出 BUG 时 报告我**:
