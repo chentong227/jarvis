@@ -1,18 +1,70 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-20 13:10 (β.5.34/35/36 全量 + Sir 13:00-13:05 实测 4 fix, 11 commits 全 sub-batch 测过 295+ pass).
+> **更新**: 2026-05-20 15:05 (β.5.37 三层架构改造 4 sub-step + Sir 14:39 校正治本, 8 commits 全 sub-batch 测过 200+ pass).
 > **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 < 300 cap, AGENTS.md 章程.
 
 ---
 
-## 🔥 Sir 13:00-13:05 真机实测 fix (4 commits)
+## 🏛️ β.5.37 — 三层架构改造 (Sir 14:39 校正真理治本)
+
+> **Sir 真理**: "传感器灵敏度修复 — 把不是真正我在操作的行为和我操作的行为区分开告诉主脑, 而不是硬编码 sentinel guard."
+>
+> **Design doc**: `docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md`
+
+### β.5.37 commits (5)
+
+| commit | marker | 内容 | testcase |
+|---|---|---|---|
+| `630b830` | β.5.37 revert | **revert fix2 (b)/(c) + fix3 硬编码补丁** (Sir 校正) | 21 |
+| `804a37e` | β.5.37 docs | `JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md` design doc (320 行) | - |
+| `daa1fa2` | **β.5.37-A** | **层 1 Sensor**: `PhysicalEnvironmentProbe` 加 `last_real_input_ts` / `idle_seconds_real` / `cascade_active` / `cascade_process_name` 字段 + publish `sir_afk_detected` + `ghost_activity_observed` 到 SWM (限频 60s) | 5 |
+| `2d250c4` | **β.5.37-B** | **层 2 SleepDetector publish-only**: `detect()` publish `sleep_intent_signal` 到 SWM; `_detect_sleep_intent` 中置信路径不再 `request_confirmation` set pending state; `handle_confirmation_response` 标 DEPRECATED (dead code) | 3 |
+| `2607308` | **β.5.37-C** | **层 2 Shield + Struggle publish**: `_compute_frustration_score` 加 `ghost_activity_dampen` 维度 (idle_real > 30 + cascade_active → score *= 0.10, sensor evidence based 替代 hard skip); Shield 触发 publish `shield_observation`; SirStruggle Conductor path publish `sir_struggle_observed` 到 SWM | 6 |
+| `48f9bf5` | **β.5.37-D** | **层 3 主脑 directive**: 3 个新 directive (`sleep_confirmation_judge` / `ghost_activity_judge` / `sir_intent_judge`) + 3 trigger 函数 (`_swm_has_recent` 助手) + `directives_vocab.json` 加 3 entry. 主脑看 SWM evidence 自决场景 A/B/C | 10 |
+| `94ffbf5` | β.5.37-D test fix | trigger fn test 改 callable-check 解 SWM bus 跨 test 污染 | - |
+
+### β.5.37 Sir 14:39 校正修了什么 BUG
+
+1. **Sir 13:03 "我要去休息一下" 误触 offer_help** → 主脑 `sir_intent_judge` directive 看 struggle_text 全文 → 判 dismiss/casual → 不 offer (替代 fix2 硬 keyword list)
+2. **Sir 14:33 起床 "嗯,哦,而且睡的也不太好,起来之后心脏很疼哎" 误判 sleep confirm** → SleepDetector 不再 hard match; 主脑 `sleep_confirmation_judge` 看 SWM `sir_afk_detected` (afk=85min) → 判 stale signal, 当新对话处理 (替代 fix4 硬 timeout / 严格 confirm match)
+3. **Sir 13:05 "屏幕动是 Cursor 自动编程"** → 1) sensor publish `ghost_activity_observed` + `sir_afk_detected` 2) ProactiveShield 评分 ghost_activity_dampen (score *= 0.10, 非 hard skip) 3) 主脑 `ghost_activity_judge` 看 SWM 不把 IDE 窗口切换当 Sir 操作 (替代 fix3 硬 idle 60s skip)
+4. **return_greeting "Windsurf terminal active" 误读** → 主脑 `ghost_activity_judge` directive 教 "看 sir_afk_detected metadata afk 时长, 不评论屏幕"
+
+---
+
+## 🔥 Sir 13:00 真机实测 fix (β.5.34 保留)
 
 | commit | marker | 内容 |
 |---|---|---|
-| `11b0cc2` | β.5.34-fix | Focus Lock UI 加 listening cue (`🎙️ Listening for your reply…`) — Sir 13:00 实测 "还是没焦点回复不了" 因 nudge 字幕和等候字幕视觉无区分 |
-| `c3dfdf0` | β.5.36-fix | `test_persona_under_3000_chars` cap 5500→9500 — Sir IP 不动, β.4.x/5.x directives 涨到 ~8641 |
-| `de06811` | **β.5.36-fix2** | **SirStruggleVocab 3 层守卫 (Sir 13:03 实测 "我去休息" 误命中 expletive_zh 'we 我去' → 47s 后催 Sir)**: (a) vocab 删 '我去'/'靠' 误命中 pattern, (b) 同句含 sleep/dismiss 关键词 (休息/睡觉/待会见/goodnight/...) → consume 不触, (c) inter-source cooldown 15s 替代老 bypass-cooldown 防风暴 |
-| `37b940d` | **β.5.36-fix3** | **ProactiveShield ghost-input guard (Sir 13:05 真理 "屏幕动的是 Cursor 自动编程")**: ProactiveShield._scan idle_seconds > 60s 直接退 — Sir 离桌时 window 切换 = Cascade/IDE 自动化 ghost activity, 不该触 shield_alert. 准则 6 evidence: 看真物理 input (键盘/鼠标), 不看屏幕动作 |
+| `11b0cc2` | β.5.34-fix | Focus Lock UI 加 listening cue (`🎙️ Listening for your reply…`) — UI 文案非硬编码决策, 保留 |
+| `c3dfdf0` | β.5.36-fix | `test_persona_under_3000_chars` cap 5500→9500 (PERSONA 涨随 directives) |
+| ~~`de06811`~~ | ~~β.5.36-fix2~~ | **revert β.5.37-A** (硬编码 sleep_dismiss keyword + 15s cooldown) |
+| ~~`37b940d`~~ | ~~β.5.36-fix3~~ | **revert β.5.37-A** (硬编码 idle 60s skip + 架构方向错) |
+
+---
+
+## ✅ Sir β.5.37 真机实测 check list (重启后跑)
+
+> Sir 重启 Jarvis 后看下面 11 行是否 OK. 出 BUG 报告我修 directive (不动 sensor/sentinel架构).
+
+```
+[ ] 1. 启动正常 → 不抛 sensor exception, log 显示 PhysicalEnvProbe / SleepDetector / Conductor 都启
+[ ] 2. Sir 说 "我要去休息一下" → 不再 47s 后被催 offer_help (struggle vocab 不命中 "我去" + 主脑 sir_intent_judge 看 struggle_text 判 dismiss)
+[ ] 3. Sir 真去休息 30+ min → PhysicalEnvProbe publish sir_afk_detected (Grep log "sir_afk_detected") 到 SWM
+[ ] 4. Sir 离桌期间 Cascade 跑代码 → publish ghost_activity_observed (cascade_active=True), ProactiveShield 触 alert 时 frustration_score 含 ghost_activity_dampen 维度
+[ ] 5. Sir 起床后 ReturnSentinel return_greeting → 主脑看 SWM ghost_activity_observed → 不说 "Windsurf terminal active" / "您在工作", 改说 afk 真实长度 (e.g. "您小睡了一会儿")
+[ ] 6. Sir 起床第一句 "嗯,我睡的不好..." → 主脑 sleep_confirmation_judge 看 sir_afk_detected (afk > 30min) → 判 stale signal, 当新对话处理 (不进 sleep mode)
+[ ] 7. Sir 说 "我搞不定 X 了 / stuck on Y" (真 struggle) → 主脑 sir_intent_judge 判场景 A → offer help
+[ ] 8. Sir 说 "搞不定老婆 / 看不懂这电视剧" (casual) → 主脑 sir_intent_judge 判场景 B → 不主动 offer help
+[ ] 9. SleepDetector 中置信 score (0.5-0.7) → 不再硬 set pending state, log 显示 "(主脑判): ... (signal 已 publish to SWM)"
+[ ] 10. Grep latest.log "sleep_intent_signal|ghost_activity_observed|sir_struggle_observed|shield_observation" 各类 SWM 信号都能看到
+[ ] 11. directive registry: scripts/registry_dump.py list 含 sleep_confirmation_judge / ghost_activity_judge / sir_intent_judge (state=active)
+```
+
+**真机出 BUG 时 报告我**:
+- 报告 Sir 说了什么 + Jarvis 怎么响应
+- Grep 相关 SWM 信号 publish 是否真发了
+- 我**只改 directive text** (主脑指引), **不改 sensor / sentinel** — sensor evidence 是 truth, sentinel publish-only 不动
 
 ---
 
