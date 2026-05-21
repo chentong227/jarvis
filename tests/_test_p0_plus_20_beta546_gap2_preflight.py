@@ -143,13 +143,19 @@ class TestD_StaticIntegration(unittest.TestCase):
         self.assertIn("self.reply_preflight", src)
         self.assertIn("register_preflight", src)
 
-    def test_assemble_prompt_has_preflight_feedback_block(self):
-        import jarvis_central_nerve
-        with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
+    def test_preflight_publishes_swm_via_chat_bypass(self):
+        """[β.5.46+ / 2026-05-21 18:17] [PREFLIGHT FEEDBACK] block 删除 (Sir 真意).
+
+        新通路: chat_bypass async_preflight 后 publish SWM 'preflight_verdict' event.
+        主脑下轮通过 SWM evidence 看到 PreFlight 历史结果, 不通过专用 block.
+        """
+        import jarvis_chat_bypass
+        with open(jarvis_chat_bypass.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        self.assertIn("PREFLIGHT FEEDBACK", src,
-                       "_assemble_prompt must inject [PREFLIGHT FEEDBACK] block")
-        self.assertIn("preflight_verdict", src)
+        self.assertIn("preflight_verdict", src,
+                       "chat_bypass 应 publish SWM event 'preflight_verdict'")
+        self.assertIn("ReplyPreFlight", src,
+                       "chat_bypass 应调 ReplyPreFlight async")
 
 
 class TestE_StatsPersist(unittest.TestCase):

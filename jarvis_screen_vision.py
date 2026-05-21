@@ -189,9 +189,12 @@ class ScreenVisionEngine:
     # ---- Enabled check ----
 
     def enabled(self) -> bool:
-        """env flag 默认关. 设 '1' / 'true' / 'yes' 启用. Sir gradual opt-in."""
+        """env flag 默认 ON (Sir 21:10 真意 — 懒得设, 默认全启用).
+
+        Sir 设 =0 / =false / =off 才关闭. 跟 JARVIS_PREFLIGHT 默认 ON 一致.
+        """
         v = (os.environ.get(self.env_flag) or '').strip().lower()
-        return v in ('1', 'true', 'yes', 'on')
+        return v not in ('0', 'false', 'no', 'off')
 
     # ---- Daemon lifecycle ----
 
@@ -199,7 +202,7 @@ class ScreenVisionEngine:
         """启动 backfill daemon (5min idle 自动 sample 1 帧)."""
         if not self.enabled():
             try:
-                bg_log(f"📷 [ScreenVision] disabled (env {self.env_flag} != 1)")
+                bg_log(f"📷 [ScreenVision] disabled (env {self.env_flag}=0)")
             except Exception:
                 pass
             return

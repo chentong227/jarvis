@@ -49,21 +49,31 @@ class TestA_DataclassAndDefaults(unittest.TestCase):
         self.assertFalse(snap_old.is_fresh(60.0))
 
 
-class TestB_EnvFlagDisabled(unittest.TestCase):
-    """env flag JARVIS_SCREEN_VISION=0 时 engine 不工作."""
+class TestB_EnvFlagDefault(unittest.TestCase):
+    """env flag JARVIS_SCREEN_VISION 默认 ON (Sir 21:10 真意), 设 =0 才关."""
 
-    def test_engine_disabled_by_default(self):
-        # save / clear env
+    def test_engine_enabled_by_default(self):
+        # 默认 ON — 不设 env var → enabled
         original = os.environ.pop('JARVIS_SCREEN_VISION', None)
+        try:
+            from jarvis_screen_vision import ScreenVisionEngine
+            engine = ScreenVisionEngine(key_router=None)
+            self.assertTrue(engine.enabled(),
+                             '默认 ON — 跟 JARVIS_PREFLIGHT 一致')
+        finally:
+            if original is not None:
+                os.environ['JARVIS_SCREEN_VISION'] = original
+
+    def test_engine_disabled_with_zero(self):
+        os.environ['JARVIS_SCREEN_VISION'] = '0'
         try:
             from jarvis_screen_vision import ScreenVisionEngine
             engine = ScreenVisionEngine(key_router=None)
             self.assertFalse(engine.enabled())
         finally:
-            if original is not None:
-                os.environ['JARVIS_SCREEN_VISION'] = original
+            os.environ.pop('JARVIS_SCREEN_VISION', None)
 
-    def test_engine_enabled_with_flag(self):
+    def test_engine_enabled_with_one(self):
         os.environ['JARVIS_SCREEN_VISION'] = '1'
         try:
             from jarvis_screen_vision import ScreenVisionEngine
@@ -155,9 +165,13 @@ class TestE_RenderBlock(unittest.TestCase):
         jarvis_screen_vision._DEFAULT_ENGINE = None
 
     def test_render_disabled_returns_empty(self):
-        from jarvis_screen_vision import render_screen_block
-        # env flag off + no engine
-        self.assertEqual(render_screen_block(), '')
+        # env flag explicit =0 → disabled
+        os.environ['JARVIS_SCREEN_VISION'] = '0'
+        try:
+            from jarvis_screen_vision import render_screen_block
+            self.assertEqual(render_screen_block(), '')
+        finally:
+            os.environ.pop('JARVIS_SCREEN_VISION', None)
 
     def test_render_low_confidence_returns_empty(self):
         os.environ['JARVIS_SCREEN_VISION'] = '1'
