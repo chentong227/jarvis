@@ -899,6 +899,31 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [Gap 5 / β.5.46-fix10 / 2026-05-22 00:10] L8 Reject Learner
+        # Sir dashboard 评 reply 👎 反馈 → 周期性 LLM judge propose directive 改写
+        # → 写 review queue, Sir CLI 拍板. 闭环演化能力.
+        # 不阻塞 TTFT (daemon 4h 一周期), config 在 memory_pool/reject_learner_config.json.
+        self.reject_learner = None
+        try:
+            from jarvis_reject_learner import (
+                RejectLearner, register_learner, is_enabled as _rl_enabled
+            )
+            self.reject_learner = RejectLearner(key_router=self.key_router)
+            register_learner(self.reject_learner)
+            if _rl_enabled():
+                self.reject_learner.start_daemon()
+                try:
+                    from jarvis_utils import bg_log as _rl_bg
+                    _rl_bg("📊 [RejectLearner] L8 闭环演化 daemon 已启动 (Gap 5)")
+                except Exception:
+                    pass
+        except Exception as _rl_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[RejectLearner] 初始化失败（非致命）：{_rl_e}")
+            except Exception:
+                pass
+
         # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Reply Summarizer
         # Sir 23:14 真凶: Jarvis 仅听 wake word "he" 即翻 4% backspace + 0.01%
         # 老账. concern_reason=silent + directive 反例已删, 仍翻 → 唯一可能:

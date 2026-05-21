@@ -1,0 +1,26 @@
+{
+  "_doc": "Reject Learner L8 闭环演化配置 (Gap 5 / β.5.46-fix10 / 2026-05-22 00:10)",
+  "_purpose": "Sir 在 dashboard 评 reply 👎 反馈进 reply_feedback.jsonl 但没自动 propose. L8 daemon 周期性 LLM judge → propose directive 改写 → 写 review queue, Sir CLI 拍板.",
+  "_grant": "准则 1 (TTFT 不退): daemon 周期跑. 准则 6 (LLM propose 不写死). 准则 6.5 (config + review 持久化). 准则 7 (Sir 元否决, 只 propose 不自动 apply).",
+  "enabled": true,
+  "cycle_interval_hours": 4.0,
+  "lookback_hours": 24.0,
+  "min_reject_count": 3,
+  "model": "flash_lite",
+  "cooldown_after_propose_hours": 12.0,
+  "_field_doc": {
+    "enabled": "全局开关",
+    "cycle_interval_hours": "daemon 多久跑一次 (默认 4h, 不太频繁打扰)",
+    "lookback_hours": "看最近多久的 reply_feedback (默认 24h)",
+    "min_reject_count": "至少 N 个 reject 才 propose (默认 3)",
+    "model": "flash_lite (便宜) / flash (精准)",
+    "cooldown_after_propose_hours": "同 sig 12h 内不重复 propose"
+  },
+  "_history": [
+    {
+      "ts": "2026-05-22T00:10:00",
+      "marker": "β.5.46-fix10 / Gap 5",
+      "reason": "L8 闭环演化 — Sir 反馈→系统改进自动通路"
+    }
+  ]
+}
