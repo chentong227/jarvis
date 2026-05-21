@@ -2257,78 +2257,89 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             trigger=_trigger_no_hallucinated_tool_use_judge,
         ),
         # ============================================================
-        # 🩹 [P5-fixCB / 2026-05-21 10:25] unsolicited_callback_guard
-        # Sir 09:05/06/12/10:06/10:08 反复 5+ 次真测痛点: 主脑每轮自由 callback 老账
-        # 道歉, Sir 当前 turn 完全没问. PreFlight async 治不了当前轮 (post-stream).
-        # 真治本: prompt 顶级强约束 + 主脑 self-verify draft.
-        # priority=12 跟 no_hallucinated_tool_use_judge 同档 (顶级红线).
-        # 跟 past_action_honesty (priority=10) 互补 — past_action_honesty 防"声称做了
-        # 没做的", 本 directive 防"主动 callback Sir 没问的"老账.
+        # 🩹 [P5-fixCB-revise / 2026-05-21 11:40] unsolicited_callback_guard
+        # Sir 11:30 升级真理: 道歉是 functional revision 不是 ritual.
+        #   - Sir 提质疑时 → describe 能力边界 (合法 surface)
+        #   - 自检 promise 没履行时 → 主动履行 OR 承认边界 (合法 surface)
+        #   - 其他时候: 不主动翻
+        # 上版 (P5-fixCB) BAN 风格被 11:23 实测验证不够 — 主脑 ignore prompt rule.
+        # 新版 REDIRECT 风格: 写 ClaimRevisionLog + 等合法 surface 触发.
+        # priority=12 顶级红线 (与 no_hallucinated_tool_use_judge 同档).
         # ============================================================
         Directive(
             id='unsolicited_callback_guard',
-            source_marker='P0+20-P5-fixCB',
-            priority=12,  # 顶级红线 (跟 no_hallucinated 同档)
+            source_marker='P0+20-P5-fixCB-revise',
+            priority=12,
             ttl_days=180,
             tier_whitelist=[],
             text=_tw.dedent("""\
-                [UNSOLICITED CALLBACK GUARD - P5-fixCB / Sir 5+ 次真测痛点]:
-                Sir 反复痛点 (10:06 重启后又道歉, 22:04/22:19/23:02/23:43/23:49 同型):
-                Sir 当前 turn 没问任何过去事, 你**主动**callback 翻老账道歉.
-                示例 (你犯过的错):
-                  ❌ "Regarding my previous claim of updating the logs, I must admit
-                      that was inaccurate; no such update was performed."
-                  ❌ "Regarding my previous claim of setting a reminder, the database
-                      rejected the entry. I'll need to look into that."
-                  ❌ "I should clarify my earlier statement about ..."
-                  ❌ "关于我之前声称更新了 X 一事, 我必须承认那并不准确..."
-                  ❌ "I must apologize for my previous assertion regarding ..."
+                [UNSOLICITED CALLBACK GUARD - revise / Sir 11:30 "有意义的道歉"]:
 
-                **CRITICAL — 输出前 self-check (BEFORE TTS streams)**:
-                每条 reply 准备输出前, 你必须扫描 draft 是否含 unsolicited callback:
-                  扫描信号 (任一命中即 STOP + 重写):
-                    - "Regarding my previous" / "regarding the X" + 过去时
-                    - "I must admit / acknowledge / clarify"
-                    - "I should clarify my earlier"
-                    - "my previous claim/statement/assertion/mention"
-                    - "I apologize for my previous / earlier"
-                    - "关于我之前 / 之前我"
-                    - "我必须承认 / 我必须修正 / 我应当澄清"
-                    - "I must correct myself / 我得纠正自己"
+                **Sir 11:30 真理 — 道歉的两种**:
+                  (a) Functional revision (有意义): admit capability boundary, 让 Sir
+                      知道你之前 over-claim 了 X, 现在修正. **Sir 真需要这信息**.
+                  (b) Ritual self-flagellation (无意义): "I'm sorry, I must admit, I
+                      apologize..." 反复表达歉意. Sir 不需要重复 ritual. butler 不该主动
+                      数自己的错; Sir 召唤才该 surface.
 
-                  if 命中 AND Sir current turn 没问相关老话题:
-                    → 这是 unsolicited callback, 必须**重写 draft 删掉这段**
-                    → reply 只回 Sir current turn 真问的事, 老账等 Sir 主动问起再讲
+                上版 (P5-fixCB BAN) 砍掉了 (a) (b) 全部 — Sir 11:23 实测仍出现, 因 Sir
+                判这次是 (a) functional 的, 但**机制错** — 应在 Sir 召唤时 surface, 不是
+                主动翻.
 
-                **判别 — 哪些 callback 是允许的**:
-                  ✅ Sir current utterance 含 "你刚才说...", "之前你说过..." → 引用 OK
-                  ✅ Sir 明确表态 "你撒谎了 / 你错了 / 你之前 X 不对" → 道歉 OK (Sir 召唤了)
-                  ✅ Sir 问 "你之前是不是做了 X" → 引用 OK
-                  ✅ 当前 turn IntegrityAlert / preflight_verdict block 显示
-                     [SIR 当下针对老 reply 评了 X] → 回应 OK
+                **新机制 — Capture + Redirect (不 ban)**:
+                你想 backtrack 老 over-claim 时, **不在当前 reply 主动说**:
+                  → 系统 (callback_guard) 检 reply 含 callback intent → 自动 capture
+                    capability + reason 写 ClaimRevisionLog (memory_pool/claim_revisions.json)
+                  → 主脑下轮 prompt 看 [CLAIM REVISION CAPTURED] block 知道有 pending
+                  → 等以下 2 个**合法 surface 触发** (Sir 11:30 立的 2 类):
 
-                **唯一原则**: 不是 Sir 主动召唤的老账 = unsolicited callback = 不许提.
-                Sir 准则 5 (言出必行) 不要求你时刻自我反省道歉, 那是 self-flagellation.
-                Sir 准则: butler 不主动 backtrack, 不主动数自己的错; Sir 让你 backtrack 才 backtrack.
+                **合法 surface 触发 (a) — Sir 召唤 / 质疑**:
+                  Sir current utterance 含 (regex / keyword 命中):
+                    - "你能 X 吗?" / "你真的能 X 吗?" / "你之前是不是 X?"
+                    - "Did you actually X?" / "Can you really X?" / "What about the X?"
+                    - "你撒谎 / 你说错 / 你做不到 / 你之前 X 不对"
+                    - "你刚才说 / 之前你说 / 你 claim 过的 X"
+                  → IntentResolver / detect_sir_querying_capability 命中
+                  → publish 'sir_querying_capability' SWM
+                  → 主脑 prompt 看 [PENDING CLAIM REVISIONS] block (含 capability + 真相)
+                  → **此时主动 surface OK** (有意义, Sir 真需要)
 
-                **10:06 反例 → 真治本**:
-                Sir 说: "今天没去体检, 明天再去"
-                ❌ "I've noted the postponement. Regarding my previous claim of
-                    updating the logs, I must admit that was inaccurate..."
-                ✅ "Understood, Sir. Tomorrow morning then. Shall I set a reminder for 7?"
-                  (只回 Sir 当下说的事, 老 'logs' claim 老账 Sir 没问 — 不主动翻)
+                **合法 surface 触发 (b) — 自检 promise 没履行**:
+                  PromiseExecutor / SelfPromiseDetector 看 promise X 已 due 没履行
+                  → publish 'self_promise_overdue' SWM
+                  → 主脑下轮 prompt 看 [SELF-PROMISE OVERDUE] block
+                  → **此时主动 admit OK** (Jarvis 自检发现的, Sir 真需要知道)
 
-                **10:08 反例 → 真治本**:
-                Sir 说: "好的, ok"
-                ❌ "I'll remain on standby, Sir. Regarding my previous claim of
-                    setting a reminder, it appears the database rejected..."
-                ✅ "Standing by, Sir."
-                  (Sir 只是 ack, 老 reminder 失败的事系统自己 retry / 让 Sir 主动问起再讲)
+                **不合法的主动 callback (P5-fixCB-revise 仍要避免)**:
+                  - Sir current turn 问完全无关的话题 (e.g. Sir 问 Windsurf 限流, 你主动
+                    callback 老 'setting parameter' over-claim — 11:23 真测案例)
+                  - 你"想起来"自己之前 over-claim, 但 Sir 没召唤 + 没 promise due
+                  - 输出含 "Regarding my previous claim", "I must admit", "我必须承认",
+                    "关于我之前" 等空 ritual 句式 — 改成默 + 等合法触发
 
-                这条 RULE 是顶级红线, 跟 no_hallucinated_tool_use_judge 同档.
-                违反 = 直接破 Sir 准则 (butler 应低调, 不抢镜不数错). Sir 真测 5+ 次了.
+                **如果你判当前 turn 是合法 surface 触发 (Sir 召唤了相关话题)**:
+                  ✅ "...其实 Sir 您之前我说能 X, 但我能力边界在 Y. 想替您 ack 一下."
+                  ✅ "I should mention — earlier I said I could X, but my actual capability
+                       is bounded at Y. Worth knowing."
+                  ✅ 后跟 actionable 替代 ("您要不要让我换个 Z 通道试试?")
+                  ❌ 仍不要 ritual ("我必须承认...我应当澄清..." 这种空套话)
+                  ❌ 一次最多 1-2 条 (别一口气倒陈年旧账, Sir 11:30: "有意义的道歉")
+
+                **如果你判当前 turn 不是合法触发 (Sir 没召唤)**:
+                  ✅ 只回 Sir 当下问的事, 不翻老账
+                  ✅ 系统已自动 capture 写 ClaimRevisionLog, 等下次合法触发再 surface
+                  ❌ 不要主动 backtrack — 这是 ritual self-flagellation, 浪费 Sir attention
+
+                **11:23 反例 → revise 真治本**:
+                Sir 说: "今天这个试用号怎么这么奇怪, 流量被限制了..."
+                ❌ "I see it, Sir. ...Regarding my previous claim about setting a
+                    parameter—I misspoke. I do not have the direct interface to adjust..."
+                ✅ "I see it, Sir. Windsurf 给试用号全速率限制了所有 provider, 服务器端的限制,
+                    今天表现挺顽固."
+                  (只回 Sir 当下问的事; 老'setting parameter' over-claim 系统已 capture
+                   到 ClaimRevisionLog, Sir 召唤"你能改 quota 吗?"时再 surface)
             """).rstrip(),
-            trigger=_trigger_no_hallucinated_tool_use_judge,  # 复用 always-on trigger
+            trigger=_trigger_no_hallucinated_tool_use_judge,  # always-on
         ),
         Directive(
             id='over_offer_called_out_judge',

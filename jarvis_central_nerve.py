@@ -1770,16 +1770,31 @@ class CentralNerve:
         except Exception:
             pass
 
-        # 🩹 [P5-fixCB / 2026-05-21 10:32] CallbackGuard SWM block 注入主脑下轮
-        # 上轮 reply 命中 forbidden_callback_vocab 中的 unsolicited phrase →
-        # publish 'unsolicited_callback_detected' SWM. 主脑下轮 prompt 看到 → 强约束自纠.
-        # 跟 [PREFLIGHT FEEDBACK] (LLM-based) 互补, 这层是 regex 命中 (零延迟 + 一定看到).
-        # 顶级红线 — Sir 5+ 次反复痛点真治本.
+        # 🩹 [P5-fixCB-revise / 2026-05-21 11:42 Sir 11:30 真意] CallbackGuard 改 redirect.
+        # 上版 P5-fixCB BAN 风格被 11:23 实测验证不够, 主脑 ignore.
+        # 新版 redirect: 命中 → 写 ClaimRevisionLog (capability + reason),
+        # 不在当前 reply 强约束 ban. 主脑下轮看 [CLAIM REVISION CAPTURED] block 知道有 pending.
         try:
             from jarvis_callback_guard import render_forbidden_block_for_prompt as _cb_render
             _cb_text = _cb_render(within_seconds=900.0, max_hits=3)
             if _cb_text:
                 _parts.append(_cb_text)
+        except Exception:
+            pass
+
+        # 🩹 [P5-fixCB-revise / 2026-05-21 11:42 Sir 11:30 真意] PENDING CLAIM REVISIONS
+        # 合法 surface 触发 (a) — Sir current utterance 含质疑 / 询问 capability →
+        # 主脑看 [PENDING CLAIM REVISIONS] block (含历史 over-claim + 真相) → 主动 surface.
+        # 这是道歉的"有意义"通道 — Sir 召唤了, Jarvis 才该 admit. butler 不主动数错.
+        try:
+            from jarvis_claim_revision_log import render_pending_revisions_block as _cr_render
+            _cr_text = _cr_render(
+                sir_utterance=str(user_input or ''),
+                within_days=7.0,
+                max_show=3,
+            )
+            if _cr_text:
+                _parts.append(_cr_text)
         except Exception:
             pass
 

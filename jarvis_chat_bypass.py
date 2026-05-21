@@ -3631,9 +3631,10 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     try:
                         from jarvis_utils import bg_log as _cb_bg
                         _cb_bg(
-                            f"🚫 [CallbackGuard] turn={_turn_id_cb[:16]} "
+                            f"📝 [CallbackGuard→ClaimRevision] turn={_turn_id_cb[:16]} "
                             f"hits={[h['phrase_id'] for h in _cb_hits[:3]]} "
-                            f"top_match='{_cb_hits[0]['match_text'][:50]}'"
+                            f"top_match='{_cb_hits[0]['match_text'][:50]}' "
+                            f"(redirect to ClaimRevisionLog, 不 ban 当前轮)"
                         )
                     except Exception:
                         pass

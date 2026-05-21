@@ -136,39 +136,70 @@ class TestC_SirInvitedCallbackExempt(unittest.TestCase):
 class TestD_PublishCallbackViolation(unittest.TestCase):
     """publish_callback_violation 写 SWM event."""
 
-    def test_publish_with_no_bus_returns_false(self):
+    def test_redirect_writes_to_store_even_no_bus(self):
+        """P5-fixCB-revise: publish_callback_violation 现在 redirect 到 ClaimRevisionLog,
+        即使 bus None 也能写 store. 仅 ClaimRevisionLog import 失败 fallback 才走 bus 路径.
+        这是预期 — redirect 不全靠 bus."""
+        import os, tempfile
         from jarvis_callback_guard import publish_callback_violation
-        from unittest.mock import patch
-        with patch('jarvis_utils.get_event_bus') as _mock:
-            _mock.return_value = None
+        from jarvis_claim_revision_log import reset_default_store_for_tests, get_default_store
+        # Redirect store to tmp to isolate
+        tmpdir = tempfile.mkdtemp()
+        tmppath = os.path.join(tmpdir, 'cr.json')
+        reset_default_store_for_tests(path=tmppath)
+        try:
             ok = publish_callback_violation(
-                hits=[{'phrase_id': 'x', 'severity': 'high', 'match_text': 'X', 'pattern': '', 'lang': 'en', 'pos': 0}],
-                reply_excerpt='test', sir_utterance='', turn_id='t1',
-            )
-            self.assertFalse(ok)
-
-    def test_publish_with_bus_calls_publish(self):
-        from jarvis_callback_guard import publish_callback_violation
-        from unittest.mock import patch, MagicMock
-        mock_bus = MagicMock()
-        with patch('jarvis_utils.get_event_bus') as _mock:
-            _mock.return_value = mock_bus
-            ok = publish_callback_violation(
-                hits=[
-                    {'phrase_id': 'x', 'severity': 'high', 'match_text': 'X', 'pattern': '', 'lang': 'en', 'pos': 0},
-                    {'phrase_id': 'y', 'severity': 'medium', 'match_text': 'Y', 'pattern': '', 'lang': 'en', 'pos': 5},
-                ],
-                reply_excerpt='draft text', sir_utterance='sir said', turn_id='t1',
+                hits=[{'phrase_id': 'x', 'severity': 'high', 'match_text': 'X',
+                       'pattern': '', 'lang': 'en', 'pos': 0}],
+                reply_excerpt='Regarding my previous claim about Y, I do not have the X interface',
+                sir_utterance='', turn_id='t1',
             )
             self.assertTrue(ok)
-            mock_bus.publish.assert_called_once()
-            kwargs = mock_bus.publish.call_args.kwargs
-            self.assertEqual(kwargs['etype'], 'unsolicited_callback_detected')
-            self.assertEqual(kwargs['source'], 'CallbackGuard')
-            self.assertGreater(kwargs['salience'], 0.7)
-            meta = kwargs['metadata']
-            self.assertEqual(meta['hits_n'], 2)
-            self.assertEqual(meta['top_phrase_id'], 'x')  # high > medium
+            items = get_default_store().all_items()
+            self.assertEqual(len(items), 1)
+        finally:
+            reset_default_store_for_tests(path=None)
+            try:
+                os.remove(tmppath); os.rmdir(tmpdir)
+            except Exception:
+                pass
+
+    def test_redirect_publishes_claim_revision_captured(self):
+        """P5-fixCB-revise: redirect publish 'claim_revision_captured' (not 'violation')."""
+        import os, tempfile
+        from jarvis_callback_guard import publish_callback_violation
+        from jarvis_claim_revision_log import reset_default_store_for_tests
+        tmpdir = tempfile.mkdtemp()
+        tmppath = os.path.join(tmpdir, 'cr.json')
+        reset_default_store_for_tests(path=tmppath)
+        try:
+            from unittest.mock import patch, MagicMock
+            mock_bus = MagicMock()
+            with patch('jarvis_utils.get_event_bus') as _mock:
+                _mock.return_value = mock_bus
+                ok = publish_callback_violation(
+                    hits=[
+                        {'phrase_id': 'x', 'severity': 'high', 'match_text': 'X',
+                         'pattern': '', 'lang': 'en', 'pos': 0},
+                    ],
+                    reply_excerpt='Regarding my previous claim of X, I do not have the Y',
+                    sir_utterance='sir said', turn_id='t1',
+                )
+                self.assertTrue(ok)
+                # publish called via capture_revision_from_reply
+                self.assertTrue(mock_bus.publish.called)
+                # etype should be 'claim_revision_captured' (info, not violation)
+                kwargs = mock_bus.publish.call_args.kwargs
+                self.assertEqual(kwargs['etype'], 'claim_revision_captured')
+                self.assertEqual(kwargs['source'], 'ClaimRevisionLog')
+                # salience info-level (lower than 0.7)
+                self.assertLess(kwargs['salience'], 0.7)
+        finally:
+            reset_default_store_for_tests(path=None)
+            try:
+                os.remove(tmppath); os.rmdir(tmpdir)
+            except Exception:
+                pass
 
     def test_no_hits_no_publish(self):
         from jarvis_callback_guard import publish_callback_violation
@@ -190,15 +221,17 @@ class TestE_RenderForbiddenBlock(unittest.TestCase):
             self.assertEqual(block, '')
 
     def test_recent_event_renders(self):
+        """P5-fixCB-revise: block 现在说 redirect 不说 ban."""
         from jarvis_callback_guard import render_forbidden_block_for_prompt
         from unittest.mock import patch, MagicMock
         fake_events = [{
-            'type': 'unsolicited_callback_detected',
+            'type': 'claim_revision_captured',
             '_age_s': 100,
             'metadata': {
-                'top_phrase_id': 'regarding_my_previous_en',
+                'capability_keyword': 'changing quota',
                 'top_match_text': 'regarding my previous',
-                'hits_n': 2,
+                'revision_id': 'rev123',
+                'hits_n': 1,
             },
         }]
         mock_bus = MagicMock()
@@ -206,9 +239,13 @@ class TestE_RenderForbiddenBlock(unittest.TestCase):
         with patch('jarvis_utils.get_event_bus') as _mock:
             _mock.return_value = mock_bus
             block = render_forbidden_block_for_prompt(within_seconds=900.0)
-            self.assertIn('UNSOLICITED CALLBACK', block)
-            self.assertIn('regarding_my_previous_en', block)
-            self.assertIn('priority 12', block)
+            # 新风格字眼
+            self.assertIn('CLAIM REVISION CAPTURED', block)
+            self.assertIn('redirect', block.lower())
+            # 应只采 capability_keyword
+            self.assertIn('changing quota', block)
+            # 不再含 ban 风格 提示
+            self.assertNotIn('priority 12', block)
 
 
 class TestF_DirectiveRegistered(unittest.TestCase):
@@ -229,15 +266,21 @@ class TestF_DirectiveRegistered(unittest.TestCase):
         self.assertIsNotNone(target)
         self.assertEqual(target.priority, 12)
 
-    def test_directive_text_has_self_check_rule(self):
+    def test_directive_text_revise_describes_redirect(self):
+        """P5-fixCB-revise: 不再 ban 风格, 说 redirect."""
         from jarvis_directives import DirectiveRegistry, _bootstrap_seed_only
         reg = DirectiveRegistry()
         _bootstrap_seed_only(reg)
         target = reg.directives.get('unsolicited_callback_guard')
-        self.assertIn('self-check', target.text.lower())
+        # 含合法 surface 触发论述
+        self.assertIn('Functional revision', target.text)
+        self.assertIn('Sir 召唤', target.text)
+        # 11:23 Sir 真测案改写
+        self.assertIn('11:23', target.text)
+        # 原不合法句式仍举例
         self.assertIn('Regarding my previous', target.text)
-        # "重写 draft" 中文规则 (directive 是双语)
-        self.assertIn('重写', target.text)
+        # source_marker 升级
+        self.assertEqual(target.source_marker, 'P0+20-P5-fixCB-revise')
 
 
 class TestG_StaticIntegrationCheck(unittest.TestCase):

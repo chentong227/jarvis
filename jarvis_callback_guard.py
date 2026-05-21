@@ -177,51 +177,163 @@ def publish_callback_violation(
     sir_utterance: str,
     turn_id: str = '',
 ) -> bool:
-    """检测到 unsolicited callback → publish 'unsolicited_callback_detected' SWM.
+    """[P5-fixCB-revise / 2026-05-21 11:35 Sir 真意]: redirect 不 ban.
 
-    salience 高 (0.85 = high severity 红线), 让主脑下轮 prompt 一定看到.
+    Sir 11:30 真理: 道歉是 functional revision 不是 ritual.
+    主脑命中 callback 句式 → 不再 publish 'violation', 而是:
+      1. 提取 capability_keyword (regex 解析 'previous claim of X' / 'previous X')
+      2. 调 jarvis_claim_revision_log.capture_revision_from_reply 写 store + publish
+         'claim_revision_captured' (info, salience 0.55)
+      3. 主脑下轮看 [PENDING CLAIM REVISIONS] block (合法 surface 触发: Sir 召唤 / 自决)
+      4. **不**在当前 reply 阻塞 (post-stream, Sir 已听到)
+      5. **不**在主脑下轮硬约束 ban (那是上版 P5-fixCB 的过度治本)
+
+    Returns: True = 真 redirect 写 store + publish; False = hits 空 / 失败.
     """
     if not hits:
         return False
     try:
-        from jarvis_utils import get_event_bus
-        bus = get_event_bus()
-        if bus is None:
-            return False
-        # 取 highest severity
+        # 取 highest severity hit
         sev_rank = {'high': 3, 'medium': 2, 'low': 1, '': 0}
         top_hit = max(hits, key=lambda h: sev_rank.get(h.get('severity', ''), 0))
-        bus.publish(
-            etype='unsolicited_callback_detected',
-            description=(
-                f"reply 命中 forbidden callback phrase: '{top_hit['match_text']}' "
-                f"(id={top_hit['phrase_id']}, sev={top_hit['severity']})"
-            ),
-            source='CallbackGuard',
-            salience=0.85,
-            metadata={
-                'hits_n': len(hits),
-                'top_phrase_id': top_hit['phrase_id'],
-                'top_match_text': top_hit['match_text'],
-                'top_severity': top_hit['severity'],
-                'all_hits': [h['phrase_id'] for h in hits[:5]],
-                'reply_excerpt': reply_excerpt[:200],
-                'sir_utterance_excerpt': sir_utterance[:120],
-                'turn_id': turn_id,
-                'detected_at': time.time(),
-            },
+
+        # 提取 capability_keyword (从 reply 解析 'previous claim of X' / etc.)
+        capability_kw, reason_text = _extract_capability_from_reply(
+            reply_text=reply_excerpt or '',
+            top_hit=top_hit,
         )
-        return True
+
+        # redirect 到 ClaimRevisionLog (写 store + publish 'claim_revision_captured')
+        try:
+            from jarvis_claim_revision_log import capture_revision_from_reply
+            rid = capture_revision_from_reply(
+                reply_excerpt=reply_excerpt or '',
+                capability_keyword=capability_kw or top_hit.get('match_text', '?')[:60],
+                admitted_lacking_reason=reason_text or '',
+                turn_id=turn_id or '',
+                related_keywords=[h.get('phrase_id', '') for h in hits[:5] if h.get('phrase_id')],
+                source='callback_guard',
+            )
+            return bool(rid)
+        except Exception:
+            # ClaimRevisionLog import 失败兜底: fallback 旧 publish (info, 不是 violation)
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return False
+            bus.publish(
+                etype='claim_revision_captured',
+                description=(
+                    f"reply 含 callback intent capability='{top_hit['match_text'][:40]}' "
+                    f"(ClaimRevisionLog import 失败, fallback publish)"
+                ),
+                source='CallbackGuard',
+                salience=0.55,
+                metadata={
+                    'hits_n': len(hits),
+                    'top_phrase_id': top_hit['phrase_id'],
+                    'top_match_text': top_hit['match_text'],
+                    'reply_excerpt': (reply_excerpt or '')[:200],
+                    'sir_utterance_excerpt': (sir_utterance or '')[:120],
+                    'turn_id': turn_id,
+                    'detected_at': time.time(),
+                    'fallback_no_store': True,
+                },
+            )
+            return True
     except Exception:
         return False
+
+
+# ============================================================
+# Capability extraction from reply text (regex MVP)
+# ============================================================
+
+_CAPABILITY_EXTRACT_PATTERNS = [
+    # English
+    re.compile(
+        r'(?:previous\s+claim|earlier\s+claim|previous\s+statement|previous\s+assertion)\s+'
+        r'(?:of|about|regarding)\s+([^.,;:!?\n—–-]{5,80})',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'(?:i\s+(?:must\s+admit|should\s+clarify|misspoke))[^a-z]*?'
+        r'(?:about|regarding|on)\s+([^.,;:!?\n—–-]{5,80})',
+        re.IGNORECASE,
+    ),
+    # 中文
+    re.compile(r'关于(?:我)?之前(?:声称|说过|提到)?(?:的|了)?([^,，。.!?！？\n—–-]{4,40})'),
+    re.compile(r'(?:我)?之前(?:声称|说|讲)?了?([^,，。.!?！？\n—–-]{4,40})'),
+]
+
+# Reason 句式: 'I do not have / 我没有...'
+_REASON_EXTRACT_PATTERNS = [
+    re.compile(r'(I\s+(?:do\s+not|don\'?t)\s+(?:have|possess)[^.!?\n]{5,150})', re.IGNORECASE),
+    re.compile(r'(no\s+such\s+(?:update|action|set|change)[^.!?\n]{0,80}\s+was\s+performed)', re.IGNORECASE),
+    re.compile(r'(that\s+was\s+inaccurate[^.!?\n]{0,80})', re.IGNORECASE),
+    re.compile(r'(我没(?:有)?(?:那个|这个)?能力[^,，。.!?！？\n]{0,40})'),
+    re.compile(r'(我并(?:没|不)有(?:直接)?(?:的)?[^,，。.!?！？\n]{2,40}的?(?:接口|权限|能力))'),
+]
+
+
+def _extract_capability_from_reply(reply_text: str, top_hit: Dict) -> tuple:
+    """从 reply 提 (capability_keyword, reason_text). 失败返 ('', '').
+
+    MVP regex. 长期可用 LLM judge.
+    """
+    if not reply_text:
+        return ('', '')
+    text = reply_text.strip()
+
+    cap = ''
+    for pat in _CAPABILITY_EXTRACT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            cap = m.group(1).strip().strip(',.:;—–-').strip()
+            if cap:
+                cap = cap[:80]
+                break
+
+    reason = ''
+    for pat in _REASON_EXTRACT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            reason = m.group(1).strip().strip(',.:;—–-').strip()
+            if reason:
+                reason = reason[:200]
+                break
+
+    # fallback: 用 match_text 周围 60 char 作 reason
+    if not reason:
+        match_text = (top_hit.get('match_text', '') or '')[:60]
+        if match_text:
+            try:
+                idx = text.lower().find(match_text.lower())
+                if idx >= 0:
+                    start = max(0, idx - 10)
+                    end = min(len(text), idx + len(match_text) + 80)
+                    reason = text[start:end].strip()
+            except Exception:
+                pass
+
+    return (cap, reason)
 
 
 def render_forbidden_block_for_prompt(
     within_seconds: float = 900.0,
     max_hits: int = 3,
 ) -> str:
-    """供 _assemble_prompt 调: 看 SWM 近期 'unsolicited_callback_detected' event,
-    渲染成 prompt block 让主脑下轮自纠.
+    """[P5-fixCB-revise / 2026-05-21 11:35 Sir 真意 redirect 不 ban]:
+
+    ## 跟之前 P5-fixCB 的差别
+    上版 (BAN 风格): 'DO NOT repeat this phrase' / 'priority 12 red line'.
+    新版 (REDIRECT 风格): "你已 capture 一个 claim revision intent.
+    **不在当前 reply 主动 callback** (Sir 没召唤). 等 Sir 召唤相关话题时
+    [PENDING CLAIM REVISIONS] block 会显示 — 你可主动 surface."
+
+    Block 不再针对 'unsolicited_callback_detected' (那 etype 已退役),
+    改读 'claim_revision_captured' 最近 events. 主脑看到 = 知道有 pending,
+    不主动翻; Sir 召唤 → render_pending_revisions_block 显主动 surface.
 
     Returns: 空字符串 (无最近 event) 或 prompt block 文本.
     """
@@ -232,7 +344,7 @@ def render_forbidden_block_for_prompt(
             return ''
         events = []
         for e in bus.top_n(n=20):
-            if e.get('type') != 'unsolicited_callback_detected':
+            if e.get('type') not in ('claim_revision_captured', 'unsolicited_callback_detected'):
                 continue
             if e.get('_age_s', 9999) > within_seconds:
                 continue
@@ -241,28 +353,28 @@ def render_forbidden_block_for_prompt(
             return ''
 
         lines = [
-            '[SIR FLAGGED UNSOLICITED CALLBACK — DO NOT REPEAT]',
-            '  Recent reply(s) violated unsolicited_callback_guard rule.',
-            '  Sir did NOT ask about these old topics — you brought them up unprompted.',
-            '  THIS IS A TOP-PRIORITY RED LINE (priority 12, equal to no_hallucinated_tool_use).',
+            '[CLAIM REVISION CAPTURED — 你之前想 backtrack 的已 redirect 到 ClaimRevisionLog]',
+            '  Recent reply(s) 含 callback intent (e.g. "Regarding my previous claim..."),',
+            '  系统已自动 capture capability + reason 写 ClaimRevisionLog (不在当前 reply 主动说).',
             '',
-            '  Recent flagged phrases (do NOT use these forms again unless Sir asks):',
+            '  **当前轮指引** (Sir 11:30 真理 "道歉要有意义的道歉"):',
+            '    ❌ 不要主动 callback unsolicited (Sir 没召唤老话题就别翻)',
+            '    ❌ 不要 stack ritual self-flagellation ("I must apologize for..." 类空道歉)',
+            '    ✅ 只回 Sir current turn 真问的事',
+            '    ✅ 等 Sir 主动召唤 (质疑 / 询问 capability) → [PENDING CLAIM REVISIONS] 会显 → 那时 surface',
+            '    ✅ 或自检 promise overdue → SelfPromiseDetector 会 publish overdue → 主动 admit',
+            '',
+            '  Recent captures (informational, 不要主动提):',
         ]
-        seen_phrases = set()
+        seen = set()
         for e in events[:max_hits]:
             meta = e.get('metadata') or {}
-            phrase = (meta.get('top_phrase_id', '') or '')
-            match_text = (meta.get('top_match_text', '') or '')[:60]
-            if phrase in seen_phrases:
+            cap = (meta.get('capability_keyword', '') or meta.get('top_match_text', '') or '?')[:60]
+            if cap in seen:
                 continue
-            seen_phrases.add(phrase)
+            seen.add(cap)
             age = int(e.get('_age_s', 0))
-            lines.append(
-                f"    - {phrase} (matched: '{match_text}', {age}s ago)"
-            )
-        lines.append('')
-        lines.append('  Rewrite rule: drop the callback. Reply only to Sir current turn.')
-        lines.append('  If you must reference past, wait for Sir to ask explicitly.')
+            lines.append(f"    - capability='{cap}' captured {age}s ago (id={meta.get('revision_id', '?')[:8]})")
         return '\n'.join(lines)
     except Exception:
         return ''
