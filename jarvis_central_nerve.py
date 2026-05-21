@@ -880,6 +880,25 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [P5-Gap3 / 2026-05-21 18:30] Screen Vision Engine — 屏幕 vision 结构化描述
+        # Sir 22:47 真意: Sir 在 Cursor 写 code, Jarvis 知 process / window 但不知
+        # file / line / error / build status. 加 vision LLM 描述屏幕 → 注入主脑
+        # prompt [WHAT SIR IS LOOKING AT] block + 跨 turn 持久化.
+        # env flag JARVIS_SCREEN_VISION=1 启用 (默认关, Sir gradual opt-in).
+        # 不阻塞 TTFT (后台 daemon fire-and-forget, 旧帧 60s cache).
+        # 详 docs/JARVIS_VISION_INTEGRATION.md
+        self.screen_vision_engine = None
+        try:
+            from jarvis_screen_vision import init_default_engine as _init_vision
+            self.screen_vision_engine = _init_vision(key_router=self.key_router)
+            self.screen_vision_engine.start()
+        except Exception as _sv_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ScreenVision] 初始化失败（非致命）：{_sv_e}")
+            except Exception:
+                pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35 + P5-fixD / 2026-05-21 10:00 默认开]
         # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
         # Sir 09:05/06/12 又 3 次混合真数据涌现 hallucination (23:59 / Windsurf quota).
@@ -1835,6 +1854,20 @@ class CentralNerve:
             _sst_text = _sst_render()
             if _sst_text:
                 _parts.append(_sst_text)
+        except Exception:
+            pass
+
+        # 🆕 [P5-Gap3 / 2026-05-21 18:32] [WHAT SIR IS LOOKING AT] block
+        # Sir 22:47 真意 — Vision LLM 描述屏幕给主脑. ScreenVisionEngine 后台
+        # daemon 触发 (wake / app_switch / 5min backfill / sir_ref). env flag
+        # JARVIS_SCREEN_VISION=1 启用. 帧 < 2min + confidence ≥ 0.3 才显.
+        # privacy redacted 帧只显 active_app, 不显内容.
+        # 详 docs/JARVIS_VISION_INTEGRATION.md
+        try:
+            from jarvis_screen_vision import render_screen_block as _sv_render
+            _sv_text = _sv_render(max_age_s=120.0)
+            if _sv_text:
+                _parts.append(_sv_text)
         except Exception:
             pass
 

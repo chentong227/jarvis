@@ -2087,6 +2087,25 @@ Spoken English:"""
             except Exception:
                 pass
 
+            # 🆕 [P5-Gap3 / 2026-05-21 18:35] 复用已有截图喂 ScreenVisionEngine
+            # 节能: chat_bypass 已截图给主脑, 直接复用 img_bytes (不重复截图)
+            # 异步喂给 vision engine 做结构化描述. 跨 turn 持久化让 ToM /
+            # IntegrityWatcher 等能拿 vision evidence.
+            # 节流: 60s 内只 sample 一次 (vision engine 内部锁防 concurrent).
+            if img_bytes is not None:
+                try:
+                    from jarvis_screen_vision import get_default_engine as _get_sv
+                    _sv = _get_sv()
+                    if _sv is not None and _sv.enabled():
+                        # 检查是否需要 sample (60s cache)
+                        _sv_latest = _sv.get_latest_snapshot()
+                        if _sv_latest is None or not _sv_latest.is_fresh(60.0):
+                            # 复用 img_bytes — 不重复截图
+                            _sv.async_describe(trigger='wake',
+                                                  jpeg_bytes=img_bytes)
+                except Exception:
+                    pass
+
             # 没有图就只送文本（WAKE_ONLY 路径），有图就附带（vision-aware）
             if img_bytes is None:
                 chat_history = [types.Content(role="user", parts=[
