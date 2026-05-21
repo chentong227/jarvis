@@ -2,10 +2,12 @@
 """[P5-Gap4-followup / 2026-05-21 21:20] SOUL concern inject gating
 
 Sir 21:17 真意 — 三轮道歉根因 = 主脑看到 concern list 被淹翻老账.
-修法: SOUL Layer 1 (Concerns) inject 默认沉默, 三种情况 inject:
+修法: SOUL Layer 1 (Concerns) inject 默认沉默, 两种情况 inject:
   (a) Sir 召唤 (user_input keyword)
-  (b) 后台 URGENT (active concern severity > 0.7)
   (c) 上轮 PreFlight verdict=edit/scrap (Jarvis 真出错保险)
+
+[β.5.46-fix2 / Sir 22:05 真测] 删原 (b) URGENT severity > 0.7 — 设计缺陷:
+  ProactiveCare 把多个 concern severity 推到 0.7+ → 等于每 turn 都 inject.
 
 不阻塞 ProactiveCare nudge — daemon 该 surface 还 surface (另一通路).
 不影响 IntegrityWatcher (类型 A tool fail) / SELF-PROMISE OVERDUE (类型 B PromiseLog).
@@ -23,15 +25,17 @@ class TestA_SilentByDefault(unittest.TestCase):
     """默认沉默 — Sir 没召唤 + 没 URGENT + 上轮无 PreFlight 错 → soul_block 空."""
 
     def test_static_check_inject_logic_present(self):
-        """central_nerve _assemble_prompt 应含 4 种判断 (summon/urgent/preflight/silent)."""
+        """[β.5.46-fix2] 删 (b) URGENT bypass — 留 (a) summon + (c) preflight_fail.
+
+        Sir 22:05 真测教训: severity > 0.7 是设计缺陷 — ProactiveCare 把多个
+        concern 推到 0.7+, 等于每 turn 都 inject (gating 形同虚设).
+        """
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        # 三种触发条件都 present
+        # 留两条触发条件
         self.assertIn('_summon_kw', src,
                        'Sir 召唤 keyword 检测应 present')
-        self.assertIn('_has_urgent', src,
-                       '后台 URGENT severity 检测应 present')
         self.assertIn('_preflight_failed', src,
                        'PreFlight 上轮错 检测应 present')
         # 默认沉默
@@ -42,6 +46,19 @@ class TestA_SilentByDefault(unittest.TestCase):
                        '应 expose inject reason 给诊断 log')
         self.assertIn('concern_reason=', src,
                        'SOUL inject log 应 print concern_reason')
+
+    def test_urgent_bypass_removed(self):
+        """[β.5.46-fix2] (b) URGENT bypass 必须删 — 留下来等于 gating 形同虚设."""
+        import jarvis_central_nerve
+        with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 不应再有 _has_urgent 主流入口检测
+        # (注: 注释里可能仍提到 urgent, 但代码逻辑不应该有)
+        self.assertNotIn('_has_urgent = True', src,
+                          'URGENT bypass 主流入口应删 (Sir 22:05 真测痛点)')
+        # 主流 inject 条件不再含 _has_urgent
+        self.assertNotIn('if _summoned or _has_urgent', src,
+                          '主流 inject 条件不应含 _has_urgent')
 
 
 class TestB_SummonKeywords(unittest.TestCase):
@@ -63,17 +80,20 @@ class TestB_SummonKeywords(unittest.TestCase):
                            f'Fallback summon phrase "{phrase}" 应在列表中')
 
 
-class TestC_UrgentBypass(unittest.TestCase):
-    """severity > 0.7 → list_active 命中 → inject (非 keyword 路径)."""
+class TestC_NoMoreUrgentBypass(unittest.TestCase):
+    """[β.5.46-fix2] (b) URGENT severity bypass 删除 — 留 (a) + (c).
 
-    def test_urgent_logic_uses_severity_threshold(self):
+    Sir 22:05 真测痛点: 4/7 concern severity > 0.7, URGENT 永远命中, gating 形同虚设.
+    且 concern severity 高不代表跟当前对话相关 (keyrouter 0.94 vs Sir 问 AI 架构).
+    """
+
+    def test_no_severity_threshold_in_main_flow(self):
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        # 检 severity > 0.7 的判断
-        self.assertIn('severity', src)
-        self.assertIn('> 0.7', src,
-                       '后台 URGENT 阈值应是 severity > 0.7')
+        # 主流 Layer 1 inject 不应再判 severity (注释里可能提到, 但代码不该用)
+        self.assertNotIn('if getattr(_c, \'severity\', 0) > 0.7', src,
+                          'severity > 0.7 主流 bypass 应删')
 
 
 class TestD_PreFlightSafetyBypass(unittest.TestCase):
@@ -93,13 +113,16 @@ class TestD_PreFlightSafetyBypass(unittest.TestCase):
 
 
 class TestE_LogReasonValues(unittest.TestCase):
-    """log 应 print 4 种 reason: summon / urgent / preflight_fail / silent."""
+    """log 应 print 3 种 reason: summon / preflight_fail / silent.
+
+    [β.5.46-fix2] 删 'urgent' (设计缺陷, 见 TestC).
+    """
 
     def test_all_reason_values_present(self):
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        for reason in ('summon', 'urgent', 'preflight_fail', 'silent'):
+        for reason in ('summon', 'preflight_fail', 'silent'):
             self.assertIn(f"'{reason}'", src,
                            f"reason value '{reason}' 应 expose 在 log")
 
@@ -161,15 +184,18 @@ class TestH_Layer2BaggageGating(unittest.TestCase):
                        'threads 条件 inject')
 
     def test_layer2_reuses_layer1_reason(self):
-        """_allow_baggage 应基于 Layer 1 的 _soul_concern_inject_reason."""
+        """_allow_baggage 应基于 Layer 1 的 _soul_concern_inject_reason.
+
+        [β.5.46-fix2] 删 'urgent' — 留 summon + preflight_fail.
+        """
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        # 复用 reason — summon/urgent/preflight_fail 三种
+        # 复用 reason — summon / preflight_fail 两种
         self.assertIn(
-            "_reason in ('summon', 'urgent', 'preflight_fail')",
+            "_reason in ('summon', 'preflight_fail')",
             src,
-            'Layer 2 应复用 Layer 1 三种触发条件'
+            'Layer 2 应复用 Layer 1 两种触发条件 (urgent 已删)'
         )
 
 

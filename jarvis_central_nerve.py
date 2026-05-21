@@ -1615,24 +1615,31 @@ class CentralNerve:
         except Exception:
             self_anchor_block = ''
         # Layer 1: Concerns（"我关心什么"）
-        # 🆕 [P5-Gap4-followup / 2026-05-21 21:18] Sir 21:17 真意:
-        # > "如果不主动提, Jarvis 不会忘提醒喝水睡觉?" — 不会, 后台 ProactiveCare
-        # 通路保留, 这只改"每 turn 主流 prompt 是否 inject concerns".
-        # 三轮道歉根因: 主脑看到 concern list → 误以为该 surface → 翻老账.
-        # 修法: concern inject 只在 (a) Sir 召唤 / (b) 后台标 URGENT (sev > 0.7) 时.
-        # 不阻塞 ProactiveCare nudge — daemon 该 surface 还 surface.
+        # 🆕 [P5-Gap4-followup-fix2 / 2026-05-21 22:08] Sir 22:05 真测痛点:
+        # >  Sir 问 jiminimany 评价 → Jarvis 仍翻 4% backspace 老账
+        # > concern_reason=urgent (4/7 concerns severity > 0.7 永远命中)
+        #
+        # 删 (b) URGENT bypass — 设计缺陷:
+        #   原以为 severity > 0.7 是 "真 URGENT", 实际 ProactiveCare 把多个
+        #   concern 推到 0.7+, 等于每 turn 都 inject (gating 形同虚设).
+        #   且 concern severity 高不代表跟当前对话相关 (keyrouter 0.94 vs Sir
+        #   问 AI 架构 — 完全无关, 但 inject 触发 → 主脑翻老账).
+        #
+        # 留两条:
+        #   (a) Sir 召唤 (vocab keyword) — 真问起来才 surface
+        #   (c) PreFlight 上轮 edit/scrap — Jarvis 真出错保险
+        #
+        # 不阻塞 ProactiveCare 后台 nudge — 那是独立 prompt 路径
+        # (line 3134 [Nudge SOUL inject]).
         soul_block = ''
         try:
             if self.concerns_ledger is not None:
                 # (a) Sir 召唤检测 (准则 6.5 vocab — memory_pool/concern_summon_vocab.json)
-                # CLI: scripts/concern_summon_dump.py [--list / --add / --test]
-                # 失败 fall back hardcoded list (resilience).
                 try:
                     from jarvis_concern_summon import is_summoned as _is_summoned
                     _summoned = _is_summoned(user_input or '')
                 except Exception:
                     # Fallback — vocab loader 失败时硬编码兜底
-                    # 完整短语避免误触 (Sir 21:56 真测教训: "状态" 单词误命中)
                     _ui = (user_input or '').lower()
                     _summon_kw = (
                         'any concern', 'what concerns', 'worried about',
@@ -1643,24 +1650,11 @@ class CentralNerve:
                         '提醒我啥', '提醒我什么', '啥情况',
                     )
                     _summoned = any(kw in _ui for kw in _summon_kw)
-                # (b) 后台真有 URGENT — 任意 active concern severity > 0.7
-                _has_urgent = False
-                try:
-                    _active = self.concerns_ledger.list_active()
-                    for _c in _active:
-                        if getattr(_c, 'severity', 0) > 0.7:
-                            _has_urgent = True
-                            break
-                except Exception:
-                    pass
-                # (c) Sir 21:19 真意保险条款 — 上轮 PreFlight 抓到 verdict=edit/scrap
-                # 说明 Jarvis 真出错了, 主脑下轮应当看到 concerns 心结, 让它合理 surface
-                # 自我澄清. 这条保留 Jarvis 真出错时的"对话中澄清"通路.
+                # (c) Sir 21:19 保险 — 上轮 PreFlight verdict=edit/scrap → inject 让主脑澄清
                 _preflight_failed = False
                 try:
                     _bus_pf = getattr(self, 'event_bus', None)
                     if _bus_pf is not None:
-                        # 最近 5min 内有 preflight_verdict edit/scrap 事件 → inject
                         _pf_events = _bus_pf.recent_events(
                             within_seconds=300.0,
                             types={'preflight_verdict'},
@@ -1672,20 +1666,16 @@ class CentralNerve:
                                 break
                 except Exception:
                     pass
-                # 记录触发原因 (诊断 log 用)
-                self._soul_concern_inject_reason = ''
+                # 记录触发原因 (诊断 log)
                 if _summoned:
                     self._soul_concern_inject_reason = 'summon'
-                elif _has_urgent:
-                    self._soul_concern_inject_reason = 'urgent'
                 elif _preflight_failed:
                     self._soul_concern_inject_reason = 'preflight_fail'
                 else:
                     self._soul_concern_inject_reason = 'silent'
-                if _summoned or _has_urgent or _preflight_failed:
+                if _summoned or _preflight_failed:
                     soul_block = self.concerns_ledger.to_prompt_block(
                         top_n=3, max_chars=600)
-                # else: 默认沉默 — 主脑不看 concerns 就不 surface 翻老账
         except Exception:
             soul_block = ''
             self._soul_concern_inject_reason = 'error'
@@ -1698,10 +1688,11 @@ class CentralNerve:
         relational_block = ''
         try:
             if self.relational_state is not None:
-                # 复用 Layer 1 的判断: 只有 summon/urgent/preflight_fail 才 inject baggage
+                # 复用 Layer 1 的判断: 只有 summon/preflight_fail 才 inject baggage
                 # silent / error / 不存在时 → 沉默 (不 inject unfinished+threads)
+                # [β.5.46-fix2] 删 'urgent' (设计缺陷, 4/7 concern severity > 0.7 永远命中)
                 _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
-                _allow_baggage = _reason in ('summon', 'urgent', 'preflight_fail')
+                _allow_baggage = _reason in ('summon', 'preflight_fail')
                 relational_block = self.relational_state.to_prompt_block(
                     top_jokes=3,
                     top_unfinished=2 if _allow_baggage else 0,
