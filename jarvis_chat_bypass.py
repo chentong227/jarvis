@@ -3511,6 +3511,20 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 )
         except Exception:
             pass
+
+        # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] L4.5 watch claim from reply
+        # Sir 14:11 真意 — Jarvis reply 中含 mutation claim → watcher 加入 watch list.
+        # 监督 8 类 (reminder/commitment/promise/memory/milestone/profile/concern/relational).
+        # 失败递归 retry, 真做不到 handoff Sir. 主脑下轮 [INTEGRITY WATCHER REPORT] 看.
+        # 跟 SelfPromiseDetector 互补 — SelfPromise 只看 promise 类, watcher 看全部.
+        try:
+            iw = getattr(self.jarvis, 'integrity_watcher', None)
+            _iw_reply = full_text if (full_text and full_text.strip()) else final_reply
+            if iw is not None and _iw_reply:
+                iw.watch_claim_async(reply_text=_iw_reply, turn_id=_turn_id_now)
+        except Exception:
+            pass
+
         # 🩹 [β.5.44-CE / 2026-05-20 19:02] IntentResolver fire turn-end
         # Sir 18:55 真理重构 — turn 末尾异步跑 IntentResolver, 看 Sir utterance + 
         # SWM candidates + 当前 state, LLM 决定调哪些 mutation tool. 结果 publish 

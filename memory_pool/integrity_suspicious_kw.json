@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "purpose": "IntegrityWatcher Layer 2 keyword gate.",
+    "design": "vocab miss + reply 含这些 kw -> 触发 LLM judge async.",
+    "created": "2026-05-21T14:30",
+    "source_marker": "P5-IntegrityWatcher",
+    "cli": "scripts/integrity_claim_vocab_dump.py --kw-list / --kw-add"
+  },
+  "keywords_en": [
+    "set", "added", "saved", "scheduled", "remember", "memorize",
+    "noted", "logged", "tracked", "updated", "modified", "applied",
+    "registered", "stored", "recorded", "marked", "captured", "confirmed",
+    "got it", "locked in"
+  ],
+  "keywords_zh": [
+    "已", "记住", "记下", "设好", "设上", "更新", "存了", "改了",
+    "存到", "记到", "保存", "添加", "登记", "注册", "锁定", "确认",
+    "完成", "完毕", "妥了", "搞定"
+  ]
+}

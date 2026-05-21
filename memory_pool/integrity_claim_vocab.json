@@ -1,0 +1,107 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "purpose": "IntegrityWatcher Layer 1 — claim detection vocab (Sir 准则 6 持久化).",
+    "design": "3-layer waterfall — vocab fast-path → keyword gate → LLM judge.",
+    "created": "2026-05-21T14:30",
+    "source_marker": "P5-IntegrityWatcher",
+    "cli": "scripts/integrity_claim_vocab_dump.py",
+    "l7_reflector": "TODO — IntegrityWatcherReflector (后续 daemon 看 7d data propose 新 vocab)"
+  },
+  "patterns": {
+    "reminder": {
+      "claim_label": "reminder",
+      "default_target": "reminder",
+      "en_patterns": [
+        "(?:i(?:'ve|\\s+have)|i)\\s+(?:set|added|created|scheduled|saved|recorded|noted)\\s+(?:the\\s+|a\\s+|an\\s+|that\\s+|your\\s+)?(?P<target>reminder|alert|alarm)",
+        "(?:done|noted),?\\s+(?:sir\\s+)?(?:i(?:'ve|\\s+have)|i)\\s+(?:set|saved)\\s+(?P<target>reminder|alarm|alert)"
+      ],
+      "zh_patterns": [
+        "(?:已经|已|刚|刚刚|帮你|为您)?\\s*(?:设|设置|加|添加|记|创建)\\s*(?:好了|完了|了|完毕|妥了|完成|好|妥)?\\s*(?P<target>提醒|闹钟|日程)",
+        "(?:好的|没问题).{0,8}?(?:设|加|记|为您|帮您)\\s*(?:好了|完了|了|完毕|妥)?\\s*(?P<target>提醒|闹钟)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "memory": {
+      "claim_label": "memory_remember",
+      "default_target": "memory",
+      "en_patterns": [
+        "(?:i(?:'ll|\\s+will)|i(?:'ve|\\s+have))\\s+(?:remember|memorize|keep\\s+(?:that\\s+)?in\\s+mind|committed?\\s+(?:that\\s+)?to\\s+memory|saved\\s+(?:that\\s+)?to\\s+memory)"
+      ],
+      "zh_patterns": [
+        "(?:已经|刚|帮你)?\\s*(?:记住|记下|铭记|存(?:到|入)?海马体|刻在心里)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "milestone": {
+      "claim_label": "milestone",
+      "default_target": "milestone",
+      "en_patterns": [
+        "(?:i(?:'ll|\\s+will))\\s+(?:keep|hold|treasure|cherish)\\s+(?:this|that|it|this\\s+moment)\\s+(?:forever|always|for\\s+life)"
+      ],
+      "zh_patterns": [
+        "(?:这件事|这一刻|此刻|这个)?\\s*(?:永远(?:记得|铭记|不忘)|一辈子(?:记得|不忘)|刻进|铭刻)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "profile": {
+      "claim_label": "profile_update",
+      "default_target": "profile",
+      "en_patterns": [
+        "(?:i(?:'ve|\\s+have))\\s+(?:updated|saved|corrected|recorded|modified|noted)\\s+(?:your\\s+|the\\s+)?(?P<target>profile|preferences?|height|name|info|details|settings?)"
+      ],
+      "zh_patterns": [
+        "(?:已经|刚|帮你)?\\s*(?:更新|修改|纠正|改|存)\\s*(?:了)?\\s*(?:您的|你的)?\\s*(?P<target>档案|资料|信息|偏好|profile)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "concern": {
+      "claim_label": "concern_update",
+      "default_target": "concern",
+      "en_patterns": [
+        "(?:i(?:'ve|\\s+have))\\s+(?:noted|added|tracked|recorded|updated|saved)\\s+(?:your\\s+|the\\s+|this\\s+)?(?P<target>concern|count|progress|hydration|sleep|exercise)"
+      ],
+      "zh_patterns": [
+        "(?:已|刚|帮你)?\\s*(?:更新|记录|记|加)\\s*(?:了)?\\s*(?P<target>关注|count|进度|喝水|睡眠|运动|水量)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "relational": {
+      "claim_label": "inside_joke",
+      "default_target": "relational",
+      "en_patterns": [
+        "(?:i(?:'ll|\\s+will))\\s+(?:remember|keep|hold)\\s+(?:this|that)\\s+(?:joke|moment|memory|inside\\s+joke)"
+      ],
+      "zh_patterns": [
+        "(?:这个|那个)?\\s*(?:梗|笑话|内部梗)\\s*(?:我会)?\\s*(?:记住|记下|永远记得)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    },
+    "commitment": {
+      "claim_label": "commitment_register",
+      "default_target": "commitment",
+      "en_patterns": [
+        "(?:got\\s+it|noted|understood|locked\\s+in|saved|recorded|will\\s+hold\\s+you)"
+      ],
+      "zh_patterns": [
+        "(?:记下了|记住了|收到|明白|这就|帮您记|记到|没问题)"
+      ],
+      "state": "active",
+      "added_at": 1779349800.0,
+      "added_by": "seed"
+    }
+  },
+  "review_queue": []
+}

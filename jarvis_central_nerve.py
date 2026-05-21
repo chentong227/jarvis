@@ -854,6 +854,32 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] L4.5 Active Verify+Retry 子层
+        # Sir 14:11 真意: "wachter 负责贾维斯所有行为(除 tool)是否成功的审查机构,
+        #  植入言出必行层级中. 主动 verify + 递归 retry, 真做不到 handoff Sir 手动."
+        # Sir 14:30: vocab + LLM 二维 (3 层 waterfall) — vocab 主路径, LLM 仅边界 case.
+        # 跟 ClaimTracer (L4) 互补 — ClaimTracer 写 audit log, Watcher 主动 retry mutation.
+        # 监督 Jarvis 内部能力 8 类: reminder/commitment/promise/memory/milestone/
+        # profile/concern/relational. 不监督 tool (主脑→工具→主脑路径自带反馈).
+        self.integrity_watcher = None
+        try:
+            from jarvis_integrity_watcher import (
+                IntegrityWatcher, attach_llm_judge_key_router
+            )
+            self.integrity_watcher = IntegrityWatcher(nerve=self)
+            # 注入 key_router 给 Layer 3 LLM judge (vocab miss + suspicious kw 时启)
+            try:
+                attach_llm_judge_key_router(self.key_router)
+            except Exception:
+                pass
+            self.integrity_watcher.start()
+        except Exception as _iw_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntegrityWatcher] 初始化失败（非致命）：{_iw_e}")
+            except Exception:
+                pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35 + P5-fixD / 2026-05-21 10:00 默认开]
         # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
         # Sir 09:05/06/12 又 3 次混合真数据涌现 hallucination (23:59 / Windsurf quota).
@@ -1795,6 +1821,19 @@ class CentralNerve:
             )
             if _cr_text:
                 _parts.append(_cr_text)
+        except Exception:
+            pass
+
+        # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] [INTEGRITY WATCHER REPORT]
+        # Sir 14:11 真意 — L4.5 自检层主动 verify + 递归 retry, 通知主脑 surface form.
+        # 内容: ✅ recovered (主脑 inline acknowledge) / ❌ handoff_sir (道歉+actionable) /
+        # ⚠️ no_tool (admit hallucination).
+        # 跟 [PENDING CLAIM REVISIONS] / [SELF-PROMISE OVERDUE] 互补 — 这层 active.
+        try:
+            from jarvis_integrity_watcher import render_report_block as _iw_render
+            _iw_text = _iw_render(within_seconds=1800.0, max_show=3)
+            if _iw_text:
+                _parts.append(_iw_text)
         except Exception:
             pass
 
