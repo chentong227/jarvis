@@ -1796,17 +1796,15 @@ class CentralNerve:
         except Exception:
             pass
 
-        # 🩹 [P5-fixCB-revise / 2026-05-21 11:42 Sir 11:30 真意] CallbackGuard 改 redirect.
-        # 上版 P5-fixCB BAN 风格被 11:23 实测验证不够, 主脑 ignore.
-        # 新版 redirect: 命中 → 写 ClaimRevisionLog (capability + reason),
-        # 不在当前 reply 强约束 ban. 主脑下轮看 [CLAIM REVISION CAPTURED] block 知道有 pending.
-        try:
-            from jarvis_callback_guard import render_forbidden_block_for_prompt as _cb_render
-            _cb_text = _cb_render(within_seconds=900.0, max_hits=3)
-            if _cb_text:
-                _parts.append(_cb_text)
-        except Exception:
-            pass
+        # 🩹 [P5-fixCB-revise2 / 2026-05-21 16:42 Sir 16:34 真测痛点] 删除 [CLAIM REVISION
+        # CAPTURED] block 每轮注入 — 这是真凶. Sir 16:28/16:30/16:34 主脑反复道歉
+        # 因为它每轮都看到自己之前 capture 过 callback → 自我催化再 surface 一次.
+        # 解法 (准则 6 evidence-only): 删 evidence 源, 让主脑看不到老 capture.
+        # 当 Sir 召唤 → [PENDING CLAIM REVISIONS] block 显 (有 sir_querying gate, 见下).
+        # 当 promise overdue → [SELF-PROMISE OVERDUE] block 显 (有 untracked gate).
+        # 没 evidence 主脑就不会主动 callback.
+        # 历史 callback_guard render_forbidden_block_for_prompt 退役, capture 仍写 store.
+        # _cb_render 调用 deleted (Sir 16:34 真测验证: 主脑反复 callback reminder fail).
 
         # 🩹 [P5-fixCB-revise / 2026-05-21 11:42 Sir 11:30 真意] PENDING CLAIM REVISIONS
         # 合法 surface 触发 (a) — Sir current utterance 含质疑 / 询问 capability →
