@@ -3355,7 +3355,12 @@ User: {user_input}
                 return ""
             
             search_query = " ".join(query_parts)
-            results = self.hippocampus.search_memory(self.gemini_key, search_query, top_k=3)
+            # 🆕 [Gap-Z5 / β.5.46-fix8] 用 search_memory_default 带 time decay
+            # 30 天前 memory 自动衰减, 主脑不被远古无关 memory 干扰 attention.
+            # config 在 memory_pool/hippocampus_decay_config.json
+            results = self.hippocampus.search_memory_default(
+                self.gemini_key, search_query, top_k=3
+            )
             
             if results:
                 now = time.time()

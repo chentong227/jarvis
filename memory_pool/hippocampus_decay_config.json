@@ -1,0 +1,23 @@
+{
+  "_doc": "Hippocampus 检索时间衰减配置 (Gap-Z5 / β.5.46-fix8 / 2026-05-21 23:55)",
+  "_purpose": "纯 cosine similarity 召回偏老 memory (远古无关 turn 占 attention). 加 time decay (final = sim × exp(-age/halflife)) 让最近 memory 优先, 30+ 天前 memory 自动衰减.",
+  "_grant": "准则 1 (TTFT 不退): 一行 math 计算, 不调 LLM. 准则 6 (不硬编码): halflife 持久化 CLI 可改. 准则 6.5: scripts CLI tool.",
+  "enabled": true,
+  "halflife_days": 30.0,
+  "_excluded_paths": [
+    "delete_memory_request",
+    "memory_correction_request"
+  ],
+  "_field_doc": {
+    "enabled": "全局 decay 开关. False → 旧行为 (纯 cosine).",
+    "halflife_days": "decay 半衰期天数. 30 = 30 天前 memory similarity 衰减一半. 越大越保留旧 memory.",
+    "_excluded_paths": "删除/纠正路径不该启 decay (Sir 让删 1 月前 X 仍要召回). doc-only, caller 自决."
+  },
+  "_history": [
+    {
+      "ts": "2026-05-21T23:55:00",
+      "marker": "β.5.46-fix8 / Gap-Z5",
+      "reason": "主脑 retrieval 召远古无关 memory 占 attention 治本"
+    }
+  ]
+}

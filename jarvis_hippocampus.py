@@ -1,8 +1,10 @@
 import sqlite3
 import json
+import math
 import time
 import numpy as np
 import os
+from typing import Optional
 from google import genai
 from google.genai import types
 from jarvis_utils import network_retry, create_genai_client
@@ -669,10 +671,19 @@ class Hippocampus:
             return []
 
     def search_memory(self, api_key: str = None, query: str = "", top_k: int = 3,
-                       time_limit: float = 0.0, min_similarity: float = 0.0) -> list:
+                       time_limit: float = 0.0, min_similarity: float = 0.0,
+                       time_decay_halflife_days: Optional[float] = None) -> list:
         """[P0+16 / 2026-05-15] 新增 min_similarity（0.0-1.0）：删除/纠正等高风险路径
         必须传入 ≥ 0.45 的阈值，否则会返回与 query 几乎无关的近邻噪声 → 工具误用根因。
-        默认 0.0 保持向后兼容（普通 LTM 检索行为不变）。"""
+        默认 0.0 保持向后兼容（普通 LTM 检索行为不变）。
+
+        🆕 [Gap-Z5 / β.5.46-fix8 / 2026-05-21 23:55] time_decay_halflife_days:
+        - None (默认): 旧行为, 纯 cosine similarity
+        - >0: final_score = similarity × exp(-age_days / halflife), 旧 memory
+          自动衰减 (主脑不被 30+ 天前 memory 干扰).
+
+        Default halflife in default_search_memory_with_decay() = 30 days.
+        """
         # [R7-β1/post-test v2] 冷却期内退到 fuzzy 兜底检索，不再返回空
         if self._is_embed_in_cooldown():
             return self._fuzzy_fallback_search(query, top_k=top_k, time_limit=time_limit,
@@ -720,6 +731,11 @@ class Hippocampus:
 
         results =[]
         query_norm = np.linalg.norm(query_vector)
+        # 🆕 [Gap-Z5 / β.5.46-fix8] 时间衰减计算
+        _now_ts = time.time()
+        _halflife_s = None
+        if time_decay_halflife_days is not None and time_decay_halflife_days > 0:
+            _halflife_s = float(time_decay_halflife_days) * 86400.0
         for mem in all_memories:
             mem_id, timestamp, env, intent, summary, blob_data = mem
             mem_vector = np.frombuffer(blob_data, dtype=np.float32)
@@ -727,8 +743,17 @@ class Hippocampus:
             if query_norm == 0 or mem_norm == 0:
                 similarity = 0.0
             else:
-                similarity = np.dot(query_vector, mem_vector) / (query_norm * mem_norm)
-            
+                similarity = float(
+                    np.dot(query_vector, mem_vector) / (query_norm * mem_norm)
+                )
+            # 🆕 [Gap-Z5] time decay (final_score = similarity × exp(-age/halflife))
+            final_score = similarity
+            decay_factor = 1.0
+            if _halflife_s is not None and timestamp > 0:
+                age_s = max(0.0, _now_ts - float(timestamp))
+                decay_factor = math.exp(-age_s / _halflife_s)
+                final_score = similarity * decay_factor
+
             # 👇 将精准的时间戳和环境打包返回
             results.append({
                 "id": mem_id,
@@ -736,15 +761,73 @@ class Hippocampus:
                 "environment": env,
                 "intent": intent,
                 "summary": summary,
-                "similarity": float(similarity)
+                "similarity": similarity,
+                "decay_factor": float(decay_factor),
+                "final_score": float(final_score),
             })
 
-        results.sort(key=lambda x: x["similarity"], reverse=True)
+        # 🆕 [Gap-Z5] 排序用 final_score (decay 启用时), 否则 similarity (向后兼容)
+        if _halflife_s is not None:
+            results.sort(key=lambda x: x["final_score"], reverse=True)
+        else:
+            results.sort(key=lambda x: x["similarity"], reverse=True)
         # [P0+16 / 2026-05-15] 删除/纠正高风险路径会传 min_similarity ≥ 0.45。
         # 09:22 误删事件根因之一：原 search 完全无阈值，返回 0.1 相似度的近邻 + 全删。
         if min_similarity > 0.0:
             results = [r for r in results if r.get("similarity", 0.0) >= min_similarity]
         return results[:top_k]
+
+    # 🆕 [Gap-Z5 / β.5.46-fix8 / 2026-05-21 23:55] decay 配置加载 (准则 6.5)
+    _decay_config_cache = None
+    _decay_config_mtime = 0.0
+    _decay_config_lock = threading.Lock()
+
+    @classmethod
+    def _load_decay_config(cls) -> dict:
+        """读 memory_pool/hippocampus_decay_config.json (mtime cache)."""
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'memory_pool', 'hippocampus_decay_config.json',
+        )
+        try:
+            if not os.path.exists(path):
+                return {'enabled': False}
+            mtime = os.path.getmtime(path)
+            with cls._decay_config_lock:
+                if (cls._decay_config_cache is not None
+                        and mtime <= cls._decay_config_mtime):
+                    return cls._decay_config_cache
+                with open(path, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                cls._decay_config_cache = cfg if isinstance(cfg, dict) else {'enabled': False}
+                cls._decay_config_mtime = mtime
+                return cls._decay_config_cache
+        except Exception:
+            return {'enabled': False}
+
+    def search_memory_default(self, api_key: str = None, query: str = "",
+                                top_k: int = 3, time_limit: float = 0.0,
+                                min_similarity: float = 0.0) -> list:
+        """🆕 [Gap-Z5 / β.5.46-fix8] 默认带 time decay 的 search.
+
+        从 memory_pool/hippocampus_decay_config.json 读 halflife_days, 调 search_memory.
+        config disabled / 文件不存在 → fallback 旧行为 (纯 cosine).
+
+        删除/纠正路径仍直调 search_memory(time_decay_halflife_days=None) 保旧行为
+        (Sir 让删 1 月前 X 时旧 memory 该召回).
+        """
+        cfg = self._load_decay_config()
+        if cfg.get('enabled', False):
+            halflife = float(cfg.get('halflife_days', 30.0))
+            return self.search_memory(
+                api_key=api_key, query=query, top_k=top_k,
+                time_limit=time_limit, min_similarity=min_similarity,
+                time_decay_halflife_days=halflife,
+            )
+        return self.search_memory(
+            api_key=api_key, query=query, top_k=top_k,
+            time_limit=time_limit, min_similarity=min_similarity,
+        )
 
     def delete_memory(self, memory_id: int):
         """逻辑删除 (移入回收站)"""
