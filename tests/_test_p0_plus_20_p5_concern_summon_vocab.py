@@ -59,6 +59,23 @@ class TestB_LoaderActiveKeywords(unittest.TestCase):
         self.assertTrue(any('concern' in kw for kw in kws))
         self.assertTrue(any('担心' in kw for kw in kws))
 
+    def test_keywords_are_phrases_not_single_words(self):
+        """[Sir 21:56 教训] keyword 应是完整短语, 不是单词.
+
+        '状态' 单词误命中 '状态还不错' 导致 unsolicited callback.
+        修法: 改成完整短语 '我状态如何' / '状态如何' 等.
+        """
+        from jarvis_concern_summon import load_active_keywords
+        kws = load_active_keywords(force_reload=True)
+        # 检查不应包含的宽词
+        forbidden_singles = (
+            '状态', '进度', '怎么样', '关心', '检查',
+            'status', 'progress', 'concern', 'worry',
+        )
+        for kw in kws:
+            self.assertNotIn(kw, forbidden_singles,
+                              f'keyword "{kw}" 太宽泛, 易误触, 应改成完整短语')
+
 
 class TestC_IsSummoned(unittest.TestCase):
     """is_summoned 命中检测."""
@@ -71,12 +88,14 @@ class TestC_IsSummoned(unittest.TestCase):
         from jarvis_concern_summon import is_summoned
         self.assertTrue(is_summoned("what's my progress today"))
         self.assertTrue(is_summoned("any concerns I should know"))
+        self.assertTrue(is_summoned("how am I doing today"))
 
     def test_summon_chinese(self):
         from jarvis_concern_summon import is_summoned
         self.assertTrue(is_summoned("我担心啥呢"))
-        self.assertTrue(is_summoned("我有什么进度要看"))
+        self.assertTrue(is_summoned("什么进度要看"))
         self.assertTrue(is_summoned("提醒我啥事"))
+        self.assertTrue(is_summoned("我状态如何"))
 
     def test_no_summon_normal_chat(self):
         from jarvis_concern_summon import is_summoned
@@ -84,6 +103,30 @@ class TestC_IsSummoned(unittest.TestCase):
         self.assertFalse(is_summoned("Thank you"))
         self.assertFalse(is_summoned("我刚才睡了 3 小时"))
         self.assertFalse(is_summoned(""))
+
+    def test_no_summon_descriptive_state(self):
+        """[Sir 21:56 真测痛点] '状态还不错' 不应触发 summon.
+
+        Sir 是描述自己状态, 不是问 Jarvis "我状态如何".
+        '状态' 单词被误命中是当晚翻 4% backspace 老账的根因.
+        """
+        from jarvis_concern_summon import is_summoned
+        self.assertFalse(
+            is_summoned("今天晚上因为休息了一下，所以状态还不错"),
+            "描述性 '状态还不错' 不应触发 summon (Sir 21:56 真测教训)"
+        )
+        self.assertFalse(
+            is_summoned("我现在状态很好"),
+            "描述性 '状态很好' 不应触发 summon"
+        )
+        self.assertFalse(
+            is_summoned("项目进度不错"),
+            "描述性 '进度不错' 不应触发 summon"
+        )
+        self.assertFalse(
+            is_summoned("怎么样, 累不累"),
+            "Sir 关心 Jarvis 的 '怎么样' 不应触发"
+        )
 
 
 class TestD_FallbackOnVocabMissing(unittest.TestCase):
@@ -99,9 +142,11 @@ class TestD_FallbackOnVocabMissing(unittest.TestCase):
             kws = jcs.load_active_keywords(force_reload=True)
             self.assertGreater(len(kws), 5,
                                 'fall back hardcoded list 应至少 5 个 keyword')
-            # 经典 fallback 词应在
-            self.assertIn('concern', kws)
-            self.assertIn('担心', kws)
+            # 完整短语应在 (Sir 21:56 教训后改成短语)
+            self.assertTrue(any('concern' in kw for kw in kws),
+                             '应有含 concern 的短语')
+            self.assertTrue(any('担心' in kw for kw in kws),
+                             '应有含 担心 的短语')
         finally:
             jcs._VOCAB_PATH = original
             jcs.reset_cache_for_test()
@@ -122,7 +167,9 @@ class TestE_FallbackOnCorruptVocab(unittest.TestCase):
             jcs.reset_cache_for_test()
             kws = jcs.load_active_keywords(force_reload=True)
             self.assertGreater(len(kws), 5, 'JSON 损坏应 fall back')
-            self.assertIn('concern', kws)
+            # 完整短语应在
+            self.assertTrue(any('concern' in kw for kw in kws),
+                             '应有含 concern 的短语')
         finally:
             jcs._VOCAB_PATH = original
             jcs.reset_cache_for_test()

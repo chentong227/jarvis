@@ -1632,12 +1632,15 @@ class CentralNerve:
                     _summoned = _is_summoned(user_input or '')
                 except Exception:
                     # Fallback — vocab loader 失败时硬编码兜底
+                    # 完整短语避免误触 (Sir 21:56 真测教训: "状态" 单词误命中)
                     _ui = (user_input or '').lower()
                     _summon_kw = (
-                        'concern', 'concerns', 'worry', 'worried', 'remind',
-                        'progress', 'status', "what's up", 'how am i', 'how about',
-                        '担心', '心事', '进度', '状态', '怎么样', '啥情况',
-                        '提醒', '记着', '要注意', '检查', '关心',
+                        'any concern', 'what concerns', 'worried about',
+                        "what's my progress", 'how am i doing',
+                        "what's my status", 'remind me what',
+                        '担心啥', '担心什么', '心事', '我关心的', '我担心的',
+                        '什么进度', '进度怎么样', '我状态如何',
+                        '提醒我啥', '提醒我什么', '啥情况',
                     )
                     _summoned = any(kw in _ui for kw in _summon_kw)
                 # (b) 后台真有 URGENT — 任意 active concern severity > 0.7

@@ -15,44 +15,51 @@
       "id": "concern_keywords_default",
       "category": "concern",
       "keywords": [
-        "concern", "concerns", "worry", "worried", "worries"
+        "any concern", "any concerns", "what concerns",
+        "what worries", "worried about", "worries about",
+        "anything to worry"
       ],
       "state": "active",
       "source": "seeded",
-      "note": "Sir 直接问关心/担心 (英)"
+      "note": "Sir 直接询问关心/担心 (英) — 必须有上下文不只是单词"
     },
     {
       "id": "progress_keywords_default",
       "category": "progress",
       "keywords": [
-        "progress", "status", "how am i", "how about",
-        "what's up", "whats up", "how are you",
-        "check on me", "check in", "remind"
+        "what's my progress", "what is my progress", "my progress today",
+        "how am i doing", "what's my status", "what is my status",
+        "remind me what", "remind me about",
+        "check on me", "check in on me",
+        "anything i should know", "anything to watch"
       ],
       "state": "active",
       "source": "seeded",
-      "note": "Sir 问状态/进度 (英)"
+      "note": "Sir 问状态/进度 (英) — 完整短语, 不是单词"
     },
     {
       "id": "concern_keywords_zh_default",
       "category": "concern_zh",
       "keywords": [
-        "担心", "心事", "关心"
+        "担心啥", "担心什么", "担心点", "心事", "你关心",
+        "我关心的", "我担心的", "在意的"
       ],
       "state": "active",
       "source": "seeded",
-      "note": "Sir 直接问关心/担心 (中)"
+      "note": "Sir 直接询问关心/担心 (中) — 完整短语, 不是单字"
     },
     {
       "id": "progress_keywords_zh_default",
       "category": "progress_zh",
       "keywords": [
-        "进度", "状态", "怎么样", "啥情况", "提醒",
-        "记着", "要注意", "检查"
+        "什么进度", "进度怎么样", "进度如何", "啥进度",
+        "我状态如何", "我的状态", "状态如何",
+        "提醒我啥", "提醒我什么", "记着啥", "记着什么",
+        "要注意啥", "要注意什么", "啥情况"
       ],
       "state": "active",
       "source": "seeded",
-      "note": "Sir 问状态/进度 (中)"
+      "note": "Sir 问状态/进度 (中) — 完整短语避免误触"
     }
   ]
 }

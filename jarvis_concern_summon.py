@@ -34,13 +34,16 @@ _VOCAB_PATH = os.path.join(
     'concern_summon_vocab.json',
 )
 
-# Fallback — vocab 缺失/损坏时用. 跟 commit dec4870 原 hardcoded list 对齐.
+# Fallback — vocab 缺失/损坏时用. 必须用完整短语避免误触
+# (Sir 21:56 真测教训: "状态" 误命中 "状态还不错" 导致 unsolicited callback).
 _FALLBACK_KEYWORDS = (
-    'concern', 'concerns', 'worry', 'worried', 'remind',
-    'progress', 'status', "what's up", 'how am i', 'how about',
-    'whats up', 'how are you', 'check on me', 'check in',
-    '担心', '心事', '进度', '状态', '怎么样', '啥情况', '提醒',
-    '记着', '要注意', '检查', '关心',
+    'any concern', 'any concerns', 'what concerns',
+    'worried about', "what's my progress", 'how am i doing',
+    "what's my status", 'remind me what', 'check on me',
+    'anything i should know',
+    '担心啥', '担心什么', '心事', '我关心的', '我担心的',
+    '什么进度', '进度怎么样', '我状态如何', '提醒我啥',
+    '提醒我什么', '记着啥', '啥情况',
 )
 
 _CACHE_LOCK = threading.Lock()

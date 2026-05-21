@@ -48,13 +48,19 @@ class TestB_SummonKeywords(unittest.TestCase):
     """Sir 召唤 keyword 列表覆盖中英文常见词."""
 
     def test_summon_keywords_cover_common_phrases(self):
+        """[Sir 21:56 教训] keyword 改成完整短语避免单词误触.
+
+        例: '状态' 单词命中 '状态还不错' → unsolicited callback.
+        修法: 改成完整短语 '我状态如何' / '状态如何' 等.
+        """
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        # 关键中英 keyword
-        for kw in ('concern', 'worry', 'progress', 'status',
-                    '担心', '心事', '进度', '怎么样', '提醒'):
-            self.assertIn(kw, src, f'Summon keyword "{kw}" 应在列表中')
+        # fallback 短语应在源码 (resilience 路径)
+        for phrase in ('any concern', 'how am i doing', '担心啥',
+                        '什么进度', '我状态如何', '提醒我啥'):
+            self.assertIn(phrase, src,
+                           f'Fallback summon phrase "{phrase}" 应在列表中')
 
 
 class TestC_UrgentBypass(unittest.TestCase):
