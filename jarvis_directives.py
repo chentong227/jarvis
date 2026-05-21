@@ -104,6 +104,13 @@ class Directive:
     ttl_days: int = DECAY_TTL_DAYS_DEFAULT                   # 超过此天数无触发 → 自动 dormant
     source_marker: str = ""                                  # 来源 marker，e.g. 'P0+18-f.2'
 
+    # 🆕 [P5-Gap4 / 2026-05-21 18:14] purpose_short — directive 元层鸟瞰用
+    # < 80 chars, 1 句话描述这条 directive 管什么. _assemble_prompt 渲染
+    # [DIRECTIVES FIRED THIS TURN] meta block 用. Sir 22:19 真痛点: 主脑被 8 条
+    # directive cluster 淹, 看不到全貌. 加 purpose_short → 主脑能"鸟瞰" + reason
+    # 哪些适用此刻 / 哪些 false positive. 详 docs/JARVIS_DIRECTIVE_SELF_AWARENESS.md
+    purpose_short: str = ""
+
     # ===== 运行时计数（持久化）=====
     fired: int = 0
     rejected: int = 0
@@ -1307,6 +1314,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=10,
             ttl_days=365,
             tier_whitelist=[],
+            purpose_short='主脑输出强制双语 (English 优先 + ZH 字幕)',
             text=_tw.dedent("""\
                 [BILINGUAL]:
                 Speak English. Append `---ZH---` then the Chinese translation at the VERY END.
@@ -1471,6 +1479,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=10,
             ttl_days=180,
             tier_whitelist=[],
+            purpose_short='禁假装记下了/已存了 — 没真 mutation 不要 claim 完成',
             text=_tw.dedent("""\
                 [MEMORY UPDATE HONESTY]:
                 Sir 此刻像在纠正/澄清你对他的记忆 (用了"其实/不是/两码事/搞错了
@@ -1580,6 +1589,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=10,  # 与 memory_update_honesty 同级, 顶级红线
             ttl_days=180,
             tier_whitelist=[],
+            purpose_short='禁说"我已做 X"无 tool result — 言行一致底线',
             text=_tw.dedent("""\
                 [PAST ACTION HONESTY] (强约束, 准则 5):
                 Sir 14:00 真实事件: 你说"已经打开 dashboard"但 ui_control.dashboard_open
@@ -1779,6 +1789,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=11,
             ttl_days=180,
             tier_whitelist=[],
+            purpose_short='Sir 醒来 first reply: 温度优先, 不数落老账 (Soul Drive 第二原则)',
             text=_tw.dedent("""\
                 [MORNING WARMTH PRIORITY - P5-fixB]:
                 Sir 跨夜回归 (SWM afk_return.afk_minutes > 240, current_hour 6-10am).
@@ -2153,6 +2164,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=10,  # 顶级 — Sir 反复反馈"吹牛" 必须治本
             ttl_days=120,
             tier_whitelist=[],
+            purpose_short='offer 前 cross-check SKILLS/INTENT MAP — 没 tool 不要 promise',
             text=_tw.dedent("""\
                 [CAPABILITY BOUNDARY JUDGE - β.5.43-fix1 / 2026-05-20 18:11 Sir 真理]:
                 Sir 18:11 反复反馈"又吹牛逼" — 主脑反复 offer / promise 你没工具的事.
@@ -2208,6 +2220,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=12,  # 极顶顶 — 言行不一红线, 比 over_offer 还高
             ttl_days=120,
             tier_whitelist=[],
+            purpose_short='禁假装调 tool 成功 — 没 [TOOL RESULT] 别说 done/已设',
             text=_tw.dedent("""\
                 [NO HALLUCINATED TOOL USE - β.5.43-fix4 / 2026-05-20 18:55 Sir 真理]:
                 Sir 18:55 痛点: 你回 "I've corrected my internal count to eight" — 但**本轮
@@ -2272,6 +2285,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=12,
             ttl_days=180,
             tier_whitelist=[],
+            purpose_short='禁主动翻老账道歉 — 道歉只来自 watcher SWM event 引导',
             text=_tw.dedent("""\
                 [UNSOLICITED CALLBACK GUARD - revise / Sir 11:30 "有意义的道歉"]:
 
@@ -2353,6 +2367,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=11,  # 顶级 (跟 over_offer / no_hallucinated 同档)
             ttl_days=180,
             tier_whitelist=[],
+            purpose_short='看 [INTEGRITY WATCHER REPORT] block 引导 surface (recovered/handoff/no_tool)',
             text=_tw.dedent("""\
                 [INTEGRITY WATCHER REPORT 使用指引 — Sir 14:11 真意 / L4.5 自检层]:
 
@@ -2439,6 +2454,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             priority=11,  # 极顶 — Sir 当前 utterance 含吹牛 callout
             ttl_days=120,
             tier_whitelist=[],
+            purpose_short='Sir 当前 utterance 提醒"别吹牛" → 立刻承认 + 改 actionable',
             text=_tw.dedent("""\
                 [OVER-OFFER CALLED OUT - β.5.43-fix1]:
                 Sir 当前 utterance 含明确 callout: "吹牛/别吹/做不到/没权限/没能力/又吹".
@@ -2586,6 +2602,15 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             n_skipped_no_trigger += 1
             continue
         try:
+            # 🆕 [P5-Gap4 / 2026-05-21 18:25] purpose_short loading
+            # JSON entry 含 purpose_short → 直接用; 否则查 _SEED_DEFS fallback
+            # (JSON 没填的 directive 退而其次拿 .py seed 的 purpose_short).
+            ps = str(entry.get('purpose_short') or '').strip()
+            if not ps:
+                # JSON 没填, 查 seed_defs (重点 P10+ 我已经在 .py 加了)
+                _seed_match = next((s for s in seed_defs if s.id == did), None)
+                if _seed_match is not None:
+                    ps = (_seed_match.purpose_short or '').strip()
             d = Directive(
                 id=did,
                 text=str(entry.get('text') or ''),
@@ -2594,6 +2619,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 tier_whitelist=list(entry.get('tier_whitelist') or []),
                 ttl_days=int(entry.get('ttl_days') or DECAY_TTL_DAYS_DEFAULT),
                 source_marker=str(entry.get('source_marker') or ''),
+                purpose_short=ps,
                 state=state,  # 实际只走 active 分支, 但保留字段
             )
             registry.register(d)
@@ -2613,13 +2639,36 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             registry.register(d)
         return len(seed_defs)
 
+    # 🆕 [P5-Gap4-bootstrap-merge / 2026-05-21 18:25] JSON + seed merge
+    # 修早就存在的 bug: P5 新加的 directive (e.g. morning_warmth_priority /
+    # unsolicited_callback_guard / integrity_watcher_report_use) 只在 .py seed
+    # 但没 sync 到 directives_vocab.json → JSON 加载成功就不走 seed fallback →
+    # 这些 directive 根本没注册. 修法: JSON 加载完 + 检查 seed 中"JSON 缺的"
+    # → 临时 register active. Sir CLI sync 到 JSON 是后续工作.
+    json_ids = {str(e.get('id', '')) for e in vocab_data.get('directives', [])}
+    n_seed_filled = 0
+    for d in seed_defs:
+        if d.id in json_ids:
+            continue  # JSON 已有
+        if d.id in registry.directives:
+            continue  # 已 register (defensive)
+        try:
+            registry.register(d)
+            n_seed_filled += 1
+        except (ValueError, TypeError):
+            continue
+
     try:
         from jarvis_utils import bg_log as _bg
         _bg(f"📖 [DirectiveBootstrap] JSON vocab loaded: {n_registered} active "
-            f"(+{n_skipped_state} non-active state, {n_skipped_no_trigger} no-trigger)")
+            f"(+{n_skipped_state} non-active state, {n_skipped_no_trigger} no-trigger)"
+            + (f" + {n_seed_filled} seed-filled (JSON 缺)" if n_seed_filled else ''))
+        if n_seed_filled:
+            _bg(f"⚠️ [DirectiveBootstrap] {n_seed_filled} directive 仅在 .py seed, "
+                f"应 sync 到 directives_vocab.json (Sir 准则 6.5)")
     except Exception:
         pass
-    return n_registered
+    return n_registered + n_seed_filled
 
 
 def _bootstrap_seed_only(registry: DirectiveRegistry) -> int:

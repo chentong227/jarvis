@@ -1528,6 +1528,39 @@ class CentralNerve:
                 _parts = ["=== [L2 DIRECTIVES — conditionally injected this turn] ==="]
                 for _d in _l2_fired:
                     _parts.append(_d.text)
+                # 🆕 [P5-Gap4 / 2026-05-21 18:18] [DIRECTIVES FIRED THIS TURN] 元层 block
+                # Sir 22:19 真痛点: 主脑被 8 条 directive cluster 淹, 看不到全貌. 加元层
+                # 鸟瞰 → 主脑 reason "哪些适用此刻 / 哪些 false positive". 详
+                # docs/JARVIS_DIRECTIVE_SELF_AWARENESS.md
+                # 不删 directive text (保 detail), 只加摘要让主脑能"鸟瞰".
+                # 不阻塞 TTFT (纯 prompt 装配, 不调 LLM, 加 ~1K chars).
+                _meta_lines = [
+                    "",
+                    "=== [DIRECTIVES FIRED THIS TURN — meta overview / Gap 4] ===",
+                    f"You have {len(_l2_fired)} directives injected above. Quick overview:",
+                    "",
+                ]
+                for _d in _l2_fired:
+                    _icon = "⚠️" if _d.priority >= 11 else "  "
+                    _ps = (_d.purpose_short or '').strip()
+                    if not _ps:
+                        # purpose_short 未填 → 用 id 兜底 (lazy 填策略)
+                        _ps = f"(no purpose_short — see directive text above)"
+                    _meta_lines.append(f"  P{_d.priority:>2} {_icon} {_d.id} — {_ps}")
+                _meta_lines.extend([
+                    "",
+                    "[HOW TO USE THIS META-VIEW]",
+                    "- Don't follow each line literally. Look at priority + Sir's current",
+                    "  context, reason which directives truly apply.",
+                    "- Conflicts (e.g. two P10 conflicting): pick the one fitting Sir's",
+                    "  current intent style (instruction vs question vs casual).",
+                    "- Suspect false positive (directive fired but doesn't fit this turn):",
+                    "  skip it. P12 ⚠️ red lines should still be honored, but you can stay",
+                    "  silent on them rather than over-correct.",
+                    "- INTEGRITY family (P11+): honor the bottom line, but no need to",
+                    "  proactively trigger if Sir didn't mention it.",
+                ])
+                _parts.append('\n'.join(_meta_lines))
                 _l2_block = "\n\n".join(_parts)
             # 存到 self 让下游使用（_assemble_prompt 末尾会拼到 prompt 末尾）
             self._l2_injected_block = _l2_block
