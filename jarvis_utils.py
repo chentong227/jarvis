@@ -1,6 +1,7 @@
 import time
 import functools
 import threading
+import contextvars
 import sys
 import re as _re_module
 from collections import deque
@@ -610,19 +611,31 @@ class _BgLogBuffer:
 # ============================================================
 
 class TraceContext:
-    """全局 Trace 上下文（线程安全）。
-    
-    入口约定：
+    """全局 Trace 上下文（线程安全 + contextvars 跨线程传播）。
+
+    入口约定:
       - jarvis_nerve.py:__main__ 启动时调 init_session()
       - VoiceListenThread.text_ready 触发时调 new_turn()
-      - ChatBypass.stream_chat 完成（Full pipeline 后）调 clear_turn()
-    
+      - ChatBypass.stream_chat 完成 (Full pipeline 后) 调 clear_turn()
+
+    🆕 [Gap-Z6 / β.5.46-fix7 / 2026-05-21 23:50] contextvars 支持:
+    daemon / reflector / async thread 可调 push_turn_id_for_thread() capture
+    当时的 turn_id, 之后该 thread 的 log 始终归属正确 turn — 不会被主 thread
+    切到下一 turn 影响.
+
     [P0+20-W.2 / 2026-05-16] 详 docs/JARVIS_WORKFLOW_PROTOCOL.md §1
     """
     _lock = threading.Lock()
     _session_id: str = ""
     _turn_id: str = ""
     _enabled: bool = True
+    # 🆕 [Gap-Z6 / β.5.46-fix7 / 2026-05-21 23:50] contextvars: thread/coroutine local turn_id
+    # daemon thread 启动时调 push_turn_id_for_thread(turn_id) 后, 该 thread 调
+    # get_turn_id() 返回 captured turn_id, 不被主 thread new_turn() 影响.
+    # default='' → 没 push 时 fallback global _turn_id.
+    _turn_id_var: contextvars.ContextVar = contextvars.ContextVar(
+        'jarvis_trace_turn_id', default=''
+    )
 
     @classmethod
     def init_session(cls, pid: int = None) -> str:
@@ -657,26 +670,92 @@ class TraceContext:
 
     @classmethod
     def get_turn_id(cls) -> str:
+        """获取 turn_id. 🆕 [Gap-Z6 / β.5.46-fix7] 优先 thread-local (ContextVar).
+
+        - daemon thread 调过 push_turn_id_for_thread() → 返该 captured turn_id
+        - 否则 → fallback global _turn_id (主对话 thread)
+        """
+        ctx_tid = cls._turn_id_var.get()
+        if ctx_tid:
+            return ctx_tid
+        with cls._lock:
+            return cls._turn_id
+
+    @classmethod
+    def push_turn_id_for_thread(cls, turn_id: str) -> contextvars.Token:
+        """🆕 [Gap-Z6 / β.5.46-fix7] daemon/async thread 启动时 capture turn_id.
+
+        之后该 thread/coroutine 调 get_turn_id() 始终返 captured 值, 不被主
+        thread new_turn() / clear_turn() 影响.
+
+        典型用法:
+            # daemon 启动时
+            token = TraceContext.push_turn_id_for_thread(captured_turn_id)
+            try:
+                ... daemon 工作, log 用正确 turn_id ...
+            finally:
+                TraceContext.pop_turn_id_for_thread(token)
+
+        Returns:
+            ContextVar.Token: 传给 pop_turn_id_for_thread() 还原.
+        """
+        return cls._turn_id_var.set(turn_id or '')
+
+    @classmethod
+    def pop_turn_id_for_thread(cls, token: contextvars.Token) -> None:
+        """🆕 [Gap-Z6] 还原 thread-local turn_id (与 push 配对)."""
+        try:
+            cls._turn_id_var.reset(token)
+        except Exception:
+            pass
+
+    @classmethod
+    def get_global_turn_id(cls) -> str:
+        """获取 global (主 thread) turn_id, 忽略 ContextVar — debug 用."""
         with cls._lock:
             return cls._turn_id
 
     @classmethod
     def get_log_prefix(cls) -> str:
         """返回日志前缀：'[session_id] [turn_id]' 或 '[session_id]' 或 ''
-        
+
         未初始化时返回 ''，保证测试场景下 bg_log 输出与历史完全等价。
+
+        🆕 [Gap-Z6 / β.5.46-fix7] tid 走 get_turn_id() — daemon thread 自动
+        用 captured turn_id, 不再被主 thread 切 turn 影响.
         """
         if not cls._enabled:
             return ""
         with cls._lock:
             sid = cls._session_id
-            tid = cls._turn_id
+        # tid 用 ContextVar 优先 (daemon thread captured 优先 global)
+        tid = cls.get_turn_id()
         if not sid:
             return ""
         parts = [f"[{sid}]"]
         if tid:
             parts.append(f"[{tid}]")
         return " ".join(parts)
+
+    @classmethod
+    def captured_turn(cls, turn_id: str):
+        """🆕 [Gap-Z6 / β.5.46-fix7] context manager — daemon 用.
+
+        Usage:
+            with TraceContext.captured_turn(turn_id):
+                # log 用 captured turn_id, 即使主 thread 切 turn
+
+        实现: push 进 ContextVar, 退出时 reset.
+        """
+        from contextlib import contextmanager
+        @contextmanager
+        def _ctx():
+            token = cls.push_turn_id_for_thread(turn_id)
+            try:
+                yield
+            finally:
+                cls.pop_turn_id_for_thread(token)
+        return _ctx()
 
     @classmethod
     def disable_log_prefix(cls):
