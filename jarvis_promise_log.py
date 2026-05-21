@@ -325,9 +325,15 @@ class PromiseExecutionLog:
             return {'total': total, 'states': states, 'kinds': kinds}
 
     def sweep_untracked(self) -> int:
-        """定期跑: 把 24h 无 evidence 的 pending → untracked. 返回扫到数."""
+        """定期跑: 把 24h 无 evidence 的 pending → untracked. 返回扫到数.
+
+        🩹 [P5-fixCB-revise / 2026-05-21 11:50] 转 UNTRACKED 时 publish
+        'self_promise_overdue' SWM event (per-promise) — 主脑下轮 prompt 看
+        [SELF-PROMISE OVERDUE] block → 主动 admit (合法 surface 触发 b).
+        """
         n = 0
         cutoff = time.time() - UNTRACKED_AFTER_HOURS * 3600
+        flipped: List[Promise] = []
         with self._lock:
             for p in list(self.promises.values()):
                 if p.state != STATE_PENDING:
@@ -337,6 +343,7 @@ class PromiseExecutionLog:
                 if p.evidence:
                     continue
                 p.state = STATE_UNTRACKED
+                flipped.append(p)
                 n += 1
         if n > 0:
             try:
@@ -346,6 +353,34 @@ class PromiseExecutionLog:
             line = f"❓ [Jarvis Promise] sweep_untracked: {n} pending → untracked (24h no evidence)"
             print(line)
             bg_log(line)
+            # publish per-promise overdue SWM (合法 surface 触发 b)
+            try:
+                from jarvis_utils import get_event_bus as _geb
+                bus = _geb()
+                if bus is not None:
+                    for p in flipped:
+                        bus.publish(
+                            etype='self_promise_overdue',
+                            description=(
+                                f"Jarvis self-promise overdue: \"{(p.description or '')[:80]}\""
+                                f" (registered {int((time.time() - p.registered_at) / 3600)}h ago, "
+                                f"无 evidence)"
+                            ),
+                            source='PromiseLog/sweep_untracked',
+                            salience=0.70,  # 高 — Sir 真需要知道 Jarvis 没履行
+                            metadata={
+                                'promise_id': p.id,
+                                'description': (p.description or '')[:200],
+                                'kind': p.kind,
+                                'deadline_str': (p.deadline_str or '')[:40],
+                                'registered_at': p.registered_at,
+                                'registered_turn_id': p.turn_id[:40],
+                                'age_hours': int((time.time() - p.registered_at) / 3600),
+                                'lang': p.lang,
+                            },
+                        )
+            except Exception:
+                pass
         return n
 
     # ---- 持久化 ----

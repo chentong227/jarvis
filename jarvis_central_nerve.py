@@ -1798,6 +1798,76 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [P5-fixCB-revise / 2026-05-21 11:50] SELF-PROMISE OVERDUE block
+        # 合法 surface 触发 (b) — Jarvis 自检 promise 没履行 (PromiseLog sweep 24h
+        # 无 evidence → state UNTRACKED → publish 'self_promise_overdue' SWM).
+        # 主脑下轮看 [SELF-PROMISE OVERDUE] block → 主动 admit "我之前说 X 没做到".
+        # 这是道歉的"有意义"通道 — Jarvis 自己发现的, Sir 真需要知道.
+        try:
+            _bus_pop = getattr(self, 'event_bus', None)
+            if _bus_pop is not None:
+                _pop_events = _bus_pop.recent_events(
+                    within_seconds=3600.0 * 12,  # 12h, sweep 1h tick × 12
+                    types={'self_promise_overdue'},
+                ) or []
+                # de-dup by promise_id (同一 promise 多次 overdue 只显 1 次)
+                _seen_pids = set()
+                _shown_promises = []
+                for _e in _pop_events:
+                    _meta = _e.get('metadata') or {}
+                    _pid = _meta.get('promise_id', '')
+                    if not _pid or _pid in _seen_pids:
+                        continue
+                    _seen_pids.add(_pid)
+                    _shown_promises.append({
+                        'promise_id': _pid,
+                        'description': _meta.get('description', '')[:160],
+                        'age_hours': int(_meta.get('age_hours') or 0),
+                        'kind': _meta.get('kind', 'soft'),
+                        'deadline_str': _meta.get('deadline_str', ''),
+                    })
+                    if len(_shown_promises) >= 3:
+                        break
+                if _shown_promises:
+                    _pop_lines = [
+                        '[SELF-PROMISE OVERDUE — Jarvis 自检发现没履行的 promise]',
+                        '  你之前 reply 里许诺过这些 (PromiseLog 自动 register), 现在已 24h+',
+                        '  无 evidence 兑现 → 系统标 UNTRACKED. **Sir 真需要你 admit**.',
+                        '',
+                    ]
+                    for _p in _shown_promises:
+                        _pop_lines.append(
+                            f"  - \"{_p['description']}\" "
+                            f"(promise_id={_p['promise_id'][:8]}, "
+                            f"{_p['age_hours']}h ago, kind={_p['kind']}"
+                            f"{(', deadline=' + _p['deadline_str']) if _p['deadline_str'] else ''})"
+                        )
+                    _pop_lines.append('')
+                    _pop_lines.append(
+                        '  **如何 surface 得有意义** (Sir 11:30 真理):'
+                    )
+                    _pop_lines.append(
+                        '    ✅ 自然 inline admit: "顺便 Sir, 之前我说会 X — 那事我其实没做到, 想跟您说一声."'
+                    )
+                    _pop_lines.append(
+                        '    ✅ 加 actionable: "...您要不要我现在补上?" / "...或先 mark 取消?"'
+                    )
+                    _pop_lines.append(
+                        '    ❌ 不要堆 ritual ("我必须承认 X 我应当澄清 Y..." 空套话)'
+                    )
+                    _pop_lines.append(
+                        '    ❌ 一次 1-2 条最多 (别一口气倒老账)'
+                    )
+                    _pop_lines.append(
+                        '    ⚠️ 若 Sir 当前 turn 在做无关事 → 仍可短句插一句 acknowledge,'
+                    )
+                    _pop_lines.append(
+                        '       不强 surface; 等 Sir 主动问"X 怎么样了" 再深入'
+                    )
+                    _parts.append('\n'.join(_pop_lines))
+        except Exception:
+            pass
+
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
         # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]
