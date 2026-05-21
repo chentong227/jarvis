@@ -148,11 +148,26 @@ class Hands:
                     trigger_ts = time.mktime(time_struct)
                 except Exception as e:
                     return ExecutionResult(success=False, msg=f"时间格式错误，必须为 YYYY-MM-DD HH:MM:00。错误: {e}")
+                # 🩹 [P5-fix-add_reminder / 2026-05-21 10:10] Sir 10:06 真测真报:
+                # "NOT NULL constraint failed: TaskMemories.timestamp"
+                # TaskMemories schema 要求 timestamp/environment/macro_goal NOT NULL,
+                # 老 INSERT 只传 user_intent/trigger_time/is_future_task/is_deleted →
+                # 3 列 NOT NULL 没传 → SQLite reject. 提醒功能从某次 schema 升级起就挂了.
+                # 修: 创建时刻 = timestamp (now), environment = 'reminder' 标识, macro_goal = intent.
                 conn = self.hippocampus._get_conn()
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO TaskMemories (user_intent, trigger_time, is_future_task, is_deleted) VALUES (?, ?, 1, 0)",
-                    (intent, trigger_ts)
+                    "INSERT INTO TaskMemories "
+                    "(timestamp, environment, user_intent, macro_goal, "
+                    " trigger_time, is_future_task, is_deleted) "
+                    "VALUES (?, ?, ?, ?, ?, 1, 0)",
+                    (
+                        time.time(),                  # 创建时刻
+                        'reminder',                   # environment 标识 (区分 chat memory)
+                        intent,                       # user_intent (提醒内容)
+                        f'reminder: {intent[:80]}',   # macro_goal
+                        trigger_ts,                   # 触发时刻
+                    )
                 )
                 conn.commit()
                 new_id = cursor.lastrowid
