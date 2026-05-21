@@ -1126,6 +1126,36 @@ class CareSpeechSynth:
                 f"(node throttled 30min for same urgency bucket)"
             )
             return False
+        # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
+        # ProactiveCare 也参与协调, 跟 SmartNudge / Conductor / ReturnSentinel 同档.
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check,
+                publish_proactive_nudge_skipped as _pub_skip,
+            )
+            _should_yield, _yield_reason = _yield_check(
+                within_s=600.0,
+                current_kind='proactive_care',
+                current_sentinel='ProactiveCare',
+            )
+            if _should_yield:
+                _pub_skip(
+                    kind='proactive_care',
+                    sentinel='ProactiveCare',
+                    reason=_yield_reason,
+                    extra_metadata={
+                        'concern_id': evi.concern_id,
+                        'urgency': float(evi.urgency_score),
+                    },
+                )
+                bg_log(
+                    f"🤝 [ProactiveCare/Yield] concern={evi.concern_id} "
+                    f"publish-only (让位 {_yield_reason})"
+                )
+                return False  # publish-only, 不 push __NUDGE__
+        except Exception:
+            pass
+
         try:
             payload = "__NUDGE__:" + json.dumps(nudge_ctx, ensure_ascii=False)
             worker.push_command(payload)
@@ -1133,6 +1163,22 @@ class CareSpeechSynth:
                 f"🤝 [ProactiveCare/LIVE] pushed concern={evi.concern_id} "
                 f"urgency={evi.urgency_score:.2f} channel={channel}"
             )
+
+            # 🩹 [P5-fixC] ProactiveCare 真 fire → publish 让别的 sentinel 让位.
+            try:
+                from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+                _pn_pub(
+                    kind='proactive_care',
+                    sentinel='ProactiveCare',
+                    extra_metadata={
+                        'concern_id': evi.concern_id,
+                        'urgency': float(evi.urgency_score),
+                        'channel': channel,
+                    },
+                )
+            except Exception:
+                pass
+
             # 🩹 [β.2.8.5] 主动关心也算"言出必行"的兑现 -
             # 我 (Jarvis) 之前可能承诺"I'll keep an eye on hydration",
             # 这次主动 nudge 就是兑现. 配对 evidence.

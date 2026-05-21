@@ -381,5 +381,15 @@ def reset_default_preflight_for_test() -> None:
 
 
 def is_enabled() -> bool:
-    """env JARVIS_PREFLIGHT=1 启用. Default off (Sir gradual rollout)."""
-    return os.environ.get('JARVIS_PREFLIGHT', '0').strip() == '1'
+    """env JARVIS_PREFLIGHT 控制. Default ON (P5-fixD / 2026-05-21 10:00).
+
+    Sir 09:05/06/12 真测痛点: 23:59 / "medical examination overlooked" / Windsurf
+    trial quota — 都是主脑混合真数据涌现 hallucination, [PENDING COMMITMENTS] block
+    主脑无视. P5-fixD: PreFlight 默认开, 让主脑 reply 后 LLM 自审, 不通过 → publish
+    SWM verdict, 主脑下轮 [PREFLIGHT FEEDBACK] 看自纠.
+
+    Sir 关掉: 设 JARVIS_PREFLIGHT=0 (其他任何值都视为 ON, 跟 fix3 默认开同 pattern).
+    代价: 每轮多 ~500ms LLM (async post-stream, 不阻 TTFT).
+    """
+    val = os.environ.get('JARVIS_PREFLIGHT', '1').strip()
+    return val != '0'

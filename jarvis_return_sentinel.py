@@ -492,6 +492,22 @@ class ReturnSentinel(threading.Thread):
             # 之前只有罐头模板路径置 False（line 4313 之前），LLM 路径漏掉 →
             # 同一天可能反复触发 first_active_today（如果上次 push 因下游异常没出声）
             self.first_active_today = False
+
+            # 🩹 [P5-fixC / 2026-05-21 09:45] β.5.0 行为弱耦合 — publish proactive_nudge_fired
+            # 让 SmartNudge.commitment_check + Conductor.path_b offer_help 等其他 sentinel
+            # 看到本 morning greeting 已 fire, 自决退化 publish-only (不连发抢话筒).
+            # Sir 09:05/06/12 真测痛点: 3 个 sentinel 7 min 内连发 — 没人协调.
+            # 此 publish 不是硬 cooldown 数字, 是 evidence: 别的 sentinel 看 evidence 自决.
+            try:
+                from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+                _pn_pub(
+                    kind='return_greeting',
+                    sentinel='ReturnSentinel',
+                    extra_metadata={'afk_minutes': afk_min, 'hour': current_hour},
+                )
+            except Exception:
+                pass
+
             _log(f"📞 [ReturnSentinel/Sent] return_greeting NUDGE 已推 (afk={afk_min}min, hour={current_hour}, first_today_in_ctx={is_first_today})")
             return
 

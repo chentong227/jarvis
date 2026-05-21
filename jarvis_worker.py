@@ -954,13 +954,21 @@ class VoiceListenThread(QThread):
             print(f"⚠️[AcousticWake / β.4.8] init 异常不启用: {_aw_e}")
             self._acoustic_det = None
 
-        # 🩹 [β.5.40-A1 / 2026-05-20] Ambient sensor init (Sir 方向 A.1)
-        # 轻量被动听感 hook 同一帧 PCM data, publish ambient_state SWM
-        # 不调 ASR / 不抢麦克风 / 不存 audio raw (隐私) / 仅 IDLE 时分析
-        # ENV: JARVIS_AMBIENT_DISABLE=1 可强制关闭
+        # 🩹 [β.5.40-A1 / 2026-05-20 + P5-fix-AmbientBus / 2026-05-21 09:55]
+        # Ambient sensor init (Sir 方向 A.1) — 轻量被动听感 hook 同一帧 PCM data,
+        # publish ambient_state SWM. 不调 ASR / 不抢麦克风 / 不存 audio raw (隐私) /
+        # 仅 IDLE 时分析. ENV: JARVIS_AMBIENT_DISABLE=1 可强制关闭.
+        #
+        # BUG fix: 原 line `getattr(getattr(self.jarvis, ...))` 访问 `self.jarvis` —
+        # 但 VoiceListenThread 没这字段 (`self.jarvis` 是 JarvisWorkerThread 才有).
+        # Sir 09:53 真测真报: "init 异常不启用: 'VoiceListenThread' object has no attribute 'jarvis'".
+        # AmbientSensor 整个 sprint 从启动起就没工作过 — 主脑没看到 ambient_state SWM signal.
+        # 修法: 改用 jarvis_utils.get_event_bus() 全局 singleton, 跟 SilenceIntel /
+        # ProactiveCare 等其他 publish-only 模块同 pattern, 不依赖类继承链.
         try:
             from jarvis_ambient_sensor import get_ambient_sensor
-            _bus = getattr(getattr(self.jarvis, 'event_bus', None), 'publish', None) and self.jarvis.event_bus
+            from jarvis_utils import get_event_bus as _amb_geb
+            _bus = _amb_geb()
             self._ambient_sensor = get_ambient_sensor(event_bus=_bus)
             stats = self._ambient_sensor.get_stats()
             if stats.get('effective_enabled'):

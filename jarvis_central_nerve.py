@@ -854,10 +854,12 @@ class CentralNerve:
             except Exception:
                 pass
 
-        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35] ReplyPreFlight 初始化
+        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35 + P5-fixD / 2026-05-21 10:00 默认开]
         # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
-        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback. PreFlight 后置审计 + SWM publish
-        # → 主脑下轮 [PREFLIGHT FEEDBACK] 看自纠. env JARVIS_PREFLIGHT=1 启用.
+        # Sir 09:05/06/12 又 3 次混合真数据涌现 hallucination (23:59 / Windsurf quota).
+        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback / hallucinate (cluster 淹).
+        # P5-fixD 默认开 — PreFlight 后置审计 + SWM publish → 主脑下轮 [PREFLIGHT FEEDBACK]
+        # 看自纠. Sir 关掉设 JARVIS_PREFLIGHT=0.
         self.reply_preflight = None
         try:
             from jarvis_reply_preflight import ReplyPreFlight, register_preflight
@@ -865,10 +867,10 @@ class CentralNerve:
             register_preflight(self.reply_preflight)
             try:
                 from jarvis_utils import bg_log as _pf_bg
-                import os as _os_pf
-                _enabled = _os_pf.environ.get('JARVIS_PREFLIGHT', '0') == '1'
+                from jarvis_reply_preflight import is_enabled as _pf_is_enabled
+                _enabled = _pf_is_enabled()
                 _pf_bg(
-                    f"🛂 [ReplyPreFlight] {'enabled (env JARVIS_PREFLIGHT=1)' if _enabled else 'registered (env JARVIS_PREFLIGHT=0, dormant)'}"
+                    f"🛂 [ReplyPreFlight] {'enabled (default ON, P5-fixD)' if _enabled else 'registered (env JARVIS_PREFLIGHT=0, dormant)'}"
                 )
             except Exception:
                 pass

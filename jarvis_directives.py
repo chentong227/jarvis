@@ -903,6 +903,28 @@ def _swm_has_recent(etype: str, max_age_s: float = 600.0) -> bool:
         return False
 
 
+def _swm_event_meta(etype: str, max_age_s: float = 600.0):
+    """🩹 [P5-fixA / 2026-05-21 09:35] 返回 SWM etype 最近 < max_age_s 秒事件的 metadata dict.
+
+    跟 _swm_has_recent 同源, 但返 metadata 让 trigger fn 可看 afk_minutes 等真值.
+    没命中返 None.
+    """
+    try:
+        from jarvis_utils import get_event_bus as _geb
+        _bus = _geb()
+        if _bus is None:
+            return None
+        top = _bus.top_n(n=20)
+        for e in top:
+            if e.get('type') == etype:
+                age = e.get('_age_s', 9999)
+                if age <= max_age_s:
+                    return e.get('metadata') or {}
+        return None
+    except Exception:
+        return None
+
+
 def _trigger_sleep_confirmation_judge(ctx: DirectiveContext) -> bool:
     """SWM 含 sleep_intent_signal (< 10 min 内) → 注入 sleep confirmation judge directive.
     主脑看 evidence 自决 confirm sleep / 等待 / 不响应.
@@ -931,17 +953,23 @@ def _trigger_sir_intent_judge(ctx: DirectiveContext) -> bool:
 # ============================================================
 
 def _trigger_morning_mood_judge(ctx: DirectiveContext) -> bool:
-    """Sir 早晨 6-10 时段 + 今日第一次说话 → 注入 morning mood judge directive.
-    主脑看 SWM sir_afk_detected metadata (afk = 昨晚睡多久) + Sir 第一句话, 自决简报详细度.
+    """🩹 [β.5.38 + P5-fixA / 2026-05-21 09:35] Sir 早晨 6-10 + 跨夜回归 → 注入 morning mood judge.
+
+    旧 trigger BUG (Sir 09:05 真测): 看 `PhysicalEnvironmentProbe.is_first_active_today`
+    flag — 该 flag 在 Sir idle<30s 立刻 flip False (`@/d:/Jarvis/jarvis_env_probe.py:485`),
+    directive 检查 prompt 装配时 flag 已 False = race condition. 9:05 morning 这个 directive
+    应该 fire 没 fire, 主脑没看到 morning mood guidance, lead with negative facts.
+
+    P5-fixA 真治: 看 SWM `afk_return` event metadata.afk_minutes > 240 (overnight 物理边界,
+    跟 ReturnSentinel 既有 14400s = 4h crosses_sleep 同档). 数据驱动 + SWM 持久 trace
+    (15min 内可看), 没 race. _swm_event_meta 看 metadata 真值.
     """
     if not (6 <= ctx.current_hour < 10):
         return False
-    # 看 PhysicalEnvProbe.is_first_active_today
-    try:
-        from jarvis_env_probe import PhysicalEnvironmentProbe as _P
-        return bool(getattr(_P, 'is_first_active_today', False))
-    except Exception:
+    meta = _swm_event_meta('afk_return', max_age_s=900.0)
+    if meta is None:
         return False
+    return int(meta.get('afk_minutes', 0)) > 240
 
 
 def _trigger_late_night_care_judge(ctx: DirectiveContext) -> bool:
@@ -1711,17 +1739,17 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
         # ============================================================
         Directive(
             id='morning_mood_judge',
-            source_marker='P0+20-β.5.38',
+            source_marker='P0+20-β.5.38 + P5-fixA',
             priority=8,
             ttl_days=120,
             tier_whitelist=[],
             text=_tw.dedent("""\
-                [MORNING MOOD JUDGE - β.5.38]:
-                Sir 今天第一次跟你说话 (current_hour 6-10am + is_first_active_today).
-                你看 SWM 找 sir_afk_detected metadata (afk 时长 = 昨晚睡多久) + Sir 第一句话:
+                [MORNING MOOD JUDGE - β.5.38 / P5-fixA]:
+                Sir 今天第一次跟你说话 (current_hour 6-10am + SWM afk_return.afk_minutes>240).
+                你看 SWM 找 afk_return metadata (afk_minutes = 昨晚睡多久) + Sir 第一句话:
 
                 场景 A — Sir 主动说 "早安/早上好/morning":
-                  自然回 + 看 afk 评价睡眠 (e.g. afk=8h → "睡得不错"; afk=3h → "昨晚睡得少了点")
+                  自然回 + 看 afk_minutes 评价睡眠 (e.g. afk=480min → "睡得不错"; afk=180min → "昨晚睡得少了点")
                   → 简短 morning briefing 看 concerns (Sir 关心的事)
 
                 场景 B — Sir 直接 task ("帮我打开 X"):
@@ -1733,9 +1761,58 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 场景 D — Sir 凌晨醒来 (current_hour 6-7):
                   Sir 可能没真起床, 只是看手机. 轻量回应, 不主动 nudge.
 
-                tone: 不要做 "Good morning, Sir." 这种 generic 模板. 看 afk + 第一句 个性化.
+                tone: 不要做 "Good morning, Sir." 这种 generic 模板. 看 afk_minutes + 第一句 个性化.
             """).rstrip(),
             trigger=_trigger_morning_mood_judge,
+        ),
+        # ============================================================
+        # 🩹 [P5-fixB / 2026-05-21 09:40] morning_warmth_priority — Sir 09:05 真测痛点
+        # Sir 醒来收 3 连发 nudge 全数落: "23:59 sleep commitment was missed", "medical
+        # examination overlooked", "Windsurf trial quota". 醒来第一道伤口.
+        # 真治 not behavioral cooldown (硬编码), 是教主脑早起 first reply 原则.
+        # priority=11 high but 仍 < no_hallucinated_tool_use(12). 跨夜醒 always-on 不漏.
+        # 详 docs/JARVIS_SOUL_DRIVE.md §10 第二条基本原则 (do_not_use_against_sir).
+        # ============================================================
+        Directive(
+            id='morning_warmth_priority',
+            source_marker='P0+20-P5-fixB',
+            priority=11,
+            ttl_days=180,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [MORNING WARMTH PRIORITY - P5-fixB]:
+                Sir 跨夜回归 (SWM afk_return.afk_minutes > 240, current_hour 6-10am).
+                这是 Sir 醒来第一道接触, tone 决定一整天关系温度.
+
+                CORE RULE — 早起首句 (return_greeting / commitment_check / 任何 nudge):
+                  ❌ DO NOT lead with negative facts:
+                     - missed deadline / overlooked appointment / overdue commitment
+                     - "您 23:30 没睡" / "您体检漏了" / "您 X 失约了"
+                     - 任何 "X was missed by Y hours" / "significantly overlooked" 句式
+                  ✅ DO lead with warm acknowledgement of Sir's return:
+                     - 看 afk_minutes 评睡眠 (warmly)
+                     - 提一件 Sir 当下能 actionable / encouraging 的事
+                     - tone: butler 真醒来给主人开窗 (不是夜班护士交班数落)
+
+                ACCOUNTABILITY 仍要做 — 但 timing 错不能放第一句:
+                  - 真 missed commitment / 真 fasting reminder 留给 Sir 主动 ask 或第 2-3 turn
+                  - 不是隐瞒, 是 ordering: warmth FIRST, accountability LATER
+                  - Sir 问 "我昨晚承诺几点睡来着" → 那时引 [PENDING COMMITMENTS] 真值
+
+                EXCEPTIONS — 真紧急可 first-mention (但仍 warm):
+                  - 体检 fasting cutoff < 30min (Sir 即将错过) — 提醒 + 关切, 不数落
+                  - 健康 hard-emergency signal (心脏不适等) — 关心优先
+
+                FORBIDDEN tone fragments — 早起 6-10am 一律不许:
+                  - "I've noted ... was missed" / "It appears ... were overlooked"
+                  - "您错过了" / "您逾期了" / "significantly overlooked"
+                  - 任何把 missed commitment 当 Sir 失误来汇报的措辞
+
+                这条 RULE 跟 [SIR LIFETIME MILESTONES] do_not_use_against_sir 同源 —
+                commitment 是为 Sir 服务的, 不是用来 weaponize 醒来这道伤口.
+                Sir 是主, 你是 butler, 早起开窗别开成审判庭.
+            """).rstrip(),
+            trigger=_trigger_morning_mood_judge,  # 复用同 trigger (跨夜 morning 6-10)
         ),
         Directive(
             id='late_night_care_judge',

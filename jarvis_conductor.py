@@ -521,10 +521,54 @@ class Conductor(threading.Thread):
             if _v:
                 nudge_context[_k] = _v
 
+        # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
+        # Sir 09:12 真测: ReturnSentinel return_greeting fire 后 7min Conductor path_a 再 fire,
+        # Sir 还没回应 morning. 让位 → 退化 publish-only.
+        _path_a_kind = alert_info.get('action', 'path_a_nudge') or 'path_a_nudge'
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check,
+                publish_proactive_nudge_skipped as _pub_skip,
+            )
+            _should_yield, _yield_reason = _yield_check(
+                within_s=600.0,
+                current_kind=_path_a_kind,
+                current_sentinel='Conductor',
+            )
+            if _should_yield:
+                _pub_skip(
+                    kind=_path_a_kind,
+                    sentinel='Conductor',
+                    reason=_yield_reason,
+                    extra_metadata={'path': 'A', 'source': alert_info.get('source', '')},
+                )
+                try:
+                    from jarvis_utils import bg_log as _yld_bg
+                    _yld_bg(
+                        f"🤝 [Conductor/Yield] path_a {_path_a_kind} publish-only "
+                        f"(让位 {_yield_reason})"
+                    )
+                except Exception:
+                    pass
+                return  # publish-only, 不 push __NUDGE__
+        except Exception:
+            pass  # 协调失败时走原 path
+
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:
             self.gate.mark_spoke('guardian')
+
+        # 🩹 [P5-fixC] path_a 真 fire → publish 让别的 sentinel 让位.
+        try:
+            from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+            _pn_pub(
+                kind=_path_a_kind,
+                sentinel='Conductor',
+                extra_metadata={'path': 'A', 'source': alert_info.get('source', '')},
+            )
+        except Exception:
+            pass
 
         # 🩹 [P4-Case3 / 2026-05-20 23:59] SoftFocus wire (Sir 23:11 真痛点)
         # Sir 23:32 真测: Conductor late_night nudge fire 后无 [Focus Mode], Sir 想短回应
@@ -696,11 +740,54 @@ class Conductor(threading.Thread):
             "afk_minutes": _afk_min,
             "is_afk_long": _is_afk_long,
         }
-        
+
+        # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
+        # Sir 09:12 真测: ReturnSentinel return_greeting fire 后 7min Conductor path_b offer_help
+        # fire ("Windsurf reached quota limit"), Sir 还没回 morning. 让位 → 退化 publish-only.
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check,
+                publish_proactive_nudge_skipped as _pub_skip,
+            )
+            _should_yield, _yield_reason = _yield_check(
+                within_s=600.0,
+                current_kind=nudge_type,
+                current_sentinel='Conductor',
+            )
+            if _should_yield:
+                _pub_skip(
+                    kind=nudge_type,
+                    sentinel='Conductor',
+                    reason=_yield_reason,
+                    extra_metadata={'path': 'B', 'action': decision.get('action', '')},
+                )
+                try:
+                    from jarvis_utils import bg_log as _yld_bg
+                    _yld_bg(
+                        f"🤝 [Conductor/Yield] path_b {nudge_type} publish-only "
+                        f"(让位 {_yield_reason})"
+                    )
+                except Exception:
+                    pass
+                return  # publish-only, 不 push __NUDGE__
+        except Exception:
+            pass  # 协调失败时走原 path
+
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:
             self.gate.mark_spoke('guardian')
+
+        # 🩹 [P5-fixC] path_b 真 fire → publish 让别的 sentinel 让位.
+        try:
+            from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+            _pn_pub(
+                kind=nudge_type,
+                sentinel='Conductor',
+                extra_metadata={'path': 'B', 'action': decision.get('action', '')},
+            )
+        except Exception:
+            pass
 
         # 🩹 [P4-Case3 / 2026-05-20 23:59] SoftFocus wire (Sir 23:11 真痛点)
         # Sir 23:32 真测: Conductor late_night nudge fire 后无 [Focus Mode], Sir 想短回应

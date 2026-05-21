@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""[Gap 2 / P5-PreFlight / 2026-05-21 00:45] Reply PreFlight verify
+"""[Gap 2 / P5-PreFlight / 2026-05-21 00:45 + P5-fixD / 10:00 默认开] Reply PreFlight verify
 
 Cover:
-  A. ReplyPreFlight class basic (default off, env enabled, fallback safe)
+  A. ReplyPreFlight class basic (default ON, env=0 disabled, fallback safe)
   B. Cache layer
   C. Stats persist
   D. Singleton register
@@ -26,13 +26,22 @@ class TestA_ReplyPreFlightBasics(unittest.TestCase):
         from jarvis_reply_preflight import reset_default_preflight_for_test
         reset_default_preflight_for_test()
 
-    def test_default_disabled(self):
+    def test_default_enabled(self):
+        """[P5-fixD] default ON — no env var → enabled."""
         from jarvis_reply_preflight import is_enabled
-        # default no env → disabled
         os.environ.pop('JARVIS_PREFLIGHT', None)
-        self.assertFalse(is_enabled())
+        self.assertTrue(is_enabled())
 
-    def test_env_enabled(self):
+    def test_env_disabled(self):
+        """[P5-fixD] JARVIS_PREFLIGHT=0 → disabled."""
+        from jarvis_reply_preflight import is_enabled
+        os.environ['JARVIS_PREFLIGHT'] = '0'
+        try:
+            self.assertFalse(is_enabled())
+        finally:
+            os.environ.pop('JARVIS_PREFLIGHT', None)
+
+    def test_env_explicit_enabled(self):
         from jarvis_reply_preflight import is_enabled
         os.environ['JARVIS_PREFLIGHT'] = '1'
         try:

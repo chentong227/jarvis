@@ -3599,12 +3599,13 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
-        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:30] Reply PreFlight 后置审计
-        # Sir 22:04 / 22:19 / 23:02 / 23:43 / 23:49 反复 5 次 unsolicited apology callback
-        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback (cluster 淹). 真治: PreFlight
+        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:30 + P5-fixD / 2026-05-21 10:00 默认开]
+        # Sir 22:04 / 22:19 / 23:02 / 23:43 / 23:49 反复 5 次 unsolicited apology callback.
+        # Sir 09:05 / 06 / 12 又 3 次混合真数据涌现 hallucination.
+        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback / hallucinate (cluster 淹). 真治: PreFlight
         # 检 reply 是否 unsolicited / hallucinate / tone mismatch. async, publish SWM
         # 'preflight_verdict' event, 主脑下轮 prompt [PREFLIGHT FEEDBACK] block 看自纠.
-        # env JARVIS_PREFLIGHT=1 启用 (default off, Sir gradual rollout).
+        # 默认开 (P5-fixD); Sir 关掉设 JARVIS_PREFLIGHT=0.
         try:
             from jarvis_reply_preflight import is_enabled as _pf_enabled
             if _pf_enabled() and final_reply and final_reply.strip():

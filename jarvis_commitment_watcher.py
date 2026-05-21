@@ -1661,10 +1661,61 @@ class CommitmentWatcher(threading.Thread):
         }
         if self.gate and not self.gate.can_speak('guardian', is_urgent=True, nudge_type='commitment_check'):
             return
+
+        # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
+        # Sir 09:05/06 真测: ReturnSentinel return_greeting fire 后 55s commitment_check 又 fire,
+        # Sir 还没回复 morning 问候. 这条 commitment 不是新的, deadline 是昨晚 23:30, 跟 morning
+        # warmth 冲突. 让位 → 退化 publish-only, 不抢话筒.
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check,
+                publish_proactive_nudge_skipped as _pub_skip,
+            )
+            _should_yield, _yield_reason = _yield_check(
+                within_s=600.0,
+                current_kind='commitment_check',
+                current_sentinel='SmartNudge',
+            )
+            if _should_yield:
+                _pub_skip(
+                    kind='commitment_check',
+                    sentinel='SmartNudge',
+                    reason=_yield_reason,
+                    extra_metadata={
+                        'commitment_description': commitment.get('description', '')[:60],
+                        'overdue_minutes': overdue_minutes,
+                    },
+                )
+                try:
+                    from jarvis_utils import bg_log as _yld_bg
+                    _yld_bg(
+                        f"🤝 [CommitmentWatcher/Yield] commitment_check publish-only "
+                        f"(让位 {_yield_reason})"
+                    )
+                except Exception:
+                    pass
+                return  # publish-only, 不 push __NUDGE__
+        except Exception:
+            pass  # 协调失败时走原 path (向后兼容)
+
         cmd = f"__NUDGE__:{json.dumps(context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:
             self.gate.mark_spoke('guardian')
+
+        # 🩹 [P5-fixC] commitment_check 真 fire → publish 让别的 sentinel 让位.
+        try:
+            from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+            _pn_pub(
+                kind='commitment_check',
+                sentinel='SmartNudge',
+                extra_metadata={
+                    'commitment_description': commitment.get('description', '')[:60],
+                    'overdue_minutes': overdue_minutes,
+                },
+            )
+        except Exception:
+            pass
 
         try:
             if hasattr(self.worker, 'causal_chain'):
