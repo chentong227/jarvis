@@ -1615,12 +1615,71 @@ class CentralNerve:
         except Exception:
             self_anchor_block = ''
         # Layer 1: Concerns（"我关心什么"）
+        # 🆕 [P5-Gap4-followup / 2026-05-21 21:18] Sir 21:17 真意:
+        # > "如果不主动提, Jarvis 不会忘提醒喝水睡觉?" — 不会, 后台 ProactiveCare
+        # 通路保留, 这只改"每 turn 主流 prompt 是否 inject concerns".
+        # 三轮道歉根因: 主脑看到 concern list → 误以为该 surface → 翻老账.
+        # 修法: concern inject 只在 (a) Sir 召唤 / (b) 后台标 URGENT (sev > 0.7) 时.
+        # 不阻塞 ProactiveCare nudge — daemon 该 surface 还 surface.
         soul_block = ''
         try:
             if self.concerns_ledger is not None:
-                soul_block = self.concerns_ledger.to_prompt_block(top_n=3, max_chars=600)
+                _ui = (user_input or '').lower()
+                # (a) Sir 召唤检测 (TODO β.6+: vocab + LLM judge 升级, 准则 6.5)
+                _summon_kw = (
+                    'concern', 'concerns', 'worry', 'worried', 'remind',
+                    'progress', 'status', "what's up", 'how am i', 'how about',
+                    'whats up', 'how are you', 'check on me', 'check in',
+                    '担心', '心事', '进度', '状态', '怎么样', '啥情况', '提醒',
+                    '记着', '要注意', '检查', '关心',
+                )
+                _summoned = any(kw in _ui for kw in _summon_kw)
+                # (b) 后台真有 URGENT — 任意 active concern severity > 0.7
+                _has_urgent = False
+                try:
+                    _active = self.concerns_ledger.list_active()
+                    for _c in _active:
+                        if getattr(_c, 'severity', 0) > 0.7:
+                            _has_urgent = True
+                            break
+                except Exception:
+                    pass
+                # (c) Sir 21:19 真意保险条款 — 上轮 PreFlight 抓到 verdict=edit/scrap
+                # 说明 Jarvis 真出错了, 主脑下轮应当看到 concerns 心结, 让它合理 surface
+                # 自我澄清. 这条保留 Jarvis 真出错时的"对话中澄清"通路.
+                _preflight_failed = False
+                try:
+                    _bus_pf = getattr(self, 'event_bus', None)
+                    if _bus_pf is not None:
+                        # 最近 5min 内有 preflight_verdict edit/scrap 事件 → inject
+                        _pf_events = _bus_pf.recent_events(
+                            within_seconds=300.0,
+                            types={'preflight_verdict'},
+                        )
+                        for _ev in (_pf_events or []):
+                            _meta = _ev.get('metadata') or {}
+                            if _meta.get('verdict') in ('edit', 'scrap'):
+                                _preflight_failed = True
+                                break
+                except Exception:
+                    pass
+                # 记录触发原因 (诊断 log 用)
+                self._soul_concern_inject_reason = ''
+                if _summoned:
+                    self._soul_concern_inject_reason = 'summon'
+                elif _has_urgent:
+                    self._soul_concern_inject_reason = 'urgent'
+                elif _preflight_failed:
+                    self._soul_concern_inject_reason = 'preflight_fail'
+                else:
+                    self._soul_concern_inject_reason = 'silent'
+                if _summoned or _has_urgent or _preflight_failed:
+                    soul_block = self.concerns_ledger.to_prompt_block(
+                        top_n=3, max_chars=600)
+                # else: 默认沉默 — 主脑不看 concerns 就不 surface 翻老账
         except Exception:
             soul_block = ''
+            self._soul_concern_inject_reason = 'error'
         # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished / threads）
         relational_block = ''
         try:
@@ -2171,9 +2230,13 @@ class CentralNerve:
             _L2c = len(relational_block)
             _L3c = len(attention_block)
             _total_soul = _L0c + _L1c + _L2c + _L3c
+            # 🆕 [P5-Gap4-followup / 2026-05-21 21:20] 加 concern_reason 标记
+            # silent / summon / urgent / preflight_fail 让 Sir grep 看 concern 注入原因
+            _concern_reason = getattr(self, '_soul_concern_inject_reason', '?')
             _bg_soul(
                 f"🪞 [SOUL inject] L0={_L0c}c L1={_L1c}c L2={_L2c}c L3={_L3c}c "
-                f"total={_total_soul}c | jokes={_picked_jokes} "
+                f"total={_total_soul}c concern_reason={_concern_reason} | "
+                f"jokes={_picked_jokes} "
                 f"concerns={_picked_concerns} unf={_picked_unfinished} "
                 f"proto={_picked_protocols} threads={_picked_threads}"
             )
