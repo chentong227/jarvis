@@ -2096,6 +2096,85 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [β.5.46-fix13 Fix-2 / 2026-05-22 00:35] [SLEEP ROUTINE EVIDENCE] block
+        # Sir 00:30:23 真测痛点 (B3/B4/B7):
+        #   - "I've muted the audio for you" (假, MuteApps hit=[])
+        #   - "I lack the means to power down display" (冲突, sleep_display 明明有)
+        #   - "I haven't actually muted yet" (自打脸)
+        # 真凶: 主脑不知道 SleepMode routine 真做了啥 + 不知道自己有哪些能力.
+        # 治本: routine 完后 publish 'sleep_routine_armed' SWM event 含真实 result.
+        # 主脑下轮 prompt 看 evidence, 据实回答 (e.g. "MuteApps 0 hit 因没 audio
+        # session active" / "DisplaySleep OK"), 不撒谎不否认.
+        # 准则 6 三维耦合: 数据 publish SWM, 主脑 LLM 据 evidence 自决怎么说.
+        try:
+            _bus_sr = getattr(self, 'event_bus', None)
+            if _bus_sr is not None:
+                _sr_events = _bus_sr.recent_events(
+                    within_seconds=600.0,  # routine 完成 10min 内有效
+                    types={'sleep_routine_armed'},
+                ) or []
+                if _sr_events:
+                    # 取最新 1 条 (routine 不可能 10min 内 fire 2 次, 但 defensive)
+                    _sr_latest = _sr_events[-1]
+                    _sr_meta = _sr_latest.get('metadata') or {}
+                    _sr_ma = _sr_meta.get('mute_apps') or {}
+                    _sr_sd = _sr_meta.get('sleep_display') or {}
+                    _sr_am = _sr_meta.get('asr_mute') or {}
+                    _sr_lines = [
+                        '[SLEEP ROUTINE EVIDENCE — 你的 sleep routine 真实执行结果]',
+                        '  这是 Jarvis 本端 SleepMode routine 在主脑视野外异步执行的'
+                        '真实结果. **据此回答, 不撒谎也不否认能力**.',
+                        '',
+                    ]
+                    # MuteApps
+                    _ma_hits = _sr_ma.get('hits') or []
+                    _ma_ok = _sr_ma.get('success')
+                    if _ma_ok:
+                        _sr_lines.append(
+                            f"  - MuteApps: hit {len(_ma_hits)} app — "
+                            f"{', '.join(_ma_hits[:5])}{'...' if len(_ma_hits) > 5 else ''}"
+                        )
+                    elif 'error' in _sr_ma:
+                        _sr_lines.append(
+                            f"  - MuteApps: ERROR — {_sr_ma.get('error', '?')[:60]}"
+                        )
+                    else:
+                        _sr_lines.append(
+                            f"  - MuteApps: 0 hit / "
+                            f"{_sr_ma.get('targets_attempted', '?')} attempted — "
+                            f"当前 0 个 app 在播声音 (audio session 空)"
+                        )
+                    # SleepDisplay
+                    if _sr_sd.get('success'):
+                        _sr_lines.append(
+                            f"  - DisplaySleep: OK — {(_sr_sd.get('msg') or '')[:60]}"
+                        )
+                    else:
+                        _sr_lines.append(
+                            f"  - DisplaySleep: FAIL — "
+                            f"{(_sr_sd.get('msg') or _sr_sd.get('error') or 'unknown')[:60]}"
+                        )
+                    # ASR mute
+                    if _sr_am.get('success'):
+                        _ttl = int(_sr_am.get('ttl_s') or 0)
+                        _sr_lines.append(
+                            f"  - ASRMute: muted for {_ttl // 60}min "
+                            f"(防梦话误触, Sir 喊 'Jarvis' 唤醒解除)"
+                        )
+                    _sr_lines.extend([
+                        '',
+                        '  ⚠️ FORBIDDEN: 说 "我已经 muted" 当 MuteApps 0 hit / '
+                        '说 "我没法 dim display" 当 DisplaySleep OK.',
+                        '  正确说法 (依据 evidence):',
+                        '    - MuteApps 0 hit → "no audio sessions active right '
+                        'now, so nothing to mute"',
+                        '    - DisplaySleep OK → "display dimmed, ASR muted, '
+                        'standing by until you wake"',
+                    ])
+                    _parts.append('\n'.join(_sr_lines))
+        except Exception:
+            pass
+
         # 🩹 [P5-fixCB-revise / 2026-05-21 11:50] SELF-PROMISE OVERDUE block
         # 合法 surface 触发 (b) — Jarvis 自检 promise 没履行 (PromiseLog sweep 24h
         # 无 evidence → state UNTRACKED → publish 'self_promise_overdue' SWM).

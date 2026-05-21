@@ -2620,6 +2620,14 @@ class JarvisWorkerThread(QThread):
             if getattr(self, '_sleep_routine_cancelled', False):
                 bg_log("🛑 [SleepMode] 倒数期 Sir 撤回, abort routine")
                 return
+            # 🆕 [β.5.46-fix13 Fix-2 / 2026-05-22 00:35] publish SWM 治 B3/B4/B7
+            # Sir 真测痛点 00:30:23 (line 1000):
+            #   - "I've muted the audio for you" (假, MuteApps hit=[])
+            #   - "I lack the means to power down display" (冲突, sleep_display routine 明明有)
+            # 真凶: 主脑不知道 routine 真做了啥 + 不知道自己有哪些能力.
+            # 治本: routine 完成后 publish 各步真实 result 进 SWM, 主脑 prompt 看到
+            #        [SLEEP ROUTINE EVIDENCE] block, 不撒谎不否认.
+            _swm_results = {'mute_apps': None, 'sleep_display': None, 'asr_mute': None}
             # 1. 循环 mute 所有 active 进程 (Sir 准则 6.5 vocab 驱动)
             try:
                 jarvis = getattr(self, 'jarvis', None)
@@ -2652,8 +2660,15 @@ class JarvisWorkerThread(QThread):
                             f"(无 audio session). Sir 用 scripts/audio_ducking_dump.py "
                             f"调整目标."
                         )
+                    _swm_results['mute_apps'] = {
+                        'hits': list(hits),
+                        'misses_count': len(misses),
+                        'targets_attempted': len(targets),
+                        'success': bool(hits),
+                    }
             except Exception as e:
                 bg_log(f"⚠️ [SleepMode/MuteApps] {e}")
+                _swm_results['mute_apps'] = {'error': str(e)[:80], 'success': False}
             # 2. sleep_display
             try:
                 disp_cls = jarvis.hand_registry.get('display_hands')
@@ -2662,13 +2677,70 @@ class JarvisWorkerThread(QThread):
                     from jarvis_blood import Action
                     r = inst.execute(Action(command='sleep_display', params={}))
                     bg_log(f"😴 [SleepMode/SleepDisplay] {r.msg[:120]}")
+                    _swm_results['sleep_display'] = {
+                        'success': bool(r.success),
+                        'msg': (r.msg or '')[:120],
+                    }
+                else:
+                    _swm_results['sleep_display'] = {
+                        'success': False, 'msg': 'display_hands not registered',
+                    }
             except Exception as e:
                 bg_log(f"⚠️ [SleepMode/SleepDisplay] {e}")
+                _swm_results['sleep_display'] = {'error': str(e)[:80], 'success': False}
             # 3. ASR mute 30min 防梦话误触
             try:
                 self.mute_until = max(getattr(self, 'mute_until', 0),
                                        time.time() + 30 * 60)
                 bg_log(f"😴 [SleepMode/ASRMute] ASR muted for 30min")
+                _swm_results['asr_mute'] = {
+                    'success': True,
+                    'mute_until_ts': self.mute_until,
+                    'ttl_s': 1800,
+                }
+            except Exception as e:
+                _swm_results['asr_mute'] = {'error': str(e)[:80], 'success': False}
+            # 4. publish SWM 'sleep_routine_armed' 让主脑下轮 prompt 看到真实结果
+            try:
+                from jarvis_utils import get_event_bus as _sm_geb
+                _bus = _sm_geb()
+                if _bus is not None:
+                    # 主总结 — 主脑读到这条就知道 routine 已执行 + 各步真实结果
+                    _ma = _swm_results['mute_apps'] or {}
+                    _sd = _swm_results['sleep_display'] or {}
+                    _am = _swm_results['asr_mute'] or {}
+                    _summary_parts = []
+                    if _ma.get('success'):
+                        _summary_parts.append(
+                            f"MuteApps OK ({len(_ma.get('hits') or [])} hit)"
+                        )
+                    else:
+                        _summary_parts.append(
+                            f"MuteApps NO-OP (0 audio session active)"
+                        )
+                    if _sd.get('success'):
+                        _summary_parts.append("DisplaySleep OK")
+                    else:
+                        _summary_parts.append(
+                            f"DisplaySleep FAIL: {(_sd.get('msg') or _sd.get('error') or 'unknown')[:40]}"
+                        )
+                    if _am.get('success'):
+                        _summary_parts.append("ASRMute 30min OK")
+                    _bus.publish(
+                        etype='sleep_routine_armed',
+                        description='SleepMode routine executed: '
+                                    + ' | '.join(_summary_parts),
+                        source='SleepModeRoutine',
+                        salience=0.85,  # 高 salience, 主脑下轮必读
+                        ttl=600.0,       # 10min 内主脑 prompt 可见
+                        metadata={
+                            'mute_apps': _ma,
+                            'sleep_display': _sd,
+                            'asr_mute': _am,
+                            'executed_at': time.time(),
+                            'delay_sec_used': delay_sec,
+                        },
+                    )
             except Exception:
                 pass
 
