@@ -83,11 +83,16 @@ DECAY_TTL_DAYS_DEFAULT = 30
 REVIEW_REJECTED_THRESHOLD = 3
 REJ_RATE_PRIORITY_DROP = 0.3
 MIN_FIRED_FOR_PRIORITY_DROP = 5
+# 🆕 [Gap-Y / β.5.46-fix5] not_helped 衰减阈值
+NOT_HELPED_PRIORITY_DROP = 5     # not_helped >= 5 AND helped/(h+nh) < 0.3 → priority drop
+NOT_HELPED_REVIEW_THRESHOLD = 10  # not_helped >= 10 AND helped == 0 → state=review
+HELPED_RATIO_THRESHOLD = 0.3     # helped 占比 < 0.3 视为低效
 
 # 运行时持久化字段（不存 trigger/text，避免 lambda 序列化）
+# 🆕 [Gap-Y / β.5.46-fix5 / 2026-05-21 23:30] 加 not_helped — 主脑被 7 条 directive 淹治本数据
 _PERSISTABLE_FIELDS = (
-    'fired', 'rejected', 'helped',
-    'last_triggered', 'last_rejected', 'last_helped',
+    'fired', 'rejected', 'helped', 'not_helped',
+    'last_triggered', 'last_rejected', 'last_helped', 'last_not_helped',
     'state', 'priority',
 )
 
@@ -115,9 +120,12 @@ class Directive:
     fired: int = 0
     rejected: int = 0
     helped: int = 0                                          # β.0.5 Gemini-3-Flash 评分后填
+    # 🆕 [Gap-Y / β.5.46-fix5] LLM eval helped=no 计数, decay 规则用 (helped/no 比率低 → priority drop)
+    not_helped: int = 0
     last_triggered: float = 0.0
     last_rejected: float = 0.0
     last_helped: float = 0.0
+    last_not_helped: float = 0.0
     state: str = STATE_ACTIVE
 
 
@@ -220,14 +228,22 @@ class DirectiveRegistry:
             self._dirty = True
 
     def record_helped(self, did: str, helped: bool) -> None:
-        """β.0.5 Gemini-3-Flash 异步评分回写：True→helped++（partial 也算 True）。"""
+        """β.0.5 Gemini-3-Flash 异步评分回写: True→helped++, False→not_helped++.
+
+        🆕 [Gap-Y / β.5.46-fix5] 双向计数: not_helped 高 → decay 规则降 priority/退役.
+        partial 由调用方判定 (一般算 True).
+        """
         with self._lock:
             d = self.directives.get(did)
             if d is None:
                 return
+            now = time.time()
             if helped:
                 d.helped += 1
-                d.last_helped = time.time()
+                d.last_helped = now
+            else:
+                d.not_helped += 1
+                d.last_not_helped = now
             self._dirty = True
 
     # ---- 衰减 ----
@@ -277,6 +293,34 @@ class DirectiveRegistry:
                         d.priority = max(1, d.priority - 2)
                         stats['priority_drop'] += 1
                         self._dirty = True
+                # 🆕 [Gap-Y / β.5.46-fix5] 规则 4: not_helped >= 10 AND helped == 0 → review
+                if d.not_helped >= NOT_HELPED_REVIEW_THRESHOLD and d.helped == 0:
+                    d.state = STATE_REVIEW
+                    stats['review'] += 1
+                    self._dirty = True
+                    review_entries.append({
+                        'id': d.id,
+                        'source_marker': d.source_marker,
+                        'fired': d.fired,
+                        'helped': d.helped,
+                        'not_helped': d.not_helped,
+                        'review_reason': 'not_helped_high',
+                        'last_not_helped_iso': time.strftime(
+                            '%Y-%m-%dT%H:%M:%S',
+                            time.localtime(d.last_not_helped)
+                        ),
+                        'text_preview': d.text[:200],
+                    })
+                    continue
+                # 🆕 [Gap-Y / β.5.46-fix5] 规则 5: not_helped >= 5 AND helped 占比 < 0.3 → priority drop
+                if d.not_helped >= NOT_HELPED_PRIORITY_DROP and d.priority > 1:
+                    total_eval = d.helped + d.not_helped
+                    if total_eval > 0:
+                        helped_ratio = d.helped / total_eval
+                        if helped_ratio < HELPED_RATIO_THRESHOLD:
+                            d.priority = max(1, d.priority - 2)
+                            stats['priority_drop'] += 1
+                            self._dirty = True
         if review_entries:
             try:
                 self._append_review_queue(review_entries)

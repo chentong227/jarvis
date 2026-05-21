@@ -1,0 +1,20 @@
+{
+  "_doc": "Directive 分层注入配置 (Gap-Y / β.5.46-fix5 / 2026-05-21 23:30)",
+  "_purpose": "Sir 22:14 真测痛点: directive cluster fired count=7 / chars=7724 → 主脑 attention 被淹. 治法: top N priority 全文 + 余 purpose_short brief, 减字符占用 + 主脑 attention 集中.",
+  "_grant": "准则 1 (TTFT 不退): 纯 prompt 装配, 不调 LLM. 准则 6 (不硬编码): top N + brief 阈值持久化 + CLI 可改.",
+  "max_full_directives": 5,
+  "always_full_priority_threshold": 11,
+  "brief_max_chars_per_directive": 100,
+  "_history": [
+    {
+      "ts": "2026-05-21T23:30:00",
+      "marker": "β.5.46-fix5 / Gap-Y",
+      "reason": "Sir 22:14 fired count=7/chars=7724 主脑被淹, 加分层注入"
+    }
+  ],
+  "_field_doc": {
+    "max_full_directives": "top N (按 priority 降序) directives 注入完整 text. 默认 5.",
+    "always_full_priority_threshold": "priority >= 此值的 directive 永远全文注入 (顶级红线). 默认 11.",
+    "brief_max_chars_per_directive": "余下 directive 注 purpose_short brief 的字符上限. 默认 100."
+  }
+}

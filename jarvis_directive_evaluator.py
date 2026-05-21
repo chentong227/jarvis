@@ -286,15 +286,23 @@ class DirectiveEvaluator:
             pass
 
     def _apply_to_registry(self, result: EvalResult) -> None:
+        """🆕 [Gap-Y / β.5.46-fix5 / 2026-05-21 23:30] 双向回写 helped/not_helped.
+
+        partial 算 helped (LLM 判 directive 部分起效, 不算反例).
+        no 算 not_helped (decay 规则 4/5 用以退役低效 directive).
+        """
         if self.registry is None:
             return
-        if result.is_followed == 'yes':
+        if result.is_followed in ('yes', 'partial'):
             try:
                 self.registry.record_helped(result.directive_id, helped=True)
             except Exception:
                 pass
         elif result.is_followed == 'no':
-            pass
+            try:
+                self.registry.record_helped(result.directive_id, helped=False)
+            except Exception:
+                pass
 
     def get_stats(self) -> dict:
         with self._lock:

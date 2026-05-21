@@ -1572,9 +1572,59 @@ class CentralNerve:
             # 后续轮次（β.1.X）观察 fired/rejected 信号收敛后再做"瘦身"删旧 inline + 改 PERSONA
             _l2_block = ""
             if _l2_fired:
+                # 🆕 [Gap-Y / β.5.46-fix5 / 2026-05-21 23:30] 分层注入 (Sir 22:14 真测痛点)
+                # fired count=7 / chars=7724 → 主脑 attention 淹. 治法: top N priority 全文,
+                # 余 brief (purpose_short). 不删 directive 数量 (保 trigger), 减字符占用.
+                # config 持久化在 memory_pool/directive_inject_config.json (准则 6.5).
+                _max_full = 5
+                _always_full_pri = 11
+                _brief_max = 100
+                try:
+                    _di_cfg_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        'memory_pool', 'directive_inject_config.json',
+                    )
+                    if os.path.exists(_di_cfg_path):
+                        with open(_di_cfg_path, 'r', encoding='utf-8') as _di_f:
+                            _di_cfg = json.load(_di_f)
+                        if isinstance(_di_cfg, dict):
+                            _max_full = int(_di_cfg.get('max_full_directives', 5))
+                            _always_full_pri = int(_di_cfg.get('always_full_priority_threshold', 11))
+                            _brief_max = int(_di_cfg.get('brief_max_chars_per_directive', 100))
+                except Exception:
+                    pass
+
+                # 已 sort by -priority 在 collect()
+                _full_directives: list = []
+                _brief_directives: list = []
+                for _idx_d, _d in enumerate(_l2_fired):
+                    # priority >= threshold (如 P11/P12 红线) 永远全文
+                    if _d.priority >= _always_full_pri:
+                        _full_directives.append(_d)
+                    # 否则 top N 全文
+                    elif len(_full_directives) < _max_full:
+                        _full_directives.append(_d)
+                    else:
+                        _brief_directives.append(_d)
+
                 _parts = ["=== [L2 DIRECTIVES — conditionally injected this turn] ==="]
-                for _d in _l2_fired:
+                for _d in _full_directives:
                     _parts.append(_d.text)
+                # 余下 brief 段
+                if _brief_directives:
+                    _brief_lines = [
+                        "",
+                        "=== [ADDITIONAL DIRECTIVES — brief mode / Gap-Y] ===",
+                        f"({len(_brief_directives)} more directive(s), purpose-only to save attention):",
+                        "",
+                    ]
+                    for _d in _brief_directives:
+                        _ps = (_d.purpose_short or '').strip()
+                        if not _ps:
+                            _ps = '(no purpose_short)'
+                        _ps = _ps[:_brief_max]
+                        _brief_lines.append(f"  P{_d.priority:>2} {_d.id} — {_ps}")
+                    _parts.append('\n'.join(_brief_lines))
                 # 🆕 [P5-Gap4 / 2026-05-21 18:18] [DIRECTIVES FIRED THIS TURN] 元层 block
                 # Sir 22:19 真痛点: 主脑被 8 条 directive cluster 淹, 看不到全貌. 加元层
                 # 鸟瞰 → 主脑 reason "哪些适用此刻 / 哪些 false positive". 详
@@ -1613,7 +1663,13 @@ class CentralNerve:
             self._l2_injected_block = _l2_block
             self._l2_last_fired_ids = list(_l2_ids)
             try:
-                _bg_l2(f"🧭 [L2 inject] tier={_l2_ctx.tier} fired={_l2_ids} (count={len(_l2_ids)} / chars={len(_l2_block)})")
+                # 🆕 [Gap-Y / β.5.46-fix5] log 加分层信息 (full / brief 数)
+                _full_n = len(_full_directives) if 'full_directives' in dir() or '_full_directives' in dir() else len(_l2_fired)
+                _brief_n = len(_brief_directives) if '_brief_directives' in dir() else 0
+                _bg_l2(
+                    f"🧭 [L2 inject] tier={_l2_ctx.tier} fired={_l2_ids} "
+                    f"(count={len(_l2_ids)} / full={_full_n} / brief={_brief_n} / chars={len(_l2_block)})"
+                )
             except Exception:
                 pass
         except Exception as _l2_err:
