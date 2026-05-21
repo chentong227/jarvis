@@ -1251,15 +1251,28 @@ def api_items_list():
 
 @app.route('/api/items/<item_id>/<action>', methods=['POST'])
 def api_items_mutate(item_id: str, action: str):
-    """Sir 操作: modify / delete / restore / activate / reject / ack."""
+    """Sir 操作: modify / delete / restore / activate / reject / ack / feedback."""
     if _ai is None:
         return jsonify({'ok': False, 'error': 'actionable_items not available'}), 500
-    if action not in ('modify', 'delete', 'restore', 'activate', 'reject', 'ack'):
+    if action not in ('modify', 'delete', 'restore', 'activate', 'reject', 'ack', 'feedback'):
         return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
 
     if action == 'ack':
         ok = _ai.mark_sir_acked(item_id)
         return jsonify({'ok': ok, 'detail': 'sir_acked recorded'})
+
+    # 🩹 [P5-fix-items-i18n / 2026-05-21 10:10] Sir item-level 👍/👎 反馈
+    if action == 'feedback':
+        payload = request.get_json(silent=True) or {}
+        verdict = payload.get('verdict', '')
+        sir_note = payload.get('sir_note', '')
+        if verdict not in ('up', 'down', ''):
+            return jsonify({'ok': False, 'error': f'invalid verdict: {verdict}'}), 400
+        ok = _ai.save_item_feedback(item_id, verdict, sir_note)
+        if ok:
+            verdict_label = {'up': '👍 已赞', 'down': '👎 已踩', '': '↩️ 已撤销'}[verdict]
+            return jsonify({'ok': True, 'detail': verdict_label})
+        return jsonify({'ok': False, 'error': 'save fail'}), 500
 
     payload = request.get_json(silent=True) or {}
     new_fields = payload.get('new_fields')
@@ -1380,22 +1393,37 @@ _ITEMS_HTML = r"""
           <div class="card bg-slate-800/70 border border-slate-700 rounded-lg p-4">
             <div class="flex items-start justify-between mb-2">
               <div class="flex-1">
-                <div class="flex items-center gap-2 mb-1">
-                  <span x-text="catIcon(item.category)" class="text-lg"></span>
-                  <span class="text-xs uppercase tracking-wider text-slate-400" x-text="item.category"></span>
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                  <!-- 🩹 [P5-fix-items-i18n] 中文 category 替英文 enum -->
+                  <span class="text-sm font-medium text-slate-200"
+                        x-text="item.category_zh || (catIcon(item.category) + ' ' + item.category)"></span>
                   <span class="text-xs px-2 py-0.5 rounded"
                         :class="item.state==='review' ? 'bg-orange-700/50 text-orange-300' : item.state==='active' ? 'bg-green-700/50 text-green-300' : 'bg-slate-700 text-slate-400'"
-                        x-text="item.state"></span>
-                  <span x-show="item.auto_proposed" class="text-xs px-2 py-0.5 rounded bg-purple-700/50 text-purple-300">🤖 auto</span>
+                        x-text="item.state==='review' ? '待审' : item.state==='active' ? '已生效' : item.state"></span>
+                  <span x-show="item.auto_proposed" class="text-xs px-2 py-0.5 rounded bg-purple-700/50 text-purple-300" title="L7 reflector 自动提议">🤖 自动提议</span>
+                  <!-- 🩹 [P5-fix-items-i18n] 👍/👎 状态标识 (已评的) -->
+                  <span x-show="item.sir_feedback === 'up'" class="text-xs px-2 py-0.5 rounded bg-green-700/50 text-green-300" title="你赞过这条">👍 已赞</span>
+                  <span x-show="item.sir_feedback === 'down'" class="text-xs px-2 py-0.5 rounded bg-red-700/50 text-red-300" title="你踩过这条">👎 已踩</span>
                   <span :class="item.sir_acked ? 'bg-green-500' : 'bg-orange-500'" class="ack-dot ml-auto" :title="item.sir_acked ? '你已看过' : '未看'"></span>
                 </div>
                 <div class="text-base text-slate-100 mb-1" x-text="item.preview"></div>
+                <!-- 🩹 [P5-fix-items-i18n] 人话 description (这条干啥用) -->
+                <div x-show="item.description_zh" class="text-sm text-cyan-300/90 mb-2 leading-snug" x-text="'🔍 ' + item.description_zh"></div>
                 <div class="text-xs text-slate-500" x-text="'id=' + item.id + ' · ' + (item.proposed_by || 'sir')"></div>
               </div>
             </div>
             <!-- 影响 tooltip + 按钮 -->
-            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-slate-700/50">
+            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-slate-700/50 flex-wrap">
               <span class="text-xs text-slate-400 flex-1" x-text="'⚠️ 改影响: ' + (item.impact_if_modified || '?')"></span>
+              <!-- 🩹 [P5-fix-items-i18n] 👍/👎 反馈按钮 -->
+              <button @click="rateItem(item, item.sir_feedback === 'up' ? '' : 'up')"
+                      :class="item.sir_feedback === 'up' ? 'bg-green-600' : 'bg-slate-700 hover:bg-green-700/70'"
+                      class="px-2 py-1 rounded text-xs"
+                      :title="item.sir_feedback === 'up' ? '点击撤销赞' : '👍 这条对/有用'">👍</button>
+              <button @click="rateItem(item, item.sir_feedback === 'down' ? '' : 'down')"
+                      :class="item.sir_feedback === 'down' ? 'bg-red-600' : 'bg-slate-700 hover:bg-red-700/70'"
+                      class="px-2 py-1 rounded text-xs"
+                      :title="item.sir_feedback === 'down' ? '点击撤销踩' : '👎 这条不对/没用'">👎</button>
               <button @click="openDetail(item)" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs">✏️ 修正</button>
               <button @click="ack(item.id)" x-show="!item.sir_acked" class="px-3 py-1 bg-slate-600 hover:bg-slate-500 rounded text-xs">👁 标已看</button>
               <button @click="del(item)" class="px-3 py-1 bg-red-700/70 hover:bg-red-600 rounded text-xs">🗑 删</button>
@@ -1578,6 +1606,23 @@ function itemsApp() { return {
     const it = this.items.find(i=>i.id===id);
     if (it) it.sir_acked = true;
     this.showToast('✅ 已标已看');
+  },
+  // 🩹 [P5-fix-items-i18n / 2026-05-21 10:12] Sir 评 item: 👍/👎/撤销
+  async rateItem(item, verdict) {
+    try {
+      const r = await fetch(`/api/items/${item.id}/feedback`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({verdict: verdict, sir_note: ''}),
+      }).then(r=>r.json());
+      if (r.ok) {
+        item.sir_feedback = verdict;
+        this.showToast(r.detail || '已记录');
+      } else {
+        this.showToast('❌ ' + (r.error || '失败'));
+      }
+    } catch (e) {
+      this.showToast('❌ 网络错: ' + e);
+    }
   },
   async del(item) {
     if (!confirm(`确定删除 "${item.preview.slice(0,60)}"?\n影响: ${item.impact_if_deleted}`)) return;

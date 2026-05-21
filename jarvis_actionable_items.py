@@ -32,13 +32,22 @@ CFG = os.path.join(ROOT, 'jarvis_config')
 
 @dataclass
 class ActionableItem:
-    """统一 schema 给 dashboard. 21 类源都映射到这."""
+    """统一 schema 给 dashboard. 21 类源都映射到这.
+
+    🩹 [P5-fix-items-i18n / 2026-05-21 09:58] Sir 09:55 截图反馈:
+      ①卡片只显 vocab id / tag 没人话翻译
+      ②没 👍/👎 评价按钮
+    schema 加 `description_zh` (人话 1 句 "这条干啥用") + `category_zh` (中文类别名).
+    extractor 各自填充. dashboard card 额外渲染这两字段.
+    """
 
     id: str
     category: str                  # 'concern' / 'inside_joke' / 'thread' / 'screen_tease' / ...
     subcategory: str = ''          # 分组 (sidebar 用): 'review' / 'active' / 'archived' / 'system'
     state: str = 'active'          # 'review' / 'active' / 'archived' / 'rejected'
     preview: str = ''              # 显示文本 (1 行 ≤ 80 char)
+    description_zh: str = ''       # 🩹 [P5-fix-items-i18n] 人话 1 句解释"这条干啥/触发时 Jarvis 做啥"
+    category_zh: str = ''          # 🩹 [P5-fix-items-i18n] 中文 category 名 (e.g. 'Sir 困境词')
     fields: Dict = field(default_factory=dict)  # 可修字段 (Sir 修正面板用)
     impact_if_modified: str = ''   # "改影响 X" tooltip
     impact_if_deleted: str = ''    # "删影响 X" tooltip
@@ -50,9 +59,28 @@ class ActionableItem:
     auto_proposed: bool = False    # L7 reflector 提的还是 Sir 自加
     proposed_by: str = ''          # 'WeeklyReflector' / 'InsideJokeReflector' / ...
     sir_acked: bool = False        # Sir 看过没
+    sir_feedback: str = ''         # 🩹 [P5-fix-items-i18n] 'up' / 'down' / '' (空 = 未评)
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# 🩹 [P5-fix-items-i18n / 2026-05-21 09:58] category → 中文 + 描述模板
+CATEGORY_ZH_MAP = {
+    'concern': '🎯 我在关心的事',
+    'inside_joke': '💭 我们的梗',
+    'thread': '📜 共同经历',
+    'protocol': '🤝 默契规则',
+    'unfinished': '⏱️ 未完结的事',
+    'screen_tease': '🪞 屏幕调侃词',
+    'struggle': '🆘 Sir 困境词',
+    'directive': '📡 主脑 directive',
+    'sleep_pattern': '💤 Sir 睡眠习惯',
+    'behavior_inference': '⏱️ 行为推断词',
+    'callback': '📞 跨会话提醒',
+    'cooldown': '⏰ 冷却时段',
+    'profile': '👤 Sir 资料',
+}
 
 
 # ============================================================
@@ -292,24 +320,40 @@ def _extract_relational(ack_state: dict) -> List[ActionableItem]:
 
 def _extract_vocab_review(vocab_name: str, category: str,
                            preview_fn, ack_state: dict,
-                           list_key: str = 'review_queue') -> List[ActionableItem]:
-    """通用 vocab review_queue / active list extractor."""
+                           list_key: str = 'review_queue',
+                           describe_fn=None) -> List[ActionableItem]:
+    """通用 vocab review_queue / active list extractor.
+
+    🩹 [P5-fix-items-i18n / 2026-05-21 09:58] 加 describe_fn → description_zh.
+    describe_fn(item_dict) → str: 人话 1 句"这条触发时 Jarvis 做啥".
+    fallback: 默认 = "{category_zh} vocab — 触发时影响 Jarvis 反应".
+    """
     items = []
     data = _safe_read_json(os.path.join(MEM, vocab_name), {})
     arr = data.get(list_key) or []
     if not isinstance(arr, list):
         return items
+    feedback_state = _load_feedback_state()
+    cat_zh = CATEGORY_ZH_MAP.get(category, category)
     for it in arr:
         if not isinstance(it, dict):
             continue
         iid = it.get('id', '?')
         st = it.get('state', 'review')
+        desc_zh = ''
+        if describe_fn is not None:
+            try:
+                desc_zh = describe_fn(it) or ''
+            except Exception:
+                desc_zh = ''
         items.append(ActionableItem(
             id=iid,
             category=category,
             subcategory=st,
             state=st,
             preview=_truncate(preview_fn(it), 100),
+            description_zh=desc_zh,
+            category_zh=cat_zh,
             fields={k: v for k, v in it.items()
                     if k not in ('id', 'state', 'proposed_at', 'created_at')},
             impact_if_modified=f'Jarvis {category} 行为下次用新参数',
@@ -320,38 +364,129 @@ def _extract_vocab_review(vocab_name: str, category: str,
             auto_proposed=True,
             proposed_by=it.get('source', 'L7 reflector'),
             sir_acked=_is_acked(iid, ack_state),
+            sir_feedback=_get_feedback(iid, feedback_state),
         ))
     return items
 
 
+# 🩹 [P5-fix-items-i18n / 2026-05-21 10:05] Sir item-level feedback state
+def _feedback_state_path() -> str:
+    return os.path.join(MEM, 'item_feedback_state.json')
+
+
+def _load_feedback_state() -> dict:
+    return _safe_read_json(_feedback_state_path(), {})
+
+
+def _get_feedback(item_id: str, feedback_state: dict = None) -> str:
+    """返 'up' / 'down' / '' (空 = 未评)."""
+    if feedback_state is None:
+        feedback_state = _load_feedback_state()
+    fb_map = feedback_state.get('item_feedback') or {}
+    entry = fb_map.get(item_id) or {}
+    return entry.get('verdict', '') if isinstance(entry, dict) else ''
+
+
+def save_item_feedback(item_id: str, verdict: str,
+                         sir_note: str = '') -> bool:
+    """Sir dashboard 评 item: 写 item_feedback_state.json + jsonl audit.
+
+    verdict ∈ ('up', 'down', '') — '' = 撤销.
+    """
+    if verdict not in ('up', 'down', ''):
+        return False
+    try:
+        state = _load_feedback_state()
+        fb_map = state.get('item_feedback') or {}
+        if verdict == '':
+            fb_map.pop(item_id, None)
+        else:
+            fb_map[item_id] = {
+                'verdict': verdict,
+                'sir_note': sir_note[:200],
+                'ts': time.time(),
+            }
+        state['item_feedback'] = fb_map
+        os.makedirs(os.path.dirname(_feedback_state_path()), exist_ok=True)
+        with open(_feedback_state_path(), 'w', encoding='utf-8') as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        # audit jsonl
+        audit_path = os.path.join(MEM, 'item_feedback.jsonl')
+        with open(audit_path, 'a', encoding='utf-8') as f:
+            json.dump({
+                'item_id': item_id,
+                'verdict': verdict,
+                'sir_note': sir_note[:200],
+                'ts': time.time(),
+                'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
+            }, f, ensure_ascii=False)
+            f.write('\n')
+        return True
+    except Exception:
+        return False
+
+
 def _extract_screen_tease(ack_state: dict) -> List[ActionableItem]:
     """Cat 4 + 17: screen_tease review + active."""
+    def _describe(it):
+        cat = it.get('category', '?')
+        kws = it.get('keywords', [])[:3]
+        return (
+            f"窗口标题/进程含 {kws} → Jarvis 把 Sir 当下场景归为 "
+            f"'{cat}', 后续 nudge/调侃 围绕这个 context."
+        )
+
+    def _preview(it):
+        return f"{it.get('category', '?')}: {', '.join(it.get('keywords', [])[:3])}"
+
     out = []
     out.extend(_extract_vocab_review(
         'screen_tease_vocab.json', 'screen_tease',
-        lambda it: f"{it.get('id', '?')}: {', '.join(it.get('keywords', [])[:3])}",
-        ack_state, list_key='review_queue',
+        _preview, ack_state, list_key='review_queue',
+        describe_fn=_describe,
     ))
     out.extend(_extract_vocab_review(
         'screen_tease_vocab.json', 'screen_tease',
-        lambda it: f"{it.get('id', '?')}: {', '.join(it.get('keywords', [])[:3])}",
-        ack_state, list_key='categories',
+        _preview, ack_state, list_key='categories',
+        describe_fn=_describe,
     ))
     return out
 
 
 def _extract_struggle(ack_state: dict) -> List[ActionableItem]:
     """Cat 5 + 18: struggle vocab review + active."""
+    _sev_zh = {'high': '高强度', 'medium': '中等', 'low': '轻度', '': '?'}
+    _lang_hint_zh = {'_zh': '中文', '_en': '英文'}
+
+    def _describe(it):
+        sev = it.get('severity', '')
+        sev_zh = _sev_zh.get(sev, sev or '?')
+        iid = it.get('id', '?')
+        # 从 id 后缀猜语种
+        lang_hint = ''
+        for suffix, zh in _lang_hint_zh.items():
+            if iid.endswith(suffix):
+                lang_hint = f'{zh}/'
+                break
+        patterns = it.get('patterns', [])[:3]
+        return (
+            f"Sir 说出{lang_hint}{sev_zh}困境词 (如 {patterns}) → "
+            f"Conductor 把 last_struggle_at 设为 fresh, 90s 内触发 offer_help 主动关心 Sir 是否需要帮忙."
+        )
+
+    def _preview(it):
+        return f"{it.get('id', '?')} [{it.get('severity', '?')}]: {', '.join(it.get('patterns', [])[:3])}"
+
     out = []
     out.extend(_extract_vocab_review(
         'sir_struggle_vocab.json', 'struggle',
-        lambda it: f"{it.get('id', '?')} [{it.get('severity', '?')}]: {', '.join(it.get('patterns', [])[:3])}",
-        ack_state, list_key='review_queue',
+        _preview, ack_state, list_key='review_queue',
+        describe_fn=_describe,
     ))
     out.extend(_extract_vocab_review(
         'sir_struggle_vocab.json', 'struggle',
-        lambda it: f"{it.get('id', '?')} [{it.get('severity', '?')}]: {', '.join(it.get('patterns', [])[:3])}",
-        ack_state, list_key='phrases',
+        _preview, ack_state, list_key='phrases',
+        describe_fn=_describe,
     ))
     return out
 
@@ -361,17 +496,36 @@ def _extract_directives(ack_state: dict) -> List[ActionableItem]:
     out = []
     data = _safe_read_json(os.path.join(MEM, 'directives_vocab.json'), {})
     arr = data.get('directives') or []
+    feedback_state = _load_feedback_state()
+    cat_zh_dir = CATEGORY_ZH_MAP.get('directive', 'directive')
     for it in arr:
         if not isinstance(it, dict):
             continue
         iid = it.get('id', '?')
         st = it.get('state', 'active')
+        # 🩹 [P5-fix-items-i18n] 人话 description
+        _pri = it.get('priority', 5)
+        _note = (it.get('note', '') or '')[:80]
+        _text_first_line = ((it.get('text', '') or '').split('\n')[0] or '')[:80]
+        # priority 含义: ≥10 = 顶级红线 / 7-9 = 高 / ≤6 = 普通
+        if _pri >= 10:
+            _pri_zh = '🔴顶级红线 always-on'
+        elif _pri >= 7:
+            _pri_zh = '🟠高优先 (主脑通常会看)'
+        else:
+            _pri_zh = '🟡普通 (排队后入)'
+        _desc_zh = (
+            f"{_pri_zh}, 触发时往主脑 prompt 注入此规则. "
+            f"内容: {_text_first_line or _note or '(无描述)'}"
+        )
         out.append(ActionableItem(
             id=iid,
             category='directive',
             subcategory=st,
             state=st,
-            preview=_truncate(f"{iid} [pri={it.get('priority', '?')}]: {it.get('note', '')[:50]}", 100),
+            preview=_truncate(f"{iid} [pri={_pri}]: {_note}", 100),
+            description_zh=_desc_zh,
+            category_zh=cat_zh_dir,
             fields={
                 'priority': it.get('priority', 5),
                 'state': st,
@@ -384,12 +538,17 @@ def _extract_directives(ack_state: dict) -> List[ActionableItem]:
             source_file='memory_pool/directives_vocab.json',
             source_path=f'directives.{iid}',
             sir_acked=_is_acked(iid, ack_state),
+            sir_feedback=_get_feedback(iid, feedback_state),
         ))
     # review queue
     out.extend(_extract_vocab_review(
         'directives_vocab.json', 'directive',
         lambda it: f"{it.get('id', '?')}: {(it.get('text', '') or '')[:60]}",
         ack_state, list_key='review_queue',
+        describe_fn=lambda it: (
+            f"L7 reflector 提议新 directive (待审). 拍板 active → 主脑下次能看到此规则. "
+            f"内容: {((it.get('text', '') or '').split(chr(10))[0] or '')[:80]}"
+        ),
     ))
     return out
 
@@ -577,6 +736,14 @@ def get_all_sir_actionable_items(
             out.extend(extractor(ack_state))
         except Exception:
             pass  # 单个 extractor 失败不影响其他
+    # 🩹 [P5-fix-items-i18n / 2026-05-21 10:08] post-process — 兜底填 category_zh
+    # + sir_feedback (老 extractor 没填的也得有 — Sir 看到完整中文 + 👍/👎 状态).
+    feedback_state = _load_feedback_state()
+    for item in out:
+        if not item.category_zh:
+            item.category_zh = CATEGORY_ZH_MAP.get(item.category, item.category)
+        if not item.sir_feedback:
+            item.sir_feedback = _get_feedback(item.id, feedback_state)
     if filter_category:
         out = [i for i in out if i.category == filter_category]
     if filter_state:
