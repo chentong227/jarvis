@@ -1,0 +1,20 @@
+{
+  "_doc": "STM Reply Summarizer 配置 (Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15)",
+  "_purpose": "Sir 23:14 真凶 — Jarvis 仅听 'he' 即翻 4% backspace + error visibility. 主脑读 STM 自身上轮 reply 含数字 → RLHF bias 触发. 治本: post-stream async LLM 压缩 STM 自身 reply, 下轮主脑看不到具体数字/历史 claim.",
+  "_grant": "准则 1 (TTFT 不退): async post-stream, 不阻 stream. 准则 6 (不硬编码): LLM judge 不靠 keyword strip.",
+  "enabled": true,
+  "min_chars_to_summarize": 180,
+  "max_summary_chars": 120,
+  "model": "flash_lite",
+  "timeout_s": 3.0,
+  "cache_ttl_s": 600,
+  "_strip_patterns_doc": "仅 LLM 判断什么该去, 不在 .py 写死 ban 词 list. 任何 specific factual claim (数字/百分比/file 名/历史 over-claim) 都由 LLM compress 时自然剥离.",
+  "compress_prompt_intent": "Sir 让你 (Jarvis) 把自己上轮的 reply 压成 brief one-line summary 给下一轮主脑看. 保留: topic / 用户意图 / 你给的 stance. 剥离: 具体数字 / 百分比 / file 路径 / 历史 over-claim mention / self-correction. 输出仅 summary 一行 (英文), 不要说 OK/明白 之类.",
+  "_history": [
+    {
+      "ts": "2026-05-21T23:15:00",
+      "marker": "β.5.46-fix4 / Gap-Z1",
+      "reason": "Sir 4 commit 仍翻老账 (concern_reason=silent 但主脑读 STM 自身上轮 4%/0.01% 自发 callback)"
+    }
+  ]
+}

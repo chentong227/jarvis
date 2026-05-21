@@ -5268,6 +5268,26 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             "user": clean_intent,
                             "jarvis": filtered_reply + _integrity_note + _capability_note
                         })
+                        # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
+                        # 治本 — Sir 23:14 真凶: 主脑读 STM 自身 reply 含数字 → RLHF 自发 callback
+                        try:
+                            from jarvis_stm_summarizer import get_default_summarizer as _gd_ssum
+                            _ssum = _gd_ssum()
+                            if _ssum is not None:
+                                _tid_ssum = ''
+                                try:
+                                    from jarvis_utils import TraceContext as _TCss
+                                    _tid_ssum = _TCss.get_turn_id() or ''
+                                except Exception:
+                                    pass
+                                _ssum.summarize_async(
+                                    entry_ref=self.jarvis.short_term_memory[-1],
+                                    sir_utterance=str(clean_intent or '')[:300],
+                                    raw_reply=str(filtered_reply or '')[:2000],
+                                    turn_id=_tid_ssum,
+                                )
+                        except Exception:
+                            pass
                         if hasattr(self, 'commitment_watcher') and self.commitment_watcher:
                             self.commitment_watcher.extract_from_input(clean_intent)
                         try:
@@ -5361,6 +5381,25 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                 "user": clean_intent,
                                 "jarvis": filtered_reply + _integrity_note + _capability_note
                             })
+                            # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
+                            try:
+                                from jarvis_stm_summarizer import get_default_summarizer as _gd_ssum2
+                                _ssum2 = _gd_ssum2()
+                                if _ssum2 is not None:
+                                    _tid_ssum2 = ''
+                                    try:
+                                        from jarvis_utils import TraceContext as _TCss2
+                                        _tid_ssum2 = _TCss2.get_turn_id() or ''
+                                    except Exception:
+                                        pass
+                                    _ssum2.summarize_async(
+                                        entry_ref=self.jarvis.short_term_memory[-1],
+                                        sir_utterance=str(clean_intent or '')[:300],
+                                        raw_reply=str(filtered_reply or '')[:2000],
+                                        turn_id=_tid_ssum2,
+                                    )
+                            except Exception:
+                                pass
                             if hasattr(self, 'commitment_watcher') and self.commitment_watcher:
                                 self.commitment_watcher.extract_from_input(clean_intent)
                             # [R7-β4] 记录 Jarvis 回复
@@ -5389,6 +5428,25 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         "user": _gate_intent,
                         "jarvis": filtered_reply + _integrity_note + _capability_note
                     })
+                    # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
+                    try:
+                        from jarvis_stm_summarizer import get_default_summarizer as _gd_ssum3
+                        _ssum3 = _gd_ssum3()
+                        if _ssum3 is not None:
+                            _tid_ssum3 = ''
+                            try:
+                                from jarvis_utils import TraceContext as _TCss3
+                                _tid_ssum3 = _TCss3.get_turn_id() or ''
+                            except Exception:
+                                pass
+                            _ssum3.summarize_async(
+                                entry_ref=self.jarvis.short_term_memory[-1],
+                                sir_utterance=str(_gate_intent or '')[:300],
+                                raw_reply=str(filtered_reply or '')[:2000],
+                                turn_id=_tid_ssum3,
+                            )
+                    except Exception:
+                        pass
                     if hasattr(self, 'commitment_watcher') and self.commitment_watcher:
                         self.commitment_watcher.extract_from_input(_gate_intent)
                     # [R7-β4] 记录 Jarvis 回复

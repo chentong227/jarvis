@@ -899,6 +899,34 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Reply Summarizer
+        # Sir 23:14 真凶: Jarvis 仅听 wake word "he" 即翻 4% backspace + 0.01%
+        # 老账. concern_reason=silent + directive 反例已删, 仍翻 → 唯一可能:
+        # 主脑读 STM 自身上轮 reply 含具体数字 → RLHF bias 自发 callback.
+        # 治本: post-stream async LLM 压缩 STM 自身 reply, 下轮主脑看 compressed
+        # brief, 无数字诱因 → 不翻. async, 不阻 TTFT. config 在
+        # memory_pool/stm_summarize_config.json (准则 6.5 持久化).
+        self.stm_summarizer = None
+        try:
+            from jarvis_stm_summarizer import STMSummarizer, register_summarizer
+            self.stm_summarizer = STMSummarizer(key_router=self.key_router)
+            register_summarizer(self.stm_summarizer)
+            try:
+                from jarvis_utils import bg_log as _ssum_bg
+                from jarvis_stm_summarizer import is_enabled as _ssum_enabled
+                _en = _ssum_enabled()
+                _ssum_bg(
+                    f"📝 [STMSummarizer] {'enabled (default ON, Gap-Z1 / β.5.46-fix4)' if _en else 'registered (env JARVIS_STM_SUMMARIZE=0, dormant)'}"
+                )
+            except Exception:
+                pass
+        except Exception as _ssum_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[STMSummarizer] 初始化失败（非致命）：{_ssum_e}")
+            except Exception:
+                pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35 + P5-fixD / 2026-05-21 10:00 默认开]
         # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
         # Sir 09:05/06/12 又 3 次混合真数据涌现 hallucination (23:59 / Windsurf quota).
