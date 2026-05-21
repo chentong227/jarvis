@@ -1517,22 +1517,67 @@ class CentralNerve:
         # 时序: 本 _assemble_prompt 在 reply 前调; trace_reply 在 reply 后调.
         # 所以 audit jsonl 里只可能有 prior turn 的 unverified entries, 但 defensively
         # 仍传 current_turn_id 排除 (e.g. 重试 / dry-run 场景).
+        # 🆕 [β.5.46-fix12 / 2026-05-22 00:20] 加 gating, 同 SOUL Concern 双门
+        # Sir 真测痛点: 22:13/00:13/00:18 三次 Jarvis 主动 callback 老账道歉
+        # ("0.01%" / "4%"). 真凶是本 prepend 无 gating, 任何对话都强 prepend.
+        # 主脑被字面强迫 acknowledge → 道歉. 治本: Sir 没 summon + PreFlight 没 fail
+        # → publish-only (audit jsonl 仍写, ClaimTracer/ClaimRevision 仍跟踪,
+        # 但不 prepend prompt). 主脑不被强迫翻老账, 也仍可看 SWM evidence 自决.
+        # 复用 SOUL Concern 同款 gating (line 1746-1787): summon / preflight_failed.
         try:
             from jarvis_claim_tracer import build_integrity_alert
             from jarvis_utils import TraceContext as _TC_int
             _curr_tid_int = _TC_int.get_turn_id() or ''
             _integrity_alert = build_integrity_alert(current_turn_id=_curr_tid_int)
             if _integrity_alert:
-                system_alert_text = (
-                    _integrity_alert + '\n\n' + system_alert_text
-                    if system_alert_text else _integrity_alert
-                )
+                # (a) Sir 召唤 (准则 6.5 vocab — memory_pool/concern_summon_vocab.json)
+                _ia_summoned = False
                 try:
-                    from jarvis_utils import bg_log as _bg_int
-                    _bg_int(f"🩹 [INTEGRITY/Alert inject] turn={_curr_tid_int} "
-                            f"prepended {len(_integrity_alert)} chars")
+                    from jarvis_concern_summon import is_summoned as _is_summoned_ia
+                    _ia_summoned = _is_summoned(user_input or '')
                 except Exception:
                     pass
+                # (b) 上轮 PreFlight verdict=edit/scrap → 让主脑澄清
+                _ia_preflight_failed = False
+                try:
+                    _bus_pf_ia = getattr(self, 'event_bus', None)
+                    if _bus_pf_ia is not None:
+                        _pf_events_ia = _bus_pf_ia.recent_events(
+                            within_seconds=300.0,
+                            types={'preflight_verdict'},
+                        )
+                        for _ev_ia in (_pf_events_ia or []):
+                            _meta_ia = _ev_ia.get('metadata') or {}
+                            if _meta_ia.get('verdict') in ('edit', 'scrap'):
+                                _ia_preflight_failed = True
+                                break
+                except Exception:
+                    pass
+                _ia_reason = ('summon' if _ia_summoned
+                              else ('preflight_fail' if _ia_preflight_failed
+                                    else 'silent'))
+                if _ia_summoned or _ia_preflight_failed:
+                    system_alert_text = (
+                        _integrity_alert + '\n\n' + system_alert_text
+                        if system_alert_text else _integrity_alert
+                    )
+                    try:
+                        from jarvis_utils import bg_log as _bg_int
+                        _bg_int(f"🩹 [INTEGRITY/Alert inject] turn={_curr_tid_int} "
+                                f"prepended {len(_integrity_alert)} chars "
+                                f"reason={_ia_reason}")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        from jarvis_utils import bg_log as _bg_int_skip
+                        _bg_int_skip(
+                            f"🛑 [INTEGRITY/Alert skip] turn={_curr_tid_int} "
+                            f"unverified={len(_integrity_alert)}c — gated_silent "
+                            f"(no summon, no preflight fail)"
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
