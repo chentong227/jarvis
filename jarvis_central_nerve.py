@@ -1771,27 +1771,45 @@ class CentralNerve:
                     if (e.get('metadata', {}) or {}).get('verdict') in ('scrap', 'edit')
                 ]
                 if _interesting:
+                    # 🩹 [P5-fixCB-revise3 / 2026-05-21 17:08 Sir 16:58 真测痛点]
+                    # 老版 lesson 是 abstract ("avoid unsolicited callback"), 主脑 ignore.
+                    # 新版 INSTRUCTABLE ban-phrase list — 主脑看到具体被 cancel 的 draft 字面 →
+                    # 知道本轮要避开哪个 phrase. Sir 16:58:51 真测重现:
+                    # PreFlight 5 次 verdict=edit, 主脑仍反复 callback 'previous claim about 87.5%' /
+                    # 'previous claim of reminder'. 修后主脑应识别这些 phrase 已被 cancel.
                     _pf_lines = [
-                        '[PREFLIGHT FEEDBACK — your last reply self-check (last 10min)]',
-                        '  Your past replies were judged unsolicited / hallucinatory / off-tone:',
+                        '[PREFLIGHT FEEDBACK — DO NOT REPEAT THESE CANCELLED DRAFTS]',
+                        '  Your last replies were judged unsolicited / hallucinatory. ',
+                        '  **HARD INSTRUCTION**: do NOT repeat any of the following draft excerpts',
+                        '  in current turn unless Sir explicitly raises the topic:',
                     ]
+                    _seen_drafts: set = set()
                     for _e in _interesting[-3:]:  # last 3 only
                         _meta = _e.get('metadata', {}) or {}
                         _v = _meta.get('verdict', '?')
                         _issues = _meta.get('issues', []) or []
                         _sir_excerpt = _meta.get('sir_utterance_excerpt', '')[:50]
-                        _draft_excerpt = _meta.get('draft_excerpt', '')[:80]
+                        _draft_excerpt = _meta.get('draft_excerpt', '')[:100]
+                        # avoid duplicate draft (same phrase ban-listed once)
+                        _draft_key = _draft_excerpt[:60].lower().strip()
+                        if _draft_key in _seen_drafts:
+                            continue
+                        _seen_drafts.add(_draft_key)
                         _pf_lines.append(
-                            f"  - [{_v.upper()}] Sir said \"{_sir_excerpt}\" → "
-                            f"you drafted \"{_draft_excerpt}...\""
+                            f"  ❌ CANCELLED draft: \"{_draft_excerpt}...\""
+                        )
+                        _pf_lines.append(
+                            f"      (Sir context: \"{_sir_excerpt}\")"
                         )
                         if _issues:
-                            _pf_lines.append(f"      issue: {'; '.join(_issues[:2])[:120]}")
-                    _pf_lines.append(
-                        '  [lesson] Avoid: unsolicited callback to old over-claims; '
-                        'inventing facts (timestamps/quotas); over-formal tone when Sir is casual. '
-                        'Just answer the current turn cleanly.'
-                    )
+                            _pf_lines.append(f"      reason: {'; '.join(_issues[:1])[:140]}")
+                    _pf_lines.extend([
+                        '',
+                        '  RULES:',
+                        '    1. If Sir didn\'t bring up the cancelled topic this turn → STAY SILENT on it.',
+                        '    2. No "Regarding my previous claim...", no "I must apologize...", no closing-the-loop.',
+                        '    3. Only address Sir\'s CURRENT utterance. Cancelled drafts are NOT your follow-up duty.',
+                    ])
                     _parts.append('\n'.join(_pf_lines))
         except Exception:
             pass
