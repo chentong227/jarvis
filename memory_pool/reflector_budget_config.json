@@ -1,0 +1,32 @@
+{
+  "_doc": "Reflector Budget 控制配置 (Gap-Z3 / β.5.46-fix11 / 2026-05-22 00:25)",
+  "_purpose": "8 个 Reflector 各自调度 + 各自调 LLM, 没统一预算控制. 中央 budget tracker, 每 LLM 调用前 acquire(). rolling 7 天窗口.",
+  "enabled": true,
+  "weekly_cap_total": 200,
+  "per_reflector_cap": {
+    "concerns_reflector": 50,
+    "weekly_reflector": 5,
+    "sleep_pattern_reflector": 30,
+    "profile_reflector": 30,
+    "soul_reflector": 30,
+    "inside_joke_reflector": 30,
+    "screen_tease_reflector": 30,
+    "struggle_reflector": 30,
+    "tom_reflector": 100,
+    "concern_feedback_reflector": 20,
+    "reject_learner": 30,
+    "stm_summarizer": 500
+  },
+  "_field_doc": {
+    "weekly_cap_total": "周总 LLM 调用 cap (across all reflectors)",
+    "per_reflector_cap": "单 reflector 周 cap. 没列的走 weekly cap.",
+    "_note": "stm_summarizer cap 大 (~每 turn 调一次, 100 turn/day = ~700/week)"
+  },
+  "_history": [
+    {
+      "ts": "2026-05-22T00:25:00",
+      "marker": "β.5.46-fix11 / Gap-Z3",
+      "reason": "防 reflector LLM 预算炸"
+    }
+  ]
+}
