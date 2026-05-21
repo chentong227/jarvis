@@ -4161,6 +4161,28 @@ User: {new_cmd}
         # 是 dismissal 残留活动), 30s-300s 才真问.
         if sleep_duration < 30:
             return
+        # 🆕 [β.5.46-fix13 Fix-1.1 / 2026-05-22] 看 sleep_routine 真 fire evidence
+        # Sir 00:30 真测 (B5/B9): dismissal_soft 立刻 activate_sleep_mode 但 Sir
+        # 还在打字 4min 后被质疑 "did you not fall asleep?". 真凶: sleep_duration
+        # 用 _sleep_activated_at 算, 但那是"表态时", 不是 Sir "真睡时".
+        # 治本: 看 NudgeGate.is_sleep_routine_fired() — routine 真 fire = audio
+        # mute + display sleep + ASR mute 全完, 才算 Sir "真睡". 没 fire = 光表态
+        # → 不质疑.
+        try:
+            _gate_fix11 = getattr(self, 'nudge_gate', None)
+            if _gate_fix11 is not None and hasattr(_gate_fix11, 'is_sleep_routine_fired'):
+                if not _gate_fix11.is_sleep_routine_fired():
+                    try:
+                        from jarvis_utils import bg_log as _bg11
+                        _bg11(
+                            f"🛌 [SleepDetector/Skip] sleep_routine 还没 fire — "
+                            f"Sir 只表态没真睡 ({sleep_duration:.0f}s), 不质疑"
+                        )
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
         if sleep_duration < 300:
             # 去重: 1 次 sleep_intent 窗口内只发一次
             if getattr(self, '_short_sleep_questioned_at', 0) > 0 and \

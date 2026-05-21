@@ -1067,7 +1067,28 @@ class NudgeGate:
         with self._lock:
             self._sleep_mode = True
             self._sleep_activated_at = time.time()
+            # 🆕 [β.5.46-fix13 Fix-1.1 / 2026-05-22] routine fire 真 evidence 标记
+            # Sir 00:30 真测 (B5/B9): dismissal_soft 立刻 activate_sleep_mode 但 Sir
+            # 还在打字, 4min 后被 _check_short_sleep 质疑 "did you not fall asleep?"
+            # 真凶: _sleep_activated_at = dismissal 触发时, 不是 Sir 真睡时.
+            # 治本: 新 _sleep_routine_fired_at = 0, 由 _do_routine 真 fire 后调
+            # mark_sleep_routine_fired() 设. _check_short_sleep 看这个判 "Sir 真睡"
+            # vs "光表态". 没 routine fire = 没真睡 = 不质疑.
+            self._sleep_routine_fired_at = 0.0
             print(f"[NudgeGate] 休眠模式已激活，抑制所有主动发言直到用户自然唤醒")
+
+    def mark_sleep_routine_fired(self):
+        """🆕 [β.5.46-fix13 Fix-1.1 / 2026-05-22] routine 真 fire 后调.
+
+        Sir 痛点 (B5/B9): dismissal_soft 立刻 activate_sleep_mode 但 Sir 还在动,
+        4min 被质疑 "did you not fall asleep". 治本: 区分 "表态" 和 "真睡".
+        _check_short_sleep 看 _sleep_routine_fired_at:
+          - == 0: routine 还没 fire → Sir 只表态 → 不质疑
+          - > 0: routine 真 fire → Sir 真睡 (audio mute / display sleep done) → 可质疑
+        """
+        with self._lock:
+            if self._sleep_mode:
+                self._sleep_routine_fired_at = time.time()
 
     # 🩹 [β.2.9.1.4 / 2026-05-18] 撤 30min 硬约束 (Sir 08:10 不喜欢这种粗暴).
     # 保留 force 参数兼容 _detect_wake_up / ReturnSentinel 调用.
@@ -1096,6 +1117,18 @@ class NudgeGate:
             if not self._sleep_mode or self._sleep_activated_at == 0:
                 return 0.0
             return time.time() - self._sleep_activated_at
+
+    def is_sleep_routine_fired(self) -> bool:
+        """🆕 [β.5.46-fix13 Fix-1.1] routine 是否已真 fire (Sir 真睡 vs 光表态)."""
+        with self._lock:
+            return self._sleep_mode and self._sleep_routine_fired_at > 0
+
+    def sleep_routine_age_seconds(self) -> float:
+        """🆕 [β.5.46-fix13 Fix-1.1] routine fire 后过了多久 (=真睡了多久)."""
+        with self._lock:
+            if not self._sleep_mode or self._sleep_routine_fired_at == 0:
+                return 0.0
+            return time.time() - self._sleep_routine_fired_at
 
 
 

@@ -2700,6 +2700,15 @@ class JarvisWorkerThread(QThread):
                 }
             except Exception as e:
                 _swm_results['asr_mute'] = {'error': str(e)[:80], 'success': False}
+            # 🆕 [β.5.46-fix13 Fix-1.1 / 2026-05-22] 标记 sleep_routine 真 fire 了
+            # NudgeGate._sleep_routine_fired_at = now, 让 _check_short_sleep 知道
+            # Sir 真睡 (routine 真执行), 不是光 dismissal 表态. 治 B5/B9.
+            try:
+                _gate_fix11 = getattr(jarvis, 'nudge_gate', None)
+                if _gate_fix11 is not None and hasattr(_gate_fix11, 'mark_sleep_routine_fired'):
+                    _gate_fix11.mark_sleep_routine_fired()
+            except Exception:
+                pass
             # 4. publish SWM 'sleep_routine_armed' 让主脑下轮 prompt 看到真实结果
             try:
                 from jarvis_utils import get_event_bus as _sm_geb
@@ -2910,6 +2919,17 @@ class JarvisWorkerThread(QThread):
 
             new_until = time.time() + delay_sec + self._SLEEP_GRACE_SEC
             old_until = getattr(self, '_sleep_intent_until', 0.0)
+            # 🆕 [β.5.46-fix13 Fix-1.3 / 2026-05-22] dedup 同夜重复表态
+            # Sir 00:30 真测 (B6): 5min 内表态 2 次 → log 2 遍同样 'Sir 表态约 30
+            # 分钟后睡', noisy. 治本: 旧 _sleep_intent_until 仍未来 (Sir 已表过态
+            # 还没到点) + 新 delay 跟旧 delay 差距 < 5min → 算"renew", 简短 log.
+            _is_renewal = False
+            _now_f13 = time.time()
+            if old_until > _now_f13:
+                _old_remaining = old_until - _now_f13
+                _new_remaining = new_until - _now_f13
+                if abs(_new_remaining - _old_remaining) < 300:  # 5min 内差异
+                    _is_renewal = True
             self._sleep_intent_until = max(old_until, new_until)
 
             # 🩹 [β.5.22-G / 2026-05-19] Sir 01:34 实测痛点: "X 分钟后睡 → 到点了 Jarvis 不提醒".
@@ -2958,7 +2978,11 @@ class JarvisWorkerThread(QThread):
                 from jarvis_utils import bg_log
                 mins = int(delay_sec / 60)
                 until_str = time.strftime('%H:%M', time.localtime(self._sleep_intent_until))
-                bg_log(f"🌙 [Sleep Intent] Sir 表态约 {mins} 分钟后睡 → 静默 late_night/suggest_break 至 {until_str}")
+                # 🆕 Fix-1.3: dedup log — renew 时只一行简短
+                if _is_renewal:
+                    bg_log(f"🌙 [Sleep Intent/Renew] Sir 二次表态 {mins} 分钟后睡 → 仍静默至 {until_str}")
+                else:
+                    bg_log(f"🌙 [Sleep Intent] Sir 表态约 {mins} 分钟后睡 → 静默 late_night/suggest_break 至 {until_str}")
             except Exception:
                 pass
 

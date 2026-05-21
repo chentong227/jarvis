@@ -1298,7 +1298,15 @@ class SleepIntentDetector:
         self._monitor_thread.start()
 
     def _post_sleep_monitor_loop(self):
-        """睡后监督循环: 每30秒检测一次用户活动, 2分钟后如果还在动就提醒"""
+        """睡后监督循环: 每30秒检测一次用户活动, 2分钟后如果还在动就提醒.
+
+        🆕 [β.5.46-fix13 Fix-1.2 / 2026-05-22] 起算点改 sleep_routine 真 fire.
+        Sir 00:32 真测 (B9): "you said you were going to sleep 2 minutes ago, but
+        I detect you are still active" — 但 Sir 根本没真睡, 是 dismissal 立刻进
+        sleep_mode 后 2min 被这条假质疑打扰. 真凶: _sleep_confirmed_at = detect
+        命中时, 不是 Sir 真睡时. 治本: 等 NudgeGate.is_sleep_routine_fired() 才算
+        真睡, 用 fired_at 起算 elapsed.
+        """
         print(f"[SleepDetector] 休眠后活动监控已启动 (将检查 {self.POST_SLEEP_MONITOR_SECONDS}秒)")
         start = time.time()
         while time.time() - start < self.POST_SLEEP_MONITOR_SECONDS:
@@ -1311,7 +1319,30 @@ class SleepIntentDetector:
             except Exception:
                 continue
             if idle_ms < 5000:
-                elapsed = time.time() - self._sleep_confirmed_at
+                # 🆕 Fix-1.2: 看 NudgeGate routine fire evidence 决定起算
+                _real_sleep_start = self._sleep_confirmed_at  # 默认 fallback
+                try:
+                    _gate_f12 = getattr(self.nerve, 'nudge_gate', None)
+                    if _gate_f12 is not None and hasattr(_gate_f12, 'is_sleep_routine_fired'):
+                        if not _gate_f12.is_sleep_routine_fired():
+                            # routine 还没 fire = Sir 没真睡 = 不该 "你还在动" 质疑
+                            try:
+                                from jarvis_utils import bg_log as _bg_f12
+                                _bg_f12(
+                                    f"🛌 [PostSleepMonitor/Skip] routine 没 fire — "
+                                    f"Sir 没真睡, 不质疑 'still active'"
+                                )
+                            except Exception:
+                                pass
+                            continue
+                        # routine fire 后才算真睡 — 用 fired_at 起算
+                        if hasattr(_gate_f12, 'sleep_routine_age_seconds'):
+                            _age = _gate_f12.sleep_routine_age_seconds()
+                            if _age > 0:
+                                _real_sleep_start = time.time() - _age
+                except Exception:
+                    pass
+                elapsed = time.time() - _real_sleep_start
                 if elapsed > 120:
                     self._reminder_sent = True
                     self._dispatch_reminder(elapsed)
