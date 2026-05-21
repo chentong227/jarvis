@@ -1,7 +1,93 @@
 ﻿# Jarvis TODO
 
-> **更新**: 2026-05-21 10:33 (P5 整夜 + 早晨 6 commit) — Gap 1+2 (ToM/PreFlight) 落地 + Sir 09:05/06/12 早起 5 BUG + 09:53 AmbientSensor 隐藏 sprint BUG + 09:55 dashboard /items 翻译/thumbs + 10:06 add_reminder NOT NULL + 10:06/10:08 callback 道歉 5+ 次反复痛点 (B+C 真治本). **6 commit, 70+ testcase 全绿, 待 Sir 重启实测**. 详 `docs/JARVIS_P5_FINAL_REPORT_2026_05_21.md`.
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~640 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
+> **更新**: 2026-05-21 16:13 (P5 整夜 + 早晨 + 下午 14 commit) — Gap 1+2 + 早起 5 BUG + dashboard i18n + add_reminder + callback 痛点 + **下午 P5-fixCB-revise (12:06 ritual)** + **P5-IntegrityWatcher L4.5 (Sir 14:11 真意 — 8 类 mutation verify+retry+handoff)** + **P5-SirStatusTracker (Sir 13:49 nudge 话术 context aware)**. **14 commit, 98 testcase 全绿, 待 Sir 真机实测**. 详 `docs/JARVIS_P5_FINAL_REPORT_2026_05_21.md` (尚未 sync 下午).
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 > 700 行 > 300 cap (β.5.34-41 + P5 段待 archive). AGENTS.md 章程.
+
+---
+
+## 🌆 P5 下午真治本 (2026-05-21 11:30-16:13, 8 commit) — Sir 11:23/12:06/13:49 反复痛点
+
+### 已落地 commit timeline (下午)
+
+| commit | 时刻 | 内容 |
+|---|---|---|
+| `52fb475` | 5/21 11:46 | **P5-fixCB-revise**: 道歉是 functional revision 不是 ritual (Sir 11:30). callback_guard 改 capture+redirect, 不 ban 当前轮. 新 module `jarvis_claim_revision_log.py` + capability extract regex + 两个合法 surface 触发 (a) Sir 召唤 (b) 自检 promise overdue |
+| `8a699d7` | 5/21 11:54 | **P5-fixCB-revise (b)**: SELF-PROMISE OVERDUE wire — PromiseLog.sweep_untracked publish 'self_promise_overdue' SWM, 主脑下轮 prompt [SELF-PROMISE OVERDUE] block 主动 admit |
+| `c116938` | 5/21 15:13 | **P5-IntegrityWatcher**: L4.5 自检层 (Sir 14:11 真意). 8 类 mutation verify+retry+handoff. 3 层 waterfall (vocab + kw gate + LLM async). vocab `integrity_claim_vocab.json` + CLI |
+| `4b2233c` | 5/21 15:18 | **docs(STACK)**: 言出必行 STACK 加 L4.5 |
+| `0172755` | 5/21 16:11 | **P5-SirStatusTracker**: Sir 13:49 痛点 — Sir 12:06 说睡觉 → tracker 状态机 + SWM publish → ReturnSentinel/Conductor/SmartNudge 看 status 出对应话术. 8 状态 (sleep/nap/lunch/dinner/out/afk_short/dnd + back transition) |
+
+### 真凶链 (下午终治)
+
+Sir 12:06 真测发现 P5-fixCB BAN 风格不够:
+> Jarvis 仍输出 "Regarding my previous claim of setting a reminder..."
+
+Sir 11:30 升级真意:
+> "道歉要有意义的道歉. (a) 我提质疑时描述能力边界 / (b) 自己发现没履行时主动履行/承认"
+
+P5-fixCB-revise 改 redirect 不 ban — capture 写 ClaimRevisionLog + 等合法 surface 触发. 同时 SELF-PROMISE OVERDUE 通道 (b) wire 起来.
+
+Sir 14:11 再升级:
+> "wachter 负责贾维斯所有行为(除调 tool)是否成功的审查机构, 植入言出必行层级中.
+>  主动重试, 真做不到 handoff Sir 手动方案"
+
+→ P5-IntegrityWatcher L4.5: 监督 8 类内部 mutation (reminder/commitment/promise/memory/milestone/profile/concern/relational), 失败自动 retry, retry 不行 handoff Sir + actionable.
+
+Sir 13:49 痛点 b:
+> Sir 12:06 说"睡觉了下午见", 13:49 回, ReturnSentinel return_greeting:
+> "Soul Drive doc still active in Windsurf 90min" — 应该说"Hope you rested well"
+
+→ P5-SirStatusTracker: vocab + 状态机 + SWM publish + nudge_ctx 注入 declared_status, 让 LLM 主脑出对应话术.
+
+### Sir 真测 check list (下午部分, 重启后跑)
+
+```
+启动:
+[ ] log 含 '🛡️ [IntegrityWatcher] L4.5 daemon started (tick=15.0s, claim_types=8)'
+[ ] log 含 '💤 [SirStatusTracker] sleep captured...' (若 Sir 之前声明过 sleep)
+
+callback redirect (Sir 12:06 真测重现):
+[ ] Sir 说"睡觉了下午见" → log 'SirStatusTracker sleep captured' + memory_pool/sir_status.json 显 status='sleep'
+[ ] 若 Jarvis 仍输出 ritual callback → log '📝 [CallbackGuard→ClaimRevision] redirect to ClaimRevisionLog, 不 ban 当前轮'
+[ ] memory_pool/claim_revisions.json 含 capture
+[ ] 主脑下轮 prompt 含 [CLAIM REVISION CAPTURED] (不再含 BAN-style 老 prompt)
+
+IntegrityWatcher (Sir 14:11 真测):
+[ ] Sir 说"明天 7 点叫我" → Jarvis 答"已设" → watcher capture reminder claim
+[ ] 若 add_reminder DB fail → watcher retry → log '🔄 [IntegrityWatcher] retry #1 reported ok'
+[ ] retry 真成功 → log '✅ RECOVERED' + 主脑下轮 prompt [INTEGRITY WATCHER REPORT] ✅
+[ ] 主脑 inline acknowledge "顺便 Sir, reminder 之前没设上, 我刚补好了, 现在 OK"
+[ ] retry 仍失败 → log '❌ HANDOFF SIR' + 主脑道歉+actionable
+
+SirStatusTracker (Sir 13:49 真测):
+[ ] Sir 12:06 → 13:49 回 → ReturnSentinel return_greeting log 含 'sir_declared_status=sleep'
+[ ] 主脑 LLM 出话术 "Welcome back, Sir. Hope you rested well." (不再 "Soul Drive doc still active...")
+
+CLI:
+[ ] python scripts/integrity_claim_vocab_dump.py --list / --watch-list / --stats
+[ ] python scripts/sir_status_dump.py --current / --history / --vocab-list
+[ ] python scripts/claim_revision_dump.py --list / --stats
+```
+
+### 14 commit (整夜 + 早晨 + 下午) 合 commit
+
+```
+0172755 feat(P5-SirStatusTracker) ★ Sir 13:49 痛点
+4b2233c docs(P5-IntegrityWatcher) STACK 加 L4.5
+c116938 feat(P5-IntegrityWatcher) ★ Sir 14:11 真意
+8a699d7 feat(P5-fixCB-revise b) SELF-PROMISE OVERDUE
+52fb475 fix(P5-fixCB-revise) ★ Sir 11:30 真意
+df0a7a4 docs(TODO) P5 早晨进度
+da6b661 docs(P5) 终报告
+7cdeefb fix(P5-fixCB) supersede (BAN style)
+d366c24 fix(P5-items-i18n) dashboard
+664ad77 fix(P5-morning + AmbientSensor) 5 fix
+3bc494f fix(P5-add_reminder) NOT NULL
+4c1ec4f feat(Gap 1) ToM
+187e015 feat(Gap 2) PreFlight
+```
+
+待 Sir 真机实测拍板 push 14 commit.
 
 ---
 
