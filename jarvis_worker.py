@@ -803,24 +803,44 @@ class VoiceListenThread(QThread):
             score -= 0.4
             breakdown['phone_opener'] = -0.4
 
+        # 🩹 [P5-bypass-fix / 2026-05-21 17:02 Sir 16:57 真测痛点]
+        # Sir 直接对 Jarvis 说话 (含 wake_word 或 direct_verb) 但描述 / 转述外部
+        # 对话 ("我和 ud 聊天 / 我跟他说") → 不应被 third_person + conversational_marker
+        # 双罚拉到 < 0.3 旁路化. Sir 是在向 Jarvis 转述, 不是跟外人说话.
+        # 修法: 检测到 "Sir 直接说话" 信号 → 转述类罚分降权 50%.
+        _is_addressing_jarvis = (
+            'wake_word' in breakdown
+            or 'zh_direct_verb' in breakdown
+            or 'en_direct_verb' in breakdown
+            or '你' in text  # Sir 第二人称 → 直接对 Jarvis
+        )
+
         # -0.3 含明确第三人称指代 (含 padding 避免误判 ' the ')
         third_hits_zh = sum(1 for w in self._THIRD_PERSON_INDICATORS_ZH if w in text)
         third_hits_en = sum(1 for w in self._THIRD_PERSON_INDICATORS_EN if w in t_pad)
         if third_hits_zh + third_hits_en >= 1:
             penalty = min(0.4, 0.2 + (third_hits_zh + third_hits_en) * 0.1)
+            if _is_addressing_jarvis:
+                penalty *= 0.5  # Sir 在转述, 不是跟第三人说话, 降权
             score -= penalty
             breakdown['third_person'] = -penalty
 
         # -0.2 长句 + 多疑问号 (电话/对外深度对话)
         q_count = text.count('?') + text.count('？')
         if len(text) > 40 and q_count >= 2:
-            score -= 0.2
-            breakdown['long_multi_question'] = -0.2
+            penalty_lq = 0.2
+            if _is_addressing_jarvis:
+                penalty_lq *= 0.5  # Sir 直接问 Jarvis 长问题, 不是对外深度
+            score -= penalty_lq
+            breakdown['long_multi_question'] = -penalty_lq
 
         # -0.15 含 "我和/和我...说" 之类外部对话标记
         if '和我' in text or '跟我' in text or '我和' in text or '我跟' in text:
-            score -= 0.15
-            breakdown['conversational_marker'] = -0.15
+            penalty_cm = 0.15
+            if _is_addressing_jarvis:
+                penalty_cm *= 0.5  # Sir 在转述外部对话给 Jarvis 听, 不是和外人说
+            score -= penalty_cm
+            breakdown['conversational_marker'] = -penalty_cm
 
         # -0.1 极短句 (≤3 字) 且无 wake word (mhm/嗯/对/好) 默认旁路概率高
         if len(t) <= 3 and 'wake_word' not in breakdown:

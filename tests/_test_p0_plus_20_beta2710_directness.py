@@ -84,6 +84,37 @@ class TestClassifyJarvisDirectness(unittest.TestCase):
         self.assertGreaterEqual(score, 0.3)
         self.assertLess(score, 0.6)
 
+    # === [P5-bypass-fix / 2026-05-21 17:02 Sir 16:57 真测痛点] ===
+    # Sir 直接对 Jarvis 转述外部对话不应被旁路化
+    def test_sir_relays_external_dialogue_to_jarvis(self):
+        """Sir 真测案例 — 长 + multi-question + 转述 ud + 第三人称, 但 Sir 在直接对 Jarvis 说.
+        修法: 当含 wake_word/direct_verb/'你' (addressing_jarvis) → 转述类罚分降权 50%.
+        修前 score=0.20 < 0.3 (旁路化), 修后应 ≥ 0.3.
+        """
+        text = (
+            "嗯挺好的，你你就是要就是要让你介绍一下我。"
+            "其实我挺在意你就是在你的眼中我是什么样的人呢，"
+            "你可以总结或者说评价一下吗？没有关系，随便聊?"
+        )
+        score, bd = self._score(text)
+        self.assertGreaterEqual(score, 0.3, f"Sir 真问 Jarvis 不应旁路化, 实测 {score:.2f}")
+
+    def test_sir_describes_third_party_chat_to_jarvis(self):
+        """Sir 描述跟 ud 聊天的内容给 Jarvis 听 — 第二人称'你'+ 转述, 不应旁路."""
+        text = (
+            "你帮我想想，我昨天和ud聊天，"
+            "我跟他说人类生来就是孤独的，他给了我一句话"
+        )
+        score, bd = self._score(text)
+        self.assertGreaterEqual(score, 0.3, f"Sir 转述给 Jarvis 不应旁路化, 实测 {score:.2f}")
+
+    def test_third_person_no_jarvis_address_still_bypass(self):
+        """对照: 没'你' 没 wake 没 verb → 第三人称应保留全罚分 (旁路有效)."""
+        text = "他说他下午要来取东西，然后他还要带个朋友过来"
+        score, bd = self._score(text)
+        self.assertLess(score, 0.45)
+        self.assertIn('third_person', bd)
+
 
 class TestStopCommandExpanded(unittest.TestCase):
     """β.2.7.10 扩 STRICT_STOP_WORDS 含 dismiss 类语义"""
