@@ -1837,6 +1837,20 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] [SIR'S DECLARED STATUS] block
+        # Sir 13:49 痛点: Smart Nudge 话术 "Soul Drive doc still active in Windsurf 90min"
+        # — 但 Sir 12:06 明确说"睡觉了下午见". 系统不知道 → 用 IDE 窗口 idle 判.
+        # 修法: SirStatusTracker 从 Sir utterance 检测 sleep/nap/lunch/out/dnd/back 状态
+        # → publish SWM + 持久化. 主脑下轮 prompt 看 block 出对应话术
+        # (sleep return → "Hope you rested well", out return → "Welcome back").
+        try:
+            from jarvis_sir_status_tracker import render_status_block_for_prompt as _sst_render
+            _sst_text = _sst_render()
+            if _sst_text:
+                _parts.append(_sst_text)
+        except Exception:
+            pass
+
         # 🩹 [P5-fixCB-revise / 2026-05-21 11:50] SELF-PROMISE OVERDUE block
         # 合法 surface 触发 (b) — Jarvis 自检 promise 没履行 (PromiseLog sweep 24h
         # 无 evidence → state UNTRACKED → publish 'self_promise_overdue' SWM).

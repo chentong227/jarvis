@@ -1981,6 +1981,21 @@ Spoken English:"""
             is_system_event = clean_intent and clean_intent.startswith('[后台系统')
             if not is_system_event:
                 self.jarvis.correction_loop.on_user_input(clean_user_input)
+                # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] Sir 13:49 痛点 — nudge 话术
+                # context aware. Sir 说"睡觉了下午见" / "出去一下" → tracker update status →
+                # ReturnSentinel return_greeting 出对应话术 (sleep return → "Hope you rested
+                # well", out return → "Welcome back"). Async 不阻 main path.
+                try:
+                    from jarvis_sir_status_tracker import observe_sir_utterance_async
+                    _turn_id_sst = ''
+                    try:
+                        from jarvis_utils import TraceContext
+                        _turn_id_sst = TraceContext.current_turn() or ''
+                    except Exception:
+                        pass
+                    observe_sir_utterance_async(clean_user_input, turn_id=_turn_id_sst)
+                except Exception:
+                    pass
                 prev_response = ""
                 stm = getattr(self.jarvis, 'short_term_memory', [])
                 if stm:

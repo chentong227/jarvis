@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "purpose": "SirStatusTracker vocab (Sir 13:49 痛点 — nudge 话术 context aware).",
+    "design": "Sir 说 X → tracker update status + publish SWM + ReturnSentinel/SmartNudge 看 status 出对应话术.",
+    "created": "2026-05-21T15:25",
+    "source_marker": "P5-SirStatusTracker",
+    "cli": "scripts/sir_status_dump.py"
+  },
+  "patterns": {
+    "sleep": {
+      "label": "睡眠 (长 AFK, 通常 4h+)",
+      "expected_return_default": "afternoon|morning|tomorrow",
+      "en": [
+        "going to bed", "going to sleep", "off to bed", "good night",
+        "gonna sleep", "i'm sleepy", "off to sleep", "calling it a night",
+        "bedtime", "heading to bed", "see you tomorrow",
+        "see you in the morning"
+      ],
+      "zh": [
+        "睡觉了", "去睡了", "睡了", "睡觉去了", "我睡了", "睡了睡了",
+        "晚安", "明早见", "明天见", "我去睡", "去睡觉", "去休息了",
+        "好梦", "明天聊", "明天再说"
+      ]
+    },
+    "nap": {
+      "label": "小憩 (短 AFK, 15-90min)",
+      "expected_return_default": "30min|1h|afternoon",
+      "en": [
+        "going to nap", "taking a nap", "quick nap", "siesta",
+        "lay down for a bit", "rest a bit"
+      ],
+      "zh": [
+        "午睡", "睡一会", "眯一会", "小睡", "躺一会", "歇一会",
+        "我去躺会", "小憩", "睡个午觉"
+      ]
+    },
+    "lunch": {
+      "label": "午餐 (~30-60min)",
+      "expected_return_default": "30min|1h",
+      "en": [
+        "going to lunch", "off to lunch", "lunch break", "having lunch",
+        "out for lunch", "grab lunch", "getting food"
+      ],
+      "zh": [
+        "吃饭去", "吃饭了", "去吃饭", "吃午饭", "午饭",
+        "去吃个饭", "吃饭", "下楼吃个饭"
+      ]
+    },
+    "dinner": {
+      "label": "晚餐 (~30-60min)",
+      "expected_return_default": "30min|1h",
+      "en": [
+        "going to dinner", "off to dinner", "having dinner",
+        "out for dinner"
+      ],
+      "zh": [
+        "吃晚饭", "晚饭去", "去吃晚饭", "吃晚饭去"
+      ]
+    },
+    "out": {
+      "label": "出门 (中长时, 可能 1h+)",
+      "expected_return_default": "afternoon|evening",
+      "en": [
+        "going out", "out for a bit", "stepping out", "leaving",
+        "i'm out", "heading out", "off for now", "be back later",
+        "see you later"
+      ],
+      "zh": [
+        "出去了", "出门", "我走了", "下楼", "去办点事",
+        "出去一下", "去外面", "我出去", "去趟", "下午见", "晚上见",
+        "傍晚见", "一会儿见", "回来再说"
+      ]
+    },
+    "afk_short": {
+      "label": "短暂 AFK (~5-30min)",
+      "expected_return_default": "10min|30min",
+      "en": [
+        "brb", "afk", "be right back", "back in a sec", "back in a bit",
+        "one moment", "give me a sec", "back in 5", "back in 10",
+        "back in 15", "back in 20", "back in 30"
+      ],
+      "zh": [
+        "一会儿就回", "一会回", "马上回来", "稍等", "等下",
+        "等会", "一会就回来", "几分钟", "一下下"
+      ]
+    },
+    "dnd": {
+      "label": "请勿打扰 (Sir 专注 / 不想被 nudge)",
+      "expected_return_default": "1h|2h",
+      "en": [
+        "do not disturb", "dnd", "leave me alone", "don't bother me",
+        "focusing", "in the zone", "deep work", "concentrating",
+        "no interruptions", "shut up", "stay quiet"
+      ],
+      "zh": [
+        "别打扰", "请勿打扰", "勿扰", "专注模式", "深度工作",
+        "别说话", "安静", "闭嘴", "勿打扰", "不要打扰"
+      ]
+    },
+    "back": {
+      "label": "Sir 主动表示回来了 (reset status → active)",
+      "expected_return_default": "",
+      "en": [
+        "i'm back", "back now", "i'm here", "good morning",
+        "morning", "i'm up", "awake", "just got back"
+      ],
+      "zh": [
+        "我回来了", "回来了", "我醒了", "早", "早安", "起床了",
+        "我醒来了", "刚回", "回来", "重新坐下", "继续"
+      ]
+    }
+  }
+}

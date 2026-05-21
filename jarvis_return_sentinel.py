@@ -423,6 +423,21 @@ class ReturnSentinel(threading.Thread):
             crosses_sleep = afk_duration > 14400  # > 4h AFK 大概率跨夜睡觉
             current_hour_for_ctx = int(time.strftime("%H"))
             is_morning_window = 5 <= current_hour_for_ctx < 12
+            # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] Sir 13:49 痛点 — context aware
+            # Sir 12:06 说"睡觉了下午见" → tracker 已 capture status='sleep'.
+            # 13:49 回 → 这里读 status, 主脑收到 declared_status 信号自然出 sleep return 话术.
+            sir_declared_status = ''
+            sir_status_keyword = ''
+            sir_status_age_min = 0
+            try:
+                from jarvis_sir_status_tracker import current_status as _sst_cur
+                _cur = _sst_cur()
+                if _cur.get('status') not in ('unknown', 'active'):
+                    sir_declared_status = _cur.get('status', '')
+                    sir_status_keyword = _cur.get('last_keyword', '')
+                    sir_status_age_min = int(_cur.get('age_s', 0) / 60)
+            except Exception:
+                pass
             nudge_ctx = {
                 "type": "return_greeting",
                 "afk_minutes": snap["afk_minutes"],
@@ -435,6 +450,10 @@ class ReturnSentinel(threading.Thread):
                 "is_first_today": is_first_today,
                 "crosses_sleep_period": crosses_sleep,
                 "is_morning_window": is_morning_window,
+                # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] Sir 声明状态 (sleep/nap/lunch/out/dnd)
+                "sir_declared_status": sir_declared_status,  # '' 或 sleep/nap/lunch/out/...
+                "sir_status_keyword": sir_status_keyword,    # Sir 原话片段
+                "sir_status_age_min": sir_status_age_min,    # 声明状态距今分钟
                 # [P0+9 / 2026-05-15] 新增 source 标记，让 _dispatch_nudge 终端 tag 显示 [ReturnSentinel]
                 "via_return_sentinel": True,
                 "source": "ReturnSentinel",
