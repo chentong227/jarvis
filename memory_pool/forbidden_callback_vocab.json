@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "created_marker": "P0+20-P5-fixCB / 2026-05-21 10:30",
+    "purpose": "Sir 5+ 次真测痛点: 主脑 unsolicited callback 老账道歉. 这 vocab 含 phrase patterns, post-stream scan reply 命中 → publish + STM forbidden block 主脑下轮自纠. 跟 directive unsolicited_callback_guard (priority 12) 双层防御.",
+    "design_doc": "docs/JARVIS_REPLY_PREFLIGHT.md (Pass 2 真治本待 P6)"
+  },
+  "phrases": [
+    {
+      "id": "regarding_my_previous_en",
+      "patterns": [
+        "regarding my previous",
+        "regarding the previous"
+      ],
+      "severity": "high",
+      "lang": "en",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed (Sir 10:06 真测)",
+      "evidence_count": 2,
+      "note": "Sir 10:06: 'Regarding my previous claim of updating the logs...' / Sir 10:08: 'Regarding my previous claim of setting a reminder...'"
+    },
+    {
+      "id": "i_must_admit_en",
+      "patterns": [
+        "i must admit",
+        "i must acknowledge",
+        "i must correct",
+        "i must apologize for my previous",
+        "i must apologize for my earlier"
+      ],
+      "severity": "high",
+      "lang": "en",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 2,
+      "note": "Sir 22:04 / 10:06 反复"
+    },
+    {
+      "id": "i_should_clarify_en",
+      "patterns": [
+        "i should clarify my earlier",
+        "i should clarify my previous",
+        "i should retract"
+      ],
+      "severity": "high",
+      "lang": "en",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 1
+    },
+    {
+      "id": "previous_claim_assertion_en",
+      "patterns": [
+        "my previous claim",
+        "my previous statement",
+        "my previous assertion",
+        "my previous mention",
+        "my earlier claim",
+        "my earlier statement",
+        "my earlier assertion"
+      ],
+      "severity": "high",
+      "lang": "en",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 3,
+      "note": "Sir 22:04 'previous claim' / 10:06 / 10:08 反复"
+    },
+    {
+      "id": "guanyu_qianmian_zh",
+      "patterns": [
+        "关于我之前",
+        "关于之前我",
+        "关于刚才我"
+      ],
+      "severity": "high",
+      "lang": "zh",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 2,
+      "note": "Sir 10:06 字幕: '关于我之前声称更新了日志一事'"
+    },
+    {
+      "id": "wo_bixu_chengren_zh",
+      "patterns": [
+        "我必须承认",
+        "我必须修正",
+        "我应当澄清",
+        "我得纠正自己",
+        "我之前说的不准确"
+      ],
+      "severity": "high",
+      "lang": "zh",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 2
+    },
+    {
+      "id": "no_such_update_en",
+      "patterns": [
+        "no such update was performed",
+        "no such action was taken",
+        "that was inaccurate"
+      ],
+      "severity": "medium",
+      "lang": "en",
+      "state": "active",
+      "source": "P0+20-P5-fixCB seed",
+      "evidence_count": 1,
+      "note": "Sir 10:06: 'no such update was performed'"
+    }
+  ],
+  "review_queue": []
+}

@@ -1770,6 +1770,19 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🩹 [P5-fixCB / 2026-05-21 10:32] CallbackGuard SWM block 注入主脑下轮
+        # 上轮 reply 命中 forbidden_callback_vocab 中的 unsolicited phrase →
+        # publish 'unsolicited_callback_detected' SWM. 主脑下轮 prompt 看到 → 强约束自纠.
+        # 跟 [PREFLIGHT FEEDBACK] (LLM-based) 互补, 这层是 regex 命中 (零延迟 + 一定看到).
+        # 顶级红线 — Sir 5+ 次反复痛点真治本.
+        try:
+            from jarvis_callback_guard import render_forbidden_block_for_prompt as _cb_render
+            _cb_text = _cb_render(within_seconds=900.0, max_hits=3)
+            if _cb_text:
+                _parts.append(_cb_text)
+        except Exception:
+            pass
+
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
         # Jarvis 大量 try/except 静默吞错, 主脑不知道 module fail. 加 [SYSTEM ERRORS]

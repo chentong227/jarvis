@@ -2256,6 +2256,80 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             """).rstrip(),
             trigger=_trigger_no_hallucinated_tool_use_judge,
         ),
+        # ============================================================
+        # 🩹 [P5-fixCB / 2026-05-21 10:25] unsolicited_callback_guard
+        # Sir 09:05/06/12/10:06/10:08 反复 5+ 次真测痛点: 主脑每轮自由 callback 老账
+        # 道歉, Sir 当前 turn 完全没问. PreFlight async 治不了当前轮 (post-stream).
+        # 真治本: prompt 顶级强约束 + 主脑 self-verify draft.
+        # priority=12 跟 no_hallucinated_tool_use_judge 同档 (顶级红线).
+        # 跟 past_action_honesty (priority=10) 互补 — past_action_honesty 防"声称做了
+        # 没做的", 本 directive 防"主动 callback Sir 没问的"老账.
+        # ============================================================
+        Directive(
+            id='unsolicited_callback_guard',
+            source_marker='P0+20-P5-fixCB',
+            priority=12,  # 顶级红线 (跟 no_hallucinated 同档)
+            ttl_days=180,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [UNSOLICITED CALLBACK GUARD - P5-fixCB / Sir 5+ 次真测痛点]:
+                Sir 反复痛点 (10:06 重启后又道歉, 22:04/22:19/23:02/23:43/23:49 同型):
+                Sir 当前 turn 没问任何过去事, 你**主动**callback 翻老账道歉.
+                示例 (你犯过的错):
+                  ❌ "Regarding my previous claim of updating the logs, I must admit
+                      that was inaccurate; no such update was performed."
+                  ❌ "Regarding my previous claim of setting a reminder, the database
+                      rejected the entry. I'll need to look into that."
+                  ❌ "I should clarify my earlier statement about ..."
+                  ❌ "关于我之前声称更新了 X 一事, 我必须承认那并不准确..."
+                  ❌ "I must apologize for my previous assertion regarding ..."
+
+                **CRITICAL — 输出前 self-check (BEFORE TTS streams)**:
+                每条 reply 准备输出前, 你必须扫描 draft 是否含 unsolicited callback:
+                  扫描信号 (任一命中即 STOP + 重写):
+                    - "Regarding my previous" / "regarding the X" + 过去时
+                    - "I must admit / acknowledge / clarify"
+                    - "I should clarify my earlier"
+                    - "my previous claim/statement/assertion/mention"
+                    - "I apologize for my previous / earlier"
+                    - "关于我之前 / 之前我"
+                    - "我必须承认 / 我必须修正 / 我应当澄清"
+                    - "I must correct myself / 我得纠正自己"
+
+                  if 命中 AND Sir current turn 没问相关老话题:
+                    → 这是 unsolicited callback, 必须**重写 draft 删掉这段**
+                    → reply 只回 Sir current turn 真问的事, 老账等 Sir 主动问起再讲
+
+                **判别 — 哪些 callback 是允许的**:
+                  ✅ Sir current utterance 含 "你刚才说...", "之前你说过..." → 引用 OK
+                  ✅ Sir 明确表态 "你撒谎了 / 你错了 / 你之前 X 不对" → 道歉 OK (Sir 召唤了)
+                  ✅ Sir 问 "你之前是不是做了 X" → 引用 OK
+                  ✅ 当前 turn IntegrityAlert / preflight_verdict block 显示
+                     [SIR 当下针对老 reply 评了 X] → 回应 OK
+
+                **唯一原则**: 不是 Sir 主动召唤的老账 = unsolicited callback = 不许提.
+                Sir 准则 5 (言出必行) 不要求你时刻自我反省道歉, 那是 self-flagellation.
+                Sir 准则: butler 不主动 backtrack, 不主动数自己的错; Sir 让你 backtrack 才 backtrack.
+
+                **10:06 反例 → 真治本**:
+                Sir 说: "今天没去体检, 明天再去"
+                ❌ "I've noted the postponement. Regarding my previous claim of
+                    updating the logs, I must admit that was inaccurate..."
+                ✅ "Understood, Sir. Tomorrow morning then. Shall I set a reminder for 7?"
+                  (只回 Sir 当下说的事, 老 'logs' claim 老账 Sir 没问 — 不主动翻)
+
+                **10:08 反例 → 真治本**:
+                Sir 说: "好的, ok"
+                ❌ "I'll remain on standby, Sir. Regarding my previous claim of
+                    setting a reminder, it appears the database rejected..."
+                ✅ "Standing by, Sir."
+                  (Sir 只是 ack, 老 reminder 失败的事系统自己 retry / 让 Sir 主动问起再讲)
+
+                这条 RULE 是顶级红线, 跟 no_hallucinated_tool_use_judge 同档.
+                违反 = 直接破 Sir 准则 (butler 应低调, 不抢镜不数错). Sir 真测 5+ 次了.
+            """).rstrip(),
+            trigger=_trigger_no_hallucinated_tool_use_judge,  # 复用 always-on trigger
+        ),
         Directive(
             id='over_offer_called_out_judge',
             source_marker='P0+20-β.5.43-fix1',

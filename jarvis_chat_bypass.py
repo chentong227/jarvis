@@ -3599,6 +3599,47 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🩹 [P5-fixCB / 2026-05-21 10:30] CallbackGuard fast scan (零延迟 regex)
+        # PreFlight (LLM async) 治不了**当前轮**道歉 — Sir 听到 reply 已说出口.
+        # 真治本两层: directive C (priority 12 prompt 教主脑) + 本 vocab scan B
+        # (post-stream 检测 reply 命中 forbidden_callback_vocab 命中即 publish SWM
+        # 'unsolicited_callback_detected', 主脑下轮看 prompt block 强约束).
+        # 跟 PreFlight (LLM-based) 互补: 这层 regex 零延迟, 主脑下轮一定看到.
+        try:
+            from jarvis_callback_guard import (
+                scan_for_unsolicited_callback as _cb_scan,
+                publish_callback_violation as _cb_pub,
+            )
+            if final_reply and final_reply.strip():
+                _cb_hits = _cb_scan(
+                    reply_text=str(final_reply or ''),
+                    sir_utterance=str(user_input or ''),
+                )
+                if _cb_hits:
+                    _turn_id_cb = ''
+                    try:
+                        from jarvis_utils import TraceContext as _TCcb
+                        _turn_id_cb = _TCcb.get_turn_id() or ''
+                    except Exception:
+                        pass
+                    _cb_pub(
+                        hits=_cb_hits,
+                        reply_excerpt=str(final_reply or '')[:200],
+                        sir_utterance=str(user_input or '')[:120],
+                        turn_id=_turn_id_cb,
+                    )
+                    try:
+                        from jarvis_utils import bg_log as _cb_bg
+                        _cb_bg(
+                            f"🚫 [CallbackGuard] turn={_turn_id_cb[:16]} "
+                            f"hits={[h['phrase_id'] for h in _cb_hits[:3]]} "
+                            f"top_match='{_cb_hits[0]['match_text'][:50]}'"
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:30 + P5-fixD / 2026-05-21 10:00 默认开]
         # Sir 22:04 / 22:19 / 23:02 / 23:43 / 23:49 反复 5 次 unsolicited apology callback.
         # Sir 09:05 / 06 / 12 又 3 次混合真数据涌现 hallucination.
