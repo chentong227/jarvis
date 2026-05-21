@@ -132,5 +132,40 @@ class TestG_IntegrityWatcherUntouched(unittest.TestCase):
                        '[SELF-PROMISE OVERDUE] block 不动')
 
 
+class TestH_Layer2BaggageGating(unittest.TestCase):
+    """[P5-Gap4-followup-L2] Layer 2 unfinished + threads 同 gating.
+
+    inside jokes / protocols 永远 inject (Jarvis 性格/STRICT RULES 不动).
+    unfinished + threads 是潜在心结源 — 同 Layer 1 三种条件才 inject.
+    """
+
+    def test_layer2_uses_allow_baggage(self):
+        import jarvis_central_nerve
+        with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('_allow_baggage', src,
+                       'Layer 2 应 expose _allow_baggage 标记')
+        # top_jokes 永远 3
+        self.assertIn('top_jokes=3', src,
+                       'jokes 永远 inject (性格)')
+        # unfinished / threads 条件 inject
+        self.assertIn('top_unfinished=2 if _allow_baggage else 0', src,
+                       'unfinished 条件 inject')
+        self.assertIn('top_threads=2 if _allow_baggage else 0', src,
+                       'threads 条件 inject')
+
+    def test_layer2_reuses_layer1_reason(self):
+        """_allow_baggage 应基于 Layer 1 的 _soul_concern_inject_reason."""
+        import jarvis_central_nerve
+        with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 复用 reason — summon/urgent/preflight_fail 三种
+        self.assertIn(
+            "_reason in ('summon', 'urgent', 'preflight_fail')",
+            src,
+            'Layer 2 应复用 Layer 1 三种触发条件'
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

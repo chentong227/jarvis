@@ -1681,11 +1681,23 @@ class CentralNerve:
             soul_block = ''
             self._soul_concern_inject_reason = 'error'
         # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished / threads）
+        # 🆕 [P5-Gap4-followup-L2 / 2026-05-21 21:25] Layer 2 unfinished+threads 同 gating
+        # Layer 2 含 4 部分:
+        #   - inside jokes / protocols → 永远 inject (Jarvis 性格 / STRICT RULES)
+        #   - unfinished + threads → 潜在心结源, 同 Layer 1 三种条件才 inject
+        # 不影响 jokes/protocols inject — Jarvis 性格语调照常.
         relational_block = ''
         try:
             if self.relational_state is not None:
+                # 复用 Layer 1 的判断: 只有 summon/urgent/preflight_fail 才 inject baggage
+                # silent / error / 不存在时 → 沉默 (不 inject unfinished+threads)
+                _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
+                _allow_baggage = _reason in ('summon', 'urgent', 'preflight_fail')
                 relational_block = self.relational_state.to_prompt_block(
-                    top_jokes=3, top_unfinished=2, top_threads=2, max_chars=700
+                    top_jokes=3,
+                    top_unfinished=2 if _allow_baggage else 0,
+                    top_threads=2 if _allow_baggage else 0,
+                    max_chars=700,
                 )
         except Exception:
             relational_block = ''
