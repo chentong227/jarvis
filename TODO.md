@@ -1,7 +1,81 @@
 ﻿# Jarvis TODO
 
+> **更新**: 2026-05-21 10:33 (P5 整夜 + 早晨 6 commit) — Gap 1+2 (ToM/PreFlight) 落地 + Sir 09:05/06/12 早起 5 BUG + 09:53 AmbientSensor 隐藏 sprint BUG + 09:55 dashboard /items 翻译/thumbs + 10:06 add_reminder NOT NULL + 10:06/10:08 callback 道歉 5+ 次反复痛点 (B+C 真治本). **6 commit, 70+ testcase 全绿, 待 Sir 重启实测**. 详 `docs/JARVIS_P5_FINAL_REPORT_2026_05_21.md`.
+> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~640 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
+
+---
+
+## 🌅 P5 早晨真治本 (2026-05-21 09:25-10:33, 6 commit) — Sir 整夜 + 早晨真测 12 BUG
+
+### 已落地 commit timeline
+
+| commit | 时刻 | 内容 |
+|---|---|---|
+| `187e015` | 5/21 00:45 | **Gap 2 PreFlight** (async post-stream self-check) |
+| `4c1ec4f` | 5/21 01:15 | **Gap 1 ToM** (Sir Mental Model, Layer 6) |
+| `3bc494f` | 5/21 10:14 | **P5-fix-add_reminder**: SQLite NOT NULL constraint failed timestamp (Sir 10:06 真测, 提醒功能从某次 schema 升级起就挂了) |
+| `664ad77` | 5/21 10:14 | **P5-morning + AmbientSensor (5 fix)**: A morning_mood_judge trigger 改 SWM (race race) / B morning_warmth_priority directive priority 11 (禁数落) / C nudge_coordination β.5.0 弱耦合 (4 sentinel publish-only yield) / D PreFlight default ON / AmbientSensor self.jarvis bug (整 β.5.40-A1 sprint 没启用) |
+| `d366c24` | 5/21 10:21 | **P5-items-i18n**: dashboard /items 卡片中文翻译 (CATEGORY_ZH_MAP + describe_fn 人话) + 一键 👍/👎 评 vocab + item_feedback.jsonl audit |
+| `7cdeefb` | 5/21 10:32 | **P5-fixCB callback_guard (B+C 真治本)**: directive priority 12 prompt 强约束 + forbidden_callback_vocab.json + post-stream regex scan + SWM publish + STM forbidden block 主脑下轮看 |
+| `da6b661` | 5/21 10:33 | **docs(P5)**: 终报告 (audit 结论 + check list + P6 推荐) |
+
+### Sir 5+ 次道歉痛点 — 真凶链 (终治)
+
+Sir 22:04/22:19/23:02/23:43/23:49 + 10:06/10:08 反复犯 unsolicited callback 老账道歉.
+- Gap 2 PreFlight async post-stream → 治不了**当前轮**, Sir 听到 reply 已说出口
+- past_action_honesty directive priority 10 → 不教**不要 unsolicited callback**
+- INTEGRITY ALERT → 仅 track factual claim, 不管 callback 行为本身
+
+**P5-fixCB B+C 双层** (commit `7cdeefb`):
+- C: directive `unsolicited_callback_guard` (priority 12) 顶级红线 prompt 强约束教主脑
+- B: `memory_pool/forbidden_callback_vocab.json` 7 phrase seed + `jarvis_callback_guard.py` regex scan + SWM publish + central_nerve `[SIR FLAGGED UNSOLICITED CALLBACK]` block
+- 跟 PreFlight (LLM async) 互补 — 这层零延迟 + 主脑下轮一定看到
+- Sir 主动召唤老账 (`you said earlier` / `你刚才说`) → exempt, 不算违规
+
+### Sir 真测 check list (重启后跑)
+
+```
+启动:
+[ ] log 含 '🎵[AmbientSensor / β.5.40-A1] 启用' (不再 init 异常)
+[ ] log 含 '🛂 [ReplyPreFlight] enabled (default ON, P5-fixD)'
+[ ] log 含 '🤝 [NudgeCoordination] ready' / SWM 'proactive_nudge_fired'
+
+早起场景 (Sir 跨夜 + 6-10am 醒):
+[ ] morning_mood_judge fire (SWM afk_return.afk_minutes>240)
+[ ] morning_warmth_priority directive 注入主脑 prompt
+[ ] return_greeting 后 commitment_check 退化 publish-only (log '🤝 [.../Yield]')
+[ ] Jarvis 早起首句 warm + brief, 不数落 missed deadline
+[ ] commitments 老账 Sir 主动问起才提
+
+callback 治本 (Sir 跟之前同场景说话):
+[ ] Sir 说 '今天没去体检' / '好的 ok' → Jarvis 不再 'Regarding my previous claim...'
+[ ] 若 Jarvis 仍 callback → log '🚫 [CallbackGuard] turn=X hits=[regarding_my_previous_en]'
+[ ] 主脑下轮 prompt 含 [SIR FLAGGED UNSOLICITED CALLBACK — DO NOT REPEAT] block
+[ ] 主脑下轮自纠不再用该 phrase
+
+add_reminder:
+[ ] Sir 说 '明天 7 点叫我' → Jarvis 真创建 reminder, 不再 NOT NULL constraint failed
+
+dashboard /items:
+[ ] 卡片显中文 category ('🆘 Sir 困境词') 替 'STRUGGLE'
+[ ] 状态显 '待审/已生效' 替 'review/active'
+[ ] 描述行 '🔍 Sir 说出 X → Jarvis 做 Y'
+[ ] 卡片新 👍 / 👎 按钮, 点击后 badge '👍 已赞' 显示
+```
+
+### ⚠️ 已知 P5+ Followup (待 Sir 真测拍板)
+
+1. **callback_guard L7 reflector**: vocab 7 phrase seed, 主脑可能涌现新形式. 加 L7 daemon 看 Sir 反馈 ("不要道歉了") + 实际命中 propose 新 phrase 进 review_queue
+2. **callback_guard dashboard /items 集成**: 加 `forbidden_callback` category 让 Sir 看 + 改 + 👍/👎
+3. **CLI `scripts/forbidden_callback_dump.py`**: 不开 dashboard 用 CLI 加 phrase
+4. **P6 Pure Pass2 sync PreFlight**: 接受 TTFT +500ms 真按 design doc 拦截当前轮. 等 callback_guard 真生效率 + Sir 拍板再做
+5. **directive cluster 减负**: 60+ directive 注入 cluster 太大 (Sir 22:04 看了 2350 chars). 考虑 grouping / context-conditional fire
+6. **dashboard pre-existing 4 fail**: `_test_p0_plus_20_beta54_conductor_publish_persist.py` 在 main 就 fail (跟 P5 无关)
+7. **TODO.md ~640 行**: 待 archive 老段 (β.5.34-41) 到 `docs/TODO_ARCHIVE.md`
+
+### β.5.43-fix 老 Sir 22:04 痛点 (背景, 这轮治本前的妥协)
+
 > **更新**: 2026-05-20 22:11 (β.5.43 6 缺口 + 4 fix + β.5.44 IntentResolver 重构 + AGENTS 准则 6 + bugfix1 + **β.5.45 Lifetime Milestones + bugfix2 (directive revise)**, **17 commits 单晚产出**). Sir 22:04 真机实测暴露主脑道歉循环 BUG → 修 directive scope + 新建 milestone 系统 (β.5.44 IntentResolver 首个真应用). 等 Sir 重启再测.
-> **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 ~580 行 > 300 cap (β.5.34-41 段待 archive). AGENTS.md 章程.
 
 ---
 
