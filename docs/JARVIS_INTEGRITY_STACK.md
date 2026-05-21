@@ -110,6 +110,19 @@
 │              下一轮 prompt 注入"上一轮 X 未 verify, 主动撤回"  │
 │      ── 现状: ⚠️ 半 ── ClaimTracer 只 trace 不 enforce         │
 ├─────────────────────────────────────────────────────────────────┤
+│ L4.5  Active Verify+Retry  ── IntegrityWatcher (P5 / Sir 14:11)│
+│      L4 是被动 audit (写 log), L4.5 主动 verify mutation 是否真完成│
+│      失败递归 retry, 真做不到 → handoff Sir 手动方案           │
+│      Sir 14:11: "wachter 负责贾维斯所有行为(除调 tool)是否成功的 │
+│      审查机构, 植入言出必行层级中. 主动重试, 真做不到给 Sir 道歉│
+│      并且提出让 Sir 手动解决的方案"                             │
+│      Sir 14:30: vocab + LLM 二维 (3 层 waterfall — vocab 主路径,│
+│      LLM 仅边界 case async judge), 不阻塞 TTFT                  │
+│      监督 Jarvis 内部 8 类: reminder/commitment/promise/memory/ │
+│      milestone/profile/concern/relational                       │
+│      Tool 失败本身让主脑知道 (主脑→工具→主脑路径), 不归 watcher │
+│      ── 现状: ✅ P5 完工 (β.5+ commit c116938)                 │
+├─────────────────────────────────────────────────────────────────┤
 │ L5  Action-Reconciliation  ── 行动结果对账 (灵魂闭环)          │
 │      Jarvis 承诺 → PromiseLog → 履约/违约 detect →             │
 │        反馈 concern.severity ±                                  │
@@ -146,6 +159,7 @@
 | L2 | ✅ | EvidenceRequirements 中央表 (jarvis_evidence_requirements.py + json) | β.4.3 |
 | L3 | ✅ | directive_registry.json 全迁 + CLI registry_dump.py + review queue + propose 接口 | β.4.6 |
 | L4 | ✅ | ClaimTracer enforce + integrity_audit.jsonl + 下一轮 prompt 注入撤回 | β.4.1 + β.4.3.3 + β.4.2-hotfix |
+| **L4.5** | ✅ | **IntegrityWatcher** (P5 / Sir 14:11): 主动 verify Jarvis 内部 8 类 mutation, 失败递归 retry, 真做不到 handoff Sir + actionable. 3 层 waterfall (vocab + kw gate + LLM async). vocab `memory_pool/integrity_claim_vocab.json`, kw `integrity_suspicious_kw.json`, CLI `scripts/integrity_claim_vocab_dump.py`, prompt block `[INTEGRITY WATCHER REPORT]` | β.5+ commit c116938 |
 | L5 | ✅ | β.2.9.11 闭环 A + infer vocab json 迁完 (β.2.9.12) + **β.5.22-C 动态语义反馈 LLM judge** (Concern.daily_progress + ConcernsLedger.record_user_feedback API + post_chat hook + urgency 反向注入) | β.2.9.11 + β.5.22-C |
 | L6 | ✅ | dashboard 信任审计卡 + 兑现率 + 7d 趋势 ASCII chart + Web Dashboard 言出必行宽卡 (top 5 空头话) | β.4.4 Session 3 + **β.5.25 web** |
 | L7 | ✅ | IntegrityReflector LLM-propose + **β.5.23-B ConcernFeedbackReflector 24h daemon** (看 7d STM + nudge 推送量 + Sir 拒绝量 → QuickClassifier.prompt_raw propose cooldown 调整 → 写 review_queue) | β.4.5.2 + β.5.23-B |
