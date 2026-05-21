@@ -1484,15 +1484,23 @@ class ConversationEventBus:
     def to_swm_block(self, n: int = 12, max_chars: int = 800,
                      title: str = "=== [SHARED WORLD MODEL — Sir 准则 6 evidence] ===",
                      types: set = None,
-                     salience_floor: float = 0.3) -> str:
+                     salience_floor: float = 0.3,
+                     critical_salience: float = 0.85) -> str:
         """渲染 SWM 给主脑 prompt 看. 按 top_n 排, 显示 salience + age + source + desc.
 
         给主脑富 evidence 自决, 不教具体反应方式.
+
+        🆕 [Gap-Z2 / β.5.46-fix6 / 2026-05-21 23:40] 智能截断:
+        当 lines 总字符 > max_chars 时, **不再简单截断** — 优先扔低 salience
+        行, 保留 critical_salience (默认 0.85) 以上的关键 evidence 全文.
+        防止主脑漏看 commitment_overdue / hallucination_detected 类红线信号.
         """
         top = self.top_n(n=n, types=types, salience_floor=salience_floor)
         if not top:
             return ""
-        lines = [title]
+
+        # 渲染所有 lines
+        line_records = []  # [(salience, line_str), ...]
         for e in top:
             age_s = e['_age_s']
             if age_s < 60:
@@ -1504,13 +1512,45 @@ class ConversationEventBus:
             sal = e.get('salience', 0.5)
             src = e.get('source', '') or 'unknown'
             src_tag = f"[{src}]" if src else ''
-            lines.append(
-                f"- (sal={sal:.2f}, age={age_str}) {e['type']} {src_tag}: {e['description']}"
+            ln = (
+                f"- (sal={sal:.2f}, age={age_str}) {e['type']} {src_tag}: "
+                f"{e['description']}"
             )
-        result = "\n".join(lines)
-        if len(result) > max_chars:
-            result = result[:max_chars - 4].rstrip() + " …"
-        return result
+            line_records.append((sal, ln))
+
+        # 简单情况: 所有 lines 加起来不超 → 直接返
+        title_len = len(title) + 1
+        budget = max_chars - title_len
+        total = sum(len(r[1]) + 1 for r in line_records)
+        if total <= budget:
+            lines = [title] + [r[1] for r in line_records]
+            return "\n".join(lines)
+
+        # 超时: 优先保 critical (sal >= critical_salience), 再按 salience 降序填
+        critical_lines = [r for r in line_records if r[0] >= critical_salience]
+        non_critical = [r for r in line_records if r[0] < critical_salience]
+        non_critical.sort(key=lambda r: r[0], reverse=True)
+
+        kept = []
+        used = 0
+        # critical 全部保 (即使超 budget — 红线优先)
+        for r in critical_lines:
+            kept.append(r[1])
+            used += len(r[1]) + 1
+        # 余下按 salience 降序填
+        for r in non_critical:
+            if used + len(r[1]) + 1 > budget:
+                break
+            kept.append(r[1])
+            used += len(r[1]) + 1
+
+        # 加截断标记 (如果有 non_critical 被截掉)
+        n_dropped = len(non_critical) - (
+            len([k for k in kept if any(nk[1] == k for nk in non_critical)])
+        )
+        if n_dropped > 0:
+            kept.append(f"  ... ({n_dropped} lower-salience event(s) dropped)")
+        return "\n".join([title] + kept)
 
 
 # ============================================================
