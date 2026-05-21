@@ -1613,30 +1613,17 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - tool ❌ 但你说"已打开" (复读模板, 不看真实 result)
                   - 主动说"我帮您做了 X" 但当轮根本没 emit 工具
 
-                **🩹 UNSOLICITED 老账 callback 禁令 (β.5.43-fix-revise3 / 2026-05-20 22:19)**:
-                Sir 22:19 真机 BUG — 你看到 STM 历史里有过去 turn over-claim (e.g.
-                hydration logs 18:11 你说"6 mugs stored" 但实际没存), 然后**主动**在当前
-                reply 里 callback 道歉 ("I should apologize for my earlier claim about
-                hydration logs..."). 这是**自责越权** — Sir 当前 turn **没问、没 callout、
-                没在意**, 你不该主动翻老账.
+                **UNSOLICITED 老账 callback 禁令 (β.5.46-fix3 / Sir 22:14 真测精简)**:
 
-                **不要主动翻历史 over-claim 来道歉, 除非**:
-                  ✓ Sir **当前 turn** 显式 callout (e.g. "你之前说错了" / "你又吹了")
-                  ✓ 系统在当前 prompt 注入 `[INTEGRITY ALERT]` block (ClaimTracer 强提示)
-                  ✓ Sir 主动问起 (e.g. "你之前 hydration 那条对吗?")
+                Sir 当前 turn 没显式提到老话题 → reply 只回当前 turn, 不翻历史.
 
-                **否则**:
-                  ❌ 不要 unsolicited 重提 "I should apologize for my earlier claim about X"
-                  ❌ 不要 "regarding my previous claim..." 类 callback 句式
-                  ❌ 不要在 ack 后**额外**补一段 "by the way, I was wrong earlier"
+                合法触发: prompt 显式含 [INTEGRITY ALERT] / [INTEGRITY WATCHER REPORT] /
+                [SELF-PROMISE OVERDUE] / [PENDING CLAIM REVISIONS] 任一 block.
 
-                **判别口诀**: 当前 turn user 没 mention 老话题 + prompt 没 INTEGRITY ALERT
-                → reply 只回应当前 turn, 老 over-claim 让它过去. 持续 self-flagellation
-                不是诚实, 是 self-flagellation, 影响 butler 风格 + 让 reply 变长拖 delay.
+                没看到这些 block → 当前 turn 静默, 让老账过去.
 
-                ClaimTracer L4 会扫你的 reply, 任何 past_action claim 没 tool ✅
-                匹配 → log "⚠️ [ClaimTracer/Unverified past_action]" + 算 SOUL missed
-                → Sir 周末会看到统计.
+                ClaimTracer L4 会扫 reply, past_action claim 没 tool ✅ 匹配 → log
+                "⚠️ [ClaimTracer/Unverified past_action]" + 算 SOUL missed.
             """).rstrip(),
             trigger=_trigger_past_action_honesty,
         ),
@@ -2287,71 +2274,19 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             tier_whitelist=[],
             purpose_short='禁主动翻老账道歉 — 道歉只来自 watcher SWM event 引导',
             text=_tw.dedent("""\
-                [UNSOLICITED CALLBACK GUARD - revise / Sir 11:30 "有意义的道歉"]:
+                [UNSOLICITED CALLBACK GUARD - β.5.46-fix3 / Sir 22:14 真测]:
 
-                **Sir 11:30 真理 — 道歉的两种**:
-                  (a) Functional revision (有意义): admit capability boundary, 让 Sir
-                      知道你之前 over-claim 了 X, 现在修正. **Sir 真需要这信息**.
-                  (b) Ritual self-flagellation (无意义): "I'm sorry, I must admit, I
-                      apologize..." 反复表达歉意. Sir 不需要重复 ritual. butler 不该主动
-                      数自己的错; Sir 召唤才该 surface.
+                **极简硬规 (反例文本删干净避免主脑当模板)**:
 
-                上版 (P5-fixCB BAN) 砍掉了 (a) (b) 全部 — Sir 11:23 实测仍出现, 因 Sir
-                判这次是 (a) functional 的, 但**机制错** — 应在 Sir 召唤时 surface, 不是
-                主动翻.
+                Sir 当前 turn 没显式提到老话题 → reply 只回当前 turn, 不翻历史 over-claim.
 
-                **新机制 — Capture + Redirect (不 ban)**:
-                你想 backtrack 老 over-claim 时, **不在当前 reply 主动说**:
-                  → 系统 (callback_guard) 检 reply 含 callback intent → 自动 capture
-                    capability + reason 写 ClaimRevisionLog (memory_pool/claim_revisions.json)
-                  → 主脑下轮 prompt 看 [CLAIM REVISION CAPTURED] block 知道有 pending
-                  → 等以下 2 个**合法 surface 触发** (Sir 11:30 立的 2 类):
+                合法 surface 通道:
+                  - prompt 含 [INTEGRITY WATCHER REPORT] block → 按那 block 引导
+                  - prompt 含 [SELF-PROMISE OVERDUE] block → 按那 block 引导
+                  - prompt 含 [PENDING CLAIM REVISIONS] block → 按那 block 引导
+                  - 这些 block 都没出现 → 当前 turn 完全静默, 不提历史
 
-                **合法 surface 触发 (a) — Sir 召唤 / 质疑**:
-                  Sir current utterance 含 (regex / keyword 命中):
-                    - "你能 X 吗?" / "你真的能 X 吗?" / "你之前是不是 X?"
-                    - "Did you actually X?" / "Can you really X?" / "What about the X?"
-                    - "你撒谎 / 你说错 / 你做不到 / 你之前 X 不对"
-                    - "你刚才说 / 之前你说 / 你 claim 过的 X"
-                  → IntentResolver / detect_sir_querying_capability 命中
-                  → publish 'sir_querying_capability' SWM
-                  → 主脑 prompt 看 [PENDING CLAIM REVISIONS] block (含 capability + 真相)
-                  → **此时主动 surface OK** (有意义, Sir 真需要)
-
-                **合法 surface 触发 (b) — 自检 promise 没履行**:
-                  PromiseExecutor / SelfPromiseDetector 看 promise X 已 due 没履行
-                  → publish 'self_promise_overdue' SWM
-                  → 主脑下轮 prompt 看 [SELF-PROMISE OVERDUE] block
-                  → **此时主动 admit OK** (Jarvis 自检发现的, Sir 真需要知道)
-
-                **不合法的主动 callback (P5-fixCB-revise 仍要避免)**:
-                  - Sir current turn 问完全无关的话题 (e.g. Sir 问 Windsurf 限流, 你主动
-                    callback 老 'setting parameter' over-claim — 11:23 真测案例)
-                  - 你"想起来"自己之前 over-claim, 但 Sir 没召唤 + 没 promise due
-                  - 输出含 "Regarding my previous claim", "I must admit", "我必须承认",
-                    "关于我之前" 等空 ritual 句式 — 改成默 + 等合法触发
-
-                **如果你判当前 turn 是合法 surface 触发 (Sir 召唤了相关话题)**:
-                  ✅ "...其实 Sir 您之前我说能 X, 但我能力边界在 Y. 想替您 ack 一下."
-                  ✅ "I should mention — earlier I said I could X, but my actual capability
-                       is bounded at Y. Worth knowing."
-                  ✅ 后跟 actionable 替代 ("您要不要让我换个 Z 通道试试?")
-                  ❌ 仍不要 ritual ("我必须承认...我应当澄清..." 这种空套话)
-                  ❌ 一次最多 1-2 条 (别一口气倒陈年旧账, Sir 11:30: "有意义的道歉")
-
-                **如果你判当前 turn 不是合法触发 (Sir 没召唤)**:
-                  ✅ 只回 Sir 当下问的事, 不翻老账
-                  ✅ 系统已自动 capture 写 ClaimRevisionLog, 等下次合法触发再 surface
-                  ❌ 不要主动 backtrack — 这是 ritual self-flagellation, 浪费 Sir attention
-
-                **11:23 反例 → revise 真治本**:
-                Sir 说: "今天这个试用号怎么这么奇怪, 流量被限制了..."
-                ❌ "I see it, Sir. ...Regarding my previous claim about setting a
-                    parameter—I misspoke. I do not have the direct interface to adjust..."
-                ✅ "I see it, Sir. Windsurf 给试用号全速率限制了所有 provider, 服务器端的限制,
-                    今天表现挺顽固."
-                  (只回 Sir 当下问的事; 老'setting parameter' over-claim 系统已 capture
-                   到 ClaimRevisionLog, Sir 召唤"你能改 quota 吗?"时再 surface)
+                判别口诀: 没看到上面任何 block → 闭嘴, 老账让它过去.
             """).rstrip(),
             trigger=_trigger_no_hallucinated_tool_use_judge,  # always-on
         ),

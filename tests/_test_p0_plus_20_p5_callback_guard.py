@@ -267,18 +267,29 @@ class TestF_DirectiveRegistered(unittest.TestCase):
         self.assertEqual(target.priority, 12)
 
     def test_directive_text_revise_describes_redirect(self):
-        """P5-fixCB-revise: 不再 ban 风格, 说 redirect."""
+        """[β.5.46-fix3 / Sir 22:14 真测] directive 极简化, 反例文本删干净.
+
+        Sir 22:14 真凶: 反例文本 ('Regarding my previous claim...' / 'I should mention')
+        被主脑当模板用了 → 反向触发 unsolicited callback. 治本: 删反例文本.
+        """
         from jarvis_directives import DirectiveRegistry, _bootstrap_seed_only
         reg = DirectiveRegistry()
         _bootstrap_seed_only(reg)
         target = reg.directives.get('unsolicited_callback_guard')
-        # 含合法 surface 触发论述
-        self.assertIn('Functional revision', target.text)
-        self.assertIn('Sir 召唤', target.text)
-        # 11:23 Sir 真测案改写
-        self.assertIn('11:23', target.text)
-        # 原不合法句式仍举例
-        self.assertIn('Regarding my previous', target.text)
+        # 极简化后的核心 contracts
+        self.assertIn('当前 turn 没显式提到老话题', target.text,
+                       '应保留核心规则: 当前没提就不翻')
+        self.assertIn('INTEGRITY WATCHER REPORT', target.text,
+                       '应指 watcher block 路径')
+        self.assertIn('SELF-PROMISE OVERDUE', target.text,
+                       '应指 PromiseLog block 路径')
+        self.assertIn('PENDING CLAIM REVISIONS', target.text,
+                       '应指 ClaimRevision block 路径')
+        # 反例文本必须删干净 (Sir 22:14 真凶)
+        self.assertNotIn('Regarding my previous', target.text,
+                          '反例 "Regarding my previous" 必须删 (主脑当模板)')
+        self.assertNotIn('I should mention', target.text,
+                          '反例 "I should mention" 必须删 (主脑当模板)')
         # source_marker 升级
         self.assertEqual(target.source_marker, 'P0+20-P5-fixCB-revise')
 
