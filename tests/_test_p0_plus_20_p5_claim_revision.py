@@ -313,11 +313,24 @@ class TestF_StaticIntegrationCheck(unittest.TestCase):
         self.assertIn('from jarvis_callback_guard import', src)
         self.assertIn('CallbackGuard→ClaimRevision', src)
 
-    def test_central_nerve_imports_pending_revisions(self):
+    def test_central_nerve_does_not_inject_pending_revisions(self):
+        """[P5-fixCB-final / 2026-05-21 17:22 Sir 真意"全靠 watcher"] 反向断言.
+
+        老版: central_nerve 在 Sir querying capability 时调 render_pending_revisions_block
+        注入 [PENDING CLAIM REVISIONS] block. Sir 真意洞察 — 任何"老 over-claim"
+        evidence 注入主脑都强化 LLM 训练本能 (RLHF 教 "看到 evidence → 道歉").
+
+        新行为: ClaimRevisionLog 仍持久化 capture (post-stream + CLI 可看), 但
+        central_nerve 不再调 render_pending_revisions_block 注入 prompt. 道歉的
+        唯一合法发起方 = IntegrityWatcher publish SWM event.
+        """
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        self.assertIn('render_pending_revisions_block', src)
+        # render_pending_revisions_block 调用应已删除
+        self.assertNotIn('_cr_render(', src,
+                          'render_pending_revisions_block 调用应已删除 '
+                          '(P5-fixCB-final 真意"全靠 watcher")')
 
 
 class TestG_DirectiveRevised(unittest.TestCase):

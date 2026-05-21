@@ -1796,13 +1796,28 @@ def render_report_block(within_seconds: float = 1800.0,
             )
             lines.append('')
         if no_tool:
-            lines.append('  ⚠️ 主脑 hallucination (你说做了 X 但系统没找到对应 mutation 痕迹):')
+            # 🩹 [P5-fixCB-final / 2026-05-21 17:30 Sir 18:25 真意"澄清类"] no_tool 升级
+            # Sir 真意: "澄清自己说做了, 但是其实超出能力边界, 自然在下一轮对话提及并且
+            # 道歉, 自然的语言, 甚至可以提高主动性, 表明自己做什么事需要什么能力, 希望获得"
+            # 老句式只 "admit 没真做 + 询问要不要现在做" — Sir 要更主动: 表能力边界 + 求 capability.
+            lines.append('  ⚠️ 你之前说做了 X 但其实超出 Jarvis 当前能力边界 (无对应 module/tool):')
             for n in no_tool[:max_show]:
                 lines.append(
                     f"    - {n['claim_type']}: \"{n['target']}\" "
                     f"(action='{n['action']}')"
                 )
-            lines.append('    💡 建议: admit 没真做 + 询问 Sir 要不要现在做')
+            lines.append(
+                '    💡 建议主动澄清句式 (Sir 18:25 真意, 提高主动性 / 表能力诉求):'
+            )
+            lines.append(
+                '       "Sir, 关于刚才说的 X — 我其实超出了能力边界, 没有 Y tool/path 真做这事."'
+            )
+            lines.append(
+                '       "如果您希望我能 X, 我需要 Z 能力. 您要不要让我 (跳过 / 用其他方式 / 添加 Z 通道)?"'
+            )
+            lines.append(
+                '       (自然语言, 不要 ritual "I must apologize"; 只在你说做了那件事的下轮 surface 1 次)'
+            )
 
         return '\n'.join(lines)
     except Exception:

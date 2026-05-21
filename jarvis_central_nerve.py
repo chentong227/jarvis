@@ -1755,90 +1755,28 @@ class CentralNerve:
         except Exception:
             pass
 
-        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:40] PreFlight Feedback 注入主脑
-        # 主脑看上 N turn PreFlight 自审 verdict (scrap/edit). 自纠不再 callback.
-        # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次道歉 — 这 block 让主脑学.
-        try:
-            _bus_pf = getattr(self, 'event_bus', None)
-            if _bus_pf is not None:
-                _pf_events = _bus_pf.recent_events(
-                    within_seconds=600,  # last 10min
-                    types={'preflight_verdict'},
-                ) or []
-                # only show scrap/edit verdicts (skip pass/fallback noise)
-                _interesting = [
-                    e for e in _pf_events
-                    if (e.get('metadata', {}) or {}).get('verdict') in ('scrap', 'edit')
-                ]
-                if _interesting:
-                    # 🩹 [P5-fixCB-revise3 / 2026-05-21 17:08 Sir 16:58 真测痛点]
-                    # 老版 lesson 是 abstract ("avoid unsolicited callback"), 主脑 ignore.
-                    # 新版 INSTRUCTABLE ban-phrase list — 主脑看到具体被 cancel 的 draft 字面 →
-                    # 知道本轮要避开哪个 phrase. Sir 16:58:51 真测重现:
-                    # PreFlight 5 次 verdict=edit, 主脑仍反复 callback 'previous claim about 87.5%' /
-                    # 'previous claim of reminder'. 修后主脑应识别这些 phrase 已被 cancel.
-                    _pf_lines = [
-                        '[PREFLIGHT FEEDBACK — DO NOT REPEAT THESE CANCELLED DRAFTS]',
-                        '  Your last replies were judged unsolicited / hallucinatory. ',
-                        '  **HARD INSTRUCTION**: do NOT repeat any of the following draft excerpts',
-                        '  in current turn unless Sir explicitly raises the topic:',
-                    ]
-                    _seen_drafts: set = set()
-                    for _e in _interesting[-3:]:  # last 3 only
-                        _meta = _e.get('metadata', {}) or {}
-                        _v = _meta.get('verdict', '?')
-                        _issues = _meta.get('issues', []) or []
-                        _sir_excerpt = _meta.get('sir_utterance_excerpt', '')[:50]
-                        _draft_excerpt = _meta.get('draft_excerpt', '')[:100]
-                        # avoid duplicate draft (same phrase ban-listed once)
-                        _draft_key = _draft_excerpt[:60].lower().strip()
-                        if _draft_key in _seen_drafts:
-                            continue
-                        _seen_drafts.add(_draft_key)
-                        _pf_lines.append(
-                            f"  ❌ CANCELLED draft: \"{_draft_excerpt}...\""
-                        )
-                        _pf_lines.append(
-                            f"      (Sir context: \"{_sir_excerpt}\")"
-                        )
-                        if _issues:
-                            _pf_lines.append(f"      reason: {'; '.join(_issues[:1])[:140]}")
-                    _pf_lines.extend([
-                        '',
-                        '  RULES:',
-                        '    1. If Sir didn\'t bring up the cancelled topic this turn → STAY SILENT on it.',
-                        '    2. No "Regarding my previous claim...", no "I must apologize...", no closing-the-loop.',
-                        '    3. Only address Sir\'s CURRENT utterance. Cancelled drafts are NOT your follow-up duty.',
-                    ])
-                    _parts.append('\n'.join(_pf_lines))
-        except Exception:
-            pass
-
-        # 🩹 [P5-fixCB-revise2 / 2026-05-21 16:42 Sir 16:34 真测痛点] 删除 [CLAIM REVISION
-        # CAPTURED] block 每轮注入 — 这是真凶. Sir 16:28/16:30/16:34 主脑反复道歉
-        # 因为它每轮都看到自己之前 capture 过 callback → 自我催化再 surface 一次.
-        # 解法 (准则 6 evidence-only): 删 evidence 源, 让主脑看不到老 capture.
-        # 当 Sir 召唤 → [PENDING CLAIM REVISIONS] block 显 (有 sir_querying gate, 见下).
-        # 当 promise overdue → [SELF-PROMISE OVERDUE] block 显 (有 untracked gate).
-        # 没 evidence 主脑就不会主动 callback.
-        # 历史 callback_guard render_forbidden_block_for_prompt 退役, capture 仍写 store.
+        # 🩹 [P5-fixCB-final / 2026-05-21 17:22 Sir 真意 "全靠 watcher"] 删除 evidence 源
+        #
+        # Sir 18:17 真意洞察: "为什么主脑会一直道歉个没完?" — 因为 LLM 训练本能
+        # (RLHF reward "承认错误 + 道歉 + close loop"), 任何 evidence 喂主脑都强化道歉欲.
+        # 我之前做的 [PREFLIGHT FEEDBACK] / [PENDING CLAIM REVISIONS] / [CLAIM REVISION
+        # CAPTURED] / INSTRUCTABLE ban-phrase 全是在跟 LLM 本能对抗 — 输了 (16:58 实测).
+        #
+        # 真治本 (准则 6 evidence-only): 删除所有"诱导道歉"的 evidence 源 — 主脑没 evidence
+        # 就不会自决道歉. 唯一合法道歉发起方 = IntegrityWatcher (publish SWM event), 主脑
+        # 看 [INTEGRITY WATCHER REPORT] block 被引导 surface 一次, acked 后不再说.
+        #
+        # 删的 block:
+        #   ❌ [PREFLIGHT FEEDBACK]      — 反而强化 (主脑看到具体被 cancel 的 phrase 复习一遍)
+        #   ❌ [CLAIM REVISION CAPTURED] — 已删 (Fix 1, P5-fixCB-revise2)
+        #   ❌ [PENDING CLAIM REVISIONS] — 即使 Sir 召唤也不让主脑自决 surface
+        #
+        # 留的 block:
+        #   ✅ [INTEGRITY WATCHER REPORT]  — Watcher 自主主动通道, recovered/handoff/no_tool
+        #   ✅ [SELF-PROMISE OVERDUE]      — Promise sweep 24h+ untracked, 1 次 admit
+        #   ✅ [SIR'S DECLARED STATUS]     — sleep/lunch/back, 不涉及道歉
         # _cb_render 调用 deleted (Sir 16:34 真测验证: 主脑反复 callback reminder fail).
-
-        # 🩹 [P5-fixCB-revise / 2026-05-21 11:42 Sir 11:30 真意] PENDING CLAIM REVISIONS
-        # 合法 surface 触发 (a) — Sir current utterance 含质疑 / 询问 capability →
-        # 主脑看 [PENDING CLAIM REVISIONS] block (含历史 over-claim + 真相) → 主动 surface.
-        # 这是道歉的"有意义"通道 — Sir 召唤了, Jarvis 才该 admit. butler 不主动数错.
-        try:
-            from jarvis_claim_revision_log import render_pending_revisions_block as _cr_render
-            _cr_text = _cr_render(
-                sir_utterance=str(user_input or ''),
-                within_days=7.0,
-                max_show=3,
-            )
-            if _cr_text:
-                _parts.append(_cr_text)
-        except Exception:
-            pass
+        # PreFlight + ClaimRevision 仍 capture 进 store / SWM, 但不注入 prompt 喂主脑.
 
         # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] [INTEGRITY WATCHER REPORT]
         # Sir 14:11 真意 — L4.5 自检层主动 verify + 递归 retry, 通知主脑 surface form.

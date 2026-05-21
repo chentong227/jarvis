@@ -294,11 +294,34 @@ class TestG_StaticIntegrationCheck(unittest.TestCase):
         self.assertIn('scan_for_unsolicited_callback', src)
         self.assertIn('publish_callback_violation', src)
 
-    def test_central_nerve_imports_render_block(self):
+    def test_chat_bypass_still_captures_callback(self):
+        """callback capture 仍存在 (post-stream regex), 但只 publish SWM, 不喂 prompt."""
+        import jarvis_chat_bypass
+        with open(jarvis_chat_bypass.__file__, 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('from jarvis_callback_guard import', src)
+        self.assertIn('scan_for_unsolicited_callback', src)
+
+    def test_central_nerve_does_not_inject_forbidden_block(self):
+        """[P5-fixCB-final / 2026-05-21 17:22 Sir 真意"全靠 watcher"] 反向断言.
+
+        老版 (P5-fixCB-revise2 前): central_nerve 调 render_forbidden_block_for_prompt
+        注入 [CLAIM REVISION CAPTURED] block 喂主脑 → Sir 16:34/16:58 真测主脑反复道歉.
+
+        Sir 真意洞察: LLM 训练本能 = 看到 evidence 就 callback. 任何"老 over-claim"
+        evidence 注入主脑都强化道歉欲. 真治本: 删 evidence 源, 让主脑没诱因自决道歉.
+
+        新行为: callback_guard 仍 capture 进 ClaimRevisionLog (持久化, CLI 可看), 但
+        central_nerve 不再 import / 调 render_forbidden_block_for_prompt 注入 prompt.
+        道歉的唯一合法发起方 = IntegrityWatcher publish SWM event (recovered/handoff/no_tool).
+        """
         import jarvis_central_nerve
         with open(jarvis_central_nerve.__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        self.assertIn('render_forbidden_block_for_prompt', src)
+        # render_forbidden_block_for_prompt / _cb_render 调用应已删除
+        self.assertNotIn('_cb_render(', src,
+                          'render_forbidden_block_for_prompt 调用应已删除 '
+                          '(P5-fixCB-final 真意"全靠 watcher")')
 
 
 if __name__ == '__main__':
