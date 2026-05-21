@@ -1,0 +1,58 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-21T21:42:00",
+    "purpose": "P5-Gap4-followup — Sir 召唤 SOUL concern inject 的 keyword vocab (准则 6.5)",
+    "source_origin": "迁自 jarvis_central_nerve.py _summon_kw 硬编码 tuple (commit dec4870)",
+    "edit_via": "scripts/concern_summon_dump.py --add/--activate/--reject/--delete",
+    "auto_propose": "TODO L7 ConcernSummonReflector LLM-propose 复杂中文召唤场景",
+    "consumer": "jarvis_central_nerve._assemble_prompt SOUL Layer 1 + 2 inject gating",
+    "schema_note": "patterns 列表里每个 entry = 一组同类 keyword. 主流是 OR 命中即触发.",
+    "fallback_behavior": "vocab 文件缺失/损坏 → fall back 到 hardcoded list (见 jarvis_concern_summon.py)"
+  },
+  "patterns": [
+    {
+      "id": "concern_keywords_default",
+      "category": "concern",
+      "keywords": [
+        "concern", "concerns", "worry", "worried", "worries"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 直接问关心/担心 (英)"
+    },
+    {
+      "id": "progress_keywords_default",
+      "category": "progress",
+      "keywords": [
+        "progress", "status", "how am i", "how about",
+        "what's up", "whats up", "how are you",
+        "check on me", "check in", "remind"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 问状态/进度 (英)"
+    },
+    {
+      "id": "concern_keywords_zh_default",
+      "category": "concern_zh",
+      "keywords": [
+        "担心", "心事", "关心"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 直接问关心/担心 (中)"
+    },
+    {
+      "id": "progress_keywords_zh_default",
+      "category": "progress_zh",
+      "keywords": [
+        "进度", "状态", "怎么样", "啥情况", "提醒",
+        "记着", "要注意", "检查"
+      ],
+      "state": "active",
+      "source": "seeded",
+      "note": "Sir 问状态/进度 (中)"
+    }
+  ]
+}

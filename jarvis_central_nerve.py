@@ -1624,16 +1624,22 @@ class CentralNerve:
         soul_block = ''
         try:
             if self.concerns_ledger is not None:
-                _ui = (user_input or '').lower()
-                # (a) Sir 召唤检测 (TODO β.6+: vocab + LLM judge 升级, 准则 6.5)
-                _summon_kw = (
-                    'concern', 'concerns', 'worry', 'worried', 'remind',
-                    'progress', 'status', "what's up", 'how am i', 'how about',
-                    'whats up', 'how are you', 'check on me', 'check in',
-                    '担心', '心事', '进度', '状态', '怎么样', '啥情况', '提醒',
-                    '记着', '要注意', '检查', '关心',
-                )
-                _summoned = any(kw in _ui for kw in _summon_kw)
+                # (a) Sir 召唤检测 (准则 6.5 vocab — memory_pool/concern_summon_vocab.json)
+                # CLI: scripts/concern_summon_dump.py [--list / --add / --test]
+                # 失败 fall back hardcoded list (resilience).
+                try:
+                    from jarvis_concern_summon import is_summoned as _is_summoned
+                    _summoned = _is_summoned(user_input or '')
+                except Exception:
+                    # Fallback — vocab loader 失败时硬编码兜底
+                    _ui = (user_input or '').lower()
+                    _summon_kw = (
+                        'concern', 'concerns', 'worry', 'worried', 'remind',
+                        'progress', 'status', "what's up", 'how am i', 'how about',
+                        '担心', '心事', '进度', '状态', '怎么样', '啥情况',
+                        '提醒', '记着', '要注意', '检查', '关心',
+                    )
+                    _summoned = any(kw in _ui for kw in _summon_kw)
                 # (b) 后台真有 URGENT — 任意 active concern severity > 0.7
                 _has_urgent = False
                 try:
