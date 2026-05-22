@@ -106,6 +106,18 @@ HTML_TEMPLATE = r"""
          title="所有 Sir 拍板事项 + 修正/删除 (β.5.41)">
         💡 我们的事
       </a>
+      <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass 入口 -->
+      <a href="/main_brain_meta"
+         class="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 transition text-sm font-medium"
+         title="主脑每轮 thinking pass META 自检 (evidence/reaction/skip_alert) - 看贾维斯为什么这样说">
+        🧠 思考链
+      </a>
+      <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] intent log 入口 (老的没显示) -->
+      <a href="/intent_resolved"
+         class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 transition text-sm font-medium"
+         title="每轮 IntentResolver mutation log - 看贾维斯真做了什么 tool 调用 (β.5.44)">
+        🧭 Intent
+      </a>
       <button @click="refresh()" :disabled="loading"
               class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition text-sm font-medium">
         <span x-show="!loading">🔄 刷新</span>
@@ -1150,6 +1162,113 @@ def api_system_errors():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ============================================================
+# 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] Sir 13:13 立 Layer 1 主脑 thinking pass
+# 可视化集成 — 把 main_brain_meta_audit.jsonl 数据搬上 dashboard.
+# Sir 14:31 反馈: "把这些信息能放都放到可视化窗口方便我看".
+# ============================================================
+
+@app.route('/api/main_brain_meta')
+def api_main_brain_meta():
+    """主脑 thinking pass META audit (每轮 evidence/reaction/skip_alert/note).
+
+    Query params:
+      - limit: 最近 N 条 (default 50)
+      - turn:  按 turn_id 过滤
+      - skip_alert: 仅主脑拒道歉的 (yes / no / all)
+      - reaction:   仅特定 reaction (voice/silent_text/silence/all)
+
+    Returns:
+      {ok, records: [...], stats: {...}, total: N}
+    """
+    try:
+        from jarvis_meta_self_check import read_recent_meta
+        # 拿全部 (内部 cap), 然后再 client 端 filter + 切 limit
+        limit = int(request.args.get('limit', '50') or '50')
+        if limit <= 0:
+            limit = 50
+        if limit > 500:
+            limit = 500
+        # debug-only: testcase 可传 audit_path 显式指定 (production 路径不用)
+        audit_path = (request.args.get('audit_path', '') or '').strip() or None
+        all_records = read_recent_meta(limit=limit * 4,
+                                          audit_path=audit_path)  # 多拿一些供 filter
+
+        # filter
+        turn = (request.args.get('turn', '') or '').strip()
+        skip_alert_f = (request.args.get('skip_alert', 'all') or 'all').strip().lower()
+        reaction_f = (request.args.get('reaction', 'all') or 'all').strip().lower()
+
+        filtered = all_records
+        if turn:
+            filtered = [r for r in filtered if r.get('turn_id') == turn]
+        if skip_alert_f == 'yes':
+            filtered = [r for r in filtered if r.get('skip_alert')]
+        elif skip_alert_f == 'no':
+            filtered = [r for r in filtered if not r.get('skip_alert')]
+        if reaction_f != 'all':
+            filtered = [r for r in filtered if r.get('reaction') == reaction_f]
+
+        # 取最后 limit 条 (倒序 newest first)
+        if len(filtered) > limit:
+            filtered = filtered[-limit:]
+        # 倒序 (新的在上)
+        filtered = list(reversed(filtered))
+
+        # stats (基于 all_records, 看全局健康度)
+        n_all = len(all_records)
+        n_skip = sum(1 for r in all_records if r.get('skip_alert'))
+        n_evidence = sum(1 for r in all_records
+                          if r.get('evidence') and r.get('evidence') != ['none'])
+        reactions: Dict[str, int] = {}
+        for r in all_records:
+            rc = r.get('reaction', '?')
+            reactions[rc] = reactions.get(rc, 0) + 1
+
+        # 平均 evidence 数 / 轮
+        avg_ev = (sum(len(r.get('evidence', []) or []) for r in all_records) /
+                   max(1, n_all))
+
+        stats = {
+            'total': n_all,
+            'skip_alert_count': n_skip,
+            'skip_alert_pct': round(100 * n_skip / max(1, n_all), 1),
+            'evidence_count': n_evidence,
+            'evidence_pct': round(100 * n_evidence / max(1, n_all), 1),
+            'reactions': reactions,
+            'avg_evidence_per_turn': round(avg_ev, 2),
+        }
+        # 健康度判定 (供前端着色)
+        health = 'ok'
+        health_msg = ''
+        if n_all == 0:
+            health = 'empty'
+            health_msg = '主脑还没跑过含 META 的对话 (jarvis 重启后等几轮才有数据)'
+        elif n_skip / max(1, n_all) > 0.5:
+            health = 'warn'
+            health_msg = (f'skip_alert > 50% — 主脑频繁拒道歉, '
+                           f'可能 IntegrityAlert 误判过多')
+        elif n_evidence / max(1, n_all) < 0.3 and n_all > 5:
+            health = 'warn'
+            health_msg = (f'evidence 非空 < 30% — 主脑很多轮 evidence=none, '
+                           f'directive 可能被忽略')
+        elif n_evidence / max(1, n_all) > 0.7:
+            health = 'ok'
+            health_msg = 'evidence 非空 > 70% — Layer 1 落地良好'
+
+        return jsonify({
+            'ok': True,
+            'records': filtered,
+            'stats': stats,
+            'total': n_all,
+            'returned': len(filtered),
+            'health': health,
+            'health_msg': health_msg,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/intent_resolved')
 def api_intent_resolved():
     """🩹 [β.5.44-F / 2026-05-20 19:08] IntentResolver 最近 mutation log
@@ -1959,6 +2078,295 @@ def page_intent_resolved():
     """🩹 [β.5.44-F / 2026-05-20 19:09] Sir 18:55 真理可视化 page."""
     from flask import make_response
     resp = make_response(render_template_string(_INTENT_RESOLVED_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass 可视化 page
+# Sir 14:31: "把这些信息能放都放到可视化窗口方便我看"
+_MAIN_BRAIN_META_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Jarvis · 主脑 Thinking Pass META</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei UI", monospace;
+            background: #0e1116; color: #d1d5db; margin: 0; padding: 1rem; }
+    .header { background: #161b22; padding: 1rem 1.2rem; border-radius: 8px;
+              border: 1px solid #30363d; margin-bottom: 1rem; }
+    .header h1 { margin: 0 0 0.4rem 0; color: #a78bfa; font-size: 1.3rem; }
+    .header p { margin: 0.2rem 0; color: #8b949e; font-size: 0.9rem; line-height: 1.5; }
+    .nav-links { margin-top: 0.5rem; }
+    .nav-links a { color: #58a6ff; text-decoration: none; margin-right: 1rem; font-size: 0.9rem; }
+    .nav-links a:hover { text-decoration: underline; }
+
+    .controls { display: flex; gap: 0.8rem; align-items: center; margin-bottom: 1rem;
+                flex-wrap: wrap; }
+    .controls label { color: #8b949e; font-size: 0.88rem; }
+    .controls select { background: #21262d; color: #c9d1d9;
+                        border: 1px solid #30363d; padding: 0.4rem 0.6rem;
+                        border-radius: 4px; font-size: 0.9rem; cursor: pointer; }
+    .refresh-btn { background: #6f42c1; color: white; border: none; padding: 0.5rem 1rem;
+                    border-radius: 4px; cursor: pointer; font-size: 0.9rem; font-weight: bold; }
+    .refresh-btn:hover { background: #8957e5; }
+    .status-text { color: #8b949e; font-size: 0.85rem; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+              gap: 0.8rem; margin: 1rem 0 1.2rem 0; }
+    .stat-box { background: #161b22; padding: 0.9rem; border-radius: 6px;
+                border: 1px solid #30363d; text-align: center; }
+    .stat-box .num { font-size: 1.8rem; font-weight: bold; color: #a78bfa; }
+    .stat-box .label { font-size: 0.83rem; color: #8b949e; margin-top: 0.3rem;
+                        line-height: 1.3; }
+    .stat-box.ok .num { color: #3fb950; }
+    .stat-box.warn .num { color: #d29922; }
+    .stat-box.crit .num { color: #f85149; }
+    .stat-box.info .num { color: #58a6ff; }
+
+    .health-banner { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem;
+                      font-size: 0.92rem; line-height: 1.5; }
+    .health-banner.ok { background: #1a2e22; border: 1px solid #3fb950; color: #7ee787; }
+    .health-banner.warn { background: #332b00; border: 1px solid #d29922; color: #f1c969; }
+    .health-banner.empty { background: #1c1d24; border: 1px solid #30363d; color: #8b949e; }
+
+    .records { background: #161b22; padding: 1rem; border-radius: 8px;
+                border: 1px solid #30363d; }
+    .record { padding: 0.8rem 1rem; margin-bottom: 0.7rem; border-radius: 5px;
+              border-left: 4px solid #30363d; background: #0d1117; font-size: 0.92rem; }
+    .record.skip-alert { border-left-color: #d29922; }
+    .record.silent { border-left-color: #8b949e; opacity: 0.8; }
+    .record.evidence-none { border-left-color: #f85149; }
+    .record.good { border-left-color: #3fb950; }
+
+    .rec-head { display: flex; justify-content: space-between; align-items: center;
+                margin-bottom: 0.4rem; }
+    .rec-turn { font-family: monospace; color: #8b949e; font-size: 0.82rem; }
+    .rec-ts { color: #6e7681; font-size: 0.82rem; }
+    .rec-sir { color: #58a6ff; margin: 0.3rem 0;
+                background: #0a0d13; padding: 0.4rem 0.6rem;
+                border-left: 2px solid #58a6ff; border-radius: 2px; }
+    .rec-sir-label { color: #6e7681; font-size: 0.78rem; margin-right: 0.4rem; }
+    .rec-think { margin-top: 0.5rem; padding: 0.4rem 0.7rem;
+                  background: #0a0d13; border-radius: 3px;
+                  font-size: 0.86rem; }
+    .rec-think-row { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.2rem 0; }
+    .rec-think-row .k { color: #8b949e; font-size: 0.82rem; min-width: 88px; }
+    .rec-think-row .v { color: #c9d1d9; }
+    .rec-think-row .v.evidence { color: #7ee787; font-family: monospace; font-size: 0.85rem; }
+    .rec-think-row .v.evidence.none { color: #f85149; }
+    .rec-think-row .v.voice { color: #79c0ff; }
+    .rec-think-row .v.silent_text { color: #b1bac4; }
+    .rec-think-row .v.silence { color: #6e7681; }
+    .rec-think-row .v.skip-yes { color: #d29922; font-weight: bold; }
+    .rec-think-row .v.skip-no { color: #6e7681; }
+    .rec-think-row .v.note { color: #ffa657; font-style: italic; }
+
+    .empty { color: #6e7681; text-align: center; padding: 3rem;
+              font-size: 0.95rem; line-height: 1.7; }
+    .empty .hint { font-size: 0.82rem; color: #484f58; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🧠 主脑 Thinking Pass META — Sir 13:13 立 Layer 1</h1>
+    <p>每轮 jarvis reply 时, 主脑自检 4 问 (claim/evidence/reaction/skip_alert), reply 末尾 emit <code style="color:#d29922;">[META]</code> 一行 (Sir 不见, TTS 不读). 这里让 Sir 看到 jarvis 每轮思考摘要 — "贾维斯为什么这样说".</p>
+    <p style="color:#6e7681; font-size:0.83rem;">数据源: <code>memory_pool/main_brain_meta_audit.jsonl</code> · 每轮 1 行 jsonl · publish 'main_brain_meta' SWM event</p>
+    <div class="nav-links">
+      <a href="/">← 主面板</a>
+      <a href="/items">items page</a>
+      <a href="/intent_resolved">intent log</a>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label>显示数:
+      <select id="limit-sel" onchange="loadRecords()">
+        <option value="20">最近 20</option>
+        <option value="50" selected>最近 50</option>
+        <option value="100">最近 100</option>
+        <option value="200">最近 200</option>
+      </select>
+    </label>
+    <label>skip_alert:
+      <select id="skip-sel" onchange="loadRecords()">
+        <option value="all" selected>全部</option>
+        <option value="yes">仅拒道歉 (yes)</option>
+        <option value="no">仅正常 (no)</option>
+      </select>
+    </label>
+    <label>reaction:
+      <select id="reaction-sel" onchange="loadRecords()">
+        <option value="all" selected>全部</option>
+        <option value="voice">仅 voice 🔊</option>
+        <option value="silent_text">仅 silent_text 📝</option>
+        <option value="silence">仅 silence 🤐</option>
+      </select>
+    </label>
+    <button class="refresh-btn" onclick="loadRecords()">🔄 刷新</button>
+    <span id="status" class="status-text"></span>
+  </div>
+
+  <div id="health-banner"></div>
+
+  <div class="stats" id="stats-box">
+    <div class="stat-box info"><div class="num" id="n-total">-</div>
+      <div class="label">总轮数</div></div>
+    <div class="stat-box ok"><div class="num" id="n-evidence">-</div>
+      <div class="label">evidence 非空轮数<br/><span style="color:#3fb950;" id="n-evidence-pct">-</span></div></div>
+    <div class="stat-box warn"><div class="num" id="n-skip">-</div>
+      <div class="label">skip_alert=yes 轮数<br/><span style="color:#d29922;" id="n-skip-pct">-</span></div></div>
+    <div class="stat-box info"><div class="num" id="avg-ev">-</div>
+      <div class="label">平均 evidence/轮</div></div>
+    <div class="stat-box info"><div class="num" id="n-voice">-</div>
+      <div class="label">🔊 voice 轮数</div></div>
+    <div class="stat-box info"><div class="num" id="n-silent">-</div>
+      <div class="label">📝 silent_text 轮数</div></div>
+    <div class="stat-box info"><div class="num" id="n-silence">-</div>
+      <div class="label">🤐 silence 轮数</div></div>
+  </div>
+
+  <div class="records" id="records">
+    <div class="empty">loading...</div>
+  </div>
+
+  <script>
+    function fmtTs(ts) {
+      if (!ts) return '?';
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('zh-CN', {hour12: false}) +
+              ' ' + d.toLocaleDateString('zh-CN', {month: '2-digit', day: '2-digit'});
+    }
+    function escapeHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function reactionEmoji(r) {
+      return ({voice: '🔊', silent_text: '📝', silence: '🤐'})[r] || '?';
+    }
+
+    function loadRecords() {
+      const limit = document.getElementById('limit-sel').value;
+      const skip = document.getElementById('skip-sel').value;
+      const reaction = document.getElementById('reaction-sel').value;
+      document.getElementById('status').textContent = '⏳ loading...';
+      const url = `/api/main_brain_meta?limit=${limit}&skip_alert=${skip}&reaction=${reaction}`;
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.ok) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty">error: ${escapeHtml(data.error || 'unknown')}</div>`;
+            document.getElementById('status').textContent = '';
+            return;
+          }
+          const s = data.stats || {};
+          document.getElementById('n-total').textContent = s.total || 0;
+          document.getElementById('n-evidence').textContent = s.evidence_count || 0;
+          document.getElementById('n-evidence-pct').textContent = (s.evidence_pct || 0) + '%';
+          document.getElementById('n-skip').textContent = s.skip_alert_count || 0;
+          document.getElementById('n-skip-pct').textContent = (s.skip_alert_pct || 0) + '%';
+          document.getElementById('avg-ev').textContent = (s.avg_evidence_per_turn || 0).toFixed(2);
+          const reactions = s.reactions || {};
+          document.getElementById('n-voice').textContent = reactions.voice || 0;
+          document.getElementById('n-silent').textContent = reactions.silent_text || 0;
+          document.getElementById('n-silence').textContent = reactions.silence || 0;
+
+          // 健康度 banner
+          const hb = document.getElementById('health-banner');
+          if (data.health === 'empty') {
+            hb.className = 'health-banner empty';
+            hb.textContent = 'ℹ️ ' + (data.health_msg || '主脑还没跑过含 META 的对话');
+          } else if (data.health === 'warn') {
+            hb.className = 'health-banner warn';
+            hb.textContent = '⚠️ ' + (data.health_msg || '');
+          } else if (data.health_msg) {
+            hb.className = 'health-banner ok';
+            hb.textContent = '✅ ' + data.health_msg;
+          } else {
+            hb.className = 'health-banner';
+            hb.textContent = '';
+          }
+
+          const records = data.records || [];
+          if (records.length === 0) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty">这段时间内没有匹配的 META 记录.<div class="hint">尝试: 改 filter, 或等 jarvis 多跑几轮.</div></div>`;
+            document.getElementById('status').textContent =
+              '✓ ' + new Date().toLocaleTimeString('zh-CN', {hour12: false});
+            return;
+          }
+
+          let html = '';
+          records.forEach(rec => {
+            const ev = rec.evidence || [];
+            const evIsNone = ev.length === 0 || (ev.length === 1 && ev[0] === 'none');
+            const skipAlert = !!rec.skip_alert;
+            const reaction = rec.reaction || '?';
+
+            // 颜色分类
+            let cls = 'good';
+            if (skipAlert) cls = 'skip-alert';
+            else if (evIsNone) cls = 'evidence-none';
+            else if (reaction === 'silent_text' || reaction === 'silence') cls = 'silent';
+
+            html += `<div class="record ${cls}">`;
+            html += `<div class="rec-head">`;
+            html += `<span class="rec-turn">turn=${escapeHtml(rec.turn_id || '?')}</span>`;
+            html += `<span class="rec-ts">${fmtTs(rec.ts)}</span>`;
+            html += `</div>`;
+
+            if (rec.user_input_excerpt) {
+              html += `<div class="rec-sir"><span class="rec-sir-label">Sir:</span>${escapeHtml(rec.user_input_excerpt)}</div>`;
+            }
+
+            html += `<div class="rec-think">`;
+            // evidence
+            const evClass = evIsNone ? 'evidence none' : 'evidence';
+            const evDisplay = ev.length === 0 ? '(空)' : ev.join(', ');
+            html += `<div class="rec-think-row"><span class="k">📚 evidence</span>`;
+            html += `<span class="v ${evClass}">${escapeHtml(evDisplay)}</span></div>`;
+            // reaction
+            html += `<div class="rec-think-row"><span class="k">${reactionEmoji(reaction)} reaction</span>`;
+            html += `<span class="v ${reaction}">${escapeHtml(reaction)}</span></div>`;
+            // skip_alert
+            const skipClass = skipAlert ? 'skip-yes' : 'skip-no';
+            html += `<div class="rec-think-row"><span class="k">${skipAlert ? '🚫' : '✓'} skip_alert</span>`;
+            html += `<span class="v ${skipClass}">${skipAlert ? 'YES (主脑拒道歉)' : 'no'}</span></div>`;
+            // note
+            if (rec.note) {
+              html += `<div class="rec-think-row"><span class="k">💭 note</span>`;
+              html += `<span class="v note">${escapeHtml(rec.note)}</span></div>`;
+            }
+            html += `</div>`; // rec-think
+            html += `</div>`; // record
+          });
+          document.getElementById('records').innerHTML = html;
+          document.getElementById('status').textContent =
+            `✓ ${records.length}/${data.total} · ` +
+            new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        })
+        .catch(err => {
+          document.getElementById('records').innerHTML =
+            `<div class="empty">fetch error: ${escapeHtml(err.message)}</div>`;
+          document.getElementById('status').textContent = '';
+        });
+    }
+    loadRecords();
+    setInterval(loadRecords, 15000);  // 15s 自动刷新
+  </script>
+</body>
+</html>
+"""
+
+
+@app.route('/main_brain_meta')
+def page_main_brain_meta():
+    """🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass META 可视化."""
+    from flask import make_response
+    resp = make_response(render_template_string(_MAIN_BRAIN_META_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
