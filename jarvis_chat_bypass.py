@@ -3350,6 +3350,26 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     except ImportError:
                         pass
             
+            # 🆕 [P5-Layer1-fix19 / 2026-05-22] Sir 13:13 立 — 主脑最小 thinking pass.
+            # 主脑 reply 末尾 emit [META] 一行 (evidence/reaction/skip_alert/note).
+            # parse 抽 + 裁掉 (不让 [META] 进 Sir-facing TTS), publish SWM 给
+            # ClaimTracer/IntegrityWatcher 订阅 + audit jsonl 持久化 (debug 神器).
+            try:
+                from jarvis_meta_self_check import parse_meta, publish_meta
+                _full_clean, _meta = parse_meta(full_text)
+                full_text = _full_clean  # 裁掉 [META] 行, 不让进 ZH/TTS
+                if _meta and _meta.parse_ok:
+                    try:
+                        from jarvis_utils import TraceContext as _TC2
+                        _t_id = _TC2.get_turn_id() or ''
+                    except Exception:
+                        _t_id = ''
+                    publish_meta(_meta, turn_id=_t_id,
+                                  user_input=clean_user_input or '',
+                                  event_bus=getattr(self.jarvis, 'event_bus', None))
+            except Exception:
+                pass
+
             final_reply = full_text.split("---ZH---")[0].strip()
             
             if "---ZH---" in full_text:

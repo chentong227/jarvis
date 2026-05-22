@@ -741,6 +741,25 @@ def build_integrity_alert(current_turn_id: str = '',
         return ''
     latest_turn = max(by_turn.keys(),
                        key=lambda k: max(float(e.get('ts', 0)) for e in by_turn[k]))
+    # 🆕 [P5-Layer1-fix19 / 2026-05-22] Sir 13:13 立 — 主脑 META skip_alert 检查.
+    # 主脑上轮 SELF_CHECK 已经 emit [META] skip_alert=yes (e.g. fix17 case 主脑
+    # 自己看出 IntegrityAlert 引用的是 daemon 空 turn_id, 拒绝道歉) → 本轮就别再
+    # inject ALERT 强迫道歉. 主脑自决优先 (准则 6 决策集中主脑).
+    try:
+        from jarvis_meta_self_check import find_meta_for_turn
+        latest_meta = find_meta_for_turn(latest_turn)
+        if latest_meta and latest_meta.get('skip_alert'):
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"🧠 [SelfCheck/SkipAlert] turn={latest_turn} 主脑已 skip_alert=yes, "
+                    f"本轮不再 inject INTEGRITY ALERT (主脑自决, 准则 6)"
+                )
+            except Exception:
+                pass
+            return ''
+    except Exception:
+        pass
     prior = by_turn[latest_turn]
     n = len(prior)
     examples = ' / '.join(

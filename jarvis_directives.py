@@ -656,6 +656,27 @@ def _trigger_bilingual_always(_ctx: DirectiveContext) -> bool:
     return True
 
 
+def _trigger_meta_self_check(ctx: DirectiveContext) -> bool:
+    """🆕 [P5-Layer1 / 2026-05-22] Sir 13:13 立: 主脑加最小 thinking pass.
+
+    Sir 真测 5 BUG (fix14-fix18) 中 3/5 是"主脑被外部信号推着说错话"
+    (fix16 dismissal 误判 / fix17 95% 道歉无中生有 / fix18 hold 不感知).
+    Root cause: 主脑当前 thinking 链 = 0, 一上来就出 reply.
+
+    Layer 1: SELF_CHECK META — 主脑 reply 末尾 emit 1 行 [META] 含 evidence /
+    reaction_space / skip_alert. ClaimTracer/IntegrityWatcher 直接读 META,
+    不再 post-hoc grep + LLM 二次判. 总延迟反而降.
+
+    Trigger 策略 (条件触发, 不是每轮全跑):
+      - WAKE_ONLY: skip (TTFT 1s 硬约束)
+      - 任何其他 tier: fire
+    """
+    # WAKE_ONLY tier 不挂 (Sir 准则 1 TTFT < 1s for wake)
+    if ctx.tier == 'WAKE_ONLY':
+        return False
+    return True
+
+
 def _trigger_search_directive(ctx: DirectiveContext) -> bool:
     return _user_input_is_time_sensitive(ctx.user_input)
 
@@ -1365,6 +1386,40 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 MANDATORY for every response, even short acknowledgments.
             """).rstrip(),
             trigger=_trigger_bilingual_always,
+        ),
+        # 🆕 [P5-Layer1 / 2026-05-22] Sir 13:13 立 — 主脑最小 thinking pass.
+        # Sir 真测 fix16/17/18 都是主脑被外部信号 (dismissal/IntegrityAlert/silence) 推
+        # 着说错话, 当前 thinking 链 = 0. 让主脑 reply 末尾 emit [META] 一行做自检 +
+        # debug trace. priority=10 必触, 仅 WAKE_ONLY 跳.
+        Directive(
+            id='meta_self_check_directive',
+            source_marker='P5-Layer1-fix19',
+            priority=10,
+            ttl_days=365,
+            tier_whitelist=[],
+            purpose_short='主脑 reply 末尾 emit [META] 自检行 (evidence/reaction/skip_alert)',
+            text=_tw.dedent("""\
+                [SELF_CHECK / META TRACE]:
+                Before finalizing your reply, internally answer in one breath:
+                  1. What specific factual claims, numbers, dates, names, or promises will my reply contain?
+                  2. For each, do I have actual evidence in STM / SWM / profile / concerns / commitments? List the source.
+                  3. Should this reply be voiced, silent_text, or stay silent given Sir's current state?
+                  4. Did any [INTEGRITY ALERT] in this prompt instruct me to apologize? If so, did the underlying claim actually happen in a real prior turn (turn_id non-empty)? If not, REFUSE to apologize and set skip_alert=yes.
+
+                Then, AFTER your normal Sir-facing reply (after `---ZH---` block, on a NEW LINE), emit ONE machine-readable trace line in this exact format:
+                [META] evidence=<comma-list of source ids or "none"> reaction=<voice|silent_text|silence> skip_alert=<yes|no> note=<<=60 chars optional>
+
+                Examples:
+                  [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice skip_alert=no note=hold acknowledgment
+                  [META] evidence=none reaction=voice skip_alert=yes note=integrity alert references empty turn_id, refusing apology
+
+                Rules:
+                  - The [META] line is for system trace only — Sir does not read it. Keep it on its own final line.
+                  - If you cite a number/date/name with no evidence in STM/SWM, do NOT say it; remove it from the reply.
+                  - If [INTEGRITY ALERT] cites a claim from an empty turn_id daemon entry, set skip_alert=yes and do NOT apologize.
+                  - Stay terse. SELF_CHECK is internal — do not narrate "I am self-checking" in the reply itself.
+            """).rstrip(),
+            trigger=_trigger_meta_self_check,
         ),
         # 7. SEARCH DIRECTIVE — 时效性
         Directive(
