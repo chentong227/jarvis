@@ -3546,6 +3546,27 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🆕 [β.5.46-fix13 Fix-3 / 2026-05-22] WatchTask register hook
+        # Sir 22:18 真测痛点: Sir 说"等导出完成提醒" Jarvis 答应"keep an eye on" 但
+        # 没机制兑现 — Time Hook trigger 空, SelfPromise soft 仅 log, ScreenVision
+        # 只 describe 不 trigger nudge. 治本: 此处 LLM 提取 watch task, 持久化, 由
+        # ScreenVision daemon 每次 describe 后 judge trigger 命中.
+        # 准则 6 三维耦合: 数据进 SWM, LLM 决策, CLI scripts/watch_task_dump.py 可改.
+        try:
+            from jarvis_watch_task import register_async as _wt_reg
+            _wt_reply = full_text if (full_text and full_text.strip()) else final_reply
+            _wt_kr = getattr(self.jarvis, 'key_router', None) \
+                       or getattr(self, 'key_router', None)
+            if clean_user_input and _wt_reply:
+                _wt_reg(
+                    sir_text=clean_user_input,
+                    jarvis_reply=_wt_reply,
+                    turn_id=_turn_id_now,
+                    key_router=_wt_kr,
+                )
+        except Exception:
+            pass
+
         # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] L4.5 watch claim from reply
         # Sir 14:11 真意 — Jarvis reply 中含 mutation claim → watcher 加入 watch list.
         # 监督 8 类 (reminder/commitment/promise/memory/milestone/profile/concern/relational).

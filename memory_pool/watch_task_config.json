@@ -1,0 +1,57 @@
+{
+  "_doc": "[P5-Gap3-WatchTask / β.5.46-fix13 Fix-3 / 2026-05-22] WatchTask 抽象 — Sir 委托 Jarvis 等屏幕事件触发任务 (e.g. '等导出完成提醒'). ScreenVisionEngine daemon 每次 describe 后 LLM judge trigger 命中否, 命中 → push __NUDGE__. 准则 6 三维耦合: 数据进 SWM, LLM 决策, CLI scripts/watch_task_dump.py 可改.",
+  "_compliance": "[准则 6.5] 持久化 + CLI + L7 reflector. 配置在此 JSON, watch tasks 在 watch_tasks.json (state 文件).",
+  "enabled": true,
+  "max_active_tasks": 10,
+  "default_poll_via_screen_vision": true,
+  "default_expires_in_s": 14400,
+  "max_expires_in_s": 86400,
+  "min_judge_interval_s": 30.0,
+  "registrar": {
+    "_doc": "Sir 说 + Jarvis ack 时, LLM 提取 watch_task 候选. 复用主脑 reply 后路径 (post-stream fire-and-forget).",
+    "primary_model": "google/gemini-2.5-flash-lite",
+    "fallback_model": "google/gemini-3-flash-preview",
+    "temperature": 0.2,
+    "max_output_tokens": 400,
+    "timeout_s": 12.0,
+    "min_sir_chars": 8
+  },
+  "judge": {
+    "_doc": "ScreenVisionEngine.describe 完后, 把 vision summary + active tasks trigger_evidence 一并喂 LLM, batch judge 哪些 task 命中.",
+    "primary_model": "google/gemini-2.5-flash-lite",
+    "fallback_model": "google/gemini-3-flash-preview",
+    "temperature": 0.1,
+    "max_output_tokens": 300,
+    "timeout_s": 10.0
+  },
+  "_doc_vocab_seed": "Sir 真测中常见的 watch 请求 phrase. registrar LLM 命中 schema 后 + 这些 phrase 命中 → 高置信; phrase 命中但 LLM 没出 schema → 兜底 propose 给主脑用 SWM signal 自决.",
+  "registrar_trigger_phrases_zh": [
+    "等",
+    "等他",
+    "等这个",
+    "完成",
+    "完了",
+    "好了",
+    "结束",
+    "导出完",
+    "渲染完",
+    "下载完",
+    "提醒我",
+    "叫我",
+    "告诉我",
+    "通知我"
+  ],
+  "registrar_trigger_phrases_en": [
+    "let me know when",
+    "tell me when",
+    "remind me when",
+    "alert me when",
+    "ping me when",
+    "notify me when",
+    "watch for",
+    "keep an eye on",
+    "when it finishes",
+    "when it's done",
+    "once it completes"
+  ]
+}

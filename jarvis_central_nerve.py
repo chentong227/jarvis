@@ -2175,6 +2175,51 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [β.5.46-fix13 Fix-3 / 2026-05-22] [WATCH TASK FIRED] block
+        # Sir 22:18 真测痛点: Sir 说"等导出完成提醒" 但没机制兑现. 治本: WatchTask
+        # 抽象 + ScreenVision daemon judge. judge fired 后 publish 'watch_task_fired'
+        # SWM event, 主脑下轮 prompt 看 evidence, 主动报告 Sir.
+        # 准则 6 三维耦合: 数据 publish SWM, 主脑 LLM 看 evidence 自决怎么说.
+        try:
+            _bus_wt = getattr(self, 'event_bus', None)
+            if _bus_wt is not None:
+                _wt_fired = _bus_wt.recent_events(
+                    within_seconds=600.0,
+                    types={'watch_task_fired'},
+                ) or []
+                if _wt_fired:
+                    _wt_lines = [
+                        '[WATCH TASK FIRED — Sir 委托等的事件刚刚触发]',
+                        '  Jarvis 答应过 Sir 等某事件, 现 ScreenVision 看到屏幕证据'
+                        '判定事件触发. **Sir 真需要你主动报告**.',
+                        '',
+                    ]
+                    for _ev_wt in _wt_fired[-3:]:  # 最近 3 条
+                        _meta_wt = _ev_wt.get('metadata') or {}
+                        _wt_lines.append(
+                            f"  - 任务: {_meta_wt.get('what_to_watch', '?')[:100]}"
+                        )
+                        _wt_lines.append(
+                            f"    触发: {_meta_wt.get('trigger_evidence', '?')[:100]}"
+                        )
+                        _wt_lines.append(
+                            f"    证据: {_meta_wt.get('fired_evidence', '?')[:120]}"
+                        )
+                        _wt_lines.append(
+                            f"    建议措辞 (EN): {_meta_wt.get('notify_msg_en', '?')[:120]}"
+                        )
+                        _wt_lines.append(
+                            f"    建议措辞 (ZH): {_meta_wt.get('notify_msg_zh', '?')[:120]}"
+                        )
+                        _wt_lines.append('')
+                    _wt_lines.append(
+                        '  ⚠️ 这是 Sir 主动委托的事件触发, 不算 unsolicited callback. '
+                        '主动报告是 Sir 的 explicit request 的兑现 (准则 5 言出必行).'
+                    )
+                    _parts.append('\n'.join(_wt_lines))
+        except Exception:
+            pass
+
         # 🩹 [P5-fixCB-revise / 2026-05-21 11:50] SELF-PROMISE OVERDUE block
         # 合法 surface 触发 (b) — Jarvis 自检 promise 没履行 (PromiseLog sweep 24h
         # 无 evidence → state UNTRACKED → publish 'self_promise_overdue' SWM).

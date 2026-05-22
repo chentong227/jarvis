@@ -303,6 +303,19 @@ class ScreenVisionEngine:
                 )
             except Exception:
                 pass
+
+            # 🆕 [β.5.46-fix13 Fix-3 / 2026-05-22] WatchTask judge hook
+            # Sir 22:18 真测痛点: Sir 说"等导出完成提醒" Jarvis 答应了但没机制兑现.
+            # 本 hook 让 ScreenVision describe 后 LLM batch judge active WatchTasks
+            # 是否被屏幕证据触发, 命中 → publish 'watch_task_fired' SWM + push
+            # __NUDGE__. 主脑下轮 prompt 看 evidence, 主动报告 Sir.
+            # 准则 6 三维耦合: 数据 publish SWM, LLM 决策, CLI 可改.
+            try:
+                if not described.privacy_redacted:  # 隐私场景 skip judge
+                    from jarvis_watch_task import judge_against_snapshot as _wt_judge
+                    _wt_judge(snapshot=described, key_router=self.key_router)
+            except Exception:
+                pass
         except Exception as e:
             self._stats['failed_calls'] += 1
             self._stats['last_error'] = f"{type(e).__name__}: {str(e)[:80]}"

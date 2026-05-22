@@ -1,0 +1,5 @@
+{
+  "_doc": "[β.5.46-fix13 Fix-3] WatchTask state 持久化. Sir 委托 Jarvis 等的事件任务. CLI scripts/watch_task_dump.py 可看/加/cancel/expire.",
+  "version": 1,
+  "tasks": []
+}
