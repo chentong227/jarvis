@@ -39,6 +39,42 @@ except Exception:
         print(msg)
 
 
+# 🆕 [P5-fix27-A / 2026-05-22] SWM publish helper — 准则 6 数据强耦合
+def _publish_promise_event(etype: str, promise, description: str,
+                              extra: Optional[Dict] = None) -> None:
+    """Publish promise lifecycle event 到 ConversationEventBus.
+
+    让主脑下轮 prompt 看到 'Sir 完成/撤销了 X promise' event,
+    避免凭过期 STM 错说 (e.g. "明天体检" 但 Sir 已 fulfill).
+    失败静默, 不影响主链 (准则 1 高效).
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return
+        metadata = {
+            'promise_id': getattr(promise, 'id', ''),
+            'description': (getattr(promise, 'description', '') or '')[:200],
+            'kind': getattr(promise, 'kind', ''),
+            'author': getattr(promise, 'author', ''),
+            'state': getattr(promise, 'state', ''),
+            'registered_at': getattr(promise, 'registered_at', 0.0),
+            'fulfilled_at': getattr(promise, 'fulfilled_at', 0.0),
+        }
+        if extra:
+            metadata.update(extra)
+        bus.publish(
+            etype=etype,
+            description=description,
+            source='promise_log',
+            metadata=metadata,
+            ttl=600.0,  # 10min 让主脑 1-2 turn 内看到
+        )
+    except Exception:
+        pass
+
+
 STATE_PENDING = 'pending'
 STATE_FULFILLED = 'fulfilled'
 STATE_OVERDUE = 'overdue'
@@ -206,6 +242,19 @@ class PromiseExecutionLog:
         )
         print(line)
         bg_log(line)
+        # 🆕 [P5-fix27-A / 2026-05-22] SWM publish — 主脑下轮 prompt 看得到
+        # "Sir 完成了体检 promise" event, 不再凭过期 STM 错说"明天体检".
+        _publish_promise_event(
+            etype='promise_fulfilled',
+            promise=p,
+            description=(
+                f"Sir 完成 promise: '{p.description[:50]}' "
+                f"({evidence_kind}: {evidence_what[:60]})"
+            ),
+            extra={'evidence_kind': evidence_kind,
+                     'evidence_what': evidence_what[:200],
+                     'elapsed_s': elapsed},
+        )
         return True
 
     def add_evidence_only(self, promise_id: str, evidence_kind: str,
@@ -266,6 +315,13 @@ class PromiseExecutionLog:
         line = f"🚫 [Jarvis Promise CANCELLED] {promise_id} '{p.description[:60]}' reason={reason}"
         print(line)
         bg_log(line)
+        # 🆕 [P5-fix27-A / 2026-05-22] SWM publish — 主脑下轮看 "Sir 撤销 promise"
+        _publish_promise_event(
+            etype='promise_cancelled',
+            promise=p,
+            description=f"Sir 撤销 promise: '{p.description[:50]}' reason={reason[:80]}",
+            extra={'reason': reason[:200]},
+        )
         return True
 
     def list_pending(self) -> List[Promise]:

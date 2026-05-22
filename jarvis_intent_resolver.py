@@ -347,27 +347,45 @@ class IntentResolver:
                 lines = txt.split('\n')
                 if len(lines) >= 3 and lines[-1].strip().startswith('```'):
                     txt = '\n'.join(lines[1:-1])
-            # 🆕 [P5-fix28-intent-parse / 2026-05-22] Sir 20:40 真测 log: 'resp={"t'
-            # 治本: 截断 JSON 用 regex 抢救最后一个完整 ']' 关. 大多数 truncate
-            # 是 reasoning_content 占满, tool_calls 已完整收尾.
+            # 🆕 [P5-fix28+30 / 2026-05-22] Sir 20:40 + 21:01 真测 LLM 返:
+            #   - {"t...           (truncate, fix28 rfind(']') rescue)
+            #   - 你可以看下你的记忆"  (plain text, fix30 detect 无 '{' 早返 empty)
+            #   - " Precision is preferred (markdown 起头, fix30 同上)
+            # 治本三档:
+            #  (1) 不以 '{' 开头 → 主脑没听 system 指令返 JSON, 直接 empty + 不噪音
+            #  (2) 以 '{' 开头但 truncated → rfind(']') 试补 '}'
+            #  (3) 都不行 → empty + 静默
             try:
                 parsed = json.loads(txt)
             except json.JSONDecodeError:
-                # rescue: 找最后 ] 前补 } 试再 parse
+                # (1) plain text 没 '{' 起首 → 主脑该返 JSON 但说人话了
+                _stripped = txt.lstrip()
+                if not _stripped.startswith('{'):
+                    with self._lock:
+                        self._stats['llm_parse_fail'] += 1
+                    return {'tool_calls': [],
+                              '_error': f'non-JSON response ({len(txt)}c) — '
+                                          f'LLM didn\'t follow JSON-only rule, '
+                                          f'recoverable, treating as no-tool'}
+                # (2) JSON-like 但 truncate
                 _idx = txt.rfind(']')
                 if _idx > 0:
                     rescue_txt = txt[: _idx + 1] + '}'
                     try:
                         parsed = json.loads(rescue_txt)
                     except Exception:
-                        # 真截断到 '{"t' 的, 视为 'tool_calls=[]' 不报错 noise
                         with self._lock:
                             self._stats['llm_parse_fail'] += 1
                         return {'tool_calls': [],
                                   '_error': f'truncated JSON ({len(txt)}c) — '
                                               f'recoverable, treating as no-tool'}
                 else:
-                    raise
+                    # (3) JSON-like 但根本没 ] → 几乎肯定 truncate, 静默
+                    with self._lock:
+                        self._stats['llm_parse_fail'] += 1
+                    return {'tool_calls': [],
+                              '_error': f'unparseable JSON ({len(txt)}c) — '
+                                          f'recoverable, treating as no-tool'}
             if not isinstance(parsed, dict):
                 with self._lock:
                     self._stats['llm_parse_fail'] += 1
@@ -573,19 +591,24 @@ class IntentResolver:
             with self._lock:
                 self._stats['last_error'] = plan['_error']
             result['reason'] = plan['_error']
-            # 🩹 [β.5.43-F] LLM fail → ErrorBus 主动暴露
-            try:
-                from jarvis_error_bus import report_error, SEVERITY_MODERATE
-                report_error(
-                    module='intent_resolver',
-                    kind='llm_judge_fail',
-                    detail=plan['_error'][:200],
-                    severity=SEVERITY_MODERATE,
-                    recoverable=True,
-                    suggested_action='check key_router quota or LLM model availability',
-                )
-            except Exception:
-                pass
+            # 🩹 [β.5.43-F + P5-fix30] LLM fail → ErrorBus.
+            # fix30: '_error' 含 'recoverable, treating as no-tool' (parse rescue)
+            # 不报 ErrorBus — 这是常见 case, 主路径已 graceful 处理. 报会刷噪.
+            _err = plan['_error']
+            _silent = 'treating as no-tool' in _err
+            if not _silent:
+                try:
+                    from jarvis_error_bus import report_error, SEVERITY_MODERATE
+                    report_error(
+                        module='intent_resolver',
+                        kind='llm_judge_fail',
+                        detail=_err[:200],
+                        severity=SEVERITY_MODERATE,
+                        recoverable=True,
+                        suggested_action='check key_router quota or LLM model availability',
+                    )
+                except Exception:
+                    pass
             return result
 
         tool_calls = plan.get('tool_calls', [])

@@ -1012,6 +1012,48 @@ class CareSpeechSynth:
                 f"{lines}\n"
             )
 
+        # 🆕 [P5-fix27-Gap2 / 2026-05-22] 注入最近 SWM lifecycle events.
+        # Sir 21:00 真测痛点: 体检 promise 已 cancel + memory ID 1482 已 modify,
+        # 但 ProactiveCare nudge prompt 没读 SWM, 主脑生成 nudge 时仍说"明天体检".
+        # 治本: 注入最近 10min promise_fulfilled / promise_cancelled / concern_dismissed
+        # events, 让主脑自我修正 nudge 内容.
+        lifecycle_str = ''
+        try:
+            from jarvis_utils import get_event_bus
+            _bus = get_event_bus()
+            if _bus is not None:
+                _now = time.time()
+                _cutoff = _now - 600  # 10min
+                _ev_lines = []
+                _topics = ('promise_fulfilled', 'promise_cancelled',
+                            'concern_dismissed', 'memory_corrected')
+                try:
+                    # 不同 EventBus 接口可能不同. 用 get_recent_events 或 events 属性
+                    if hasattr(_bus, 'get_recent_events'):
+                        evts = _bus.get_recent_events(types=_topics, since_ts=_cutoff)
+                    elif hasattr(_bus, '_events'):
+                        evts = [e for e in _bus._events
+                                  if getattr(e, 'etype', '') in _topics
+                                  and getattr(e, 'ts', 0) >= _cutoff]
+                    else:
+                        evts = []
+                    for e in evts[-5:]:  # 最多 5 条
+                        et = getattr(e, 'etype', '?')
+                        desc = (getattr(e, 'description', '') or '')[:120]
+                        _ev_lines.append(f"  - [{et}] {desc}")
+                except Exception:
+                    pass
+                if _ev_lines:
+                    lifecycle_str = (
+                        "\n[RECENT LIFECYCLE EVENTS — Sir 已完成/撤销, 不要 nudge 这些]\n"
+                        + '\n'.join(_ev_lines)
+                        + "\n  → 如果你的 nudge 内容涉及这些条目, **主动避开** "
+                          "或换角度. 例: '体检' promise 已 cancelled → 不说\"为了"
+                          "明天体检\". 用更通用 framing.\n"
+                    )
+        except Exception:
+            pass
+
         directive = (
             "You are making a brief proactive remark to Sir.\n"
             "This is NOT a scheduled reminder. This is YOU noticing something based on\n"
@@ -1028,7 +1070,8 @@ class CareSpeechSynth:
             f"  - Related unfinished business:      \"{unfinished}\"\n"
             f"  - Inside joke you may reference (sparingly): \"{joke}\"\n\n"
             f"[CURRENT ACTIVITY]\n  {activity}\n"
-            f"{protocols_str}\n"
+            f"{protocols_str}"
+            f"{lifecycle_str}\n"
             "[ANTI-HALLUCINATION]\n"
             "- Quote Sir's exact recent words above if relevant. NEVER invent specifics\n"
             "  (no fake dinner times, no fake activities he didn't actually mention).\n"

@@ -3570,6 +3570,35 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             except Exception:
                 pass
 
+            # 🆕 [P5-fix29 / 2026-05-22] Sir 20:59 真测发现:
+            # stream_chat 主路径 (主对话 google_pool) **缺** IntentRouter 调用!
+            # 只在 stream_chat_cloud_followup (line 2018) 和 stream_nudge (line 4965)
+            # 有, 主路径完全漏掉. 主脑 emit <TOOL_CALL>{intent='dashboard_open'}
+            # → 没人 invoke → Sir 看到"打开了"但面板没开 (虚假 ack).
+            # 治本: 主路径同样跑 IntentRouter, 跟 cloud_followup 行为一致.
+            try:
+                from jarvis_intent_router import IntentParser, get_default_intent_router
+                if IntentParser.has_tool_call_tag(full_text):
+                    _router = get_default_intent_router()
+                    if _router is not None:
+                        _ir_results = _router.route_and_invoke_all(full_text)
+                        if _ir_results:
+                            try:
+                                from jarvis_utils import bg_log as _ir_bg
+                                _hits = sum(1 for r in _ir_results if r.get('success'))
+                                _ir_bg(
+                                    f"🔧 [IntentRouter] {len(_ir_results)} tool calls "
+                                    f"({_hits} success): "
+                                    + ', '.join(
+                                        f"{r.get('intent_id', '?')}={'✅' if r.get('success') else '❌'}"
+                                        for r in _ir_results[:5]
+                                    )
+                                )
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
             final_reply = full_text.split("---ZH---")[0].strip()
             
             if "---ZH---" in full_text:
