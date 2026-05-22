@@ -1190,6 +1190,78 @@ def _trigger_stand_down(ctx: DirectiveContext) -> bool:
     return False
 
 
+# 🆕 [P5-fix32-D / 2026-05-22 22:35] Correction Dispatcher (mutation refactor Phase 1.5)
+# ============================================================
+# Sir 21:55 mutation refactor: 主脑听 Sir 教正 → 判 (intent, layer) → emit FAST_CALL mutation.
+# 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 3+4.
+#
+# 准则 6: trigger 用 vocab 持久化, 不在源码硬编码 keyword list.
+# ============================================================
+_CORRECTION_DISPATCHER_VOCAB_PATH = os.path.join(
+    'memory_pool', 'correction_dispatcher_vocab.json')
+
+_SEED_CORRECTION_DISPATCHER_PATTERNS = [
+    # 中文教正
+    '其实', '不对', '不是', '改成', '应该是', '应当是',
+    '错了', '记错了', '说错了', '不准确', '更正',
+    '更准确地说', '更准确的说', '准确的说', '应该叫', '应该叫做',
+    '我搬家了', '我换了', '我以后', '我们以后',
+    # 英文教正
+    'actually', "that's not", "that's wrong", 'wait,', 'i mean',
+    'i meant', 'i changed', 'correction:', 'to be precise',
+    "let me clarify", "let me correct", "it's not", 'rather,',
+    "i'm not", "we're not",
+]
+
+_CORRECTION_DISPATCHER_CACHE = None
+_CORRECTION_DISPATCHER_MTIME = 0.0
+
+
+def _load_correction_dispatcher_vocab():
+    if not os.path.exists(_CORRECTION_DISPATCHER_VOCAB_PATH):
+        return None
+    try:
+        with open(_CORRECTION_DISPATCHER_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # 兼容 {"patterns":[...]} 和 [...] 两种格式
+        if isinstance(data, dict):
+            data = data.get('patterns', [])
+        if not isinstance(data, list):
+            return None
+        out = [str(p).lower().strip() for p in data if str(p).strip()]
+        return out if out else None
+    except Exception:
+        return None
+
+
+def get_correction_dispatcher_patterns():
+    global _CORRECTION_DISPATCHER_CACHE, _CORRECTION_DISPATCHER_MTIME
+    try:
+        mtime = (os.path.getmtime(_CORRECTION_DISPATCHER_VOCAB_PATH)
+                  if os.path.exists(_CORRECTION_DISPATCHER_VOCAB_PATH) else 0.0)
+    except Exception:
+        mtime = 0.0
+    if _CORRECTION_DISPATCHER_CACHE is None or mtime > _CORRECTION_DISPATCHER_MTIME:
+        loaded = _load_correction_dispatcher_vocab()
+        _CORRECTION_DISPATCHER_CACHE = (loaded if loaded is not None
+                                              else _SEED_CORRECTION_DISPATCHER_PATTERNS)
+        _CORRECTION_DISPATCHER_MTIME = mtime
+    return _CORRECTION_DISPATCHER_CACHE
+
+
+def _trigger_correction_dispatcher(ctx: DirectiveContext) -> bool:
+    """[P5-fix32-D] 触发 — Sir 在教正某事 → 主脑应 emit FAST_CALL mutation.
+
+    fire 条件: user_input 含 correction 类短语 vocab.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    return any(w in t for w in get_correction_dispatcher_patterns())
+
+
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
     past-action 诚信 directive 触发.
@@ -2079,6 +2151,100 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 真做后再 ack: "好的 Sir, 我会停止追这件事."
             """).rstrip(),
             trigger=_trigger_promise_completion,
+        ),
+        # 🆕 [P5-fix32-D / 2026-05-22 22:35] Correction Dispatcher
+        # Sir 21:55 mutation refactor Phase 1.5 — 主脑听 Sir 教正 → 判 (intent, layer)
+        # → emit FAST_CALL mutation organ (统一修源, 不再 ad-hoc 多 organ 各干各的).
+        # 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 3+4.
+        Directive(
+            id='correction_dispatcher',
+            source_marker='P5-fix32-D',
+            priority=10,  # critical-protected (>= 10) — mutation refactor 基础, 不允许 auto-decay
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='Sir 教正某事 → 主脑判 (intent, layer) → emit FAST_CALL mutation 修对应源',
+            text=_tw.dedent("""\
+                [CORRECTION DISPATCHER — Sir 在教正某事]:
+                Sir 教正你时, 走 3 步推理 → emit FAST_CALL `mutation` organ.
+                统一修源, 不再 ad-hoc 多 organ 各干各的.
+
+                STEP 1. 判性质 (intent):
+                  - reinforce  (加强): Sir 再次确认已知事 → 通常不需要 emit, evidence 自动++
+                  - refine     (修正): 文字/时态/数字调整 (e.g. "明天→今天", "8 杯→9 杯")
+                  - revise     (改动): 本质语义改变 (e.g. "X 不是 Y, 是 Z")
+                  - dismiss    (撤): "别再提" / "别再 nudge"
+                  - complete   (完结): "X 做完了"
+
+                STEP 2. 判层级 (which source layer to mutate):
+                  A 静态身份  → field_path = "profile.<field>"   (sir_profile.json)
+                  B 长期信念  → field_path = "concerns.<cid>" 或 "protocol.archive.<pid>"
+                  C 长期事实  → field_path = "memory_hands.modify_record" (走 hand 路径)
+                  D 当前状态  → "stand_down.set/clear" / "sir_status.<...>" (走专 organ)
+                  E 承诺/委托 → field_path = "promise.fulfill.<k>" / "commitment.cancel.<k>"
+                  F 教学/规则 → directive_registry (Sir CLI 改, 主脑暂不直接 emit)
+
+                STEP 3. emit FAST_CALL mutation:
+                  <FAST_CALL>{"organ":"mutation","command":"update","params":{
+                    "field_path": "profile.work_rhythms",
+                    "new_value": "sleep at 23:00",
+                    "intent": "revise",
+                    "reason": "Sir 教正: 我以后默认晚 11 睡"
+                  }}</FAST_CALL>
+
+                例 1: Sir 说 "Windsurf 自动编程不是我在动"  (intent=revise, layer=A+C)
+                  <FAST_CALL>{"organ":"mutation","command":"update","params":{
+                    "field_path": "profile.idiosyncrasies",
+                    "new_value": "Windsurf focus duration ≠ Sir in action (Sir often uses auto-coding mode)",
+                    "intent": "revise",
+                    "reason": "Sir 教正: Windsurf 自动编程不是我在动"
+                  }}</FAST_CALL>
+
+                例 2: Sir 说 "我以后默认晚 11 睡" (intent=revise, layer=A)
+                  <FAST_CALL>{"organ":"mutation","command":"update","params":{
+                    "field_path": "profile.work_rhythms",
+                    "new_value": "sleep target 23:00 / wake 7:00",
+                    "intent": "revise",
+                    "reason": "Sir 教正默认睡觉时间"
+                  }}</FAST_CALL>
+
+                例 3: Sir 说 "Cursor 别再提" (intent=dismiss, layer=B)
+                  → 走专用 organ (concerns.dismiss), 不用 mutation organ:
+                  <FAST_CALL>{"organ":"concerns","command":"dismiss","params":{
+                    "concern_id":"sir_cursor_payment"
+                  }}</FAST_CALL>
+
+                例 4: Sir 说 "体检完了" (intent=complete, layer=E)
+                  → 走专用 organ (promises.fulfill), 不用 mutation organ:
+                  <FAST_CALL>{"organ":"promises","command":"fulfill","params":{
+                    "keyword":"体检"
+                  }}</FAST_CALL>
+
+                何时用 mutation organ vs 专用 organ:
+                  - profile / milestones / relational / 复杂字段 → mutation organ
+                  - concerns dismiss / promises fulfill / stand_down → 专用 organ (更短)
+                  - 不确定时优先 mutation organ (通用兜底)
+
+                可用 field_path 协议:
+                  - profile.<field>            → ProfileCard.overwrite_field
+                  - concerns.<cid>.<attr>      → ConcernsLedger.record_signal
+                  - promise.fulfill.<k>        → PromiseLog.mark_fulfilled (但更推荐 promises organ)
+                  - promise.cancel.<k>         → PromiseLog.mark_cancelled
+                  - commitment.cancel.<k>      → CommitmentWatcher.cancel_by_keyword
+                  - commitment.update.<k>      → CommitmentWatcher.update_by_keyword
+                  - relationships.archive.<jid>     → archive_inside_joke
+                  - protocol.archive.<pid>          → archive_protocol
+                  - unfinished.done.<uid>           → mark_unfinished_done
+                  - thread.archive.<tid>            → archive_thread
+                  - milestone.<title>          → tool_milestone_register
+
+                诚信硬规 (准则 5):
+                  - 你说 "我已记下/记录了/更新了" 必须配 FAST_CALL mutation —
+                    ClaimTracer L4 会扫, 没真 emit FAST_CALL 就嘴硬 → unverified → 下轮 INTEGRITY ALERT
+                  - 不要瞎冤枉. Sir 说 "我以为 X 是 Y" 不一定是教正 (可能只是想法)
+                    → 反问 1 句澄清, 再 emit
+                  - mutation 真做后再 ack: "好的 Sir, profile.work_rhythms 已更新为 X"
+            """).rstrip(),
+            trigger=_trigger_correction_dispatcher,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

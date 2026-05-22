@@ -1656,6 +1656,113 @@ Spoken English:"""
             return (f"❌ promises: 未知指令 {command} "
                       f"(支持 fulfill/cancel/list)")
 
+        # 🆕 [P5-fix32-D / 2026-05-22 22:30] FAST_CALL `mutation` organ — 统一修源接口
+        # ============================================================
+        # Sir 21:55 mutation refactor Phase 1.4: 主脑能 emit 1 个 FAST_CALL 修
+        # 任何 source data, 系统按 field_path 前缀路由到对应 layer.
+        # 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 3+4.
+        #
+        # 主脑 emit 形式:
+        #   <FAST_CALL>{"organ":"mutation","command":"update","params":{
+        #     "field_path": "profile.work_rhythms",
+        #     "new_value": "sleep at 23:00",
+        #     "intent": "revise",       // reinforce/refine/revise/dismiss/complete
+        #     "reason": "Sir 教正",     // Sir 原话 / 主脑解读 (audit 用)
+        #     "old_value": "(可选)",
+        #     "confidence": 0.9         // 默认 0.9, fast_call 路径走高置信
+        #   }}</FAST_CALL>
+        #
+        # field_path 协议:
+        #   - profile.<field>          → ProfileCard.overwrite_field (sir_profile.json)
+        #   - concerns.<cid>           → ConcernsLedger.record_signal
+        #   - promise.fulfill.<k>      → PromiseLog.mark_fulfilled
+        #   - promise.cancel.<k>       → PromiseLog.mark_cancelled
+        #   - commitment.cancel.<k>    → CommitmentWatcher.cancel_by_keyword
+        #   - commitment.update.<k>    → CommitmentWatcher.update_by_keyword
+        #   - relationships.archive.<jid>     → archive_inside_joke
+        #   - protocol.archive.<pid>          → archive_protocol
+        #   - unfinished.done.<uid>           → mark_unfinished_done
+        #   - thread.archive.<tid>            → archive_thread
+        #   - milestone.<title>        → tool_milestone_register
+        # ============================================================
+        if organ_name == "mutation":
+            try:
+                from jarvis_memory_gateway import get_default_gateway
+                gw = get_default_gateway()
+            except Exception as _ge:
+                return f"❌ mutation: gateway 不可用 ({_ge})"
+
+            if command not in ("update", "set", "fulfill", "cancel",
+                                  "dismiss", "complete", "revise", "refine",
+                                  "reinforce", "archive"):
+                return (f"❌ mutation: 未知指令 {command} "
+                          f"(支持 update / set / fulfill / cancel / dismiss / complete / "
+                          f"revise / refine / reinforce / archive)")
+
+            field_path = (params.get('field_path') or
+                            params.get('field') or '').strip()
+            if not field_path:
+                return "❌ mutation.{}: missing 'field_path'".format(command)
+
+            new_value = params.get('new_value', params.get('value', ''))
+            old_value = params.get('old_value', '')
+            intent = (params.get('intent', '') or '').strip()
+            reason = (params.get('reason', '') or '')[:200]
+            try:
+                confidence = float(params.get('confidence', 0.9))
+            except Exception:
+                confidence = 0.9
+            confidence = max(0.0, min(1.0, confidence))
+
+            # 把 command 映射到 source 标识 (帮助 gateway 判 fast_call vs 老路 + audit)
+            source_label = f"fast_call_mutation:{command}"
+            if intent:
+                source_label += f":intent={intent}"
+
+            # turn_id from trace
+            try:
+                from jarvis_utils import TraceContext
+                turn_id = TraceContext.get_turn_id() or ''
+            except Exception:
+                turn_id = ''
+
+            try:
+                receipt = gw.update_sir_field(
+                    field_path=field_path,
+                    new_value=new_value,
+                    source=source_label,
+                    old_value=old_value,
+                    confidence=confidence,
+                    turn_id=turn_id,
+                    nerve=getattr(self, 'jarvis', None),
+                )
+            except Exception as _ue:
+                return f"❌ mutation.{command} fail: {_ue}"
+
+            # Format 人话 result 给主脑下轮看
+            if receipt.ok:
+                layer_name = receipt.layer_targeted or '?'
+                summary = (
+                    f"✅ mutation.{command}: layer={layer_name} "
+                    f"field={field_path} "
+                    f"new='{(receipt.new_value_excerpt or '')[:60]}'"
+                )
+                if receipt.old_value_excerpt:
+                    summary += f" (was '{receipt.old_value_excerpt[:40]}')"
+                summary += (
+                    f". mutation_id={receipt.mutation_id}. "
+                    f"主脑下次 retrieve 看新版."
+                )
+                # Bonus: 若是 profile overwrite, 提示 sir_profile.json 已真改
+                if layer_name == 'ProfileCard' and confidence >= 0.8:
+                    summary += " (sir_profile.json 已 atomic 覆写)"
+                return summary
+            else:
+                return (
+                    f"❌ mutation.{command} fail: layer={receipt.layer_targeted} "
+                    f"field={field_path} err='{receipt.error[:120]}'"
+                )
+
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
             try:
