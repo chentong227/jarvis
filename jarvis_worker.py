@@ -5070,7 +5070,25 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                     pass
 
                 # 👇 核心改造 1：提前判断这句话是不是告退指令
-                is_dismissal = any(w in cmd_lower for w in self.voice_thread.DISMISS_WORDS) if hasattr(self, 'voice_thread') else False
+                # 🩹 [β.5.46-fix16 / 2026-05-22] Sir 11:26 真测 BUG: "好的, 谢谢你啊, 谢谢你. 你不提醒,
+                # 我真忘了, 赶紧清理一下" 28 字真请求被判 dismissal → sleep_mode 误激活.
+                # Root cause: 原代码用合并 DISMISS_WORDS (EXCLUSIVE + POLITE), 但 line 314 注释明写
+                # POLITE (谢谢/thanks) "必须整句很短才算告别" — 规则注释里写了, 代码里没实现.
+                # 修: EXCLUSIVE 含即触; POLITE 仅 cmd 短 (≤6 词 + ≤12 字) 才触.
+                if hasattr(self, 'voice_thread'):
+                    _exc = self.voice_thread.DISMISS_EXCLUSIVE
+                    _pol = self.voice_thread.DISMISS_POLITE
+                    is_dismissal_exclusive = any(w in cmd_lower for w in _exc)
+                    is_dismissal_polite = any(w in cmd_lower for w in _pol)
+                    # 短句门槛: ≤6 词 AND ≤12 字 (中英都满足才算短).
+                    # 注意: 中文 .split() 不分词整句 1 word, 不能用 OR (老逻辑 BUG).
+                    # 例: Sir 28 字真请求 "好的, 谢谢你啊..." = 1 word + 28 字 →
+                    #     OR: 1<=6=True → 短 (BUG); AND: 28>12=False → 长 (修).
+                    # 短例: "谢谢" = 1 word + 2 字 → AND: 都 True → 短 (触, 合理).
+                    is_short = len(cmd_words) <= 6 and len(cmd) <= 12
+                    is_dismissal = is_dismissal_exclusive or (is_dismissal_polite and is_short)
+                else:
+                    is_dismissal = False
 
                 self.state_changed.emit("THINKING")
 
