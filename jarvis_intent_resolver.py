@@ -165,6 +165,9 @@ class IntentResolver:
             'sir_intent_profile_update_candidate',
             'sir_intent_promise_candidate',
             'sir_intent_deadline_candidate',
+            # 🆕 [β.5.46-fix18 / 2026-05-22] Sir 真测 BUG: project hold persistence.
+            # ProjectHoldDetector publish 此 candidate, 主脑看 evidence 调 tool_project_hold.
+            'sir_intent_project_hold_candidate',
         }
         try:
             events = bus.recent_events(

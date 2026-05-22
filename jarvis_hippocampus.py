@@ -224,6 +224,15 @@ class Hippocampus:
                 session_count INTEGER DEFAULT 0
             )
         ''')
+        # 🆕 [β.5.46-fix18 / 2026-05-22] Sir 11:39 真测 BUG: "驾照放一放" 持久化失效.
+        # Root cause: ProjectTimeline 不感知 Sir hold 信号. Sir 5/20 + 5/22 反复说
+        # "驾照放一放/on hold/suppress nudges", SmartNudge 仍 fire dormant_project.
+        # 治本 (3 数据源 refactor B 层): 加 held_until_ts 列, hold_project method,
+        # get_dormant_projects 过滤. SQLite ALTER 在 try/except 内 (老 db migration 友好).
+        try:
+            cursor.execute("ALTER TABLE ProjectTimeline ADD COLUMN held_until_ts REAL DEFAULT 0")
+        except Exception:
+            pass  # 列已存在 (老 db 升级幂等)
 
         # [P0+18-e.3 / 2026-05-15] CommitmentWatcher 持久化表（迁旧 in-memory list 到 SQLite）。
         # 因果：原 CW.commitments 是 in-memory python list，进程重启就丢；Sir 24:00 说"两点睡觉"，
@@ -1225,18 +1234,28 @@ class Hippocampus:
         conn.close()
 
     def get_dormant_projects(self, dormant_days: int = 3) -> list:
-        """获取沉寂超过指定天数的项目"""
+        """获取沉寂超过指定天数的项目.
+
+        🆕 [β.5.46-fix18 / 2026-05-22] Sir 真测 BUG fix:
+        - 过滤 held_until_ts > now (Sir 显式 hold 中, 不算 dormant).
+        - 老 db (无 held_until_ts 列) 兼容: COALESCE 取 0 → 不影响.
+        """
         now = time.time()
         threshold = now - (dormant_days * 86400)
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT project_name, last_active_time, total_hours, session_count FROM ProjectTimeline WHERE status = 'active' AND last_active_time < ? ORDER BY last_active_time ASC",
-            (threshold,)
+            "SELECT project_name, last_active_time, total_hours, session_count "
+            "FROM ProjectTimeline "
+            "WHERE status = 'active' "
+            "  AND last_active_time < ? "
+            "  AND COALESCE(held_until_ts, 0) < ? "
+            "ORDER BY last_active_time ASC",
+            (threshold, now)
         )
         rows = cursor.fetchall()
         conn.close()
-        
+
         results = []
         for r in rows:
             days_since = (now - r[1]) / 86400
@@ -1248,6 +1267,75 @@ class Hippocampus:
                 'session_count': r[3]
             })
         return results
+
+    def hold_project(self, project_name: str, hours: float = 72.0,
+                      source: str = '') -> bool:
+        """🆕 [β.5.46-fix18 / 2026-05-22] Sir 显式 hold project N 小时.
+
+        Sir 11:39 真测痛点: 反复说 "驾照放一放/hold off" 但 SmartNudge 仍触
+        dormant_project. 治本: ProjectTimeline.held_until_ts = now + hours*3600,
+        get_dormant_projects 过滤期间. 默认 72h (3天) — Sir 重复说会 refresh.
+
+        Args:
+          project_name: 严格匹配 ProjectTimeline.project_name (case-insensitive 模糊见 _find_project_match).
+          hours: hold 时长, default 72h.
+          source: trace 来源 ('intent_resolver' / 'sir_cmd' / 'reflector').
+        Returns:
+          True 真 hold 成功 / False 项目不存在.
+        """
+        if not project_name or hours <= 0:
+            return False
+        until_ts = time.time() + (hours * 3600.0)
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE ProjectTimeline SET held_until_ts = ? "
+                "WHERE LOWER(project_name) = LOWER(?)",
+                (until_ts, project_name)
+            )
+            ok = cursor.rowcount > 0
+            conn.commit()
+        except Exception:
+            ok = False
+        finally:
+            conn.close()
+        if ok:
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"⏸️ [ProjectTimeline/hold] '{project_name}' held until "
+                    f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(until_ts))} "
+                    f"({hours:.0f}h, src={source or 'unknown'})"
+                )
+            except Exception:
+                pass
+        return ok
+
+    def find_project_by_keyword(self, keyword: str) -> Optional[str]:
+        """🆕 [β.5.46-fix18 / 2026-05-22] 模糊查找 project_name (Sir 说"驾照" 找 "驾照科一").
+
+        IntentResolver project_hold action 用此 helper 把 Sir 自然语言中的项目词
+        映射到真实 project_name. 不命中返 None.
+        """
+        if not keyword or not str(keyword).strip():
+            return None
+        kw = str(keyword).strip().lower()
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT project_name FROM ProjectTimeline "
+                "WHERE LOWER(project_name) LIKE ? AND status = 'active' "
+                "ORDER BY last_active_time DESC LIMIT 1",
+                (f"%{kw}%",)
+            )
+            row = cursor.fetchone()
+        except Exception:
+            row = None
+        finally:
+            conn.close()
+        return row[0] if row else None
 
     def get_active_projects_summary(self) -> str:
         """生成活跃项目摘要，供 Prompt 注入"""

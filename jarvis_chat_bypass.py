@@ -3512,6 +3512,42 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🆕 [β.5.46-fix18 / 2026-05-22] Sir 11:39 真测 BUG: 驾照"放一放" 持久化失效.
+        # ProjectHoldDetector: 检测 Sir cmd 含 hold phrase ("放一放/hold off/...") +
+        # project keyword (hippo 模糊匹) → publish SWM candidate. IntentResolver
+        # 主脑下轮看 evidence 自决调 tool_project_hold (ProjectTimeline.held_until_ts).
+        # 三维耦合 (准则 6 β.5.0): 数据强耦合 (SWM) + 行为弱耦合 (publish-only) +
+        # 决策集中主脑.
+        try:
+            if clean_user_input or final_reply:
+                import threading as _th
+                def _run_phd():
+                    try:
+                        from jarvis_project_hold_detector import detect_and_publish
+                        hippo = getattr(self.jarvis, 'hippocampus', None)
+                        bus = getattr(self.jarvis, 'event_bus', None)
+                        if bus is None:
+                            try:
+                                from jarvis_utils import get_event_bus
+                                bus = get_event_bus()
+                            except Exception:
+                                bus = None
+                        if hippo is None or bus is None:
+                            return
+                        detect_and_publish(
+                            cmd=clean_user_input or '',
+                            jarvis_reply=final_reply or '',
+                            turn_id=_turn_id_now,
+                            hippocampus=hippo,
+                            event_bus=bus,
+                        )
+                    except Exception:
+                        pass
+                _th.Thread(target=_run_phd, daemon=True,
+                            name='ProjectHoldDetector').start()
+        except Exception:
+            pass
+
         # 🩹 [P0+20-β.2.6 / 2026-05-17] 灵魂工程 Layer 5 SoulAlignmentEvaluator
         # 异步评 Jarvis 本轮回复是否对齐 self_model + relational_state，把信号
         # 写回 concerns_ledger.record_alignment 累计。LLM 调用走 OpenRouter，

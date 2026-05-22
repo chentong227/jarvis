@@ -320,6 +320,62 @@ def tool_milestone_register(
 # TOOL_REGISTRY — IntentResolver 调度入口
 # ============================================================
 
+# ---------------- Project Hold Tool ----------------
+
+def tool_project_hold(
+    project_keyword: str,
+    hours: float = 72.0,
+    raw_text: str = '',
+    nerve=None,
+    **kw,
+) -> Dict[str, Any]:
+    """🆕 [β.5.46-fix18 / 2026-05-22] Sir 显式 hold project N 小时.
+
+    Sir 11:39 真测痛点: 反复说"驾照放一放/hold off" 但 SmartNudge 仍 fire
+    dormant_project. 治本 (3 数据源 refactor E 层): IntentResolver 检测 Sir
+    cmd 含 hold phrase + project keyword → 调此 tool → ProjectTimeline.
+    held_until_ts = now + hours*3600.
+
+    Args:
+      project_keyword: Sir 说的项目词 (e.g. "驾照"/"driver's license"). 模糊查 ProjectTimeline.
+      hours: hold 时长, default 72h. vocab 里 default_hours 主导.
+      raw_text: Sir 原话 (审计用).
+    Returns:
+      {'ok': True, 'result': '...'} 真 hold 成功
+      {'ok': False, 'error': '...'} 没找到项目 / hippo 失败
+    """
+    if not project_keyword or not str(project_keyword).strip():
+        return _fail('project_keyword required')
+    if hours <= 0 or hours > 24 * 365:
+        return _fail(f'invalid hours: {hours} (range 0-8760)')
+    try:
+        if nerve is None:
+            try:
+                import jarvis_central_nerve as _cn
+                nerve = getattr(_cn, '_GLOBAL_NERVE', None)
+            except Exception:
+                nerve = None
+        hippo = getattr(nerve, 'hippocampus', None) if nerve else None
+        if hippo is None:
+            return _fail('no hippocampus')
+        # 模糊查 project_name
+        project_name = None
+        if hasattr(hippo, 'find_project_by_keyword'):
+            project_name = hippo.find_project_by_keyword(project_keyword)
+        if not project_name:
+            return _fail(f'project not found by keyword: {project_keyword}')
+        # 调 hippo.hold_project
+        if not hasattr(hippo, 'hold_project'):
+            return _fail('hippocampus.hold_project not available (needs β.5.46-fix18)')
+        ok = hippo.hold_project(project_name, hours=float(hours),
+                                  source='intent_resolver')
+        if ok:
+            return _ok(f"project '{project_name}' held for {hours:.0f}h")
+        return _fail(f"project '{project_name}' hold failed")
+    except Exception as e:
+        return _fail(f'tool_project_hold exception: {e}')
+
+
 TOOL_REGISTRY: Dict[str, Any] = {
     'concern_progress_update': tool_concern_progress_update,
     'memory_correction_apply': tool_memory_correction_apply,
@@ -327,6 +383,8 @@ TOOL_REGISTRY: Dict[str, Any] = {
     'self_promise_register': tool_self_promise_register,
     'profile_field_update': tool_profile_field_update,
     'milestone_register': tool_milestone_register,
+    # 🆕 [β.5.46-fix18] Sir hold project tool
+    'project_hold': tool_project_hold,
 }
 
 
