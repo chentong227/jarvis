@@ -452,6 +452,141 @@ class TestRelationalUpdateField(unittest.TestCase):
 
 
 # ============================================================
+# 5d. Gateway integration with deep update (Phase 2.1 + 2.2 routing)
+# ============================================================
+
+class TestGatewayDeepUpdateIntegration(unittest.TestCase):
+    """gateway 'concerns.<cid>.<attr>' / '<kind>.update.<id>.<field>' 端到端."""
+
+    def test_gateway_routes_concern_attr_to_update_concern_field(self):
+        """gateway field_path='concerns.<cid>.severity' → ConcernsLedger.update_concern_field"""
+        from jarvis_concerns import ConcernsLedger, Concern
+        from jarvis_memory_gateway import MemoryMutationGateway
+
+        # Setup
+        tmp_dir = tempfile.mkdtemp(prefix='gw_concern_int_')
+        try:
+            ledger = ConcernsLedger(persist_path=os.path.join(tmp_dir, 'c.json'))
+            ledger.register(Concern(
+                id='test_c', what_i_watch='Sir 熬夜', why_i_care='Sir 健康',
+                severity=0.5,
+            ))
+
+            class _MockNerve:
+                concerns_ledger = ledger
+                profile_card = None
+
+            gw = MemoryMutationGateway(
+                receipt_path=os.path.join(tmp_dir, 'receipts.jsonl')
+            )
+            receipt = gw.update_sir_field(
+                field_path='concerns.test_c.severity',
+                new_value=0.3,
+                source='fast_call_mutation:refine',
+                confidence=0.95,
+                nerve=_MockNerve(),
+            )
+            self.assertTrue(receipt.ok, receipt.error)
+            self.assertEqual(receipt.layer_targeted, 'ConcernsLedger')
+            # Verify concern severity changed
+            self.assertEqual(ledger.concerns['test_c'].severity, 0.3)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_gateway_routes_concern_no_attr_to_record_signal(self):
+        """gateway field_path='concerns.<cid>' (no attr) → 老路 record_signal"""
+        from jarvis_concerns import ConcernsLedger, Concern
+        from jarvis_memory_gateway import MemoryMutationGateway
+
+        tmp_dir = tempfile.mkdtemp(prefix='gw_concern_old_')
+        try:
+            ledger = ConcernsLedger(persist_path=os.path.join(tmp_dir, 'c.json'))
+            ledger.register(Concern(
+                id='test_c', what_i_watch='watch', why_i_care='care',
+                severity=0.5,
+            ))
+
+            class _MockNerve:
+                concerns_ledger = ledger
+                profile_card = None
+
+            gw = MemoryMutationGateway(
+                receipt_path=os.path.join(tmp_dir, 'receipts.jsonl')
+            )
+            receipt = gw.update_sir_field(
+                field_path='concerns.test_c',  # no attr → record_signal
+                new_value='Sir mentioned X',
+                source='record_signal_test',
+                confidence=0.7,
+                nerve=_MockNerve(),
+            )
+            self.assertTrue(receipt.ok)
+            # record_signal should add 1 entry
+            self.assertEqual(len(ledger.concerns['test_c'].recent_signals), 1)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_gateway_routes_relational_update_to_update_field(self):
+        """gateway field_path='inside_joke.update.<id>.phrase' → RelationalStateStore.update_field"""
+        from jarvis_relational import RelationalStateStore, InsideJoke
+        from jarvis_memory_gateway import MemoryMutationGateway
+
+        tmp_dir = tempfile.mkdtemp(prefix='gw_rel_int_')
+        try:
+            rs = RelationalStateStore(persist_path=os.path.join(tmp_dir, 'r.json'))
+            rs.add_inside_joke(InsideJoke(id='j1', phrase='old phrase', tone='wry'))
+
+            class _MockNerve:
+                relational_state = rs
+                profile_card = None
+
+            gw = MemoryMutationGateway(
+                receipt_path=os.path.join(tmp_dir, 'receipts.jsonl')
+            )
+            receipt = gw.update_sir_field(
+                field_path='inside_joke.update.j1.phrase',
+                new_value='new phrase',
+                source='fast_call_mutation:refine',
+                confidence=0.9,
+                nerve=_MockNerve(),
+            )
+            self.assertTrue(receipt.ok, receipt.error)
+            self.assertEqual(receipt.layer_targeted, 'RelationalStateStore')
+            self.assertEqual(rs.inside_jokes['j1'].phrase, 'new phrase')
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_gateway_relational_archive_op_still_works(self):
+        """老的 'inside_joke.archive.<jid>' 路径不退化."""
+        from jarvis_relational import RelationalStateStore, InsideJoke, STATE_ARCHIVED
+        from jarvis_memory_gateway import MemoryMutationGateway
+
+        tmp_dir = tempfile.mkdtemp(prefix='gw_rel_arch_')
+        try:
+            rs = RelationalStateStore(persist_path=os.path.join(tmp_dir, 'r.json'))
+            rs.add_inside_joke(InsideJoke(id='j1', phrase='joke', tone='wry'))
+
+            class _MockNerve:
+                relational_state = rs
+                profile_card = None
+
+            gw = MemoryMutationGateway(
+                receipt_path=os.path.join(tmp_dir, 'receipts.jsonl')
+            )
+            receipt = gw.update_sir_field(
+                field_path='inside_joke.archive.j1',
+                new_value='archived by Sir',
+                source='fast_call_mutation:dismiss',
+                confidence=0.9,
+                nerve=_MockNerve(),
+            )
+            self.assertTrue(receipt.ok, receipt.error)
+            self.assertEqual(rs.inside_jokes['j1'].state, STATE_ARCHIVED)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
 # 6. SWM publish on overwrite_field
 # ============================================================
 
