@@ -258,12 +258,23 @@ class DirectiveRegistry:
         
         返回统计 dict：{'dormant': N, 'review': N, 'priority_drop': N}
         """
-        stats = {'dormant': 0, 'review': 0, 'priority_drop': 0}
+        stats = {'dormant': 0, 'review': 0, 'priority_drop': 0,
+                  'critical_protected': 0}
         now = time.time()
         review_entries: list = []
         with self._lock:
             for d in self.directives.values():
                 if d.state != STATE_ACTIVE:
+                    continue
+                # 🆕 [P5-fix23-meta-protect / 2026-05-22] critical priority protect
+                # priority >= 10 是 always-on 红线 directive (bilingual /
+                # meta_self_check / capability_boundary / past_action_honesty 等).
+                # Sir 设计这些为结构性规则, 不应被 helped/not_helped 评分降级.
+                # Sir 17:40 真测痛点: meta_self_check (priority=10) 因
+                # not_helped=11/helped=0 被 decay 到 review → 思考链消失.
+                # 准则 7 (Sir 元否决): critical 红线不允许 auto-decay 干预.
+                if d.priority >= 10:
+                    stats['critical_protected'] += 1
                     continue
                 # 规则 1：长期无触发 → dormant
                 if d.last_triggered > 0 and (now - d.last_triggered) > d.ttl_days * 86400:
