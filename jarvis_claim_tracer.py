@@ -713,6 +713,13 @@ def build_integrity_alert(current_turn_id: str = '',
     准则 5 / 准则 6 设计:
       - 只述说上轮的 claim 未 verify 事实, 两个选项 (withdraw / supply evidence)
       - 不写上中文句式 / 不指定使用 '其实/I'm sorry/On reflection' 等 wording
+
+    🩹 [β.5.46-fix17 / 2026-05-22] Sir 11:39 真测 BUG: Jarvis 主动 "withdraw 95% figure"
+    Root cause: 11:26 audit 写了 {"turn_id": "", "claim": "95%"} (空 turn_id —
+    daemon/跨 session 路径, 不对应任何 main turn). build_integrity_alert 按 ts 排
+    选 "上轮" 时把这条空 turn_id entry 算成上轮 → inject 95% 给 11:39 turn → 主脑
+    被 prompt 强迫道歉一个 Sir 没要求道歉的事 ("他不算骗人, 为啥道歉?").
+    修: 过滤 turn_id="" entry, 仅算真有 turn_id 的 audit (= 真主 turn 的 unverified).
     """
     try:
         unv = read_recent_unverified(limit=limit,
@@ -720,6 +727,10 @@ def build_integrity_alert(current_turn_id: str = '',
                                        audit_path=audit_path)
     except Exception:
         return ''
+    if not unv:
+        return ''
+    # 🩹 [β.5.46-fix17] 过滤 turn_id="" — 不对应 main turn 的 claim 不该 inject ALERT
+    unv = [e for e in unv if (e.get('turn_id') or '').strip()]
     if not unv:
         return ''
     # 按 turn_id group, 取 ts 最大的 turn (immediate prior turn)
