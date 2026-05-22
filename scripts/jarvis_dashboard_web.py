@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import threading
+import time
 import webbrowser
 from typing import Any, Dict
 
@@ -138,6 +139,31 @@ HTML_TEMPLATE = r"""
     </div>
   </div>
 </header>
+
+<!-- 🆕 [P5-fix20-A1 / 2026-05-22] Sir 14:32 真测痛点 — Key 池雪崩 header banner -->
+<!-- 当 keyHealth.overall === 'crit' (有池全挂), 顶部红条提醒 + 一键跳卡片. -->
+<div x-show="keyHealth && keyHealth.overall === 'crit'"
+     x-transition
+     class="bg-rose-900/80 border-b-2 border-rose-500 text-rose-100 px-6 py-2.5 sticky top-[var(--header-h,3.5rem)] z-40 backdrop-blur">
+  <div class="max-w-7xl mx-auto flex items-center justify-between gap-3 text-sm">
+    <div class="flex items-center gap-2 flex-1 min-w-0">
+      <span class="text-lg">🚨</span>
+      <span class="font-semibold">API Key 池雪崩</span>
+      <span class="text-rose-200 truncate" x-text="keyHealth.health_msg || '某个 key 池已无可用 key, 主脑/IntentResolver/Vision 会降级'"></span>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button @click="document.querySelector('[data-key-card]')?.scrollIntoView({behavior:'smooth'}); showKeyDetail = true;"
+              class="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600 text-xs font-medium">
+        ↓ 看详情
+      </button>
+      <button @click="resetAllKeys()"
+              :disabled="keyResetPending"
+              class="px-3 py-1 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-xs font-medium">
+        ⚡ 一键复活
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- 整体状态条 -->
 <section class="max-w-7xl mx-auto px-6 pt-6">
@@ -564,6 +590,104 @@ HTML_TEMPLATE = r"""
       </div>
     </div>
   </div>
+
+  <!-- 🆕 [P5-fix20-A1 / 2026-05-22] Sir 14:32 真测痛点 — key 池雪崩可视化 -->
+  <!-- Sir 真测发现 OpenRouter 全挂 + Google 429 → 主脑能开口但 IntentResolver/ -->
+  <!-- Vision/Hippocampus 全降级 → "嘴上说没真做". 这卡片让 Sir 一眼看哪个池挂了. -->
+  <div data-key-card
+       class="glass rounded-2xl p-5 border border-slate-700/30 mt-4"
+       :class="{
+         'border-rose-500/50': (keyHealth.overall || 'ok') === 'crit',
+         'border-amber-500/50': keyHealth.overall === 'warn'
+       }">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold flex items-center gap-2">
+        <span>🔑</span>API Key 池健康
+        <span class="badge"
+              :class="{
+                'bg-emerald-500/20 text-emerald-300': (keyHealth.overall || 'ok') === 'ok',
+                'bg-amber-500/20 text-amber-300': keyHealth.overall === 'warn',
+                'bg-rose-500/20 text-rose-300': keyHealth.overall === 'crit',
+                'bg-slate-700/50 text-slate-400': !keyHealth.available
+              }"
+              x-text="(keyHealth.overall || 'unknown').toUpperCase()"></span>
+        <span class="text-xs text-slate-500"
+              x-show="keyHealth.snapshot_age_s !== null && keyHealth.snapshot_age_s !== undefined"
+              x-text="'· ' + keyHealth.snapshot_age_s + 's 前'"></span>
+      </h3>
+      <button @click="resetAllKeys()"
+              x-show="keyHealth.available && keyHealth.overall !== 'ok'"
+              :disabled="keyResetPending"
+              class="px-3 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 transition text-xs font-medium">
+        <span x-show="!keyResetPending">⚡ 一键复活全部</span>
+        <span x-show="keyResetPending">⏳ 处理中...</span>
+      </button>
+    </div>
+
+    <!-- 健康度 banner -->
+    <p class="text-sm mb-3"
+       :class="{
+         'text-emerald-300': (keyHealth.overall || 'ok') === 'ok',
+         'text-amber-300': keyHealth.overall === 'warn',
+         'text-rose-300': keyHealth.overall === 'crit',
+         'text-slate-400': !keyHealth.available
+       }"
+       x-text="keyHealth.health_msg || '加载中...'"></p>
+
+    <!-- 3 池 grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs"
+         x-show="keyHealth.available">
+      <template x-for="(p, name) in (keyHealth.pools || {})" :key="name">
+        <div class="bg-slate-800/50 rounded-lg p-2.5"
+             :class="{
+               'border border-rose-500/40': p.healthy === 0 && p.total > 0,
+               'border border-amber-500/40': p.healthy > 0 && p.healthy < p.total,
+             }">
+          <div class="flex items-center justify-between">
+            <p class="text-slate-300 font-mono uppercase" x-text="name"></p>
+            <p :class="{
+                 'text-emerald-300': p.healthy === p.total,
+                 'text-amber-300': p.healthy > 0 && p.healthy < p.total,
+                 'text-rose-300': p.healthy === 0
+               }"
+               class="text-base font-mono"
+               x-text="p.healthy + '/' + p.total"></p>
+          </div>
+          <p class="text-slate-500 text-[0.7rem] mt-1">
+            <span x-show="p.permanent_dead > 0" class="text-rose-400" x-text="'⛔ 永久死 ' + p.permanent_dead + ' '"></span>
+            <span x-show="p.in_cooldown > 0" class="text-amber-400" x-text="'❄️ 冷却 ' + p.in_cooldown + ' '"></span>
+            <span x-show="p.healthy === p.total" class="text-emerald-400">✓ 全部健康</span>
+          </p>
+        </div>
+      </template>
+    </div>
+
+    <!-- 详细 key 列表 (展开时显示) -->
+    <div x-show="keyHealth.available && Object.keys(keyHealth.key_status || {}).length > 0 && showKeyDetail"
+         class="mt-3 space-y-1 text-xs max-h-48 overflow-y-auto scrollbar-thin border-t border-slate-700 pt-3">
+      <template x-for="(st, label) in (keyHealth.key_status || {})" :key="label">
+        <div class="flex items-center gap-2 p-1.5 rounded hover:bg-slate-800/50">
+          <span x-text="st.healthy ? '🟢' : (st.permanently_dead ? '⛔' : '❄️')"></span>
+          <span class="font-mono text-slate-300 min-w-[6rem]" x-text="label"></span>
+          <span class="text-slate-500 text-[0.7rem]" x-show="st.in_cooldown" x-text="'冷却剩 ' + st.cooldown_remaining_s + 's'"></span>
+          <span class="text-slate-500 text-[0.7rem] truncate flex-1" x-show="st.last_error" :title="st.last_error" x-text="st.last_error.slice(0, 60)"></span>
+          <button @click="resetKey(label, st.permanently_dead ? 'permanent' : 'cooldown')"
+                  x-show="!st.healthy"
+                  :disabled="keyResetPending"
+                  class="px-2 py-0.5 text-[0.7rem] rounded bg-slate-700 hover:bg-violet-600 transition disabled:opacity-50">
+            复活
+          </button>
+        </div>
+      </template>
+    </div>
+
+    <button @click="showKeyDetail = !showKeyDetail"
+            x-show="keyHealth.available && Object.keys(keyHealth.key_status || {}).length > 0"
+            class="mt-2 text-xs text-slate-500 hover:text-slate-300">
+      <span x-show="!showKeyDetail">▼ 展开详细 key 列表</span>
+      <span x-show="showKeyDetail">▲ 收起</span>
+    </button>
+  </div>
 </section>
 
 <!-- Toast 通知 -->
@@ -702,6 +826,10 @@ function dashboard() {
     promise: {},
     // 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass META state
     brainMeta: {},
+    // 🆕 [P5-fix20-A1 / 2026-05-22] KeyRouter 健康可视化 state
+    keyHealth: {},
+    showKeyDetail: false,
+    keyResetPending: false,
     actionPending: {},
     toast: { show: false, ok: true, title: '', detail: '' },
 
@@ -813,6 +941,42 @@ function dashboard() {
     showToast(ok, title, detail) {
       this.toast = { show: true, ok, title, detail };
       setTimeout(() => { this.toast.show = false; }, 4000);
+    },
+
+    // 🆕 [P5-fix20-A1 / 2026-05-22] Key 池 reset — 写 reset_request.json 让主进程 poll 执行
+    async resetAllKeys() {
+      if (!confirm('确认一键复活全部 key (清冷却 + 解永久死)? 主进程会在数秒内执行.')) return;
+      this.keyResetPending = true;
+      try {
+        const r = await fetch('/api/key_reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'all', source: 'dashboard' })
+        });
+        const d = await r.json();
+        this.showToast(d.ok !== false, '⚡ Reset 请求已写入', d.message || '主进程将在数秒内 poll 执行');
+      } catch (e) {
+        this.showToast(false, '❌ Reset 失败', String(e));
+      } finally {
+        this.keyResetPending = false;
+      }
+    },
+
+    async resetKey(label, kind) {
+      this.keyResetPending = true;
+      try {
+        const r = await fetch('/api/key_reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: kind, key_label: label, source: 'dashboard' })
+        });
+        const d = await r.json();
+        this.showToast(d.ok !== false, `⚡ Reset ${label}`, d.message || '已写入');
+      } catch (e) {
+        this.showToast(false, `❌ Reset ${label} 失败`, String(e));
+      } finally {
+        this.keyResetPending = false;
+      }
     }
   };
 }
@@ -865,6 +1029,9 @@ def _summary_for_web() -> Dict[str, Any]:
         # 主脑 thinking pass META 健康度: total/skip%/evidence% 一眼看,
         # 不点 /main_brain_meta page 也能瞄一眼.
         brain_meta = _read_brain_meta_summary()
+        # 🆕 [P5-fix20-A1 / 2026-05-22] Sir 14:32 key 池雪崩真测痛点修.
+        # 主页加 key 池健康 mini card, Sir 一眼看哪个池挂了.
+        key_health = _read_key_health()
         emoji_map = {'ok': '✅', 'warn': '⚠️', 'crit': '❌'}
         return {
             'summary': {
@@ -885,6 +1052,7 @@ def _summary_for_web() -> Dict[str, Any]:
             'todo': todo,
             'promise': promise,
             'brainMeta': brain_meta,
+            'keyHealth': key_health,
         }
     except Exception as e:
         return {
@@ -893,7 +1061,67 @@ def _summary_for_web() -> Dict[str, Any]:
             'reviewItems': [], 'concerns': {}, 'relation': {}, 'health': {},
             'directive': {}, 'daemon': {}, 'events': {}, 'mutations': {},
             'integrity': {}, 'todo': {}, 'promise': {}, 'brainMeta': {},
+            'keyHealth': {},
         }
+
+
+def _read_key_health() -> Dict[str, Any]:
+    """🆕 [P5-fix20-A1 / 2026-05-22] 读 KeyRouter health snapshot.
+
+    KeyRouter daemon 每 15s 写 memory_pool/key_router_health.json.
+    Sir 14:32 真测痛点: OpenRouter 全挂 + Google 池 429 → 主脑能开口但
+    IntentResolver/Vision/Hippocampus 全降级 → "嘴上说没真做". 这卡片
+    一眼让 Sir 看到哪个池挂了, 不用进 log 翻.
+    """
+    import json as _json
+    path = os.path.join(ROOT, 'memory_pool', 'key_router_health.json')
+    if not os.path.exists(path):
+        return {'available': False,
+                'health_msg': 'Jarvis 未启动 / KeyRouter 未上线 (启 jarvis 等 15s)'}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            stats = _json.load(f)
+    except Exception as e:
+        return {'available': False, 'health_msg': f'读 snapshot 失败: {e}'}
+
+    # 加诊断文本
+    pools = stats.get('pools', {})
+    overall = stats.get('overall_health', 'ok')
+    issues = []
+    for name, p in pools.items():
+        if p['total'] == 0:
+            continue
+        if p['healthy'] == 0:
+            issues.append(f"❌ {name} 池全挂 (0/{p['total']})")
+        elif p['healthy'] < p['total']:
+            cooling = p.get('in_cooldown', 0)
+            dead = p.get('permanent_dead', 0)
+            issues.append(
+                f"⚠️ {name} 部分降级 ({p['healthy']}/{p['total']}"
+                + (f", 永久死 {dead}" if dead else '')
+                + (f", 冷却 {cooling}" if cooling else '')
+                + ')'
+            )
+
+    if not issues:
+        health_msg = f"✅ 全部 key 池健康"
+    else:
+        health_msg = ' · '.join(issues)
+
+    snapshot_ts = stats.get('_snapshot_ts', 0)
+    age_s = max(0, int(time.time() - snapshot_ts)) if snapshot_ts else None
+
+    return {
+        'available': True,
+        'overall': overall,
+        'health_msg': health_msg,
+        'issues': issues,
+        'pools': pools,
+        'key_status': stats.get('key_status', {}),
+        'openrouter_calls_today': stats.get('openrouter_calls_today', 0),
+        'snapshot_age_s': age_s,
+        'snapshot_iso': stats.get('_snapshot_iso', ''),
+    }
 
 
 def _read_brain_meta_summary() -> Dict[str, Any]:
@@ -1290,6 +1518,67 @@ def api_system_errors():
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ============================================================
+# 🆕 [P5-fix20-A1/A2 / 2026-05-22] KeyRouter 健康 API + reset endpoint
+# Sir 14:32 真测痛点: OpenRouter 全挂 + Google 429 → 主脑嘴上说没真做.
+# A1: /api/key_health 返回 KeyRouter snapshot.
+# A2: /api/key_reset (POST) 调 reset_cooldown / reset_permanent / reset_all.
+# 注意: dashboard 是独立进程, 通过 disk snapshot 读 (不直持 KeyRouter 实例).
+# 但 reset 必须打到主进程 KeyRouter — 这里先用 file-based signal:
+#   写 memory_pool/key_router_reset_request.json, 主进程 daemon poll + 执行.
+# ============================================================
+
+@app.route('/api/key_health')
+def api_key_health():
+    """🆕 [P5-fix20-A1] KeyRouter 健康 snapshot (Sir 一眼看 key 池状态)."""
+    try:
+        return jsonify({'ok': True, 'data': _read_key_health()})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/key_reset', methods=['POST'])
+def api_key_reset():
+    """🆕 [P5-fix20-A2] Sir 一键复活 key. 写 reset_request.json, 主进程 poll 执行.
+
+    POST body: {"action": "cooldown"|"permanent"|"all", "label": "google_1"}
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        action = (payload.get('action', '') or '').strip().lower()
+        # 接受 label 或 key_label (前端 dashboard 用 key_label, CLI 用 label)
+        label = (payload.get('label', '') or payload.get('key_label', '') or '').strip()
+        source = (payload.get('source', '') or 'api').strip()
+        if action not in ('cooldown', 'permanent', 'all'):
+            return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
+        if action != 'all' and not label:
+            return jsonify({'ok': False, 'error': 'label required for cooldown/permanent action'}), 400
+
+        req = {
+            'action': action,
+            'label': label,
+            'source': source,
+            'requested_at': time.time(),
+            'requested_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'consumed': False,
+        }
+        path = os.path.join(ROOT, 'memory_pool', 'key_router_reset_request.json')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(req, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        msg = f"已写 reset 请求 ({action}{' ' + label if label else ''}). 主进程 KeyRouter ≤15s 内 poll 执行."
+        return jsonify({
+            'ok': True,
+            'message': msg,
+            'detail': msg,
+            'request': req,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e), 'message': f'失败: {e}'}), 500
 
 
 # ============================================================

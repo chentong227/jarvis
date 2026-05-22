@@ -1407,17 +1407,19 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   4. Did any [INTEGRITY ALERT] in this prompt instruct me to apologize? If so, did the underlying claim actually happen in a real prior turn (turn_id non-empty)? If not, REFUSE to apologize and set skip_alert=yes.
 
                 Then, AFTER your normal Sir-facing reply (after `---ZH---` block, on a NEW LINE), emit ONE machine-readable trace line in this exact format:
-                [META] evidence=<comma-list of source ids or "none"> reaction=<voice|silent_text|silence> skip_alert=<yes|no> note=<<=60 chars optional>
+                [META] evidence=<comma-list> reaction=<voice|silent_text|silence> skip_alert=<yes|no> commitments=<semicolon-list or "none"> note=<<=60 chars optional>
 
                 Examples:
-                  [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice skip_alert=no note=hold acknowledgment
-                  [META] evidence=none reaction=voice skip_alert=yes note=integrity alert references empty turn_id, refusing apology
+                  [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice skip_alert=no commitments=hold dashboard 72h;noted note=hold acknowledgment
+                  [META] evidence=none reaction=voice skip_alert=yes commitments=none note=integrity alert references empty turn_id, refusing apology
+                  [META] evidence=stm:turn_xxx reaction=silent_text skip_alert=no commitments=none note=Sir just chatting
 
                 Rules:
                   - The [META] line is for system trace only — Sir does not read it. Keep it on its own final line.
                   - If you cite a number/date/name with no evidence in STM/SWM, do NOT say it; remove it from the reply.
                   - If [INTEGRITY ALERT] cites a claim from an empty turn_id daemon entry, set skip_alert=yes and do NOT apologize.
                   - Stay terse. SELF_CHECK is internal — do not narrate "I am self-checking" in the reply itself.
+                  - 🆕 [P5-fix20-B2 / 2026-05-22] commitments: semicolon-list of CONCRETE mutation promises in your THIS reply. Use SHORT phrases ("hold X 72h" / "noted Sir's correction" / "register reminder Y" / "remember 8 cups goal"). If you only ack/empathize without promising state change, use "none". IntegrityWatcher checks commitments vs real tool_called this turn; mismatch = "嘴上说但没真做" → next turn you must withdraw or supply evidence. Honesty rule: do NOT list a commitment if you did not actually intend (or system did not actually) make the corresponding mutation.
             """).rstrip(),
             trigger=_trigger_meta_self_check,
         ),

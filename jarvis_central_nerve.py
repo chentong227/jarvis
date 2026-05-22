@@ -2068,6 +2068,32 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [P5-fix20-B2 / 2026-05-22] [COMMITMENT MISMATCH] block
+        # Sir 14:32 真测痛点: 主脑嘴上说"我已经记下了 X" 但 IntentResolver 0 mutation.
+        # check_commitments_vs_mutations 比对 META.commitments vs 真 tool_called.
+        # 上一轮 turn_id mismatch → 本轮 prompt 看 [COMMITMENT MISMATCH] → 主脑自决撤回 or 补做.
+        try:
+            from jarvis_meta_self_check import render_commitment_mismatch_block as _cm_render
+            # 取上一轮 turn_id (主脑刚 emit 的 META 对应)
+            _last_turn = ''
+            try:
+                from jarvis_utils import get_event_bus as _geb
+                _bus = _geb()
+                if _bus is not None:
+                    _evs = _bus.recent_events(within_seconds=180.0,
+                                                  types={'main_brain_meta'}) or []
+                    if _evs:
+                        _last_turn = ((_evs[-1].get('metadata') or {}).get('turn_id', '')
+                                       or '')
+            except Exception:
+                pass
+            if _last_turn:
+                _cm_text = _cm_render(_last_turn, within_seconds=180.0)
+                if _cm_text:
+                    _parts.append(_cm_text)
+        except Exception:
+            pass
+
         # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] [SIR'S DECLARED STATUS] block
         # Sir 13:49 痛点: Smart Nudge 话术 "Soul Drive doc still active in Windsurf 90min"
         # — 但 Sir 12:06 明确说"睡觉了下午见". 系统不知道 → 用 IDE 窗口 idle 判.

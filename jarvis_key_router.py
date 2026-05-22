@@ -115,6 +115,21 @@ class KeyRouter:
                 _kr_bg(f"⚠️ [KeyRouter] 永久剔除状态载入失败（首次运行正常）: {_e}")
             except Exception:
                 pass
+
+        # 🆕 [P5-fix20-A1 / 2026-05-22] Sir 14:32 真测痛点修.
+        # 启动 health snapshot daemon — 每 15s 把 get_stats() 写到 disk
+        # (memory_pool/key_router_health.json), dashboard 进程读该文件即可
+        # 实时显示 key 池状态. 进程隔离不让 dashboard 直接持 KeyRouter.
+        try:
+            self._snapshot_stop = threading.Event()
+            self._snapshot_thread = threading.Thread(
+                target=self._snapshot_daemon_loop,
+                name='KeyRouterSnapshot',
+                daemon=True,
+            )
+            self._snapshot_thread.start()
+        except Exception:
+            pass
     
     def _init_key(self, key: str, label: str, provider: str, max_concurrent: int):
         self._active_calls[key] = 0
@@ -444,20 +459,262 @@ class KeyRouter:
     
     def get_stats(self) -> dict:
         self._reset_daily_counters()
+        # 🆕 [P5-fix20-A1 / 2026-05-22] Sir 14:32 真测发现 root cause:
+        # OpenRouter 全挂 + Google 池 429 → IntentResolver/Vision/Hippocampus 全降级,
+        # 主脑能开口但子系统 0 mutation → "嘴上说没真做". get_stats 扩展加 cooldown /
+        # permanent_death / last_error / pool_summary, 让 dashboard 一眼看 key 池状态.
+        now = time.time()
+        key_status = {}
+        for k, v in self._key_status.items():
+            label = v['label']
+            # cooldown 还剩几秒 (only for unhealthy + auto_recover-able + not permanent)
+            cooldown_remaining = 0
+            if (not v['healthy'] and not v.get('permanently_dead', False)
+                    and v['provider'] == self.PROVIDER_GOOGLE):
+                last_err_t = v.get('last_error_time', 0) or 0
+                if last_err_t > 0:
+                    elapsed = now - last_err_t
+                    cooldown_remaining = max(0, int(self._error_cooldown - elapsed))
+            key_status[label] = {
+                'healthy': v['healthy'],
+                'errors': v['error_count'],
+                'provider': v['provider'],
+                'permanently_dead': v.get('permanently_dead', False),
+                'permanent_death_count': v.get('permanent_death_count', 0),
+                'permanent_death_reason': v.get('permanent_death_reason', '')[:120],
+                'last_error': v.get('last_error', '')[:200],
+                'last_error_time': v.get('last_error_time', 0),
+                'cooldown_remaining_s': cooldown_remaining,
+                'in_cooldown': cooldown_remaining > 0,
+            }
+
+        # 池级 summary — Sir 一眼看哪个池挂了
+        pools = {
+            'main_brain': {'total': 1, 'healthy': 0, 'unhealthy': 0,
+                            'permanent_dead': 0, 'in_cooldown': 0},
+            'google': {'total': len(self._google_pool), 'healthy': 0,
+                        'unhealthy': 0, 'permanent_dead': 0, 'in_cooldown': 0},
+            'openrouter': {'total': len(self._openrouter_pool), 'healthy': 0,
+                            'unhealthy': 0, 'permanent_dead': 0, 'in_cooldown': 0},
+        }
+        for label, st in key_status.items():
+            if label == 'main_brain':
+                bucket = 'main_brain'
+            elif label.startswith('google_'):
+                bucket = 'google'
+            elif label.startswith('openrouter_'):
+                bucket = 'openrouter'
+            else:
+                continue
+            if st['healthy']:
+                pools[bucket]['healthy'] += 1
+            else:
+                pools[bucket]['unhealthy'] += 1
+            if st['permanently_dead']:
+                pools[bucket]['permanent_dead'] += 1
+            if st['in_cooldown']:
+                pools[bucket]['in_cooldown'] += 1
+
+        # 整体健康度 (worst pool 决定整体)
+        any_total_dead = any(
+            p['total'] > 0 and p['healthy'] == 0
+            for p in pools.values()
+        )
+        any_partial = any(
+            p['total'] > 0 and 0 < p['healthy'] < p['total']
+            for p in pools.values()
+        )
+        overall = 'crit' if any_total_dead else ('warn' if any_partial else 'ok')
+
         return {
             'openrouter_calls_today': self._openrouter_call_count_today,
-            'key_status': {
-                self._key_status[k]['label']: {
-                    'healthy': v['healthy'], 'errors': v['error_count'],
-                    'provider': v['provider']
-                }
-                for k, v in self._key_status.items()
-            },
+            'key_status': key_status,
             'active_calls': {
                 self._key_status[k]['label']: v
                 for k, v in self._active_calls.items()
             },
+            'pools': pools,
+            'overall_health': overall,
         }
+
+    def reset_cooldown(self, label: str) -> bool:
+        """🆕 [P5-fix20-A2 / 2026-05-22] Sir 一键强制结束 cooldown.
+
+        把 last_error_time 清零 → cooldown 立刻视为结束 → 下次 _pick_from_pool
+        会跳过 (因为 healthy=False), 但 _auto_recover thread 仍会按时执行.
+        Sir 想立刻复活 → reset_cooldown 后调 _force_healthy.
+
+        Returns: True 成功, False 不存在 / 永久死亡 (要 reset_permanent_death).
+        """
+        key = self._resolve_key(label)
+        if not key or key not in self._key_status:
+            return False
+        with self._lock:
+            status = self._key_status[key]
+            if status.get('permanently_dead', False):
+                return False  # permanent dead 要走 reset_permanent_death
+            status['healthy'] = True
+            status['error_count'] = 0
+            status['last_error'] = ''
+            status['last_error_time'] = 0
+        try:
+            from jarvis_utils import bg_log as _kr_bg
+            _kr_bg(f"✅ [KeyRouter] {label} cooldown 已强制结束 (Sir 手动 reset)")
+        except Exception:
+            pass
+        return True
+
+    # 🆕 [P5-fix20-A1 / 2026-05-22] health snapshot daemon
+    _HEALTH_SNAPSHOT_PATH = 'memory_pool/key_router_health.json'
+    _RESET_REQUEST_PATH = 'memory_pool/key_router_reset_request.json'
+    _RESET_AUDIT_PATH = 'memory_pool/key_router_reset_audit.jsonl'
+    _HEALTH_SNAPSHOT_INTERVAL_S = 15.0
+    _RESET_POLL_INTERVAL_S = 5.0  # reset 比 snapshot 快, 让 Sir 一键能 ≤5s 看到结果
+
+    def _snapshot_daemon_loop(self):
+        """每 15s 写 health snapshot + 每 5s poll reset_request.
+
+        合并到同一 thread 省资源. snapshot 间隔较大 (state 变化慢),
+        reset 必须响应快 (Sir 等结果). 用 _snapshot_stop.wait 做 interruptible sleep.
+        """
+        last_snapshot_ts = 0.0
+        while not self._snapshot_stop.is_set():
+            now = time.time()
+            # poll reset request (高频)
+            try:
+                self._poll_reset_request()
+            except Exception:
+                pass
+            # snapshot (低频)
+            if (now - last_snapshot_ts) >= self._HEALTH_SNAPSHOT_INTERVAL_S:
+                try:
+                    self._write_health_snapshot()
+                    last_snapshot_ts = now
+                except Exception:
+                    pass
+            # interruptible sleep
+            self._snapshot_stop.wait(self._RESET_POLL_INTERVAL_S)
+
+    def _write_health_snapshot(self):
+        """写 health snapshot 到 disk (子函数, 让 _snapshot_daemon_loop 干净)."""
+        import os as _os
+        import json as _json
+        path = self._HEALTH_SNAPSHOT_PATH
+        stats = self.get_stats()
+        stats['_snapshot_ts'] = time.time()
+        stats['_snapshot_iso'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+        try:
+            _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        except Exception:
+            pass
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            _json.dump(stats, f, ensure_ascii=False, indent=2)
+        _os.replace(tmp, path)
+
+    def _poll_reset_request(self):
+        """🆕 [P5-fix20-A2 / 2026-05-22] poll reset_request.json, 主进程执行 reset.
+
+        Dashboard / CLI 写 reset_request.json (action/label/consumed=false).
+        本 loop 读 → 执行对应 reset_* → 标记 consumed=true → 写 audit jsonl.
+        让 Sir 一键复活的请求在 ≤5s 内被主进程执行.
+        """
+        import os as _os
+        import json as _json
+        path = self._RESET_REQUEST_PATH
+        if not _os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                req = _json.load(f)
+        except Exception:
+            return
+        if not isinstance(req, dict) or req.get('consumed'):
+            return  # 已被处理过
+        action = (req.get('action', '') or '').strip().lower()
+        label = (req.get('label', '') or '').strip()
+        source = (req.get('source', '') or 'unknown').strip()
+        result: Dict[str, Any] = {'action': action, 'label': label, 'source': source}
+
+        if action == 'all':
+            r = self.reset_all()
+            result['outcome'] = 'ok'
+            result['reset_cooldown'] = r.get('reset_cooldown', [])
+            result['reset_permanent'] = r.get('reset_permanent', [])
+            n_total = len(result['reset_cooldown']) + len(result['reset_permanent'])
+            result['summary'] = f"复活 {n_total} 把 key (冷却 {len(result['reset_cooldown'])} + 永久死 {len(result['reset_permanent'])})"
+        elif action == 'cooldown':
+            ok = self.reset_cooldown(label) if label else False
+            result['outcome'] = 'ok' if ok else 'fail'
+            result['summary'] = f"reset_cooldown({label})={'ok' if ok else 'fail'}"
+        elif action == 'permanent':
+            ok = self.reset_permanent_death(label) if label else False
+            result['outcome'] = 'ok' if ok else 'fail'
+            result['summary'] = f"reset_permanent_death({label})={'ok' if ok else 'fail'}"
+        else:
+            result['outcome'] = 'unknown_action'
+            result['summary'] = f"unknown action: {action}"
+
+        # 标 consumed (写回 request 文件)
+        req['consumed'] = True
+        req['consumed_at'] = time.time()
+        req['result'] = result
+        try:
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                _json.dump(req, f, ensure_ascii=False, indent=2)
+            _os.replace(tmp, path)
+        except Exception:
+            pass
+
+        # 写 audit jsonl (debug + Sir 看历史)
+        try:
+            audit_path = self._RESET_AUDIT_PATH
+            _os.makedirs(_os.path.dirname(audit_path), exist_ok=True)
+            audit_line = {
+                'ts': time.time(),
+                'iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'request': {k: v for k, v in req.items() if k not in ('result',)},
+                'result': result,
+            }
+            with open(audit_path, 'a', encoding='utf-8') as f:
+                f.write(_json.dumps(audit_line, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+        # bg_log 让 Sir 一眼看到
+        try:
+            from jarvis_utils import bg_log as _kr_bg
+            _kr_bg(
+                f"⚡ [KeyRouter/Reset] 源={source} {result.get('summary', '')} "
+                f"(P5-fix20-A2 file-IPC)"
+            )
+        except Exception:
+            pass
+
+        # 立刻刷新 snapshot, 让 dashboard 在 5s 内看到新状态
+        try:
+            self._write_health_snapshot()
+        except Exception:
+            pass
+
+    def reset_all(self) -> dict:
+        """🆕 [P5-fix20-A2 / 2026-05-22] Sir 一键全清 — cooldown + permanent_death 一次性.
+
+        Returns: {reset_cooldown: [labels], reset_permanent: [labels]}
+        """
+        out = {'reset_cooldown': [], 'reset_permanent': []}
+        # 先 permanent
+        for key, status in list(self._key_status.items()):
+            if status.get('permanently_dead', False):
+                if self.reset_permanent_death(status['label']):
+                    out['reset_permanent'].append(status['label'])
+        # 再 cooldown
+        for key, status in list(self._key_status.items()):
+            if not status['healthy'] and not status.get('permanently_dead', False):
+                if self.reset_cooldown(status['label']):
+                    out['reset_cooldown'].append(status['label'])
+        return out
 
     # ====================================================================
     # [P0+18-b.5 / 2026-05-15] 启动诊断探针

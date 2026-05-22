@@ -132,6 +132,8 @@ class IntentResolver:
             'llm_fallback_fail': 0,
             'llm_fallback_latency_sum_ms': 0.0,
             'llm_parse_fail': 0,
+            # 🆕 [P5-fix20-B1 / 2026-05-22] vocab fast-path telemetry
+            'fast_path_hits': 0,
         }
 
     def register_tool(self, name: str, fn: Any) -> None:
@@ -362,11 +364,128 @@ class IntentResolver:
                 '_error': f'parse fail: {str(e)[:60]} resp={response_text[:120]}',
             }
 
+    # ---------------- vocab fast-path (P5-fix20-B1) ----------------
+
+    _VOCAB_PATH = 'memory_pool/intent_fast_path_vocab.json'
+
+    def _load_fast_path_vocab(self) -> List[Dict]:
+        """🆕 [P5-fix20-B1 / 2026-05-22] 读 fast-path vocab.
+
+        Sir 14:32 真测痛点: OpenRouter 全挂 → IntentResolver LLM 全 fail → 0 mutation.
+        fast-path 在 LLM 之前 keyword 匹配, 高确定性场景直达 tool, LLM 挂兜底.
+        准则 6 vocab 持久化 — 数据在 memory_pool/intent_fast_path_vocab.json,
+        Sir 通过 scripts/intent_fast_path_dump.py CLI 改, 不动源码.
+        """
+        try:
+            with open(self._VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return [v for v in data.get('vocab', []) if v.get('active')]
+        except Exception:
+            return []
+
+    def _render_template_value(self, value: Any, sir_utterance: str,
+                                  phrase: str) -> Any:
+        """🆕 [P5-fix20-B1] template render — 支持 {sir_utterance} / {after_phrase}.
+
+        - {sir_utterance}: 替换 Sir 原话
+        - {after_phrase}:  替换 phrase 之后的子串 (lowercase utterance), trim 首尾空白
+                           e.g. utterance='我想暂停 dashboard 项目', phrase='暂停'
+                           → after_phrase='dashboard 项目'
+        - {before_phrase}: 替换 phrase 之前的子串
+        非 str 原样返.
+        """
+        if not isinstance(value, str):
+            return value
+        out = value
+        if '{sir_utterance}' in out:
+            out = out.replace('{sir_utterance}', sir_utterance or '')
+        if '{after_phrase}' in out or '{before_phrase}' in out:
+            utt_lower = (sir_utterance or '').strip().lower()
+            p_lower = (phrase or '').lower()
+            if p_lower and p_lower in utt_lower:
+                idx = utt_lower.index(p_lower)
+                # 用 lower 找位, 但取原 case 子串
+                before = (sir_utterance or '')[:idx].strip()
+                after = (sir_utterance or '')[idx + len(p_lower):].strip()
+                # trim 标点 (中英常见)
+                for c in ('.,。,!?！？:;:；'):
+                    before = before.strip(c).strip()
+                    after = after.strip(c).strip()
+                out = out.replace('{after_phrase}', after)
+                out = out.replace('{before_phrase}', before)
+            else:
+                out = out.replace('{after_phrase}', '')
+                out = out.replace('{before_phrase}', '')
+        return out
+
+    def _check_vocab_fast_path(self, sir_utterance: str) -> List[Dict]:
+        """匹配 vocab → 返 tool_calls list (LLM 前的短路).
+
+        Returns: list of {'name', 'args', 'reason', '_via': 'fast_path', '_phrase': '...'}
+                 多条 vocab 命中 → 多条 tool_call (同一 tool 仅取首条 vocab, 防重复调).
+
+        skip 条件:
+          - vocab 抽 args 后含 None/空必填 → 跳过 (避免 tool 调用 fail)
+          - tool 不存在
+          - phrase len/utt len 不匹配
+        """
+        utt = (sir_utterance or '').strip().lower()
+        if not utt:
+            return []
+        vocab = self._load_fast_path_vocab()
+        if not vocab:
+            return []
+        matched = []
+        seen_tools: set = set()
+        for v in vocab:
+            phrase = (v.get('phrase') or '').lower().strip()
+            if not phrase:
+                continue
+            min_len = v.get('min_utterance_len', 0)
+            max_len = v.get('max_utterance_len', 0)
+            if len(utt) < min_len:
+                continue
+            if max_len > 0 and len(utt) > max_len:
+                continue
+            if phrase not in utt:
+                continue
+            tool_name = v.get('tool_name', '')
+            if not tool_name or tool_name not in self.tools:
+                continue
+            if tool_name in seen_tools:
+                continue  # 同一 tool 已命中过 (vocab list order = priority)
+            # render args template
+            args_t = dict(v.get('tool_args_template') or {})
+            args = {}
+            skip = False
+            required_args = v.get('required_args', [])  # vocab 可声明 必填字段
+            for ak, av in args_t.items():
+                rendered = self._render_template_value(av, sir_utterance, phrase)
+                if ak in required_args and not rendered:
+                    skip = True
+                    break  # 必填空 → 跳过这条 vocab (防 tool 调用 fail)
+                args[ak] = rendered
+            if skip:
+                continue
+            matched.append({
+                'name': tool_name,
+                'args': args,
+                'reason': f"fast-path: '{phrase}' (conf={v.get('confidence', '?')})",
+                '_via': 'fast_path',
+                '_phrase': phrase,
+            })
+            seen_tools.add(tool_name)
+        return matched
+
     # ---------------- 主入口 ----------------
 
     def resolve_turn(self, turn_id: str, sir_utterance: str,
                      require_candidates: bool = False) -> Dict:
         """turn 末尾调. 收 SWM candidate + state evidence → LLM judge → 调 tool → publish intent_resolved.
+
+        🆕 [P5-fix20-B1 / 2026-05-22] LLM 之前先跑 _check_vocab_fast_path —
+        高确定性 vocab (e.g. "暂停 X") 命中即直达 tool, 不耗 LLM token.
+        LLM judge fail 时 fast-path 命中也兜底.
 
         Args:
           turn_id: 本轮 ID
@@ -375,9 +494,11 @@ class IntentResolver:
                               False (默认) = 无 candidate 也基于 utterance + state 直接 LLM judge.
                               过渡期 (B 没改完) 用 False; B 完成后改 True 节省 token.
 
-        Returns: {'tool_calls': [...], 'executed': [...], 'reason': str}
+        Returns: {'tool_calls': [...], 'executed': [...], 'reason': str,
+                   'fast_path_matched': bool}
         """
-        result = {'tool_calls': [], 'executed': [], 'reason': ''}
+        result = {'tool_calls': [], 'executed': [], 'reason': '',
+                    'fast_path_matched': False}
 
         candidates = self._collect_candidates()
         if not candidates and require_candidates:
@@ -393,6 +514,31 @@ class IntentResolver:
         if not self.tools:
             result['reason'] = 'no tools registered'
             return result
+
+        # 🆕 [P5-fix20-B1] vocab fast-path 先跑 (高确定性场景 skip LLM)
+        fast_path_calls = self._check_vocab_fast_path(sir_utterance)
+        if fast_path_calls:
+            result['fast_path_matched'] = True
+            try:
+                from jarvis_utils import bg_log
+                phrases = [c.get('_phrase') for c in fast_path_calls]
+                bg_log(
+                    f"⚡ [IntentResolver/FastPath] turn={turn_id[:20]} "
+                    f"matched {len(fast_path_calls)} vocab → "
+                    f"{[c['name'] for c in fast_path_calls]} "
+                    f"(phrases={phrases}) — skip LLM judge"
+                )
+            except Exception:
+                pass
+            # fast-path 直接走 tool 执行路径, 不调 LLM
+            return self._execute_tool_calls(
+                turn_id=turn_id,
+                sir_utterance=sir_utterance,
+                candidates=candidates,
+                tool_calls=fast_path_calls,
+                via='fast_path',
+                result=result,
+            )
 
         prompt = INTENT_RESOLVER_PROMPT.format(
             sir_utterance=str(sir_utterance or '')[:500],
@@ -423,9 +569,31 @@ class IntentResolver:
             return result
 
         tool_calls = plan.get('tool_calls', [])
+        return self._execute_tool_calls(
+            turn_id=turn_id,
+            sir_utterance=sir_utterance,
+            candidates=candidates,
+            tool_calls=tool_calls,
+            via='llm',
+            result=result,
+        )
+
+    def _execute_tool_calls(self, turn_id: str, sir_utterance: str,
+                             candidates: List[Dict],
+                             tool_calls: List[Dict],
+                             via: str,
+                             result: Dict) -> Dict:
+        """🆕 [P5-fix20-B1 / 2026-05-22] 执行 tool_calls + publish — 抽出来让
+        LLM 路径和 fast-path 共用 (复用所有 publish / ErrorBus / stats / log).
+
+        Args:
+          turn_id, sir_utterance, candidates: turn 上下文 (publish 元信息)
+          tool_calls: list of {name, args, reason, [_via, _phrase]}
+          via: 'llm' / 'fast_path' (publish 时 metadata 标识)
+          result: 已部分填充的 result dict (会就地更新 + 返)
+        """
         result['tool_calls'] = tool_calls
 
-        # 执行 tools, publish tool_called
         bus = None
         if self.nerve is not None:
             bus = getattr(self.nerve, 'event_bus', None)
@@ -440,13 +608,15 @@ class IntentResolver:
             name = (tc.get('name') or '').strip()
             args = tc.get('args') or {}
             reason = (tc.get('reason') or '')[:120]
+            tc_via = tc.get('_via', via)
+            tc_phrase = tc.get('_phrase', '')
             if not name or name not in self.tools:
                 # tool 不存在 → 记 failed
                 if bus is not None:
                     try:
                         bus.publish(
                             etype='tool_called',
-                            description=f'tool {name} unknown (LLM 编了名字)',
+                            description=f'tool {name} unknown ({tc_via} 编了名字)',
                             source='IntentResolver',
                             salience=0.5,
                             metadata={
@@ -456,6 +626,7 @@ class IntentResolver:
                                 'ok': False,
                                 'error': 'unknown_tool',
                                 'reason': reason,
+                                'via': tc_via,
                             },
                         )
                     except Exception:
@@ -463,7 +634,7 @@ class IntentResolver:
                 with self._lock:
                     self._stats['tools_failed_total'] += 1
                 result['executed'].append({
-                    'name': name, 'ok': False, 'error': 'unknown_tool',
+                    'name': name, 'ok': False, 'error': 'unknown_tool', 'via': tc_via,
                 })
                 continue
 
@@ -473,24 +644,22 @@ class IntentResolver:
             tool_result = None
             try:
                 tool_result = fn(**args)
-                # tool fn 应返 {'ok': bool, 'result': any, 'error': str}
                 if isinstance(tool_result, dict):
                     ok = bool(tool_result.get('ok', True))
                     err = str(tool_result.get('error', ''))[:200]
                 else:
-                    ok = True  # 没返 dict, 默认成功
+                    ok = True
             except Exception as e:
                 ok = False
                 err = str(e)[:200]
 
-            # 🩹 [β.5.43-F / 2026-05-20] tool fail → ErrorBus 主动暴露
             if not ok:
                 try:
                     from jarvis_error_bus import report_error, SEVERITY_MODERATE
                     report_error(
                         module='intent_resolver',
                         kind=f'tool_fail.{name}',
-                        detail=f'{err} (args={json.dumps(args, ensure_ascii=False)[:100]})',
+                        detail=f'{err} (via={tc_via} args={json.dumps(args, ensure_ascii=False)[:100]})',
                         severity=SEVERITY_MODERATE,
                         recoverable=True,
                         suggested_action=f'check {name} preconditions or skip this turn',
@@ -505,6 +674,7 @@ class IntentResolver:
                         description=(
                             f'{"✓" if ok else "✗"} {name}'
                             f'({json.dumps(args, ensure_ascii=False)[:80]})'
+                            + (f' [via={tc_via}]' if tc_via != 'llm' else '')
                         ),
                         source='IntentResolver',
                         salience=0.85 if ok else 0.75,
@@ -516,6 +686,8 @@ class IntentResolver:
                             'error': err,
                             'reason': reason,
                             'result_summary': str(tool_result)[:200],
+                            'via': tc_via,
+                            'phrase': tc_phrase,
                         },
                     )
                 except Exception:
@@ -527,7 +699,7 @@ class IntentResolver:
                 else:
                     self._stats['tools_failed_total'] += 1
             result['executed'].append({
-                'name': name, 'ok': ok, 'error': err,
+                'name': name, 'ok': ok, 'error': err, 'via': tc_via,
             })
 
         # publish intent_resolved (turn-level 报告, 主脑必看)
@@ -540,6 +712,7 @@ class IntentResolver:
                         f"calls={len(tool_calls)}, "
                         f"ok={sum(1 for e in result['executed'] if e.get('ok'))}/"
                         f"{len(result['executed'])}"
+                        + (f" [via={via}]" if via != 'llm' else '')
                     ),
                     source='IntentResolver',
                     salience=0.90,
@@ -548,6 +721,7 @@ class IntentResolver:
                         'sir_utterance_excerpt': str(sir_utterance or '')[:200],
                         'tool_calls': result['executed'],
                         'candidates_count': len(candidates),
+                        'via': via,
                     },
                 )
             except Exception:
@@ -556,25 +730,28 @@ class IntentResolver:
         with self._lock:
             self._stats['turns_resolved'] += 1
             self._stats['last_resolve_ts'] = time.time()
+            # 🆕 [P5-fix20-B1] fast-path 命中计数 (telemetry)
+            if via == 'fast_path':
+                self._stats['fast_path_hits'] = self._stats.get('fast_path_hits', 0) + 1
 
         try:
             from jarvis_utils import bg_log
             ok_n = sum(1 for e in result['executed'] if e.get('ok'))
             bg_log(
                 f"🧭 [IntentResolver] turn={turn_id[:20]} "
-                f"candidates={len(candidates)} → "
+                f"candidates={len(candidates)} via={via} → "
                 f"tools={ok_n}/{len(result['executed'])} ok"
             )
         except Exception:
             pass
 
-        # 🆕 [β.5.46-fix14 / 2026-05-22] persist telemetry 让 Sir 跨进程看 A/B
         try:
             self._persist_telemetry()
         except Exception:
             pass
 
-        result['reason'] = f'resolved {len(candidates)} candidates → {len(tool_calls)} tool calls'
+        result['reason'] = (f'resolved {len(candidates)} candidates → '
+                              f'{len(tool_calls)} tool calls (via={via})')
         return result
 
     def _persist_telemetry(self) -> None:

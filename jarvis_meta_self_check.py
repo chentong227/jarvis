@@ -60,6 +60,10 @@ class MetaSelfCheck:
     reaction: str = 'voice'                             # voice / silent_text / silence
     skip_alert: bool = False                            # 主脑明确拒绝道歉?
     note: str = ''                                       # 自由文本 note (<= 60 chars)
+    # 🆕 [P5-fix20-B2 / 2026-05-22] commitments 列表 — 主脑承认本轮承诺哪些 mutation
+    # IntegrityWatcher 看 commitments vs 真 tool_called 数, 差异 = '嘴上说没真做'.
+    # e.g. ['note', 'remember 8 cups goal', 'hold dashboard 72h']
+    commitments: List[str] = field(default_factory=list)
     raw_line: str = ''                                   # 原始 [META] 行 (debug)
     parse_ok: bool = False                              # parse 成功?
 
@@ -69,6 +73,7 @@ class MetaSelfCheck:
             'reaction': self.reaction,
             'skip_alert': bool(self.skip_alert),
             'note': self.note,
+            'commitments': list(self.commitments),
             'raw_line': self.raw_line,
             'parse_ok': bool(self.parse_ok),
         }
@@ -131,6 +136,12 @@ def parse_meta(reply_text: str) -> Tuple[str, MetaSelfCheck]:
         meta.skip_alert = (sa == 'yes' or sa == 'true' or sa == '1')
         # note
         meta.note = kv_dict.get('note', '').strip()[:60]
+        # 🆕 [P5-fix20-B2 / 2026-05-22] commitments — 'a;b;c' or 'a,b,c' (分号优先, 防 note 内有逗号)
+        co_str = kv_dict.get('commitments', '').strip()
+        if co_str and co_str.lower() not in ('none', '[]', '-'):
+            sep = ';' if ';' in co_str else ','
+            meta.commitments = [c.strip()[:120] for c in co_str.split(sep)
+                                  if c.strip() and c.strip().lower() not in ('none', '-')]
         meta.parse_ok = True
     except Exception:
         meta.parse_ok = False
@@ -251,6 +262,153 @@ def read_recent_meta(limit: int = 20,
         except Exception:
             continue
     return out
+
+
+# ============================================================
+# 🆕 [P5-fix20-B2 / 2026-05-22] commitments vs mutation 检查
+# Sir 14:32 真测痛点: 主脑嘴上说"我已经记下了"但 IntentResolver 0 tool_called.
+# 此函数比对 META.commitments vs 本 turn 的真 tool_called 数, mismatch =
+# "嘴上说没真做". 主脑下轮 prompt 看 [COMMITMENT MISMATCH] block, 自决撤回 or 补做.
+# ============================================================
+
+def check_commitments_vs_mutations(turn_id: str,
+                                     within_seconds: float = 60.0,
+                                     event_bus=None,
+                                     audit_path: Optional[str] = None
+                                     ) -> Dict[str, Any]:
+    """对比 META.commitments vs 本 turn 真 tool_called.
+
+    Args:
+      turn_id: 要检查的 turn
+      within_seconds: SWM 事件回看窗口
+      event_bus: 注入用 (None = get_event_bus())
+      audit_path: 测试用
+
+    Returns:
+      {
+        'turn_id': str,
+        'commitments': List[str],           # 主脑嘴上说的
+        'commitments_count': int,
+        'mutations_ok': int,                # 真 tool_called ok=True
+        'mutations_fail': int,              # 真 tool_called ok=False
+        'mutations_via': List[str],         # llm / fast_path
+        'mismatch': bool,                   # commitments > 0 但 mutations_ok < commitments
+        'status': 'ok' / 'partial' / 'mismatch' / 'no_commitments' / 'no_meta',
+        'reason': str (人话原因),
+      }
+    """
+    result: Dict[str, Any] = {
+        'turn_id': turn_id,
+        'commitments': [],
+        'commitments_count': 0,
+        'mutations_ok': 0,
+        'mutations_fail': 0,
+        'mutations_via': [],
+        'mismatch': False,
+        'status': 'no_meta',
+        'reason': '',
+    }
+    if not turn_id:
+        result['reason'] = 'no turn_id'
+        return result
+
+    # 1. 读 META audit
+    meta = find_meta_for_turn(turn_id, audit_path=audit_path)
+    if not meta:
+        result['reason'] = 'no META audit for this turn'
+        return result
+    commitments = meta.get('commitments', []) or []
+    result['commitments'] = list(commitments)
+    result['commitments_count'] = len(commitments)
+    if not commitments:
+        result['status'] = 'no_commitments'
+        result['reason'] = '主脑本轮 commitments=none (无 mutation 承诺)'
+        return result
+
+    # 2. 收同 turn 的 tool_called events (from IntentResolver)
+    bus = event_bus
+    if bus is None:
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+        except Exception:
+            bus = None
+    if bus is None:
+        result['status'] = 'mismatch'
+        result['mismatch'] = True
+        result['reason'] = f'no event_bus, 无法验证 commitments {commitments}'
+        return result
+
+    try:
+        events = bus.recent_events(within_seconds=within_seconds,
+                                       types={'tool_called'}) or []
+    except Exception:
+        events = []
+    ok_n = 0
+    fail_n = 0
+    via_list: List[str] = []
+    for ev in events:
+        meta_ev = ev.get('metadata') or {}
+        if meta_ev.get('turn_id') != turn_id:
+            continue
+        via_list.append(meta_ev.get('via', '?'))
+        if meta_ev.get('ok'):
+            ok_n += 1
+        else:
+            fail_n += 1
+    result['mutations_ok'] = ok_n
+    result['mutations_fail'] = fail_n
+    result['mutations_via'] = via_list
+
+    # 3. 判断 mismatch
+    if ok_n >= len(commitments):
+        result['status'] = 'ok'
+        result['reason'] = (f'commitments {len(commitments)} 全部对得上 '
+                              f'tool_called ok={ok_n}')
+    elif ok_n > 0:
+        result['status'] = 'partial'
+        result['mismatch'] = True
+        result['reason'] = (f'commitments={len(commitments)} 但仅 {ok_n} 个 '
+                              f'tool_called ok (fail={fail_n}) → 部分嘴上说没真做')
+    else:
+        result['status'] = 'mismatch'
+        result['mismatch'] = True
+        result['reason'] = (f'commitments={len(commitments)} 但 0 tool_called ok '
+                              f'(fail={fail_n}) → 完全嘴上说没真做')
+
+    return result
+
+
+def render_commitment_mismatch_block(turn_id: str,
+                                       within_seconds: float = 60.0,
+                                       audit_path: Optional[str] = None) -> str:
+    """渲染 [COMMITMENT MISMATCH] block 给主脑下轮 prompt 看.
+
+    仅 mismatch=True 时返非空 str, 否则空.
+    """
+    chk = check_commitments_vs_mutations(turn_id,
+                                            within_seconds=within_seconds,
+                                            audit_path=audit_path)
+    if not chk.get('mismatch'):
+        return ''
+    co = chk['commitments']
+    co_str = '; '.join(f'"{c}"' for c in co[:5])
+    if len(co) > 5:
+        co_str += f' ... (+{len(co)-5} more)'
+    lines = [
+        '[COMMITMENT MISMATCH — P5-fix20-B2 / Sir 14:32 痛点: 嘴上说没真做]',
+        f'  上一轮 (turn={turn_id[:24]}) 你的 [META] 写了 {chk["commitments_count"]} 条 commitments:',
+        f'    {co_str}',
+        f'  但 IntentResolver 真 tool_called ok={chk["mutations_ok"]} / '
+        f'fail={chk["mutations_fail"]}.',
+        f'  → {chk["reason"]}',
+        '',
+        '  你本轮选择 (准则 5 言出必行):',
+        '    A. 主动 inline acknowledge "Sir, 我刚说的 X 没真生效 (LLM 挂/tool fail), 我现在重试 / 您要不要手动 Y" — 不要装没说.',
+        '    B. 如果当时只是 verbal ack / empathize 而非真承诺 mutation, 这轮 [META] commitments=none, 不再列已落空的项.',
+        '  ❌ 错误反应: 装没说过 / 再次列同样 commitments 但仍不做.',
+    ]
+    return '\n'.join(lines)
 
 
 def find_meta_for_turn(turn_id: str,

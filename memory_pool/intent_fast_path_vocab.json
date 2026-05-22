@@ -1,0 +1,131 @@
+{
+  "_doc": "[P5-fix20-B1 / 2026-05-22] IntentResolver vocab fast-path. 准则 6 vocab 持久化范式. Sir 14:32 真测痛点: OpenRouter 全挂 → IntentResolver LLM 全 fail → mutation 0 → 嘴上说没真做. fast-path 让高确定性的 hold/dismiss/简单 commit 不走 LLM (省 token + LLM 挂兜底).",
+  "_schema": {
+    "phrase": "lowercase substring 匹配 Sir utterance, 命中即触发",
+    "tool_name": "调哪个 tool (必须在 TOOL_REGISTRY)",
+    "tool_args_template": "tool 入参 template, 用 {sir_utterance} / {after_phrase} / {before_phrase} 占位符",
+    "required_args": "list of arg key names whose rendered value must be non-empty; 空 → skip 这条 vocab",
+    "min_utterance_len": "Sir 句长下限, 防短句误触 (默认 4)",
+    "max_utterance_len": "Sir 句长上限, 防长句不该 fast-path 的, 0 = 无上限",
+    "confidence": "fast-path 命中可信度 (0-1, 仅 audit 用)",
+    "lang": "zh / en / any",
+    "active": "true 才参与匹配, false 仅记录待 Sir 拍板",
+    "source": "manual / l7_reflector / sir_correction",
+    "added_at": "ISO timestamp",
+    "added_by": "sir / agent / l7_reflector"
+  },
+  "vocab": [
+    {
+      "phrase": "暂停",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{after_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 4,
+      "max_utterance_len": 60,
+      "confidence": 0.9,
+      "lang": "zh",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir",
+      "note": "Sir 14:32 真测痛点 — 'hold/暂停 X 项目' OpenRouter 全挂时主脑能开口但 0 mutation"
+    },
+    {
+      "phrase": "搁置",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{after_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 4,
+      "max_utterance_len": 60,
+      "confidence": 0.9,
+      "lang": "zh",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir"
+    },
+    {
+      "phrase": "先放一放",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{after_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 4,
+      "max_utterance_len": 60,
+      "confidence": 0.85,
+      "lang": "zh",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir"
+    },
+    {
+      "phrase": "hold off",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{after_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 6,
+      "max_utterance_len": 80,
+      "confidence": 0.85,
+      "lang": "en",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir"
+    },
+    {
+      "phrase": "put on hold",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{before_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 6,
+      "max_utterance_len": 80,
+      "confidence": 0.85,
+      "lang": "en",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir",
+      "note": "'X put on hold' → before_phrase=X"
+    },
+    {
+      "phrase": "shelve",
+      "tool_name": "project_hold",
+      "tool_args_template": {
+        "project_keyword": "{after_phrase}",
+        "raw_text": "{sir_utterance}",
+        "hours": 72.0
+      },
+      "required_args": ["project_keyword"],
+      "min_utterance_len": 5,
+      "max_utterance_len": 80,
+      "confidence": 0.85,
+      "lang": "en",
+      "active": true,
+      "source": "manual",
+      "added_at": "2026-05-22T14:40:00",
+      "added_by": "sir",
+      "note": "'shelve X' → after_phrase=X"
+    }
+  ],
+  "review_queue": []
+}

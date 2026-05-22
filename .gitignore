@@ -62,6 +62,21 @@ memory_pool/jarvis_promise_log.json
 memory_pool/jarvis_health_history.jsonl
 # [P0+20-β.4.5.1 / 2026-05-18] ClaimStatsDumper 跨进程持久化: in-memory counter snapshot
 memory_pool/claim_stats.json
+# [P5-fix20-A1/A2 / 2026-05-22] KeyRouter health snapshot + reset IPC + audit: runtime
+memory_pool/key_router_health.json
+memory_pool/key_router_reset_request.json
+memory_pool/key_router_reset_audit.jsonl
+# [β.5.46-fix14 / 2026-05-22] IntentResolver A/B telemetry: runtime stats snapshot
+memory_pool/intent_resolver_telemetry.json
+# [P5-IntegrityWatcher / 2026-05-21] runtime claim store + cross-session callback
+memory_pool/integrity_watcher.json
+memory_pool/claim_revisions.json
+memory_pool/cross_session_callback.json
+# [P5-SirStatusTracker / 2026-05-21] Sir 自报状态 + 已 ack runtime
+memory_pool/sir_status.json
+memory_pool/sir_acked_state.json
+# [P5-Gap3 / 2026-05-21] ScreenVisionEngine 屏幕快照: runtime
+memory_pool/screen_snapshot.json
 # memory_pool 下的 .bak 文件 (jsonl tainted 备份 / promise_log 归档备份等 runtime 残留)
 memory_pool/*.bak
 jarvis_config/screenshots/
