@@ -468,6 +468,122 @@ class RelationalStateStore:
             return True
 
     # ---------------------------------------------------------
+    # 🆕 [P5-fix32-I / 2026-05-22] update_field — 深度 update (Phase 2.2)
+    # ---------------------------------------------------------
+    # Sir 21:55 mutation refactor Phase 2.2: Sir 想改 jokes/protocols/threads/unfinished
+    # 的字段 (例: 改 inside_joke 的 phrase, 改 protocol 的 rule).
+    # 设计跟 ConcernsLedger.update_concern_field 一致 — schema 白名单 + audit + SWM publish.
+    # 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 6 Phase 2.2
+
+    # 4 类 entity 各自允许 update 的字段白名单
+    _UPDATE_ALLOWED_FIELDS = {
+        'inside_joke': frozenset({'phrase', 'birth_context', 'tone', 'ttl_days'}),
+        'protocol':    frozenset({'rule', 'ttl_days'}),
+        'thread':      frozenset({'title', 'detail', 'ttl_days'}),
+        'unfinished':  frozenset({'topic', 'detail', 'ttl_days'}),
+    }
+
+    def update_field(self, kind: str, item_id: str, field: str, new_value,
+                       source: str = 'fast_call_mutation',
+                       turn_id: str = '',
+                       reason: str = '') -> tuple:
+        """统一 update entity 字段 (深度 update, 不是 archive/reactivate).
+
+        Args:
+          kind: 'inside_joke' | 'protocol' | 'thread' | 'unfinished'
+          item_id: target entity id
+          field: top-level field (must be in _UPDATE_ALLOWED_FIELDS[kind])
+          new_value: 新值
+          source / turn_id / reason: audit
+
+        Returns:
+          (ok: bool, message: str, old_value: any)
+        """
+        if not kind or kind not in self._UPDATE_ALLOWED_FIELDS:
+            return (False,
+                      f"unknown kind '{kind}' (allowed: "
+                      f"{sorted(self._UPDATE_ALLOWED_FIELDS.keys())})",
+                      None)
+        if not item_id:
+            return False, 'empty item_id', None
+        if not field:
+            return False, 'empty field', None
+        allowed = self._UPDATE_ALLOWED_FIELDS[kind]
+        if field not in allowed:
+            return (False,
+                      f"field '{field}' not in allowed for kind '{kind}' "
+                      f"(allowed: {sorted(allowed)})",
+                      None)
+
+        # Locate entity (kind → store map)
+        store_map = {
+            'inside_joke': self.inside_jokes,
+            'protocol':    self.unspoken_protocols,
+            'thread':      self.shared_history_threads,
+            'unfinished':  self.unfinished_business,
+        }
+        store = store_map[kind]
+
+        with self._lock:
+            entity = store.get(item_id)
+            if entity is None:
+                return False, f'{kind} {item_id} not found', None
+
+            old_value = getattr(entity, field, None)
+            if old_value == new_value:
+                return True, f'no-op ({kind}.{field} already {str(new_value)[:40]})', old_value
+
+            # Type coerce + clamp
+            try:
+                if field == 'ttl_days':
+                    nv = max(1, min(3650, int(new_value)))
+                elif field in ('phrase',):
+                    nv = str(new_value)[:120]
+                elif field in ('birth_context', 'detail', 'rule'):
+                    nv = str(new_value)[:500]
+                elif field in ('tone',):
+                    nv = str(new_value)[:60]
+                elif field in ('title', 'topic'):
+                    nv = str(new_value)[:120]
+                else:
+                    nv = new_value
+            except (TypeError, ValueError) as _ve:
+                return False, f'value coerce fail: {_ve}', old_value
+
+            setattr(entity, field, nv)
+            self._dirty = True
+
+        # SWM publish (锁外)
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='relational_field_updated',
+                    description=(
+                        f"{kind} {item_id}.{field} = '{str(nv)[:60]}' "
+                        f"(was: '{str(old_value)[:40]}', src={source})"
+                    ),
+                    source='relational_state',
+                    salience=0.7,
+                    metadata={
+                        'kind': kind,
+                        'item_id': item_id,
+                        'field': field,
+                        'old_value': str(old_value)[:200],
+                        'new_value': str(nv)[:200],
+                        'source': source,
+                        'turn_id': turn_id,
+                        'reason': reason[:200],
+                    },
+                    ttl=86400.0,
+                )
+        except Exception:
+            pass
+
+        return True, f'{kind}.{item_id}.{field} updated', old_value
+
+    # ---------------------------------------------------------
     # Review Queue（β.2.4.4：SoulArchivistSentinel 自动 propose 不直接 active）
     # ---------------------------------------------------------
 

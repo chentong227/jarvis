@@ -390,23 +390,45 @@ class MemoryMutationGateway:
                             err = f'update_by_keyword exception: {_cue}'
                     else:
                         err = f'unknown commitment op: {op} (need cancel/update)'
-            # 🆕 [P5-fix32-C / 2026-05-22 22:25] RelationalStateStore routing
+            # 🆕 [P5-fix32-C+I / 2026-05-22] RelationalStateStore routing
             # field_path 形如:
             #   'relationships.archive_joke.<jid>'   → archive_inside_joke
             #   'protocol.archive.<pid>'              → archive_protocol
             #   'unfinished.done.<uid>'               → mark_unfinished_done
             #   'thread.archive.<tid>'                → archive_thread
+            #   🆕 [P5-fix32-I / Phase 2.2] depth update:
+            #   '<kind>.update.<item_id>.<field>'     → update_field
+            #   e.g. 'inside_joke.update.j1.phrase'
             elif layer == 'RelationalStateStore':
                 rs = getattr(nerve, 'relational_state', None) if nerve else None
                 if rs is None:
                     err = 'RelationalStateStore not available'
                 else:
-                    parts = field_path.split('.', 2)
-                    kind = parts[0]  # relationships / protocol / unfinished / thread
+                    parts = field_path.split('.', 3)  # 允许 4 段
+                    kind = parts[0]  # relationships / protocol / unfinished / thread / inside_joke
                     op = parts[1] if len(parts) >= 2 else ''
                     item_id = parts[2] if len(parts) >= 3 else str(new_value)
+                    sub_field = parts[3] if len(parts) >= 4 else ''
                     try:
-                        if kind in ('relationships', 'inside_joke') and op == 'archive':
+                        # 🆕 [P5-fix32-I] update.<item_id>.<field> 深度 update
+                        if op == 'update' and sub_field and hasattr(rs, 'update_field'):
+                            # 'relationships' 是 alias for 'inside_joke'
+                            kind_norm = ('inside_joke' if kind == 'relationships'
+                                            else kind)
+                            uf_ok, uf_msg, uf_old = rs.update_field(
+                                kind=kind_norm,
+                                item_id=item_id,
+                                field=sub_field,
+                                new_value=new_value,
+                                source=source,
+                                turn_id=turn_id,
+                            )
+                            ok = uf_ok
+                            if not uf_ok:
+                                err = uf_msg
+                            elif uf_old is not None:
+                                old_excerpt = str(uf_old)[:100]
+                        elif kind in ('relationships', 'inside_joke') and op == 'archive':
                             ok = rs.archive_inside_joke(item_id)
                             if not ok:
                                 err = f'inside_joke {item_id} not found'
@@ -425,7 +447,8 @@ class MemoryMutationGateway:
                         else:
                             err = (f'unknown relational op: kind={kind} op={op} '
                                       f'(need relationships.archive/protocol.archive/'
-                                      f'unfinished.done/thread.archive)')
+                                      f'unfinished.done/thread.archive/'
+                                      f'<kind>.update.<id>.<field>)')
                     except Exception as _re:
                         err = f'relational mutation exception: {_re}'
             else:

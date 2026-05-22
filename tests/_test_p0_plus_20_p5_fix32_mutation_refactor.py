@@ -359,6 +359,99 @@ class TestConcernUpdateField(unittest.TestCase):
 
 
 # ============================================================
+# 5c. RelationalStateStore.update_field (Phase 2.2)
+# ============================================================
+
+class TestRelationalUpdateField(unittest.TestCase):
+    """[P5-fix32-I] RelationalStateStore.update_field — 4 kind depth update."""
+
+    def setUp(self):
+        from jarvis_relational import (RelationalStateStore, InsideJoke,
+                                              UnspokenProtocol, SharedHistoryThread,
+                                              UnfinishedBusiness)
+        self.tmp_dir = tempfile.mkdtemp(prefix='relational_upd_test_')
+        self.persist_path = os.path.join(self.tmp_dir, 'relational.json')
+        self.rs = RelationalStateStore(persist_path=self.persist_path)
+        # Seed: 4 entities
+        self.rs.add_inside_joke(InsideJoke(
+            id='j1', phrase='初代笑话', birth_context='ctx1', tone='wry',
+        ))
+        self.rs.add_protocol(UnspokenProtocol(
+            id='p1', rule='I should not interrupt Sir mid-sentence',
+        ))
+        self.rs.add_thread(SharedHistoryThread(
+            id='t1', title='Built J.A.R.V.I.S.', detail='initial detail',
+        ))
+        self.rs.add_unfinished(UnfinishedBusiness(
+            id='u1', topic='driver license study', detail='科一未完',
+        ))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_update_inside_joke_phrase(self):
+        ok, msg, old = self.rs.update_field(
+            'inside_joke', 'j1', 'phrase', '新版笑话',
+            source='fast_call_mutation:refine',
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(old, '初代笑话')
+        self.assertEqual(self.rs.inside_jokes['j1'].phrase, '新版笑话')
+
+    def test_update_protocol_rule(self):
+        new_rule = 'I should wait 3 seconds before responding'
+        ok, msg, old = self.rs.update_field(
+            'protocol', 'p1', 'rule', new_rule,
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(self.rs.unspoken_protocols['p1'].rule, new_rule)
+
+    def test_update_thread_detail(self):
+        ok, msg, old = self.rs.update_field(
+            'thread', 't1', 'detail', 'updated detail',
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(self.rs.shared_history_threads['t1'].detail,
+                          'updated detail')
+
+    def test_update_unfinished_topic(self):
+        ok, msg, old = self.rs.update_field(
+            'unfinished', 'u1', 'topic', 'driver license practice',
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(self.rs.unfinished_business['u1'].topic,
+                          'driver license practice')
+
+    def test_update_rejects_unknown_kind(self):
+        ok, msg, _ = self.rs.update_field(
+            'unknown_kind', 'x', 'phrase', 'foo',
+        )
+        self.assertFalse(ok)
+        self.assertIn("unknown kind", msg)
+
+    def test_update_rejects_non_whitelist_field(self):
+        ok, msg, _ = self.rs.update_field(
+            'inside_joke', 'j1', 'state', 'archived',  # state 不在白名单
+        )
+        self.assertFalse(ok)
+        self.assertIn('not in allowed', msg)
+
+    def test_update_rejects_unknown_item(self):
+        ok, msg, _ = self.rs.update_field(
+            'inside_joke', 'no_such_id', 'phrase', 'foo',
+        )
+        self.assertFalse(ok)
+        self.assertIn('not found', msg)
+
+    def test_update_no_op_returns_ok(self):
+        ok, msg, _ = self.rs.update_field(
+            'inside_joke', 'j1', 'phrase', '初代笑话',  # same as initial
+        )
+        self.assertTrue(ok)
+        self.assertIn('no-op', msg)
+
+
+# ============================================================
 # 6. SWM publish on overwrite_field
 # ============================================================
 
