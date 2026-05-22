@@ -647,13 +647,23 @@ python scripts/mutation_dump.py --stats
 python scripts/mutation_dump.py --show mut_xxxxxxxx
 ```
 
-## 9.3 Phase 2 待 Sir 拍板项
+## 9.3 Phase 2 已交付 + 跳过项
 
-| 项 | 优先 | 范围 |
-|---|---|---|
-| `[SIR NOW]` 复合 block (合 6 sensor block) | Medium | -150 净, 大重构 |
-| Promise/CW/notes_for_self 三合一 | Low | 重构, 需 Sir 拍板 (改影响多 module) |
-| `attention.adjust` / `screen_vision.annotate` | Low | Sir 没说必要, 后做 |
+**已交付**:
+- ✅ Phase 2.1 ConcernsLedger.update_concern_field 深度 update
+- ✅ Phase 2.2 RelationalStateStore.update_field (4-kind: inside_joke / protocol / thread / unfinished)
+- ✅ Phase 2.6 mutation_dump.py CLI
+- ✅ Phase 2.7 整合 testcase (38 个, 全 pass)
+
+**Sir 真测前跳过的项** (Sir 真测后再决定):
+- ⏸ `[SIR NOW]` 复合 block (合 6 sensor block) — 大重构 _assemble_prompt, 易破回归
+- ⏸ Promise/CW/notes_for_self 三合一 — 大重构, 需 data migration
+- ⏸ `attention.adjust` / `screen_vision.annotate` organ — 概念上不该单独 mutate (Attention/ScreenVision 是 derived data, 应通过 mutate Profile 间接影响)
+
+**跳过原因**:
+1. 这 3 项**不直接关 Sir 真痛点** ("教正不生效"). Phase 1+2.1+2.2 已治本.
+2. 风险高, 应在 Sir 真测后基于反馈再决定是否做.
+3. 设计 doc 已留位置, 后续可独立加.
 
 ## 9.4 Sir 真测验证清单
 
