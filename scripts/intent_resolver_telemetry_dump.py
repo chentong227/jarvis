@@ -123,13 +123,114 @@ def cmd_reset() -> int:
         return 2
 
 
+def cmd_check() -> int:
+    """🆕 [β.5.46-fix14] Sir 让我盯着 A/B — 自动诊断 verdict.
+
+    判别矩阵 (跟 Sir 实施时讨论的):
+      success >=95% + parse_fail<2% + avg_latency<3s   → 推广候选
+      success >=95% 但 avg_latency>3s                  → 保留 (副链 latency 不卡 TTFT)
+      success 85-95%                                   → 观察 (再跑 1 周)
+      success <85% 或 fallback_rate >15%               → 回退建议
+      parse_fail >5%                                   → 警告 schema 不稳
+
+    输出 verdict + 推荐动作, Sir 拍板.
+    """
+    if not os.path.exists(TELEMETRY_PATH):
+        print('(no telemetry yet — IntentResolver 还没跑 turn, 无法判断)')
+        return 0
+    try:
+        with open(TELEMETRY_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f'failed to load: {e}', file=sys.stderr)
+        return 2
+
+    s = data.get('stats', {}) or {}
+    p_calls = s.get('llm_primary_calls', 0)
+    p_ok = s.get('llm_primary_ok', 0)
+    p_lat = s.get('llm_primary_latency_sum_ms', 0.0)
+    f_calls = s.get('llm_fallback_calls', 0)
+    parse_fail = s.get('llm_parse_fail', 0)
+
+    # 样本量门槛 — 没 30 次 call 不评判
+    if p_calls < 30:
+        print(f'⏳ 样本量不足 (primary calls={p_calls} < 30), 再跑跑再 check')
+        return 0
+
+    success_rate = p_ok / p_calls
+    avg_lat_ms = p_lat / p_calls if p_calls > 0 else 0
+    fallback_rate = f_calls / max(p_calls, 1)
+    total_calls = p_calls + f_calls
+    parse_fail_rate = parse_fail / max(total_calls, 1)
+
+    print('=' * 70)
+    print('IntentResolver A/B Verdict')
+    print('=' * 70)
+    print(f"primary  : {data.get('primary_model', '?')}")
+    print(f"fallback : {data.get('fallback_model', '?')}")
+    print()
+    print(f"primary calls       : {p_calls}")
+    print(f"primary success     : {success_rate * 100:.1f}%")
+    print(f"primary avg latency : {avg_lat_ms:.0f}ms")
+    print(f"fallback rate       : {fallback_rate * 100:.1f}%")
+    print(f"parse fail rate     : {parse_fail_rate * 100:.2f}%")
+    print()
+
+    # 判别矩阵
+    verdict = '🟢 OK'
+    recommend = []
+    if success_rate < 0.85:
+        verdict = '🔴 BAD'
+        recommend.append('回退 — primary 改回 google/gemini-2.5-flash-lite')
+    elif success_rate < 0.95:
+        verdict = '🟡 WATCH'
+        recommend.append('观察 — 再跑 1 周看 (Sir 真测)')
+    else:
+        if avg_lat_ms > 3000:
+            recommend.append(
+                '保留 — success 高但 latency 偏高. 副链是 fire-and-forget 不卡 TTFT, '
+                '可保留. 主脑升级要等 3.5 Pro 看 latency 改善'
+            )
+        else:
+            recommend.append(
+                '推广候选 — 等 3.5 Pro 出再看主脑升级. 副链 A/B 已证明 3.5-flash '
+                '在 agentic tool 调度场景比 2.5-lite 强'
+            )
+
+    if fallback_rate > 0.15:
+        verdict = '🟡 WATCH' if verdict == '🟢 OK' else verdict
+        recommend.append(
+            f'fallback rate {fallback_rate*100:.0f}% 偏高 (>15%) — '
+            '查 OpenRouter rate limit / 3.5 容量, 必要时回退'
+        )
+
+    if parse_fail_rate > 0.05:
+        verdict = '🔴 BAD' if verdict != '🔴 BAD' else verdict
+        recommend.append(
+            f'parse fail rate {parse_fail_rate*100:.1f}% 偏高 (>5%) — '
+            '3.5-flash verbose 破 JSON schema. 加 prompt "OUTPUT JSON ONLY" '
+            '或回退 lite primary'
+        )
+
+    print(f"VERDICT  : {verdict}")
+    print()
+    print('推荐:')
+    for r in recommend:
+        print(f"  - {r}")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description='IntentResolver A/B telemetry')
     p.add_argument('--reset', action='store_true',
                     help='clear telemetry counters')
+    p.add_argument('--check', action='store_true',
+                    help='self-diagnose verdict + 推荐动作')
     args = p.parse_args()
     if args.reset:
         return cmd_reset()
+    if args.check:
+        return cmd_check()
     return cmd_show()
 
 

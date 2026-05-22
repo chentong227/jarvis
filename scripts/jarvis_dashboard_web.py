@@ -1372,16 +1372,16 @@ _ITEMS_HTML = r"""
       <template x-for="cat in Object.keys(counts).sort()" :key="cat">
         <button @click="setCat(cat)" class="w-full text-left px-3 py-2 rounded mb-1 text-sm"
                 :class="filter.cat===cat ? 'bg-blue-600 text-white' : 'hover:bg-slate-700'">
-          <span x-text="catIcon(cat) + ' ' + cat"></span>
+          <span x-text="categoryZh(cat)"></span>
           <span class="float-right text-slate-400" x-text="catTotal(cat)"></span>
         </button>
       </template>
 
       <div class="text-xs text-slate-400 uppercase tracking-wider mt-6 mb-3">状态</div>
-      <template x-for="st in ['', 'review', 'active']" :key="st">
+      <template x-for="st in ['', 'review', 'active', 'archived']" :key="st">
         <button @click="setState(st)" class="w-full text-left px-3 py-2 rounded mb-1 text-sm"
                 :class="filter.state===st ? 'bg-purple-600 text-white' : 'hover:bg-slate-700'">
-          <span x-text="st==='' ? '全部状态' : (st==='review' ? '🔥 待拍板' : '✅ 已生效')"></span>
+          <span x-text="st==='' ? '🌍 全部状态' : stateZh(st)"></span>
         </button>
       </template>
     </aside>
@@ -1398,8 +1398,8 @@ _ITEMS_HTML = r"""
                   <span class="text-sm font-medium text-slate-200"
                         x-text="item.category_zh || (catIcon(item.category) + ' ' + item.category)"></span>
                   <span class="text-xs px-2 py-0.5 rounded"
-                        :class="item.state==='review' ? 'bg-orange-700/50 text-orange-300' : item.state==='active' ? 'bg-green-700/50 text-green-300' : 'bg-slate-700 text-slate-400'"
-                        x-text="item.state==='review' ? '待审' : item.state==='active' ? '已生效' : item.state"></span>
+                        :class="stateClass(item.state)"
+                        x-text="stateZh(item.state)"></span>
                   <span x-show="item.auto_proposed" class="text-xs px-2 py-0.5 rounded bg-purple-700/50 text-purple-300" title="L7 reflector 自动提议">🤖 自动提议</span>
                   <!-- 🩹 [P5-fix-items-i18n] 👍/👎 状态标识 (已评的) -->
                   <span x-show="item.sir_feedback === 'up'" class="text-xs px-2 py-0.5 rounded bg-green-700/50 text-green-300" title="你赞过这条">👍 已赞</span>
@@ -1409,7 +1409,7 @@ _ITEMS_HTML = r"""
                 <div class="text-base text-slate-100 mb-1" x-text="item.preview"></div>
                 <!-- 🩹 [P5-fix-items-i18n] 人话 description (这条干啥用) -->
                 <div x-show="item.description_zh" class="text-sm text-cyan-300/90 mb-2 leading-snug" x-text="'🔍 ' + item.description_zh"></div>
-                <div class="text-xs text-slate-500" x-text="'id=' + item.id + ' · ' + (item.proposed_by || 'sir')"></div>
+                <div class="text-xs text-slate-500" x-text="'id=' + item.id + ' · 提议者: ' + proposerZh(item.proposed_by)"></div>
               </div>
             </div>
             <!-- 影响 tooltip + 按钮 -->
@@ -1448,11 +1448,13 @@ _ITEMS_HTML = r"""
             <button @click="detail=null" class="text-slate-400 hover:text-slate-100">✕</button>
           </div>
           <div class="text-xs text-slate-400 mb-1" x-text="'id: ' + detail.id"></div>
-          <div class="text-xs text-slate-400 mb-3" x-text="'分类: ' + detail.category + ' / 状态: ' + detail.state"></div>
+          <div class="text-xs text-slate-400 mb-3"
+               x-text="'分类: ' + categoryZh(detail.category) + ' · 状态: ' + stateZh(detail.state)"></div>
 
           <template x-for="(value, key) in editingFields" :key="key">
             <div class="mb-3">
-              <label class="text-xs text-slate-400 uppercase" x-text="key"></label>
+              <label class="text-xs text-slate-400" x-text="fieldKeyZh(key)"
+                     :title="key"></label>
               <template x-if="Array.isArray(value)">
                 <textarea x-model="editingFieldsStr[key]" rows="3"
                           class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm mt-1"
@@ -1533,7 +1535,97 @@ function itemsApp() { return {
     return {concern:'🎯', inside_joke:'💭', thread:'📜', protocol:'🤝',
             unfinished:'⏱️', screen_tease:'🪞', struggle:'🆘', directive:'📡',
             sleep_pattern:'💤', behavior_inference:'⏱️', callback:'📞',
-            cooldown:'⏰', profile:'👤'}[c] || '📌';
+            cooldown:'⏰', profile:'👤', commitment:'📋', promise:'🤞',
+            watch_task:'👁️', milestone:'🏆', memory_correction:'🔧',
+            wake_filler:'🌅', refusal:'🙅', evidence:'📊', intent:'🧭'}[c] || '📌';
+  },
+  // 🩹 [P5-fix-items-i18n / 2026-05-22] frontend i18n maps — Sir 真测看 dashboard 全中文
+  // 不靠 backend 必带 category_zh (老 extractor 没填的也能兜底).
+  categoryZh(c) {
+    return {
+      concern:'🎯 我在关心的事', inside_joke:'💭 我们的梗',
+      thread:'📜 共同经历', protocol:'🤝 默契规则',
+      unfinished:'⏱️ 未完结的事', screen_tease:'🪞 屏幕调侃词',
+      struggle:'🆘 Sir 困境词', directive:'📡 主脑 directive',
+      sleep_pattern:'💤 Sir 睡眠习惯', behavior_inference:'⏱️ 行为推断词',
+      callback:'📞 跨会话提醒', cooldown:'⏰ 冷却时段',
+      profile:'👤 Sir 资料', commitment:'📋 承诺',
+      promise:'🤞 Jarvis 许诺', watch_task:'👁️ 等屏幕事件',
+      milestone:'🏆 重要时刻', memory_correction:'🔧 记忆修正',
+      wake_filler:'🌅 唤起开场词', refusal:'🙅 拒绝表态',
+      evidence:'📊 证据', intent:'🧭 意图',
+    }[c] || (this.catIcon(c) + ' ' + c);
+  },
+  stateZh(st) {
+    return {
+      review:'🔥 待拍板', active:'✅ 已生效', archived:'📦 已归档',
+      rejected:'❌ 已驳回', pending:'⏳ 待办', done:'✔️ 已完成',
+      overdue:'🚨 逾期', expired:'⌛ 已失效', fired:'⚡ 已触发',
+      cancelled:'🚫 已取消', fulfilled:'🎉 已兑现', untracked:'⚠️ 未追踪',
+      paused:'⏸️ 已暂停', draft:'📝 草稿',
+    }[st] || st;
+  },
+  stateClass(st) {
+    const map = {
+      review:'bg-orange-700/50 text-orange-300',
+      active:'bg-green-700/50 text-green-300',
+      archived:'bg-slate-700 text-slate-400',
+      rejected:'bg-red-900/50 text-red-400',
+      pending:'bg-amber-700/50 text-amber-300',
+      done:'bg-emerald-700/50 text-emerald-300',
+      overdue:'bg-rose-700/50 text-rose-300',
+      expired:'bg-slate-600 text-slate-500',
+      fired:'bg-purple-700/50 text-purple-300',
+      cancelled:'bg-slate-700 text-slate-500',
+      fulfilled:'bg-emerald-700/50 text-emerald-200',
+      untracked:'bg-orange-900/40 text-orange-400',
+    };
+    return map[st] || 'bg-slate-700 text-slate-400';
+  },
+  fieldKeyZh(k) {
+    return {
+      priority:'优先级', severity:'严重度', urgency:'紧迫度',
+      threshold:'触发阈值', cooldown:'冷却 (秒)', cooldown_s:'冷却 (秒)',
+      tags:'标签', keywords:'触发关键词', triggers:'触发条件',
+      state:'状态', category:'分类', subcategory:'子分类',
+      note:'备注', description:'描述', preview:'预览',
+      preview_zh:'预览 (中文)', rationale:'理由', rationale_zh:'理由 (中文)',
+      created_at:'创建时间', updated_at:'更新时间', expires_at:'过期时间',
+      fired_at:'触发时间', confirmed_at:'确认时间',
+      ttl:'存活 (秒)', ttl_s:'存活 (秒)',
+      sir_acked:'已看', sir_feedback:'你的反馈', auto_proposed:'自动提议',
+      source:'来源', proposed_by:'提议者', target:'目标',
+      progress:'进度', current:'当前值', target_value:'目标值',
+      what_to_watch:'看什么', trigger_evidence:'触发证据',
+      notify_msg_en:'通知 (英)', notify_msg_zh:'通知 (中)',
+      sir_request:'Sir 原话', jarvis_ack:'Jarvis 回复',
+      enabled:'启用', disabled:'禁用',
+      helped:'有帮助计数', not_helped:'没用计数',
+      fired:'命中次数', rejected:'被拒次数',
+      min_severity:'最低严重度', max_active:'最大活跃数',
+      vocab:'词表', value:'值', field:'字段', field_path:'字段路径',
+      old_value:'旧值', new_value:'新值',
+    }[k] || k;
+  },
+  proposerZh(p) {
+    if (!p) return 'Sir 拍板';
+    return {
+      sir:'Sir 拍板',
+      sir_request_reflector:'L7 反思器',
+      directive_evaluator:'directive 评分器',
+      l7_reflector:'L7 反思器',
+      concerns_reflector:'concern 反思器',
+      weekly_reflector:'每周反思器',
+      relational_reflector:'关系反思器',
+      sleep_pattern_reflector:'睡眠习惯反思器',
+      intent_resolver:'意图调度器',
+      watch_task_registrar:'WatchTask 提取器',
+      self_promise_detector:'Jarvis 许诺侦测',
+      profile_card_reflector:'Sir 资料反思器',
+      gate_keeper:'Gatekeeper',
+      memory_correction:'记忆修正',
+      reject_learner:'反馈学习器',
+    }[p] || p;
   },
   catTotal(c) {
     if (!this.counts[c]) return 0;
