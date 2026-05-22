@@ -1693,6 +1693,151 @@ def api_watch_tasks():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ============================================================
+# 🆕 [P5-fix25-stand-down-dashboard / 2026-05-22] Stand Down panel
+# Sir 痛点: 玩游戏/接电话/和爸妈说话尴尬. Dashboard 一眼看 active state +
+# 一键 set / clear / 看 history.
+# ============================================================
+
+@app.route('/api/stand_down')
+def api_stand_down():
+    """🆕 [P5-fix25-stand-down] Stand Down 当前 state + history.
+
+    Returns:
+      {ok, data: {state: {...}, history: [...recent N], stats: {...}}}
+    """
+    try:
+        sys.path.insert(0, ROOT)
+        import jarvis_stand_down as sd
+        s = sd.get_state()
+        now = time.time()
+
+        # state snapshot for UI
+        state_dict = {
+            'active': s.is_active_now(),
+            'reason': s.reason,
+            'since_ts': s.since_ts,
+            'since_iso': (time.strftime('%H:%M:%S', time.localtime(s.since_ts))
+                              if s.since_ts > 0 else ''),
+            'until_ts': s.until_ts,
+            'until_iso': (time.strftime('%H:%M:%S', time.localtime(s.until_ts))
+                              if s.until_ts > 0 else ''),
+            'elapsed_s': int(s.elapsed_s()),
+            'remaining_s': int(s.remaining_s()),
+            'in_grace': s.is_in_grace(),
+            'grace_until_ts': s.grace_until_ts,
+            'exit_hint': s.exit_hint,
+            'set_by_source': s.set_by_source,
+            'set_by_turn': s.set_by_turn,
+            'cleared_at_ts': s.cleared_at_ts,
+            'cleared_by_source': s.cleared_by_source,
+            'cleared_iso': (time.strftime('%H:%M:%S',
+                                                time.localtime(s.cleared_at_ts))
+                                if s.cleared_at_ts > 0 else ''),
+        }
+
+        # history (recent 30)
+        history = []
+        try:
+            hist_path = os.path.join(ROOT, 'memory_pool',
+                                          'stand_down_history.jsonl')
+            if os.path.exists(hist_path):
+                with open(hist_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                for L in lines[-30:]:
+                    try:
+                        history.append(json.loads(L.strip()))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # stats (count enter/exit, total held time today)
+        today_start = time.mktime(time.strptime(
+            time.strftime('%Y-%m-%d 00:00:00'), '%Y-%m-%d %H:%M:%S'))
+        sets_today = 0
+        clears_today = 0
+        held_s_today = 0.0
+        for h in history:
+            if h.get('ts', 0) >= today_start:
+                ev = h.get('event', '')
+                if ev == 'set':
+                    sets_today += 1
+                elif ev == 'clear':
+                    clears_today += 1
+                    held_s_today += float(h.get('duration_held_s', 0) or 0)
+        stats = {
+            'sets_today': sets_today,
+            'clears_today': clears_today,
+            'held_s_today': int(held_s_today),
+            'held_min_today': round(held_s_today / 60, 1),
+        }
+
+        return jsonify({
+            'ok': True,
+            'data': {
+                'state': state_dict,
+                'history': history,
+                'stats': stats,
+            }
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stand_down_action', methods=['POST'])
+def api_stand_down_action():
+    """🆕 [P5-fix25-stand-down] set / clear stand_down via dashboard.
+
+    POST body:
+      {action: 'set'|'clear', reason: str, duration_min: float, exit_hint: str}
+    """
+    try:
+        sys.path.insert(0, ROOT)
+        import jarvis_stand_down as sd
+        payload = request.get_json(silent=True) or {}
+        action = (payload.get('action', '') or '').strip().lower()
+        if action == 'set':
+            reason = (payload.get('reason', '') or sd.REASON_MANUAL)[:64]
+            try:
+                duration_min = float(payload.get('duration_min',
+                                                       sd.DEFAULT_DURATION_MIN))
+            except Exception:
+                duration_min = sd.DEFAULT_DURATION_MIN
+            exit_hint = (payload.get('exit_hint', '') or '')[:200]
+            s = sd.set_stand_down(
+                reason=reason,
+                duration_min=duration_min,
+                exit_hint=exit_hint,
+                source='dashboard',
+            )
+            eta = time.strftime('%H:%M', time.localtime(s.until_ts))
+            return jsonify({
+                'ok': True,
+                'message': f'进入沉默 reason={s.reason} until={eta}',
+                'state': {
+                    'active': True,
+                    'reason': s.reason,
+                    'until_iso': eta,
+                    'remaining_min': int(s.remaining_s() / 60),
+                },
+            })
+        if action == 'clear':
+            reason = (payload.get('reason', '') or 'dashboard wake')[:200]
+            was_active = sd.is_active()
+            sd.clear_stand_down(reason=reason, source='dashboard')
+            return jsonify({
+                'ok': True,
+                'message': ('wake up' if was_active
+                              else '当前未在 stand_down, 无需 clear'),
+                'state': {'active': False},
+            })
+        return jsonify({'ok': False,
+                          'error': f'invalid action: {action} (set|clear)'}), 400
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/watch_task_action', methods=['POST'])
 def api_watch_task_action():
     """🆕 [P5-fix21-c] cancel / expire 一个 task. POST {action, task_id}."""

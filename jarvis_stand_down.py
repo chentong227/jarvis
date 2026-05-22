@@ -212,6 +212,45 @@ def _bg_log(msg: str) -> None:
 
 
 # ============================================================
+# 🆕 [P5-fix25-stand-down-chime / 2026-05-22] Chime 进/出反馈 (默认 OFF)
+# ============================================================
+# Sir 20:07 真测反馈: "是你在放声音吗?! 好突兀的声音" — winsound.Beep 是
+# PC speaker 硬件方波, 极刺耳. 改默认 OFF, 仅终端 + 字幕 + dashboard 反馈.
+# 后续 Phase 2 可换 wav 文件 (柔和 ding) 或系统 message beep (Asterisk).
+# 想试: 设 env JARVIS_STAND_DOWN_CHIME=1 临时打开.
+# ============================================================
+_CHIME_ENABLED = (os.environ.get('JARVIS_STAND_DOWN_CHIME', '0') == '1')
+
+
+def _play_chime(direction: str) -> None:
+    """Play short 2-tone chime. direction='enter' | 'exit'. 默认 OFF.
+
+    Sir 20:07 真测反馈 winsound.Beep 太突兀, 默认关. 仅 env=1 时开.
+    Non-blocking — 单独 daemon thread 跑. 失败静默.
+    """
+    if not _CHIME_ENABLED:
+        return
+    try:
+        import winsound
+    except Exception:
+        return  # 非 Windows, no-op
+
+    def _worker():
+        try:
+            if direction == 'enter':
+                winsound.Beep(500, 80)
+                winsound.Beep(350, 100)
+            else:
+                winsound.Beep(700, 60)
+                winsound.Beep(1000, 80)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True,
+                       name=f'StandDownChime/{direction}').start()
+
+
+# ============================================================
 # Public API — set / clear / get / is_active
 # ============================================================
 def set_stand_down(reason: str = REASON_MANUAL,
@@ -286,6 +325,10 @@ def set_stand_down(reason: str = REASON_MANUAL,
               f"until={eta} (~{int(duration_min)}min) "
               f"source={source} grace_until={int(GRACE_PERIOD_S)}s")
 
+    # Chime (仅当真"进入" — 已 active 时延期不响, 防止刷屏)
+    if not already_active:
+        _play_chime('enter')
+
     return snapshot
 
 
@@ -339,6 +382,8 @@ def clear_stand_down(reason: str = '',
         _bg_log(f"☀️ [StandDown] wake up source={source} "
                   f"(was {prev_reason}, held "
                   f"{int(now - prev_since)}s)")
+        # Chime — 出 stand_down (明亮升序). grace_cancel 也响, Sir 想要反馈.
+        _play_chime('exit')
 
     return snapshot
 
