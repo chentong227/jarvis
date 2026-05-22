@@ -1000,6 +1000,87 @@ def get_concern_dismiss_patterns():
     return _CONCERN_DISMISS_CACHE
 
 
+# 🆕 [P5-fix27-promise-fulfill / 2026-05-22] Promise 完成 / 撤销 vocab
+# ============================================================
+_PROMISE_COMPLETION_VOCAB_PATH = os.path.join(
+    'memory_pool', 'promise_completion_vocab.json')
+
+_SEED_PROMISE_COMPLETION_PATTERNS = {
+    'fulfilled': [
+        '做完了', '搞定了', '完成了', '弄完了', '解决了',
+        '已经做', '已经完成', '已经搞定', '已经弄完', '已经解决',
+        '体检完了', '面试完了', '考试完了', '会议完了', '开完会了',
+        '从医院回来', '从面试回来', '从公司回来', '回来了',
+        'done with', 'finished', 'completed', 'wrapped up',
+        "i'm done", "we're done", 'taken care of',
+    ],
+    'cancelled': [
+        '不用了', '算了', '不做了', '取消了', '不去了',
+        '没事了', '不用管', '别管', '别提了',
+        'never mind', 'forget it', "don't bother", 'cancel that',
+        'no longer', 'changed my mind',
+    ],
+}
+
+_PROMISE_COMPLETION_VOCAB_CACHE = None
+_PROMISE_COMPLETION_VOCAB_MTIME = 0.0
+
+
+def _load_promise_completion_vocab():
+    if not os.path.exists(_PROMISE_COMPLETION_VOCAB_PATH):
+        return None
+    try:
+        with open(_PROMISE_COMPLETION_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out = {
+            'fulfilled': [str(p).lower() for p in (data.get('fulfilled', []) or [])
+                              if str(p).strip()],
+            'cancelled': [str(p).lower() for p in (data.get('cancelled', []) or [])
+                              if str(p).strip()],
+        }
+        if not out['fulfilled'] and not out['cancelled']:
+            return None
+        return out
+    except Exception:
+        return None
+
+
+def get_promise_completion_patterns():
+    global _PROMISE_COMPLETION_VOCAB_CACHE, _PROMISE_COMPLETION_VOCAB_MTIME
+    try:
+        mtime = (os.path.getmtime(_PROMISE_COMPLETION_VOCAB_PATH)
+                    if os.path.exists(_PROMISE_COMPLETION_VOCAB_PATH) else 0.0)
+    except Exception:
+        mtime = 0.0
+    if (_PROMISE_COMPLETION_VOCAB_CACHE is None
+            or mtime > _PROMISE_COMPLETION_VOCAB_MTIME):
+        loaded = _load_promise_completion_vocab()
+        _PROMISE_COMPLETION_VOCAB_CACHE = (loaded if loaded is not None
+                                                       else _SEED_PROMISE_COMPLETION_PATTERNS)
+        _PROMISE_COMPLETION_VOCAB_MTIME = mtime
+    return _PROMISE_COMPLETION_VOCAB_CACHE
+
+
+def _trigger_promise_completion(ctx: DirectiveContext) -> bool:
+    """[P5-fix27] 触发 — Sir 说"做完了 / 不用了" 类话.
+
+    fire 条件: user_input 命中 fulfilled / cancelled vocab.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    pats = get_promise_completion_patterns()
+    if any(w in t for w in pats.get('fulfilled', [])):
+        return True
+    if any(w in t for w in pats.get('cancelled', [])):
+        return True
+    return False
+
+
 def _trigger_concern_dismissal(ctx: DirectiveContext) -> bool:
     """[P5-fix24-concern-dismiss / 2026-05-22] 双 trigger:
 
@@ -1954,6 +2035,50 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 你看 [STAND DOWN STATE] block 知道当前是否 active.
             """).rstrip(),
             trigger=_trigger_stand_down,
+        ),
+        # 🆕 [P5-fix27-promise-fulfill / 2026-05-22] Promise 完成/撤销
+        # Sir 痛点 (20:42): jarvis 还在说"明天体检"但 Sir 今天已完成. 没有
+        # 让 Sir 告诉 jarvis "做完了 / 不用了" → mark fulfilled/cancelled 的渠道.
+        # 这条 directive 教主脑听 Sir 说"X 做完了 / X 不用了" → emit FAST_CALL.
+        Directive(
+            id='promise_completion_judge',
+            source_marker='P5-fix27-promise-fulfill',
+            priority=9,
+            ttl_days=120,
+            tier_whitelist=[],
+            purpose_short='Sir 说"X 做完了/不用了" → 主脑 emit FAST_CALL promises.fulfill/cancel',
+            text=_tw.dedent("""\
+                [PROMISE COMPLETION — Sir 说完成或撤销]:
+                Sir 可能告诉你某件事做完了 (体检完了 / 面试完了 / 搞定了),
+                或者撤销 (不用关心了 / 算了 / 别管了). 这时承诺需要 mark fulfilled
+                或 cancelled — 否则 ProactiveCare 会继续 nudge 早就过期的事.
+
+                FULFILLED — Sir 说做完:
+                  例: "体检完了" / "已经从医院回来" / "面试 done" / "搞定了" /
+                      "完成了" / "wrapped up"
+                  →  emit:
+                  <FAST_CALL>{"organ":"promises","command":"fulfill","params":{"keyword":"体检","evidence":"Sir 5/22 体检完成"}}</FAST_CALL>
+
+                CANCELLED — Sir 说不做了:
+                  例: "不去体检了" / "算了" / "不用关心" / "面试取消了" /
+                      "never mind" / "forget it" / "changed my mind"
+                  →  emit:
+                  <FAST_CALL>{"organ":"promises","command":"cancel","params":{"keyword":"体检","reason":"Sir 说不去了"}}</FAST_CALL>
+
+                找不到 keyword? 先 list:
+                  <FAST_CALL>{"organ":"promises","command":"list","params":{}}</FAST_CALL>
+                  → 你看到 pending 列表, 再选 id 或更准的 keyword.
+
+                诚信硬规:
+                  - 嘴上说 "我记下了, 这件事不再提" / "noted, won't bring it up again"
+                    必须配 FAST_CALL — 否则 ClaimTracer 会标 unverified, 下轮
+                    INTEGRITY ALERT 提醒你嘴硬没真做.
+                  - 不要冤枉撤销 Sir 没说的承诺. Sir 说"我今天没空"≠"取消".
+                  - 如果 Sir 模糊 ("我搞完那个了"), 先反问 1 句澄清是哪件事,
+                    再 emit FAST_CALL. 不要瞎猜.
+                  - 真做后再 ack: "好的 Sir, 我会停止追这件事."
+            """).rstrip(),
+            trigger=_trigger_promise_completion,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

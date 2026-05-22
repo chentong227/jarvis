@@ -347,7 +347,27 @@ class IntentResolver:
                 lines = txt.split('\n')
                 if len(lines) >= 3 and lines[-1].strip().startswith('```'):
                     txt = '\n'.join(lines[1:-1])
-            parsed = json.loads(txt)
+            # 🆕 [P5-fix28-intent-parse / 2026-05-22] Sir 20:40 真测 log: 'resp={"t'
+            # 治本: 截断 JSON 用 regex 抢救最后一个完整 ']' 关. 大多数 truncate
+            # 是 reasoning_content 占满, tool_calls 已完整收尾.
+            try:
+                parsed = json.loads(txt)
+            except json.JSONDecodeError:
+                # rescue: 找最后 ] 前补 } 试再 parse
+                _idx = txt.rfind(']')
+                if _idx > 0:
+                    rescue_txt = txt[: _idx + 1] + '}'
+                    try:
+                        parsed = json.loads(rescue_txt)
+                    except Exception:
+                        # 真截断到 '{"t' 的, 视为 'tool_calls=[]' 不报错 noise
+                        with self._lock:
+                            self._stats['llm_parse_fail'] += 1
+                        return {'tool_calls': [],
+                                  '_error': f'truncated JSON ({len(txt)}c) — '
+                                              f'recoverable, treating as no-tool'}
+                else:
+                    raise
             if not isinstance(parsed, dict):
                 with self._lock:
                     self._stats['llm_parse_fail'] += 1

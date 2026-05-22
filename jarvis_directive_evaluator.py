@@ -180,6 +180,11 @@ class DirectiveEvaluator:
             return
 
         for did in fired_directive_ids:
+            # 🆕 [P5-fix26 / 2026-05-22] meta_self_check_directive 由 chat_bypass
+            # parse_meta 直接 record_helped (parse_ok=True/False), Evaluator
+            # 看不到 [META] 行 (已裁剥) 必判 helped=no 假阳性. skip 省 LLM call.
+            if did == 'meta_self_check_directive':
+                continue
             d = self.registry.get(did) if hasattr(self.registry, 'get') else None
             if d is None:
                 continue

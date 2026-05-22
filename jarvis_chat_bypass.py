@@ -1584,6 +1584,78 @@ Spoken English:"""
                           f"({int(s.remaining_s() / 60)}min 剩)")
             return f"❌ stand_down: 未知指令 {command} (支持 set/clear/status)"
 
+        # 🆕 [P5-fix27-promise-fulfill / 2026-05-22] Promise / Commitment 闭环
+        # ============================================================
+        # Sir 真痛点 (20:42): jarvis 还在说"明天体检"但 Sir 今天已完成. 根因:
+        # promise_log 有 mark_fulfilled / mark_cancelled API, 但主脑无法调
+        # 也没 directive 教主脑听 "X 做完了 / X 别管了" → emit FAST_CALL.
+        # 修法: 加 promises organ + 配套 directive promise_completion_judge.
+        # 配套 directive: jarvis_directives.py:promise_completion_judge
+        # ============================================================
+        if organ_name == "promises":
+            try:
+                from jarvis_promise_log import get_default_log
+                plog = get_default_log()
+            except Exception as _pe:
+                return f"❌ promises.{command}: log 不可用 ({_pe})"
+            pid = (params.get('id', '') or params.get('promise_id', '') or '').strip()
+            keyword = (params.get('keyword', '') or '').strip()
+            reason = (params.get('reason', '') or '')[:200]
+            evidence = (params.get('evidence', '') or reason)[:200]
+            # 支持 keyword 模糊找 — 主脑可能不记 pid (e.g. "p_cdc96ad5"),
+            # 但说 "体检的承诺" / "the medical exam promise" → keyword 搜.
+            if not pid and keyword:
+                try:
+                    kw_low = keyword.lower()
+                    for _pid, _p in plog.promises.items():
+                        if _p.state != 'pending':
+                            continue
+                        blob = ((_p.description or '') + ' ' +
+                                  (_p.jarvis_reply or '') + ' ' +
+                                  (getattr(_p, 'source_text', '') or '')).lower()
+                        if kw_low in blob:
+                            pid = _pid
+                            break
+                except Exception:
+                    pass
+            if command == "fulfill":
+                if not pid:
+                    return ("❌ promises.fulfill: missing 'id' or 'keyword' (e.g. "
+                              "{'keyword':'体检'} 让我帮你找)")
+                ok = plog.mark_fulfilled(pid, evidence_kind='sir_voice',
+                                                  evidence_what=evidence or 'Sir 说做完了')
+                if ok:
+                    return (f"✅ promises.fulfill: {pid} 标记 fulfilled "
+                              f"— ProactiveCare 不再提醒")
+                return (f"❌ promises.fulfill: {pid} 未找到或非 pending "
+                          f"(可能已 fulfilled/cancelled/untracked)")
+            if command == "cancel":
+                if not pid:
+                    return ("❌ promises.cancel: missing 'id' or 'keyword' (e.g. "
+                              "{'keyword':'体检'} 让我帮你找)")
+                ok = plog.mark_cancelled(pid, reason=reason or 'Sir 撤销')
+                if ok:
+                    return (f"✅ promises.cancel: {pid} 已撤销 — "
+                              f"ProactiveCare 不再提醒")
+                return (f"❌ promises.cancel: {pid} 未找到或非 pending")
+            if command == "list":
+                # 帮主脑看当前有哪些 pending — 主脑可能不记 id
+                try:
+                    pendings = [(p_id, p) for p_id, p in plog.promises.items()
+                                  if p.state == 'pending']
+                    if not pendings:
+                        return "ℹ️ promises.list: 0 pending"
+                    lines = [f"pending {len(pendings)} 条 (recent 5):"]
+                    for p_id, p in pendings[-5:]:
+                        _desc = (p.description or '')[:60]
+                        _auth = p.author or '?'
+                        lines.append(f"  {p_id} author={_auth} '{_desc}'")
+                    return '\n'.join(lines)
+                except Exception as _le:
+                    return f"❌ promises.list: {_le}"
+            return (f"❌ promises: 未知指令 {command} "
+                      f"(支持 fulfill/cancel/list)")
+
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
             try:
@@ -3474,6 +3546,18 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 from jarvis_meta_self_check import parse_meta, publish_meta
                 _full_clean, _meta = parse_meta(full_text)
                 full_text = _full_clean  # 裁掉 [META] 行, 不让进 ZH/TTS
+                # 🆕 [P5-fix26 / 2026-05-22] Sir 20:32 真测发现:
+                # Evaluator (LLM) 看 sir-facing reply 已裁 [META] → 必判 helped=no
+                # reason='Missing meta trace'. fix23 让 directive 不降级是对的, 但
+                # Evaluator 错杀仍累积 not_helped. 治本: parse_ok 直接 record_helped
+                # (绕过 LLM evaluator), Evaluator 路径 skip meta_self_check_directive.
+                try:
+                    from jarvis_directives import get_default_registry as _gdr
+                    _reg = _gdr()
+                    _reg.record_helped('meta_self_check_directive',
+                                          helped=bool(_meta and _meta.parse_ok))
+                except Exception:
+                    pass
                 if _meta and _meta.parse_ok:
                     try:
                         from jarvis_utils import TraceContext as _TC2
