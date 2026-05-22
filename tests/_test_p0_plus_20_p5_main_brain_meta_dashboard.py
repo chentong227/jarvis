@@ -322,6 +322,47 @@ class TestE_Pages(unittest.TestCase):
         self.assertIn('/main_brain_meta', body)
         self.assertIn('思考链', body)
 
+    def test_home_has_mini_card(self):
+        """主页应有 brainMeta mini card (Layer 1 META 健康度概览)."""
+        app = _get_app()
+        with app.test_client() as c:
+            r = c.get('/')
+        body = r.data.decode('utf-8')
+        # mini card title
+        self.assertIn('主脑思考链 (Layer 1 META)', body)
+        # Alpine state binding
+        self.assertIn('brainMeta', body)
+        self.assertIn('brainMeta.evidence_pct', body)
+        self.assertIn('brainMeta.skip_alert_pct', body)
+        # 链到详情 page
+        self.assertIn('详情 →', body)
+
+
+class TestG_ApiAllHasBrainMeta(unittest.TestCase):
+    """G: /api/all 应含 brainMeta 字段."""
+
+    def test_brain_meta_in_api_all(self):
+        app = _get_app()
+        with app.test_client() as c:
+            r = c.get('/api/all')
+        self.assertEqual(r.status_code, 200)
+        data = r.get_json()
+        self.assertIn('brainMeta', data,
+                       '/api/all 应返回 brainMeta 字段供主页 mini card 渲染')
+
+    def test_brain_meta_summary_helper(self):
+        """直接测 _read_brain_meta_summary helper."""
+        global _DASHBOARD
+        app = _get_app()  # ensure module imported
+        # 用空 audit (default 路径) — 应返 health=empty 或 stat
+        result = _DASHBOARD._read_brain_meta_summary()
+        # 不论是否有数据, 应是 dict
+        self.assertIsInstance(result, dict)
+        # health 字段必有 (empty / ok / warn)
+        if result:  # 非空 dict
+            self.assertIn('health', result)
+            self.assertIn('total', result)
+
 
 class TestF_Marker(unittest.TestCase):
     def test_marker_in_dashboard(self):

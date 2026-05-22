@@ -500,6 +500,70 @@ HTML_TEMPLATE = r"""
       </div>
     </template>
   </div>
+
+  <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 Thinking Pass mini card -->
+  <!-- Sir 13:13 立 Layer 1: 主脑 reply 末尾 emit [META] 一行自检. 这卡片让 Sir -->
+  <!-- 不点 /main_brain_meta page 也能一眼看主脑是否在认真 self-check. -->
+  <div class="glass rounded-2xl p-5 border border-slate-700/30 mt-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold flex items-center gap-2">
+        <span>🧠</span>主脑思考链 (Layer 1 META)
+        <span class="badge"
+              :class="{
+                'bg-emerald-500/20 text-emerald-300': (brainMeta.health || 'empty') === 'ok',
+                'bg-amber-500/20 text-amber-300': brainMeta.health === 'warn',
+                'bg-slate-700/50 text-slate-400': (brainMeta.health || 'empty') === 'empty'
+              }"
+              x-text="(brainMeta.total || 0) + ' 轮'"></span>
+        <span class="badge bg-violet-500/20 text-violet-300" x-show="(brainMeta.skip_alert_count || 0) > 0"
+              x-text="'拒道歉 ' + (brainMeta.skip_alert_count || 0)"></span>
+      </h3>
+      <a href="/main_brain_meta"
+         class="text-xs text-violet-400 hover:text-violet-300">详情 →</a>
+    </div>
+
+    <!-- 健康度 banner -->
+    <p class="text-sm mb-3"
+       :class="{
+         'text-emerald-300': (brainMeta.health || 'empty') === 'ok',
+         'text-amber-300': brainMeta.health === 'warn',
+         'text-slate-400': (brainMeta.health || 'empty') === 'empty'
+       }"
+       x-text="(brainMeta.health === 'ok' ? '✅ ' : (brainMeta.health === 'warn' ? '⚠️ ' : 'ℹ️ ')) + (brainMeta.health_msg || '')"></p>
+
+    <!-- 4 mini stat -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      <div class="bg-slate-800/50 rounded-lg p-2.5">
+        <p class="text-slate-400">📚 evidence 非空</p>
+        <p class="text-emerald-300 text-base font-mono mt-0.5"
+           x-text="(brainMeta.evidence_pct || 0) + '%'"></p>
+        <p class="text-slate-500 text-[0.7rem]"
+           x-text="(brainMeta.evidence_count || 0) + ' / ' + (brainMeta.total || 0) + ' 轮'"></p>
+      </div>
+      <div class="bg-slate-800/50 rounded-lg p-2.5">
+        <p class="text-slate-400">🚫 skip_alert</p>
+        <p class="text-amber-300 text-base font-mono mt-0.5"
+           x-text="(brainMeta.skip_alert_pct || 0) + '%'"></p>
+        <p class="text-slate-500 text-[0.7rem]"
+           x-text="(brainMeta.skip_alert_count || 0) + ' / ' + (brainMeta.total || 0) + ' 轮拒道歉'"></p>
+      </div>
+      <div class="bg-slate-800/50 rounded-lg p-2.5">
+        <p class="text-slate-400">📊 平均 evidence</p>
+        <p class="text-blue-300 text-base font-mono mt-0.5"
+           x-text="(brainMeta.avg_evidence_per_turn || 0).toFixed(2)"></p>
+        <p class="text-slate-500 text-[0.7rem]">每轮主脑用证据数</p>
+      </div>
+      <div class="bg-slate-800/50 rounded-lg p-2.5">
+        <p class="text-slate-400">💭 最近 1 轮 note</p>
+        <p class="text-slate-200 text-xs mt-0.5 truncate"
+           x-text="brainMeta.latest_turn_note || '(空)'"
+           :title="brainMeta.latest_turn_note"></p>
+        <p class="text-slate-500 text-[0.7rem]"
+           x-show="brainMeta.latest_turn_id"
+           x-text="(brainMeta.latest_turn_skip_alert ? '🚫 拒道歉' : '✓') + ' · ' + (brainMeta.latest_turn_reaction || '?')"></p>
+      </div>
+    </div>
+  </div>
 </section>
 
 <!-- Toast 通知 -->
@@ -636,6 +700,8 @@ function dashboard() {
     integrity: {},
     todo: {},
     promise: {},
+    // 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass META state
+    brainMeta: {},
     actionPending: {},
     toast: { show: false, ok: true, title: '', detail: '' },
 
@@ -795,6 +861,10 @@ def _summary_for_web() -> Dict[str, Any]:
             concerns, directive, promise, relation,
             daemon, health, review, events,
             mutations=mutations, integrity=integrity)
+        # 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主页 mini stats card
+        # 主脑 thinking pass META 健康度: total/skip%/evidence% 一眼看,
+        # 不点 /main_brain_meta page 也能瞄一眼.
+        brain_meta = _read_brain_meta_summary()
         emoji_map = {'ok': '✅', 'warn': '⚠️', 'crit': '❌'}
         return {
             'summary': {
@@ -814,6 +884,7 @@ def _summary_for_web() -> Dict[str, Any]:
             'integrity': integrity,
             'todo': todo,
             'promise': promise,
+            'brainMeta': brain_meta,
         }
     except Exception as e:
         return {
@@ -821,8 +892,67 @@ def _summary_for_web() -> Dict[str, Any]:
                          'headline': f'读取失败: {e}', 'actions': []},
             'reviewItems': [], 'concerns': {}, 'relation': {}, 'health': {},
             'directive': {}, 'daemon': {}, 'events': {}, 'mutations': {},
-            'integrity': {}, 'todo': {}, 'promise': {},
+            'integrity': {}, 'todo': {}, 'promise': {}, 'brainMeta': {},
         }
+
+
+def _read_brain_meta_summary() -> Dict[str, Any]:
+    """🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主页 mini card 数据.
+
+    返回简版 stats: total / skip% / evidence% / health / 最近 1 条 turn note.
+    """
+    try:
+        from jarvis_meta_self_check import read_recent_meta
+        records = read_recent_meta(limit=200)  # 最近 200 算 stats
+        n = len(records)
+        if n == 0:
+            return {
+                'total': 0,
+                'skip_alert_pct': 0,
+                'evidence_pct': 0,
+                'avg_evidence_per_turn': 0,
+                'health': 'empty',
+                'health_msg': '主脑还没跑 META (jarvis 重启后等几轮)',
+                'latest_turn_note': '',
+                'latest_turn_skip_alert': False,
+            }
+        n_skip = sum(1 for r in records if r.get('skip_alert'))
+        n_ev = sum(1 for r in records
+                   if r.get('evidence') and r.get('evidence') != ['none'])
+        avg_ev = sum(len(r.get('evidence', []) or []) for r in records) / n
+        skip_pct = round(100 * n_skip / n, 1)
+        ev_pct = round(100 * n_ev / n, 1)
+
+        if skip_pct > 50:
+            health = 'warn'
+            health_msg = f'skip_alert {skip_pct}% — 主脑频繁拒道歉'
+        elif ev_pct < 30 and n > 5:
+            health = 'warn'
+            health_msg = f'evidence 非空 {ev_pct}% — directive 可能被忽略'
+        elif ev_pct > 70:
+            health = 'ok'
+            health_msg = f'evidence {ev_pct}% — Layer 1 落地良好'
+        else:
+            health = 'ok'
+            health_msg = f'{n} 轮 META, evidence {ev_pct}%'
+
+        latest = records[-1] if records else {}
+        return {
+            'total': n,
+            'skip_alert_count': n_skip,
+            'skip_alert_pct': skip_pct,
+            'evidence_count': n_ev,
+            'evidence_pct': ev_pct,
+            'avg_evidence_per_turn': round(avg_ev, 2),
+            'health': health,
+            'health_msg': health_msg,
+            'latest_turn_note': (latest.get('note') or '')[:50],
+            'latest_turn_skip_alert': bool(latest.get('skip_alert')),
+            'latest_turn_id': latest.get('turn_id', ''),
+            'latest_turn_reaction': latest.get('reaction', ''),
+        }
+    except Exception:
+        return {}
 
 
 @app.route('/api/commitment/cancel/<int:cw_id>', methods=['POST'])
