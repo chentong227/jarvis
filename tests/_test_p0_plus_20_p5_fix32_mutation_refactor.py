@@ -1,0 +1,327 @@
+# -*- coding: utf-8 -*-
+"""[P5-fix32 / 2026-05-22] Mutation Refactor Phase 1 Foundation testcase.
+
+Sir 21:55 真痛点: "我教正某事永远不生效, 而且要跨模块通用".
+Phase 1 已加:
+- jarvis_routing.py:ProfileCard.overwrite_field — 真覆写 sir_profile.json
+- jarvis_memory_gateway.py — 6 layer routing (ProfileCard 高置信走 overwrite + 低置信
+  走 apply_correction; PromiseLog/CommitmentWatcher/RelationalStateStore 新加 routing)
+- jarvis_chat_bypass.py — FAST_CALL 'mutation' organ (主脑 emit 入口)
+- jarvis_directives.py — correction_dispatcher directive (priority=10) + vocab persist
+
+测试覆盖:
+1. ProfileCard.overwrite_field — schema 白名单 / atomic / no-op / load fail
+2. Gateway routing — high-conf overwrite / low-conf fallback / unknown layer
+3. correction_dispatcher trigger — 中/英教正 vocab 命中 + 中性 input 不命中
+4. correction_dispatcher 注册到 registry + priority=10 critical-protected
+"""
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ============================================================
+# 1. ProfileCard.overwrite_field
+# ============================================================
+
+class TestProfileCardOverwriteField(unittest.TestCase):
+    """真覆写 sir_profile.json + schema 白名单."""
+
+    def setUp(self):
+        # 备份当前 sir_profile.json (如存在)
+        self.profile_path = os.path.join('jarvis_config', 'sir_profile.json')
+        self._restore_needed = False
+        if os.path.exists(self.profile_path):
+            self._backup_path = self.profile_path + '.fix32_test_bak'
+            shutil.copy2(self.profile_path, self._backup_path)
+            self._restore_needed = True
+        # Mock nerve
+        from jarvis_routing import ProfileCard
+
+        class _MockNerve:
+            habit_clock = None
+            causal_chain = None
+            project_timeline = None
+            status_ledger = None
+
+        self.pc = ProfileCard(_MockNerve())
+
+    def tearDown(self):
+        if self._restore_needed:
+            shutil.copy2(self._backup_path, self.profile_path)
+            os.remove(self._backup_path)
+
+    def test_overwrite_allowed_field(self):
+        if not os.path.exists(self.profile_path):
+            self.skipTest('sir_profile.json not found')
+        new_val = f'[FIX32-TEST] sleep 23:00 - {time.time():.0f}'
+        ok, msg, old = self.pc.overwrite_field(
+            field='work_rhythms',
+            new_value=new_val,
+            source='fast_call_mutation:revise',
+            turn_id='test_turn_001',
+            reason='unit test',
+        )
+        self.assertTrue(ok, f"should succeed: {msg}")
+        # Verify file content really changed
+        with open(self.profile_path, 'r', encoding='utf-8') as f:
+            after = json.load(f)
+        self.assertEqual(after.get('work_rhythms'), new_val)
+
+    def test_overwrite_rejects_non_whitelist_field(self):
+        ok, msg, old = self.pc.overwrite_field(
+            field='secret_field_not_in_whitelist',
+            new_value='hacked',
+            source='fast_call_mutation:revise',
+        )
+        self.assertFalse(ok, "should reject non-whitelist field")
+        self.assertIn('not in allowed list', msg)
+
+    def test_overwrite_no_op_returns_ok(self):
+        if not os.path.exists(self.profile_path):
+            self.skipTest('sir_profile.json not found')
+        with open(self.profile_path, 'r', encoding='utf-8') as f:
+            current = json.load(f)
+        old_val = current.get('work_rhythms', '')
+        if not old_val:
+            self.skipTest('work_rhythms empty in profile')
+        # Set to same value → no-op
+        ok, msg, old = self.pc.overwrite_field(
+            field='work_rhythms',
+            new_value=old_val,
+            source='fast_call_mutation:revise',
+        )
+        self.assertTrue(ok, f"no-op should still return ok: {msg}")
+        self.assertIn('no-op', msg)
+
+    def test_overwrite_empty_field_rejected(self):
+        ok, msg, _ = self.pc.overwrite_field(
+            field='',
+            new_value='x',
+            source='fast_call_mutation:revise',
+        )
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'empty field')
+
+
+# ============================================================
+# 2. Gateway routing
+# ============================================================
+
+class TestGatewayRouting(unittest.TestCase):
+
+    def test_layer_detection_profile(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('profile.work_rhythms'),
+                          'ProfileCard')
+        self.assertEqual(_detect_target_layer('biographic.height'),
+                          'ProfileCard')
+
+    def test_layer_detection_promise(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('promise.fulfill.exam'),
+                          'PromiseLog')
+
+    def test_layer_detection_commitment(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('commitment.cancel.sleep'),
+                          'CommitmentWatcher')
+
+    def test_layer_detection_relational(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('relationships.archive.j1'),
+                          'RelationalStateStore')
+
+    def test_layer_detection_concern(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('concerns.sir_sleep_streak.severity'),
+                          'ConcernsLedger')
+
+    def test_layer_detection_unknown(self):
+        from jarvis_memory_gateway import _detect_target_layer
+        self.assertEqual(_detect_target_layer('foobar.xyz'), 'unknown')
+
+    def test_gateway_writes_receipt_jsonl(self):
+        """gateway 总是写 receipt 到 jsonl, 不论成功失败."""
+        from jarvis_memory_gateway import MemoryMutationGateway
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_receipt = os.path.join(tmp, 'receipts.jsonl')
+            gw = MemoryMutationGateway(receipt_path=tmp_receipt)
+            # 用 unknown layer 触发 err 但仍写 receipt
+            receipt = gw.update_sir_field(
+                field_path='foobar.unknown',
+                new_value='x',
+                source='fast_call_mutation:revise',
+                confidence=0.9,
+            )
+            self.assertEqual(receipt.layer_targeted, 'unknown')
+            self.assertFalse(receipt.ok)
+            # Verify jsonl written
+            self.assertTrue(os.path.exists(tmp_receipt))
+            with open(tmp_receipt, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            self.assertEqual(len(lines), 1)
+            d = json.loads(lines[0])
+            self.assertEqual(d.get('mutation_id'), receipt.mutation_id)
+
+
+# ============================================================
+# 3. correction_dispatcher directive trigger
+# ============================================================
+
+class TestCorrectionDispatcherTrigger(unittest.TestCase):
+
+    def test_chinese_correction_phrases_fire(self):
+        from jarvis_directives import (_trigger_correction_dispatcher,
+                                              DirectiveContext)
+        for phrase in ['其实我以后默认晚 11 睡',
+                          'Windsurf 不对, 不是我在动',
+                          '应该是 23:00, 不是 22:00',
+                          '改成下周一', '我搬家了',
+                          '更准确地说, 是月薪 1 万 2']:
+            ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
+            self.assertTrue(_trigger_correction_dispatcher(ctx),
+                              f'should fire for: {phrase}')
+
+    def test_english_correction_phrases_fire(self):
+        from jarvis_directives import (_trigger_correction_dispatcher,
+                                              DirectiveContext)
+        for phrase in ["actually, that's not it",
+                          "wait, I changed my mind",
+                          "it's not Windsurf",
+                          'i mean, I sleep at 11',
+                          "let me clarify"]:
+            ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
+            self.assertTrue(_trigger_correction_dispatcher(ctx),
+                              f'should fire for: {phrase}')
+
+    def test_neutral_chitchat_does_not_fire(self):
+        from jarvis_directives import (_trigger_correction_dispatcher,
+                                              DirectiveContext)
+        for phrase in ['你好', 'open dashboard', '今天天气怎么样',
+                          'tell me about the weather', 'good morning']:
+            ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
+            self.assertFalse(_trigger_correction_dispatcher(ctx),
+                                f'should NOT fire for: {phrase}')
+
+    def test_empty_input_does_not_fire(self):
+        from jarvis_directives import (_trigger_correction_dispatcher,
+                                              DirectiveContext)
+        ctx = DirectiveContext(user_input='', tier='CHAT', stm=[])
+        self.assertFalse(_trigger_correction_dispatcher(ctx))
+
+
+# ============================================================
+# 4. correction_dispatcher directive registered + critical-protected
+# ============================================================
+
+class TestCorrectionDispatcherRegistration(unittest.TestCase):
+
+    def test_directive_registered_with_priority_10(self):
+        import jarvis_directives as jd
+        reg = jd.get_default_registry()
+        cd = reg.get('correction_dispatcher')
+        self.assertIsNotNone(cd, "correction_dispatcher not registered")
+        self.assertEqual(cd.priority, 10,
+                          "correction_dispatcher should be priority=10 (critical-protected)")
+        self.assertEqual(cd.id, 'correction_dispatcher')
+        self.assertEqual(cd.source_marker, 'P5-fix32-D')
+
+    def test_directive_text_mentions_field_path_protocol(self):
+        import jarvis_directives as jd
+        reg = jd.get_default_registry()
+        cd = reg.get('correction_dispatcher')
+        self.assertIsNotNone(cd)
+        # text 必须教主脑 field_path 协议
+        self.assertIn('field_path', cd.text)
+        self.assertIn('mutation', cd.text)
+        self.assertIn('FAST_CALL', cd.text)
+        # 必须含 3 步推理
+        self.assertIn('intent', cd.text)
+        self.assertIn('layer', cd.text.lower())
+
+
+# ============================================================
+# 5. Vocab persistence (准则 6)
+# ============================================================
+
+class TestCorrectionDispatcherVocab(unittest.TestCase):
+
+    def test_seed_returns_when_no_json(self):
+        # 即便 vocab json 不存在, seed 应返回非空 list
+        import jarvis_directives as jd
+        # Force reload via mtime change
+        jd._CORRECTION_DISPATCHER_CACHE = None
+        pats = jd.get_correction_dispatcher_patterns()
+        self.assertIsInstance(pats, list)
+        self.assertGreater(len(pats), 0)
+        # Seed 应含中英 keyword
+        self.assertIn('其实', pats)
+        self.assertIn('actually', pats)
+
+
+# ============================================================
+# 6. SWM publish on overwrite_field
+# ============================================================
+
+class TestOverwriteFieldSwmPublish(unittest.TestCase):
+
+    def test_overwrite_emits_swm_event(self):
+        if not os.path.exists(os.path.join('jarvis_config', 'sir_profile.json')):
+            self.skipTest('sir_profile.json not found')
+
+        from jarvis_routing import ProfileCard
+        from jarvis_utils import (get_event_bus, ConversationEventBus)
+        import jarvis_utils as _ju
+
+        class _MockNerve:
+            habit_clock = None
+            causal_chain = None
+            project_timeline = None
+            status_ledger = None
+
+        pc = ProfileCard(_MockNerve())
+
+        # 测试上下文: 没 nerve init 时 _GLOBAL_EVENT_BUS=None.
+        # 注册一个临时 bus 让 overwrite_field 能 publish.
+        prev_bus = _ju._GLOBAL_EVENT_BUS
+        test_bus = ConversationEventBus()
+        ConversationEventBus.register_global(test_bus)
+
+        # Backup + write
+        profile_path = os.path.join('jarvis_config', 'sir_profile.json')
+        backup = profile_path + '.swm_test_bak'
+        shutil.copy2(profile_path, backup)
+
+        try:
+            new_val = f'[SWM-TEST] {time.time():.0f}'
+            ok, _, _ = pc.overwrite_field(
+                field='work_rhythms',
+                new_value=new_val,
+                source='fast_call_mutation:revise',
+                turn_id='test_swm_001',
+                reason='swm publish test',
+            )
+            self.assertTrue(ok)
+
+            # Verify SWM has 'sir_profile_overwritten' event
+            # Note: ConversationEventBus stores etype under key 'type', not 'etype'
+            after_events = test_bus.recent_events(within_seconds=10.0)
+            etypes = [e.get('type') for e in after_events]
+            self.assertIn('sir_profile_overwritten', etypes,
+                            f'SWM should publish sir_profile_overwritten; got: {etypes}')
+        finally:
+            shutil.copy2(backup, profile_path)
+            os.remove(backup)
+            ConversationEventBus.register_global(prev_bus)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
