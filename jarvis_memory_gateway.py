@@ -193,17 +193,57 @@ class MemoryMutationGateway:
                 profile = getattr(nerve, 'profile_card', None) if nerve else None
                 if profile is None:
                     err = 'ProfileCard not available'
-                elif hasattr(profile, 'apply_correction'):
-                    profile.apply_correction(
-                        source_module=source,
-                        field=field_path,
-                        old_value=old_excerpt,
-                        new_value=new_excerpt,
-                        confidence=float(confidence),
-                    )
-                    ok = True
                 else:
-                    err = 'ProfileCard has no apply_correction'
+                    # 🆕 [P5-fix32-B / 2026-05-22 22:20] 高置信走真覆写 sir_profile.json
+                    # 低置信 / field 不在白名单 → fallback apply_correction (老路, 只 audit).
+                    # field_path 转 top-level (取末段 — gateway 用 'biographic.X' / 'profile.X'
+                    # 形式调, ProfileCard 只识 top-level field). e.g. 'profile.work_rhythms'
+                    # → 'work_rhythms'. apply_correction 老路用全 field_path (含前缀).
+                    _is_high_conf_fast_call = (
+                        float(confidence) >= 0.8 and
+                        (source.startswith('fast_call') or
+                         source.startswith('sir_cli') or
+                         source.startswith('intent_resolver_revise'))
+                    )
+                    if _is_high_conf_fast_call and hasattr(profile, 'overwrite_field'):
+                        # 抽 top-level field (允许 'profile.X' / 'biographic.X' / 'sir.X' 前缀)
+                        _top_field = field_path.split('.')[-1] if '.' in field_path else field_path
+                        try:
+                            ow_ok, ow_msg, ow_old = profile.overwrite_field(
+                                field=_top_field,
+                                new_value=new_value,
+                                source=source,
+                                turn_id=turn_id,
+                            )
+                            if ow_ok:
+                                ok = True
+                                if ow_old is not None:
+                                    old_excerpt = str(ow_old)[:100]
+                            else:
+                                # field 不在白名单 / load fail / write fail → fallback 老路 audit
+                                err = f'overwrite_field fail: {ow_msg}; falling back to apply_correction'
+                                if hasattr(profile, 'apply_correction'):
+                                    profile.apply_correction(
+                                        source_module=source,
+                                        field=field_path,
+                                        old_value=old_excerpt,
+                                        new_value=new_excerpt,
+                                        confidence=float(confidence),
+                                    )
+                                    ok = True  # audit 成功
+                        except Exception as _owe:
+                            err = f'overwrite_field exception: {_owe}'
+                    elif hasattr(profile, 'apply_correction'):
+                        profile.apply_correction(
+                            source_module=source,
+                            field=field_path,
+                            old_value=old_excerpt,
+                            new_value=new_excerpt,
+                            confidence=float(confidence),
+                        )
+                        ok = True
+                    else:
+                        err = 'ProfileCard has no apply_correction / overwrite_field'
             elif layer == 'Milestones':
                 # 路由到 milestone_register tool
                 try:
@@ -238,6 +278,137 @@ class MemoryMutationGateway:
                                 err = f'concern {cid} not found'
                         else:
                             err = 'ConcernsLedger has no record_signal'
+            # 🆕 [P5-fix32-C / 2026-05-22 22:25] PromiseLog routing
+            # field_path 形如:
+            #   'promise.fulfill.<id_or_keyword>'  → mark_fulfilled
+            #   'promise.cancel.<id_or_keyword>'   → mark_cancelled
+            elif layer == 'PromiseLog':
+                try:
+                    from jarvis_promise_log import get_default_log
+                    plog = get_default_log()
+                except Exception as _pe:
+                    err = f'PromiseLog import fail: {_pe}'
+                    plog = None
+                if plog is not None:
+                    parts = field_path.split('.', 2)
+                    op = parts[1] if len(parts) >= 2 else ''
+                    key = parts[2] if len(parts) >= 3 else str(new_value)
+                    # Resolve key → promise_id (id 精确匹配 / keyword 模糊找)
+                    target_pid = None
+                    try:
+                        # 1) 精确 id
+                        if key in (plog.promises or {}):
+                            target_pid = key
+                        else:
+                            # 2) keyword fuzzy on description
+                            kl = key.lower()
+                            for p in plog.list_pending():
+                                if kl and kl in (p.description or '').lower():
+                                    target_pid = p.id
+                                    break
+                    except Exception:
+                        target_pid = None
+                    if not target_pid:
+                        err = f"no pending promise matching '{key}'"
+                    elif op == 'fulfill':
+                        try:
+                            ok = plog.mark_fulfilled(target_pid,
+                                                      evidence_kind='fast_call_mutation',
+                                                      evidence_what=str(new_value)[:100])
+                            if not ok:
+                                err = f'mark_fulfilled fail (already settled?)'
+                        except Exception as _fe:
+                            err = f'mark_fulfilled exception: {_fe}'
+                    elif op == 'cancel':
+                        try:
+                            ok = plog.mark_cancelled(target_pid, reason=str(new_value)[:100])
+                            if not ok:
+                                err = f'mark_cancelled fail (already settled?)'
+                        except Exception as _ce:
+                            err = f'mark_cancelled exception: {_ce}'
+                    else:
+                        err = f'unknown promise op: {op} (need fulfill/cancel)'
+            # 🆕 [P5-fix32-C / 2026-05-22 22:25] CommitmentWatcher routing
+            # field_path 形如:
+            #   'commitment.cancel.<keyword>'  → cancel_by_keyword
+            #   'commitment.update.<keyword>'  → update_by_keyword (new_value = new desc/deadline JSON)
+            elif layer == 'CommitmentWatcher':
+                cw = getattr(nerve, 'commitment_watcher', None) if nerve else None
+                if cw is None:
+                    err = 'CommitmentWatcher not available'
+                else:
+                    parts = field_path.split('.', 2)
+                    op = parts[1] if len(parts) >= 2 else ''
+                    keyword = parts[2] if len(parts) >= 3 else str(new_value)
+                    if op == 'cancel':
+                        try:
+                            n_removed = cw.cancel_by_keyword(keyword)
+                            ok = n_removed > 0
+                            if not ok:
+                                err = f'no commitment matching "{keyword}"'
+                            else:
+                                new_excerpt = f'cancelled {n_removed} commitment(s)'
+                        except Exception as _cce:
+                            err = f'cancel_by_keyword exception: {_cce}'
+                    elif op == 'update':
+                        # new_value 解读: dict {desc, deadline_str} 或 str (作为 new desc)
+                        try:
+                            if isinstance(new_value, dict):
+                                _new_desc = new_value.get('description')
+                                _new_dl = new_value.get('deadline_str')
+                            else:
+                                _new_desc = str(new_value)
+                                _new_dl = None
+                            n_updated = cw.update_by_keyword(
+                                keyword,
+                                new_description=_new_desc,
+                                new_deadline_str=_new_dl,
+                            )
+                            ok = n_updated > 0
+                            if not ok:
+                                err = f'no commitment matching "{keyword}"'
+                        except Exception as _cue:
+                            err = f'update_by_keyword exception: {_cue}'
+                    else:
+                        err = f'unknown commitment op: {op} (need cancel/update)'
+            # 🆕 [P5-fix32-C / 2026-05-22 22:25] RelationalStateStore routing
+            # field_path 形如:
+            #   'relationships.archive_joke.<jid>'   → archive_inside_joke
+            #   'protocol.archive.<pid>'              → archive_protocol
+            #   'unfinished.done.<uid>'               → mark_unfinished_done
+            #   'thread.archive.<tid>'                → archive_thread
+            elif layer == 'RelationalStateStore':
+                rs = getattr(nerve, 'relational_state', None) if nerve else None
+                if rs is None:
+                    err = 'RelationalStateStore not available'
+                else:
+                    parts = field_path.split('.', 2)
+                    kind = parts[0]  # relationships / protocol / unfinished / thread
+                    op = parts[1] if len(parts) >= 2 else ''
+                    item_id = parts[2] if len(parts) >= 3 else str(new_value)
+                    try:
+                        if kind in ('relationships', 'inside_joke') and op == 'archive':
+                            ok = rs.archive_inside_joke(item_id)
+                            if not ok:
+                                err = f'inside_joke {item_id} not found'
+                        elif kind == 'protocol' and op == 'archive':
+                            ok = rs.archive_protocol(item_id)
+                            if not ok:
+                                err = f'protocol {item_id} not found'
+                        elif kind == 'unfinished' and op == 'done':
+                            ok = rs.mark_unfinished_done(item_id)
+                            if not ok:
+                                err = f'unfinished {item_id} not found'
+                        elif kind == 'thread' and op == 'archive':
+                            ok = rs.archive_thread(item_id)
+                            if not ok:
+                                err = f'thread {item_id} not found'
+                        else:
+                            err = (f'unknown relational op: kind={kind} op={op} '
+                                      f'(need relationships.archive/protocol.archive/'
+                                      f'unfinished.done/thread.archive)')
+                    except Exception as _re:
+                        err = f'relational mutation exception: {_re}'
             else:
                 err = f'no router for layer={layer} (field={field_path})'
         except Exception as e:

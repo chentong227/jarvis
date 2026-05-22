@@ -827,6 +827,132 @@ class ProfileCard:
         with open(path, 'a', encoding='utf-8') as f:
             f.write(_json.dumps(record, ensure_ascii=False) + '\n')
 
+    # ============================================================
+    # 🆕 [P5-fix32-B / 2026-05-22 22:20] overwrite_field — 真覆写 sir_profile.json
+    # ============================================================
+    # 起因: Sir 21:55 真测 "我修正 profile 永远不生效".
+    # apply_correction (line 728) 故意不改主 profile (line 770-771 注释), 是低置信
+    # 学习路径. Sir 用 FAST_CALL emit profile.update_field 时, 需要走**真覆写**.
+    #
+    # 设计原则 (per docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 8.3):
+    #   - 高置信 (主脑 emit FAST_CALL with intent=revise/refine) → 走 overwrite_field
+    #   - 低置信 (auto 学习, e.g. habit_clock anomaly) → 走 apply_correction (老路)
+    #   - 真覆写 sir_profile.json (atomic write via tmp+rename)
+    #   - 同时 audit 到 profile_corrections.jsonl (留 trail)
+    #   - schema 保护: 只允许已知 top-level field, 防主脑乱改坏结构
+    # ============================================================
+
+    # 允许 FAST_CALL emit 覆写的 sir_profile.json top-level field 白名单.
+    # Sir 可加 (per 准则 6: vocab 可持久化 + CLI 改, 但此处 system constant
+    # 列表数量级 ~20, 不下钻 vocab; 准则 6 递归边界 β.3.5 立).
+    _OVERWRITE_ALLOWED_FIELDS = frozenset({
+        'core_philosophy', 'work_rhythms', 'idiosyncrasies',
+        'conversational_boundaries', 'active_projects',
+        'sleep_target_hour', 'wake_target_hour',
+        'work_category', 'preferred_tools', 'frequently_used_software',
+        'health_concerns', 'life_anchors', 'relationship_status',
+        'professional_role', 'location_general', 'languages',
+        'communication_preferences', 'nudge_frequency_default',
+    })
+
+    def overwrite_field(self, field: str, new_value, source: str = 'fast_call_mutation',
+                          turn_id: str = '', reason: str = '') -> tuple:
+        """真覆写 sir_profile.json 的 top-level field.
+
+        Args:
+          field: top-level field name (must be in _OVERWRITE_ALLOWED_FIELDS)
+          new_value: 新值 (任意 JSON-serializable)
+          source: caller 标识 ('fast_call_mutation' / 'sir_cli' / 'intent_resolver_revise')
+          turn_id: trace id
+          reason: Sir 原话 / 主脑解读
+
+        Returns:
+          (ok: bool, message: str, old_value: any)
+        """
+        import json as _json
+        # Schema 保护
+        if not field:
+            return False, 'empty field', None
+        if field not in self._OVERWRITE_ALLOWED_FIELDS:
+            return (False,
+                      f"field '{field}' not in allowed list "
+                      f"(allowed: {sorted(self._OVERWRITE_ALLOWED_FIELDS)[:5]}...)",
+                      None)
+        profile_path = os.path.join('jarvis_config', 'sir_profile.json')
+        if not os.path.exists(profile_path):
+            return False, f'profile file not found: {profile_path}', None
+
+        # Load
+        try:
+            with open(profile_path, 'r', encoding='utf-8') as f:
+                profile = _json.load(f)
+        except Exception as e:
+            return False, f'load fail: {e}', None
+        if not isinstance(profile, dict):
+            return False, 'profile not a dict', None
+
+        old_value = profile.get(field)
+        # No-op check (老值跟新值相同)
+        if old_value == new_value:
+            return True, f'no-op (field {field} already {str(new_value)[:40]})', old_value
+
+        # Atomic write: tmp + rename
+        profile[field] = new_value
+        try:
+            tmp_path = profile_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                _json.dump(profile, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, profile_path)
+        except Exception as e:
+            return False, f'write fail: {e}', old_value
+
+        # Audit 到 profile_corrections.jsonl (复用 _persist_correction_to_disk)
+        try:
+            correction = {
+                'time': time.strftime('%H:%M:%S'),
+                'source': source,
+                'field': field,
+                'old': str(old_value)[:200],
+                'new': str(new_value)[:200],
+                'confidence': 1.0,           # FAST_CALL = 高置信
+                'kind': 'overwrite_field',   # 区分 apply_correction
+                'turn_id': turn_id,
+                'reason': reason[:200],
+            }
+            self._persist_correction_to_disk(correction)
+        except Exception:
+            pass
+
+        # SWM publish
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='sir_profile_overwritten',
+                    description=(
+                        f"profile.{field} = '{str(new_value)[:60]}' "
+                        f"(was: '{str(old_value)[:40]}', source={source})"
+                    ),
+                    source='ProfileCard',
+                    salience=0.85,
+                    metadata={
+                        'field': field,
+                        'old_value': str(old_value)[:200],
+                        'new_value': str(new_value)[:200],
+                        'source': source,
+                        'turn_id': turn_id,
+                        'reason': reason[:200],
+                    },
+                )
+        except Exception:
+            pass
+
+        # Invalidate cache
+        self._cache_time = 0
+
+        return True, f"profile.{field} overwritten", old_value
+
     def _load_profile(self) -> dict:
         import json as _json
         profile_file = os.path.join("jarvis_config", "sir_profile.json")
