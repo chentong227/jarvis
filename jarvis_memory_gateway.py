@@ -261,23 +261,42 @@ class MemoryMutationGateway:
                 if ledger is None:
                     err = 'ConcernsLedger not available'
                 else:
-                    # field_path 形如 'concerns.sir_sleep_streak.severity' or 'concerns.sir_x'
+                    # field_path 形如:
+                    #   'concerns.<cid>.<attr>'  → update_concern_field (P5-fix32-G 深度 update)
+                    #   'concerns.<cid>'         → record_signal (老路, severity_delta)
                     parts = field_path.split('.')
                     cid = parts[1] if len(parts) >= 2 else ''
+                    attr = parts[2] if len(parts) >= 3 else ''
                     if not cid:
-                        err = 'invalid concern field_path (need concerns.<cid>...)'
-                    else:
-                        # 简单 record_signal
-                        if hasattr(ledger, 'record_signal'):
-                            ok = ledger.record_signal(
-                                cid, str(new_value)[:200],
-                                severity_delta=float(confidence) - 0.5,
-                                source_turn_id=turn_id,
+                        err = 'invalid concern field_path (need concerns.<cid>[.<attr>])'
+                    elif attr and hasattr(ledger, 'update_concern_field'):
+                        # 🆕 [P5-fix32-G] 深度 update — 改 what_i_watch / severity / triggers_proactive 等
+                        try:
+                            uf_ok, uf_msg, uf_old = ledger.update_concern_field(
+                                concern_id=cid,
+                                field=attr,
+                                new_value=new_value,
+                                source=source,
+                                turn_id=turn_id,
                             )
-                            if not ok:
-                                err = f'concern {cid} not found'
-                        else:
-                            err = 'ConcernsLedger has no record_signal'
+                            ok = uf_ok
+                            if not uf_ok:
+                                err = uf_msg
+                            elif uf_old is not None:
+                                old_excerpt = str(uf_old)[:100]
+                        except Exception as _ue:
+                            err = f'update_concern_field exception: {_ue}'
+                    elif hasattr(ledger, 'record_signal'):
+                        # 老路 (没 attr / ledger 不支持新 method): record_signal
+                        ok = ledger.record_signal(
+                            cid, str(new_value)[:200],
+                            severity_delta=float(confidence) - 0.5,
+                            source_turn_id=turn_id,
+                        )
+                        if not ok:
+                            err = f'concern {cid} not found'
+                    else:
+                        err = 'ConcernsLedger has no record_signal / update_concern_field'
             # 🆕 [P5-fix32-C / 2026-05-22 22:25] PromiseLog routing
             # field_path 形如:
             #   'promise.fulfill.<id_or_keyword>'  → mark_fulfilled

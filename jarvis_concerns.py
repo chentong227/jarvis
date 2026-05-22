@@ -534,6 +534,136 @@ class ConcernsLedger:
             pass
         return True
 
+    # =========================================================
+    # 🆕 [P5-fix32-G / 2026-05-22] update_concern_field — 深度 update
+    # =========================================================
+    # Sir 21:55 mutation refactor Phase 2.1: Sir 想改 concern 的内容 (不只 dismiss).
+    # 例:
+    #   "睡眠 concern 别这么严肃, 我半夜画图也算工作" → 改 what_i_watch / why_i_care
+    #   "把 cursor concern 严重度调低" → 改 severity
+    #   "cursor concern 别 nudge" → 改 triggers_proactive=False (= dismiss 软关闭)
+    # gateway 现在路由 'concerns.<cid>' → record_signal (改 severity_delta).
+    # 加 'concerns.<cid>.<attr>' → update_concern_field (改字段).
+    # 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 6 Phase 2.1
+    # =========================================================
+
+    # 允许 update 的 Concern field 白名单 (防主脑乱改 schema).
+    # 不含: id (改 id 会破 dedup), state (走 dismiss/reactivate), recent_signals
+    # (signal 走 record_signal), last_updated (内部维护).
+    _UPDATE_ALLOWED_FIELDS = frozenset({
+        'what_i_watch', 'why_i_care', 'severity',
+        'triggers_proactive', 'notes_for_self', 'optimal_timing',
+        'ttl_days',
+    })
+
+    def update_concern_field(self, concern_id: str, field: str, new_value,
+                                source: str = 'fast_call_mutation',
+                                turn_id: str = '',
+                                reason: str = '') -> tuple:
+        """更新 concern 单个字段. 真改 + audit + SWM publish.
+
+        Args:
+          concern_id: target concern id
+          field: top-level field name (must be in _UPDATE_ALLOWED_FIELDS)
+          new_value: 新值
+          source: caller 标识
+          turn_id: trace id
+          reason: Sir 原话 / 主脑解读
+
+        Returns:
+          (ok: bool, message: str, old_value: any)
+        """
+        if not concern_id:
+            return False, 'empty concern_id', None
+        if not field:
+            return False, 'empty field', None
+        if field not in self._UPDATE_ALLOWED_FIELDS:
+            return (False,
+                      f"field '{field}' not in allowed list "
+                      f"(allowed: {sorted(self._UPDATE_ALLOWED_FIELDS)})",
+                      None)
+
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False, f'concern {concern_id} not found', None
+
+            old_value = getattr(c, field, None)
+
+            # No-op check
+            if old_value == new_value:
+                return True, f'no-op (concern.{field} already {str(new_value)[:40]})', old_value
+
+            # Type coerce + validate
+            try:
+                if field == 'severity':
+                    nv = max(0.0, min(1.0, float(new_value)))
+                elif field == 'triggers_proactive':
+                    if isinstance(new_value, str):
+                        nv = new_value.strip().lower() in ('1', 'true', 'yes', 'on')
+                    else:
+                        nv = bool(new_value)
+                elif field == 'ttl_days':
+                    nv = max(1, min(3650, int(new_value)))
+                elif field in ('what_i_watch', 'why_i_care'):
+                    nv = str(new_value)[:500]
+                elif field == 'notes_for_self':
+                    nv = str(new_value)[:500]
+                elif field == 'optimal_timing':
+                    nv = str(new_value)[:32]
+                else:
+                    nv = new_value  # 不在 list 里 (不可达, 上面已 check)
+            except (TypeError, ValueError) as _ve:
+                return False, f'value coerce fail: {_ve}', old_value
+
+            # 写入
+            setattr(c, field, nv)
+            # 加 signal 记录 (audit)
+            tag = f'[update/{field}/{source}] '
+            sig_what = (tag + (reason or f'changed to {str(nv)[:60]}'))[:200]
+            c.recent_signals.append({
+                'when': time.time(),
+                'when_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                                time.localtime(time.time())),
+                'what': sig_what,
+                'severity_delta': 0,
+                'turn_id': turn_id,
+            })
+            if len(c.recent_signals) > 10:
+                c.recent_signals = c.recent_signals[-10:]
+            c.last_updated = time.time()
+            self._dirty = True
+
+        # SWM publish (锁外)
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='concern_field_updated',
+                    description=(
+                        f"concern {concern_id}.{field} = "
+                        f"'{str(nv)[:60]}' (was: '{str(old_value)[:40]}', "
+                        f"src={source})"
+                    ),
+                    source='concerns_ledger',
+                    salience=0.75,
+                    metadata={
+                        'concern_id': concern_id,
+                        'field': field,
+                        'old_value': str(old_value)[:200],
+                        'new_value': str(nv)[:200],
+                        'source': source,
+                        'turn_id': turn_id,
+                        'reason': reason[:200],
+                    },
+                    ttl=86400.0,
+                )
+        except Exception:
+            pass
+
+        return True, f"concern.{concern_id}.{field} updated", old_value
+
     # ---- decay ----
 
     def apply_decay(self) -> dict:

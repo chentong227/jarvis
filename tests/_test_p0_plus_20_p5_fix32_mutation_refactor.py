@@ -268,6 +268,97 @@ class TestCorrectionDispatcherVocab(unittest.TestCase):
 
 
 # ============================================================
+# 5b. ConcernsLedger.update_concern_field (Phase 2.1)
+# ============================================================
+
+class TestConcernUpdateField(unittest.TestCase):
+    """[P5-fix32-G] 深度 update concern 字段."""
+
+    def setUp(self):
+        from jarvis_concerns import ConcernsLedger, Concern
+        # 用临时持久化路径, 不污染真账本
+        self.tmp_dir = tempfile.mkdtemp(prefix='concern_upd_test_')
+        self.persist_path = os.path.join(self.tmp_dir, 'concerns.json')
+        self.ledger = ConcernsLedger(persist_path=self.persist_path)
+        # Add 1 active concern
+        self.ledger.register(Concern(
+            id='test_concern_1',
+            what_i_watch='Sir 是否熬夜',
+            why_i_care='Sir 健康',
+            severity=0.8,
+        ))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_update_what_i_watch(self):
+        ok, msg, old = self.ledger.update_concern_field(
+            'test_concern_1', 'what_i_watch',
+            'Sir 半夜画图也算工作',
+            source='fast_call_mutation:revise',
+            turn_id='test_turn_1',
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(old, 'Sir 是否熬夜')
+        c = self.ledger.concerns['test_concern_1']
+        self.assertEqual(c.what_i_watch, 'Sir 半夜画图也算工作')
+
+    def test_update_severity_clamped(self):
+        ok, msg, old = self.ledger.update_concern_field(
+            'test_concern_1', 'severity', 2.5,  # 超出 1.0 应 clamp
+            source='fast_call_mutation:refine',
+        )
+        self.assertTrue(ok, msg)
+        c = self.ledger.concerns['test_concern_1']
+        self.assertEqual(c.severity, 1.0)
+
+    def test_update_triggers_proactive_string_to_bool(self):
+        ok, msg, _ = self.ledger.update_concern_field(
+            'test_concern_1', 'triggers_proactive', 'false',
+            source='fast_call_mutation:dismiss',
+        )
+        self.assertTrue(ok, msg)
+        c = self.ledger.concerns['test_concern_1']
+        self.assertFalse(c.triggers_proactive)
+
+    def test_update_rejects_non_whitelist_field(self):
+        ok, msg, _ = self.ledger.update_concern_field(
+            'test_concern_1', 'state', 'archived',  # state 不在白名单
+            source='fast_call_mutation:revise',
+        )
+        self.assertFalse(ok)
+        self.assertIn('not in allowed list', msg)
+
+    def test_update_rejects_unknown_concern(self):
+        ok, msg, _ = self.ledger.update_concern_field(
+            'no_such_concern', 'severity', 0.5,
+        )
+        self.assertFalse(ok)
+        self.assertIn('not found', msg)
+
+    def test_update_no_op_returns_ok(self):
+        ok, msg, _ = self.ledger.update_concern_field(
+            'test_concern_1', 'severity', 0.8,  # 等同当前
+        )
+        self.assertTrue(ok)
+        self.assertIn('no-op', msg)
+
+    def test_update_writes_signal_audit(self):
+        before_n = len(self.ledger.concerns['test_concern_1'].recent_signals)
+        ok, _, _ = self.ledger.update_concern_field(
+            'test_concern_1', 'what_i_watch', 'new watch text',
+            source='fast_call_mutation:revise',
+            reason='test reason',
+        )
+        self.assertTrue(ok)
+        after_n = len(self.ledger.concerns['test_concern_1'].recent_signals)
+        self.assertEqual(after_n, before_n + 1, 'should append 1 signal')
+        last = self.ledger.concerns['test_concern_1'].recent_signals[-1]
+        self.assertIn('update', last['what'])
+        self.assertIn('what_i_watch', last['what'])
+
+
+# ============================================================
 # 6. SWM publish on overwrite_field
 # ============================================================
 
