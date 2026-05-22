@@ -8,9 +8,9 @@
   "max_expires_in_s": 86400,
   "min_judge_interval_s": 30.0,
   "registrar": {
-    "_doc": "Sir 说 + Jarvis ack 时, LLM 提取 watch_task 候选. 复用主脑 reply 后路径 (post-stream fire-and-forget).",
-    "primary_model": "google/gemini-2.5-flash-lite",
-    "fallback_model": "google/gemini-3-flash-preview",
+    "_doc": "Sir 说 + Jarvis ack 时, LLM 提取 watch_task 候选. 复用主脑 reply 后路径 (post-stream fire-and-forget). [β.5.46-fix14] primary 升级 gemini-3.5-flash 试 agentic 提取 (强项 MCP/Terminal-Bench), fallback 老 lite 兜底.",
+    "primary_model": "google/gemini-3.5-flash",
+    "fallback_model": "google/gemini-2.5-flash-lite",
     "temperature": 0.2,
     "max_output_tokens": 400,
     "timeout_s": 12.0,

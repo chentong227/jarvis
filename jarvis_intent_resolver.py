@@ -32,8 +32,14 @@ except Exception:
 
 
 INTENT_RESOLVER_CONFIG = {
-    'primary_model': 'google/gemini-2.5-flash-lite',
-    'fallback_model': 'google/gemini-3.1-pro-preview',
+    # 🆕 [β.5.46-fix14 / 2026-05-22] Gemini 3.5 Flash A/B (Sir 拍板副链 A/B)
+    # 调研: gemini-3.5-flash GA 2026-05-19, 强 agentic/工具调用 (Terminal-Bench 76.2%
+    # MCP Atlas 83.6%, beats 3.1 Pro), $1.50/$9 per 1M, 1M ctx, 4x faster.
+    # IntentResolver 是 mutation tool 调度核心 (LLM judge 调哪些 tool), agentic 强项
+    # 真适用. 切换 primary 试 1-2 周看 fact tool call 准确率 vs 老 lite. 主对话不动.
+    # fallback 降级老 lite (3.5 rate limit / 挂时至少能跑), 不用 pro-preview (timeout 风险高 + 贵).
+    'primary_model': 'google/gemini-3.5-flash',
+    'fallback_model': 'google/gemini-2.5-flash-lite',
     'temperature': 0.1,                    # 工具调度要稳, 不要随机
     'max_output_tokens': 800,
     'timeout_s': 12.0,
@@ -116,6 +122,16 @@ class IntentResolver:
             'tools_failed_total': 0,
             'last_resolve_ts': 0.0,
             'last_error': '',
+            # 🆕 [β.5.46-fix14 / 2026-05-22] A/B telemetry — 看 3.5-flash vs 老 lite
+            'llm_primary_calls': 0,
+            'llm_primary_ok': 0,
+            'llm_primary_fail': 0,
+            'llm_primary_latency_sum_ms': 0.0,
+            'llm_fallback_calls': 0,
+            'llm_fallback_ok': 0,
+            'llm_fallback_fail': 0,
+            'llm_fallback_latency_sum_ms': 0.0,
+            'llm_parse_fail': 0,
         }
 
     def register_tool(self, name: str, fn: Any) -> None:
@@ -274,7 +290,11 @@ class IntentResolver:
             return {'tool_calls': [], '_error': f'key error: {str(e)[:80]}'}
 
         response_text = ''
+        # 🆕 [β.5.46-fix14] A/B telemetry — 记录 primary/fallback 真实成功率 + latency
+        _t0 = time.time()
         try:
+            with self._lock:
+                self._stats['llm_primary_calls'] += 1
             response_text = safe_openrouter_call(
                 openrouter_key=okey,
                 model=self.config['primary_model'],
@@ -282,8 +302,19 @@ class IntentResolver:
                 max_tokens=self.config['max_output_tokens'],
                 temperature=self.config['temperature'],
             )
+            with self._lock:
+                self._stats['llm_primary_ok'] += 1
+                self._stats['llm_primary_latency_sum_ms'] += \
+                    (time.time() - _t0) * 1000.0
         except Exception as e_primary:
+            with self._lock:
+                self._stats['llm_primary_fail'] += 1
+                self._stats['llm_primary_latency_sum_ms'] += \
+                    (time.time() - _t0) * 1000.0
+            _t1 = time.time()
             try:
+                with self._lock:
+                    self._stats['llm_fallback_calls'] += 1
                 response_text = safe_openrouter_call(
                     openrouter_key=okey,
                     model=self.config['fallback_model'],
@@ -291,7 +322,15 @@ class IntentResolver:
                     max_tokens=self.config['max_output_tokens'],
                     temperature=self.config['temperature'],
                 )
+                with self._lock:
+                    self._stats['llm_fallback_ok'] += 1
+                    self._stats['llm_fallback_latency_sum_ms'] += \
+                        (time.time() - _t1) * 1000.0
             except Exception as e_fb:
+                with self._lock:
+                    self._stats['llm_fallback_fail'] += 1
+                    self._stats['llm_fallback_latency_sum_ms'] += \
+                        (time.time() - _t1) * 1000.0
                 return {
                     'tool_calls': [],
                     '_error': f'LLM both fail: {str(e_primary)[:50]} / {str(e_fb)[:50]}',
@@ -305,12 +344,16 @@ class IntentResolver:
                     txt = '\n'.join(lines[1:-1])
             parsed = json.loads(txt)
             if not isinstance(parsed, dict):
+                with self._lock:
+                    self._stats['llm_parse_fail'] += 1
                 return {'tool_calls': [], '_error': 'LLM returned non-dict'}
             tcs = parsed.get('tool_calls', [])
             if not isinstance(tcs, list):
                 tcs = []
             return {'tool_calls': tcs[: self.config['max_tool_calls_per_turn']]}
         except Exception as e:
+            with self._lock:
+                self._stats['llm_parse_fail'] += 1
             return {
                 'tool_calls': [],
                 '_error': f'parse fail: {str(e)[:60]} resp={response_text[:120]}',
@@ -522,8 +565,41 @@ class IntentResolver:
         except Exception:
             pass
 
+        # 🆕 [β.5.46-fix14 / 2026-05-22] persist telemetry 让 Sir 跨进程看 A/B
+        try:
+            self._persist_telemetry()
+        except Exception:
+            pass
+
         result['reason'] = f'resolved {len(candidates)} candidates → {len(tool_calls)} tool calls'
         return result
+
+    def _persist_telemetry(self) -> None:
+        """🆕 [β.5.46-fix14] 把 stats 写到 memory_pool/intent_resolver_telemetry.json.
+
+        Sir CLI `scripts/intent_resolver_telemetry_dump.py` 跨进程看. 防止 process
+        重启丢 stats. atomic write (tmp + replace).
+        """
+        try:
+            import json
+            import os
+            path = os.path.join('memory_pool', 'intent_resolver_telemetry.json')
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            with self._lock:
+                payload = {
+                    '_doc': '[β.5.46-fix14] IntentResolver A/B telemetry — '
+                            '3.5-flash primary vs 2.5-flash-lite fallback',
+                    'primary_model': self.config['primary_model'],
+                    'fallback_model': self.config['fallback_model'],
+                    'updated_at': time.time(),
+                    'stats': dict(self._stats),
+                }
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            pass
 
 
     def resolve_turn_async(self, turn_id: str, sir_utterance: str,
