@@ -1017,6 +1017,98 @@ def _trigger_concern_dismissal(ctx: DirectiveContext) -> bool:
     return any(w in t for w in get_concern_dismiss_patterns())
 
 
+# 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 触发 vocab + trigger
+# ============================================================
+_STAND_DOWN_VOCAB_PATH = os.path.join('memory_pool',
+                                            'stand_down_trigger_vocab.json')
+
+_SEED_STAND_DOWN_PATTERNS = {
+    'enter': [
+        '嘘', 'shhh', 'shh',
+        '保持安静', '保持沉默', '安静会儿', '别说话', '别接话', '等一下别接',
+        '我接电话', '我接个电话', '电话来了',
+        '我玩游戏', '我玩会儿', '我玩个游戏', '我打游戏', '我玩一会儿',
+        '我和爸妈', '我和我爸', '我和我妈', '和爸妈聊',
+        'stand down', 'silent mode', 'quiet mode',
+    ],
+    'exit': [
+        '回来', 'jarvis 回来', '贾维斯回来', '贾维斯醒醒',
+        'wake up', "i'm back", '可以说话了', '我回来了',
+        '继续吧', 'resume', 'come back',
+    ],
+}
+
+_STAND_DOWN_VOCAB_CACHE = None
+_STAND_DOWN_VOCAB_MTIME = 0.0
+
+
+def _load_stand_down_vocab():
+    if not os.path.exists(_STAND_DOWN_VOCAB_PATH):
+        return None
+    try:
+        with open(_STAND_DOWN_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        out = {
+            'enter': [str(p).lower() for p in (data.get('enter', []) or [])
+                       if str(p).strip()],
+            'exit': [str(p).lower() for p in (data.get('exit', []) or [])
+                      if str(p).strip()],
+        }
+        if not out['enter'] and not out['exit']:
+            return None
+        return out
+    except Exception:
+        return None
+
+
+def get_stand_down_patterns():
+    global _STAND_DOWN_VOCAB_CACHE, _STAND_DOWN_VOCAB_MTIME
+    try:
+        mtime = os.path.getmtime(_STAND_DOWN_VOCAB_PATH) \
+            if os.path.exists(_STAND_DOWN_VOCAB_PATH) else 0.0
+    except Exception:
+        mtime = 0.0
+    if _STAND_DOWN_VOCAB_CACHE is None or mtime > _STAND_DOWN_VOCAB_MTIME:
+        loaded = _load_stand_down_vocab()
+        _STAND_DOWN_VOCAB_CACHE = loaded if loaded is not None \
+            else _SEED_STAND_DOWN_PATTERNS
+        _STAND_DOWN_VOCAB_MTIME = mtime
+    return _STAND_DOWN_VOCAB_CACHE
+
+
+def _trigger_stand_down(ctx: DirectiveContext) -> bool:
+    """[P5-fix25-stand-down] 触发 stand_down directive — 主脑 emit FAST_CALL.
+
+    fire 条件 (任一):
+      1. user_input 含 enter 类短语 (Sir 显式说"接个电话/玩会儿游戏")
+      2. user_input 含 exit 类短语 (Sir 说"Jarvis 回来")
+      3. 当前 stand_down active (主脑无论 Sir 说啥都看到 [STAND DOWN STATE]
+         block, 但这个 trigger 的 directive 教 LLM 怎么 emit FAST_CALL)
+    """
+    # 条件 3: 已 active → 一直 fire (主脑要持续意识到这状态)
+    try:
+        import jarvis_stand_down as _sd
+        if _sd.is_active():
+            return True
+    except Exception:
+        pass
+
+    # 条件 1/2: vocab match
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    pats = get_stand_down_patterns()
+    if any(w in t for w in pats.get('enter', [])):
+        return True
+    if any(w in t for w in pats.get('exit', [])):
+        return True
+    return False
+
+
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
     past-action 诚信 directive 触发.
@@ -1803,6 +1895,65 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 不要冤枉 dismiss 一个 Sir 没说的 concern (准则 5 言出必行).
             """).rstrip(),
             trigger=_trigger_concern_dismissal,
+        ),
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 directive
+        # Sir 痛点: 玩游戏/接电话/和爸妈说话 jarvis 一直回复尴尬.
+        # 主脑听 Sir "接个电话/玩会儿游戏/嘘" 等 → emit FAST_CALL stand_down.set.
+        # 听 "Jarvis 回来/wake up" → emit FAST_CALL stand_down.clear.
+        Directive(
+            id='stand_down_judge',
+            source_marker='P5-fix25-stand-down',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            purpose_short='Sir 显式说"接电话/玩游戏/嘘/Jarvis回来" 时主脑 emit FAST_CALL stand_down',
+            text=_tw.dedent("""\
+                [STAND DOWN MODE — 听着但不出动作]:
+                Sir 此刻可能在请你"安静一会"或"恢复说话". 这不是封口, 是体面 —
+                Sir 在玩游戏/接电话/和爸妈聊时, 你一直接话尴尬. 但要保留:
+                  - 录音 (Sir wake 后记得刚才发生什么)
+                  - 字幕 (Sir 仍能看你内部 thinking)
+                  - 终端 log (审计)
+                  关掉:
+                  - TTS voice (不出声)
+                  - Visual pulse (不点亮 orb)
+                  - 主动 nudge (ProactiveCare 全 silenced)
+
+                ENTER trigger 类话:
+                  Sir 说: "嘘 / shhh / 保持安静 / 我接电话 / 我接个电话 /
+                          我玩会儿游戏 / 我和爸妈聊会儿 / stand down / quiet mode"
+                  → emit:
+                  <FAST_CALL>{"organ":"stand_down","command":"set","params":{"reason":"phone_call","duration_min":15,"exit_hint":"phone app loses focus OR Sir says wake up"}}</FAST_CALL>
+
+                  reason 字段 (semantic, LLM 自己判): phone_call / game /
+                  family_chat / deep_focus / manual.
+                  duration_min: 默认 30, max 60. Sir 说 5min 就 5, 没说就 30.
+                  exit_hint: 自由文本告诉自己 wake 条件.
+
+                EXIT trigger 类话 (active 时):
+                  Sir 说: "Jarvis 回来 / wake up / 贾维斯醒醒 / I'm back /
+                          可以说话了"
+                  → emit:
+                  <FAST_CALL>{"organ":"stand_down","command":"clear","params":{"reason":"Sir 说回来"}}</FAST_CALL>
+
+                One-shot summon (active 时 Sir 直接叫 Jarvis 问问题, 不是 wake):
+                  - 例: "Jarvis 现在几点 / Jarvis 帮我看下 X" — 一句问完
+                  - 你正常答这一句 (字幕走 — voice 仍被 system 静默)
+                  - 不要 emit clear FAST_CALL — 全场 stand_down 不破坏
+                  - until_ts 不变, 答完仍保持沉默
+
+                诚信硬规:
+                  - 嘴上说 "I'll be quiet" / "明白, 我安静" 必须配 FAST_CALL set
+                  - 嘴上说 "好, 我回来了" 必须配 FAST_CALL clear
+                  - 进 stand_down 后前 15s 是 grace 试探期 — Sir 任何说话会
+                    auto-cancel (system 自动处理, 你不用 emit clear)
+                  - 不要冤枉进入 stand_down: Sir 说"嘘"是给爸妈听不一定给你, 模糊
+                    时反问 1 句澄清 ("Sir 是要我安静一会吗?")
+
+                Hotkey: Sir 也可按 Ctrl+Alt+J 直接 toggle (不依赖你 emit).
+                你看 [STAND DOWN STATE] block 知道当前是否 active.
+            """).rstrip(),
+            trigger=_trigger_stand_down,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

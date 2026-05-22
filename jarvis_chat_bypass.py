@@ -525,6 +525,26 @@ class ChatBypass:
             pass
 
     def _put_audio(self, text: str, is_response: bool = True):
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 — TTS 静默
+        # active 时彻底拦 audio_queue.put — 主脑可能仍生成 voice 文本, 但
+        # TTS 不出声 (字幕仍走 — subtitle_queue 不在这里). 字幕在另一路径.
+        try:
+            import jarvis_stand_down as _sd
+            if _sd.should_silence_voice() and text:
+                # 节流 log: 第一句 + 每分钟一次, 防刷屏
+                try:
+                    _last = getattr(self, '_stand_down_audio_log_at', 0)
+                    if time.time() - _last > 60:
+                        from jarvis_utils import bg_log as _sd_bg
+                        _sd_bg(f"🔇 [StandDown/Audio] 拦截 TTS: '{text[:40]}...' "
+                                  f"(voice silenced, 字幕仍走)")
+                        self._stand_down_audio_log_at = time.time()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         # [P0+18-c.1 / 2026-05-15] 最后一道防线：拦截结构化标签 block 漏到 TTS。
         # 上游 stream_chat / stream_chat_cloud_followup 已 5 处剥块，这里兜底防回归。
         # 检测条件：(a) 含明显 tag 字面 (b) 含 PROMISE/ACTIVATE_PLAN 典型 JSON 字段 ("goal" + "steps")
@@ -1513,6 +1533,56 @@ Spoken English:"""
                               f"(triggers_proactive=True)")
                 return f"❌ concerns.reactivate: 未找到 concern_id={cid}"
             return f"❌ concerns: 未知指令 {command} (支持 dismiss/reactivate)"
+
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式
+        # ============================================================
+        # Sir 痛点: 玩游戏 / 接电话 / 和爸妈说话时, Jarvis 一直回复尴尬.
+        # FAST_CALL stand_down.set / clear 让主脑 (或 Sir 显式) 进入沉默.
+        # Hotkey Ctrl+Alt+J 同步 toggle (jarvis_stand_down 自带 daemon).
+        # Reaction gate 在 stream nudge / TTS 处用 should_silence_voice() 判.
+        # ============================================================
+        if organ_name == "stand_down":
+            try:
+                import jarvis_stand_down as sd
+            except Exception as _se:
+                return f"❌ stand_down.{command}: module 不可用 ({_se})"
+            if command == "set":
+                reason = (params.get('reason', '') or sd.REASON_MANUAL)[:64]
+                duration_min = params.get('duration_min', sd.DEFAULT_DURATION_MIN)
+                try:
+                    duration_min = float(duration_min)
+                except Exception:
+                    duration_min = sd.DEFAULT_DURATION_MIN
+                exit_hint = (params.get('exit_hint', '') or '')[:200]
+                turn_id = (params.get('turn_id', '') or '')[:60]
+                s = sd.set_stand_down(
+                    reason=reason,
+                    duration_min=duration_min,
+                    exit_hint=exit_hint,
+                    source='sir_voice',
+                    source_turn_id=turn_id,
+                )
+                eta = time.strftime('%H:%M', time.localtime(s.until_ts))
+                return (f"✅ stand_down.set: 进入沉默 reason={s.reason} "
+                          f"until={eta} (~{int(duration_min)}min). "
+                          f"voice OFF, 字幕 ON, visual_pulse OFF.")
+            if command == "clear":
+                reason = (params.get('reason', '') or '')[:200]
+                turn_id = (params.get('turn_id', '') or '')[:60]
+                was_active = sd.is_active()
+                sd.clear_stand_down(reason=reason, source='sir_voice',
+                                            source_turn_id=turn_id)
+                if was_active:
+                    return f"✅ stand_down.clear: wake up — voice / nudge 恢复"
+                return "ℹ️ stand_down.clear: 当前未在 stand_down, 无需 clear"
+            if command == "status":
+                s = sd.get_state()
+                if not s.is_active_now():
+                    return "☀️ stand_down: NOT active"
+                return (f"🌙 stand_down: ACTIVE reason={s.reason} "
+                          f"until={time.strftime('%H:%M', time.localtime(s.until_ts))} "
+                          f"({int(s.remaining_s() / 60)}min 剩)")
+            return f"❌ stand_down: 未知指令 {command} (支持 set/clear/status)"
 
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:

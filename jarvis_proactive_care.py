@@ -1515,6 +1515,22 @@ class ProactiveCareEngine(threading.Thread):
         if now_ts - self.start_ts < _wm:
             return
 
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 — 全局 nudge silence
+        # Sir 痛点: 玩游戏/接电话时 ProactiveCare 仍 nudge 尴尬.
+        # active 时整个 nudge 路径短路 (sensor 仍跑 / SWM 仍累积 / 主脑仍记 STM,
+        # 但 ProactiveCare 不主动 push __NUDGE__).
+        try:
+            import jarvis_stand_down as _sd
+            if _sd.should_silence_proactive_nudge():
+                # 节流 log: 30 min 一次 (跟 health log 同步)
+                if now_ts - getattr(self, '_stand_down_log_at', 0) > 1800:
+                    bg_log("🌙 [ProactiveCare] skip — Stand Down active "
+                            "(voice/nudge silenced, sensor/SWM 仍正常)")
+                    self._stand_down_log_at = now_ts
+                return
+        except Exception:
+            pass
+
         # 1.5. [β-2.5] 跑 sensor → 让 sensor 派生 signal 喂给 concern
         # 不依赖 Sir 主动开口才知道关心啥
         # 🩹 [β.5.27 / 2026-05-20] Sir 02:13 log: 'NoneType object has no attribute tick'.

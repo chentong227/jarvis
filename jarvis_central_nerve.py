@@ -562,6 +562,30 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 — 全局 hotkey daemon
+        # Sir 痛点: 玩游戏/接电话/和爸妈说话 jarvis 一直回复尴尬.
+        # Ctrl+Alt+J toggle stand_down (TTS off + 字幕 on + nudge off).
+        try:
+            import jarvis_stand_down as _sd
+            _sd.start_hotkey_daemon()
+            _initial_state = _sd.get_state()
+            try:
+                from jarvis_utils import bg_log as _sd_bg
+                if _initial_state.is_active_now():
+                    _eta_min = int(_initial_state.remaining_s() / 60)
+                    _sd_bg(f"🌙 [StandDown] 启动时仍 active reason={_initial_state.reason} "
+                              f"(remain {_eta_min}min) — 上次未 wake. Hotkey Ctrl+Alt+J 切换.")
+                else:
+                    _sd_bg("🌙 [StandDown] hotkey daemon 已启动 (Ctrl+Alt+J 切换)")
+            except Exception:
+                pass
+        except Exception as _sd_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[StandDown] hotkey daemon 启动失败 (非致命): {_sd_e}")
+            except Exception:
+                pass
+
         # 🩹 [P0+20-β.2.2 / 2026-05-16] RelationalState —— Jarvis 灵魂工程 Layer 2
         # "我们之间"——inside_jokes / unspoken_protocols / unfinished_business
         # 由 Sir 用 CLI（scripts/relational_dump.py）录入，注入 prompt 让主脑在自然
@@ -2107,6 +2131,18 @@ class CentralNerve:
             _active_text = _wt_active(max_show=5)
             if _active_text:
                 _parts.append(_active_text)
+        except Exception:
+            pass
+
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] [STAND DOWN STATE] block
+        # Sir 痛点: 玩游戏/接电话/和爸妈说话 jarvis 一直接话尴尬.
+        # active 时主脑 reaction 必须 silent (voice OFF, 字幕 ON, visual_pulse OFF).
+        # 不 active 时不注入 (零 token 浪费).
+        try:
+            from jarvis_stand_down import render_prompt_block as _sd_render
+            _sd_text = _sd_render()
+            if _sd_text:
+                _parts.append(_sd_text)
         except Exception:
             pass
 

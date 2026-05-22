@@ -937,6 +937,22 @@ class VoiceListenThread(QThread):
                     pass
         except Exception:
             pass
+        # 🆕 [P5-fix25-stand-down / 2026-05-22] 15s 试探期 grace cancel
+        # Sir 进 stand_down 后 15s 内说话 → 视为误触发, 自动 cancel.
+        # 防止 Sir 按错 hotkey / LLM 误判 dismissal 进 stand_down.
+        try:
+            import jarvis_stand_down as _sd
+            if _sd.is_in_grace() and cmd and cmd.strip():
+                cancelled = _sd.grace_cancel_if_in_grace(
+                    reason=f'Sir 说话 in grace: "{cmd[:40]}"')
+                if cancelled:
+                    try:
+                        from jarvis_utils import bg_log as _gc_bg
+                        _gc_bg(f"☀️ [StandDown/Grace] cancel — Sir 说话 in 15s 试探期: \"{cmd[:40]}\"")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         self.text_ready.emit(cmd)
 
     def run(self):
