@@ -168,14 +168,36 @@ HTML_TEMPLATE = r"""
 <!-- 整体状态条 -->
 <section class="max-w-7xl mx-auto px-6 pt-6">
   <div class="glass rounded-2xl p-5 shadow-xl border border-slate-700/30">
-    <div class="flex items-baseline gap-3">
-      <span class="text-3xl"
-            :class="{
-              'text-emerald-400': summary.level === 'ok',
-              'text-amber-400': summary.level === 'warn',
-              'text-rose-400': summary.level === 'crit'
-            }" x-text="summary.emoji"></span>
-      <h2 class="text-2xl font-bold" x-text="summary.headline"></h2>
+    <div class="flex items-baseline gap-3 justify-between">
+      <div class="flex items-baseline gap-3">
+        <span class="text-3xl"
+              :class="{
+                'text-emerald-400': summary.level === 'ok',
+                'text-amber-400': summary.level === 'warn',
+                'text-rose-400': summary.level === 'crit'
+              }" x-text="summary.emoji"></span>
+        <h2 class="text-2xl font-bold" x-text="summary.headline"></h2>
+      </div>
+      <!-- 🆕 [P5-fix25-stand-down] Stand Down mini badge + toggle -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button @click="standDownToggle()"
+                :disabled="standDownActionPending"
+                :class="(standDown.state && standDown.state.active)
+                          ? 'bg-indigo-600/30 hover:bg-indigo-600/50 border-indigo-400/50 text-indigo-200'
+                          : 'bg-slate-700/40 hover:bg-slate-600/60 border-slate-600/40 text-slate-300'"
+                class="text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition disabled:opacity-50"
+                :title="(standDown.state && standDown.state.active)
+                          ? ('Stand Down active · ' + (standDown.state.reason || '') + ' · ' + fmtRemaining(standDown.state.remaining_s) + ' remain · 点击 wake')
+                          : '点击进入 Stand Down (30min, voice+nudge OFF, 字幕 ON)'">
+          <span x-text="(standDown.state && standDown.state.active) ? '🌙' : '☀️'"></span>
+          <span class="font-medium"
+                x-text="(standDown.state && standDown.state.active)
+                          ? ('Stand Down · ' + (standDown.state.reason || '') + ' · ' + fmtRemaining(standDown.state.remaining_s))
+                          : 'Stand Down: OFF'"></span>
+          <span x-show="standDown.state && standDown.state.active && standDown.state.in_grace"
+                class="text-amber-300 text-[0.7rem] ml-1">grace</span>
+        </button>
+      </div>
     </div>
     <template x-if="summary.actions && summary.actions.length">
       <ol class="mt-3 space-y-1.5 pl-1">
@@ -830,6 +852,9 @@ function dashboard() {
     keyHealth: {},
     showKeyDetail: false,
     keyResetPending: false,
+    // 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down state
+    standDown: { state: { active: false }, history: [], stats: {} },
+    standDownActionPending: false,
     actionPending: {},
     toast: { show: false, ok: true, title: '', detail: '' },
 
@@ -860,9 +885,12 @@ function dashboard() {
     async init() {
       await this.refresh();
       this.fetchJarvisState();
+      this.fetchStandDown();
       setInterval(() => { if (this.autoRefresh) this.refresh(); }, 10000);
       // 🩹 [β.5.43-A / 2026-05-20] HUD 状态 2s 轮询 (Jarvis 状态变化要看得即时)
       setInterval(() => { this.fetchJarvisState(); }, 2000);
+      // 🆕 [P5-fix25-stand-down] Stand Down 5s 轮询 (state 变化看得即时)
+      setInterval(() => { this.fetchStandDown(); }, 5000);
     },
     async fetchJarvisState() {
       try {
@@ -871,6 +899,49 @@ function dashboard() {
           this.jarvisState = r;
         }
       } catch (e) { /* silent */ }
+    },
+    // 🆕 [P5-fix25-stand-down]
+    async fetchStandDown() {
+      try {
+        const r = await fetch('/api/stand_down').then(r => r.json());
+        if (r.ok && r.data) {
+          this.standDown = r.data;
+        }
+      } catch (e) { /* silent */ }
+    },
+    async standDownToggle() {
+      if (this.standDownActionPending) return;
+      this.standDownActionPending = true;
+      try {
+        const isActive = this.standDown.state && this.standDown.state.active;
+        const action = isActive ? 'clear' : 'set';
+        const body = isActive
+          ? { action: 'clear', reason: 'dashboard wake' }
+          : { action: 'set', reason: 'manual', duration_min: 30,
+              exit_hint: 'dashboard manual set' };
+        const r = await fetch('/api/stand_down_action', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        }).then(r => r.json());
+        if (r.ok) {
+          this.showToast(true, isActive ? '☀️ Wake up' : '🌙 进入沉默',
+                          r.message || '');
+          await this.fetchStandDown();
+        } else {
+          this.showToast(false, '失败', r.error || '');
+        }
+      } catch (e) {
+        this.showToast(false, '错误', String(e));
+      } finally {
+        this.standDownActionPending = false;
+      }
+    },
+    fmtRemaining(s) {
+      if (!s || s <= 0) return '';
+      if (s < 60) return Math.round(s) + 's';
+      const m = Math.floor(s / 60);
+      return m + 'min';
     },
 
     async refresh() {

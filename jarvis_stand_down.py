@@ -223,26 +223,32 @@ _CHIME_ENABLED = (os.environ.get('JARVIS_STAND_DOWN_CHIME', '0') == '1')
 
 
 def _play_chime(direction: str) -> None:
-    """Play short 2-tone chime. direction='enter' | 'exit'. 默认 OFF.
+    """Play short chime. direction='enter' | 'exit'. 默认 OFF.
 
     Sir 20:07 真测反馈 winsound.Beep 太突兀, 默认关. 仅 env=1 时开.
-    Non-blocking — 单独 daemon thread 跑. 失败静默.
+
+    改用 MessageBeep — 系统通知声, 比 Beep 柔和很多 (Windows 自带 wav, 跟
+    Sir 平时听到的"消息提示音"一致, 不会突兀).
+      enter (沉默): MB_ICONHAND (低沉系统通知)
+      exit (回来):  MB_ICONASTERISK (轻快系统通知)
+
+    Non-blocking — daemon thread 跑. 失败静默.
     """
     if not _CHIME_ENABLED:
         return
     try:
         import winsound
     except Exception:
-        return  # 非 Windows, no-op
+        return
 
     def _worker():
         try:
             if direction == 'enter':
-                winsound.Beep(500, 80)
-                winsound.Beep(350, 100)
+                # 进入沉默 — 系统询问音 (短低)
+                winsound.MessageBeep(winsound.MB_ICONQUESTION)
             else:
-                winsound.Beep(700, 60)
-                winsound.Beep(1000, 80)
+                # 出沉默 — 系统通知音 (短亮)
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
         except Exception:
             pass
 
