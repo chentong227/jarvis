@@ -230,5 +230,74 @@ class TestDirectiveTrigger(unittest.TestCase):
         self.assertTrue(_trigger_stand_down(ctx))
 
 
+class TestOneShotSummon(unittest.TestCase):
+    """🆕 [Phase 3] One-shot summon — Sir 在 stand_down 时叫 Jarvis 一句."""
+
+    def test_one_shot_initially_inactive(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        self.assertFalse(sd.is_one_shot_active())
+
+    def test_mark_returns_false_when_not_in_stand_down(self):
+        sd, _ = _isolated_sd()
+        ok = sd.mark_one_shot_summon(turn_id='turn_xxx', duration_s=60)
+        self.assertFalse(ok)
+
+    def test_mark_succeeds_when_active(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        ok = sd.mark_one_shot_summon(turn_id='turn_xxx', duration_s=60)
+        self.assertTrue(ok)
+        self.assertTrue(sd.is_one_shot_active())
+
+    def test_should_silence_voice_returns_false_during_one_shot(self):
+        """关键: stand_down active + one_shot 标记 → voice 不静默."""
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        self.assertTrue(sd.should_silence_voice())  # 默认静默
+        sd.mark_one_shot_summon(turn_id='turn_xxx')
+        self.assertFalse(sd.should_silence_voice())  # one-shot 期内不静默
+
+    def test_visual_pulse_and_nudge_still_silenced_during_one_shot(self):
+        """one-shot 仅放 voice, 其他保持静默."""
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        sd.mark_one_shot_summon(turn_id='turn_xxx')
+        self.assertTrue(sd.should_silence_visual_pulse())
+        self.assertTrue(sd.should_silence_proactive_nudge())
+
+    def test_clear_one_shot_returns_to_silence(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        sd.mark_one_shot_summon(turn_id='turn_xxx')
+        self.assertFalse(sd.should_silence_voice())
+        sd.clear_one_shot_summon()
+        self.assertTrue(sd.should_silence_voice())
+
+    def test_one_shot_expires_after_duration(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        sd.mark_one_shot_summon(turn_id='turn_xxx', duration_s=60)
+        sd._STATE.one_shot_until_ts = time.time() - 1
+        self.assertFalse(sd.is_one_shot_active())
+        self.assertTrue(sd.should_silence_voice())
+
+    def test_clear_stand_down_also_clears_one_shot(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        sd.mark_one_shot_summon(turn_id='turn_xxx')
+        self.assertTrue(sd.is_one_shot_active())
+        sd.clear_stand_down()
+        self.assertFalse(sd.is_one_shot_active())
+
+    def test_duration_capped_at_120s(self):
+        sd, _ = _isolated_sd()
+        sd.set_stand_down(reason='phone_call', duration_min=10)
+        sd.mark_one_shot_summon(turn_id='turn_xxx', duration_s=999)
+        s = sd.get_state()
+        cap = s.one_shot_until_ts - time.time()
+        self.assertLessEqual(cap, 120 + 0.5)
+
+
 if __name__ == '__main__':
     unittest.main()

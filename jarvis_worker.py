@@ -953,6 +953,26 @@ class VoiceListenThread(QThread):
                         pass
         except Exception:
             pass
+        # 🆕 [P5-fix25-phase3-one-shot / 2026-05-22] one-shot summon
+        # 在 stand_down active 时 Sir 喊 "Jarvis ..." / "贾维斯 ..." → mark
+        # 本轮 voice 不静默 (听 reply). 答完 60s 后自动回全静默.
+        # 注意: 在 grace_cancel 之后判 — 如果 Sir 在 grace 内说话已 cancel,
+        # 这里 _sd.is_active() 返 False, 不会 mark (合理).
+        try:
+            import jarvis_stand_down as _sd2
+            if _sd2.is_active() and cmd and cmd.strip():
+                _cmd_low = cmd.lower()
+                if any(w in _cmd_low for w in ('jarvis', '贾维斯')):
+                    # 拿 current turn_id (best effort)
+                    _turn_id = ''
+                    try:
+                        from jarvis_utils import TraceContext
+                        _turn_id = TraceContext.get_turn_id() or ''
+                    except Exception:
+                        pass
+                    _sd2.mark_one_shot_summon(turn_id=_turn_id, duration_s=60.0)
+        except Exception:
+            pass
         self.text_ready.emit(cmd)
 
     def run(self):

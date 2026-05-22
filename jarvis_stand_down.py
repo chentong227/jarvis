@@ -87,6 +87,11 @@ class StandDownState:
     cleared_at_ts: float = 0.0     # 上次 clear 时间 (only meaningful when active=False)
     cleared_by_source: str = ''
     cleared_by_turn: str = ''
+    # 🆕 [P5-fix25-phase3-one-shot / 2026-05-22] one-shot summon
+    # Sir 在 stand_down 时叫 "Jarvis ..." → 当前轮 voice 不静默 (听 reply)
+    # 答完 60s 后自动回全静默. Sir 选 A: 答完仍 stand_down (until_ts 不变).
+    one_shot_until_ts: float = 0.0  # 当前轮 one-shot voice 窗口
+    one_shot_turn: str = ''         # mark 时的 turn_id (debug)
 
     def is_active_now(self) -> bool:
         """是否当前 active (未到 until_ts)."""
@@ -101,6 +106,14 @@ class StandDownState:
         if not self.is_active_now():
             return False
         return time.time() < self.grace_until_ts
+
+    def is_one_shot_active(self) -> bool:
+        """是否在 one-shot summon 窗口期 (voice 临时不静默)."""
+        if not self.is_active_now():
+            return False
+        if self.one_shot_until_ts <= 0:
+            return False
+        return time.time() < self.one_shot_until_ts
 
     def remaining_s(self) -> float:
         if not self.is_active_now():
@@ -418,9 +431,61 @@ def is_in_grace() -> bool:
         return s.is_in_grace()
 
 
+def is_one_shot_active() -> bool:
+    """🆕 [Phase 3] one-shot summon 窗口期内 (voice 临时不静默)."""
+    with _LOCK:
+        s = _ensure_loaded()
+        return s.is_one_shot_active()
+
+
+def mark_one_shot_summon(turn_id: str = '', duration_s: float = 60.0) -> bool:
+    """🆕 [Phase 3] Sir 在 stand_down 时喊"Jarvis ..." → mark 当前轮 voice 不静默.
+
+    Args:
+        turn_id: 当前 turn_id (debug, 不强制)
+        duration_s: one-shot 窗口期 (默认 60s, 主脑 reply 大概 5-30s 够)
+
+    Returns:
+        True if marked, False if 当前未在 stand_down (不需要 mark).
+    """
+    with _LOCK:
+        s = _ensure_loaded()
+        if not s.is_active_now():
+            return False
+        s.one_shot_until_ts = time.time() + max(5.0, min(duration_s, 120.0))
+        s.one_shot_turn = (turn_id or '')[:60]
+        _save_state_to_disk(s)
+
+    _bg_log(f"🔉 [StandDown/OneShot] mark — Sir 叫 Jarvis 一轮, voice 临时开 "
+              f"{int(duration_s)}s turn={turn_id[:20] if turn_id else 'unknown'}")
+    return True
+
+
+def clear_one_shot_summon() -> bool:
+    """🆕 [Phase 3] turn 完后清 one-shot (back to 全静默)."""
+    with _LOCK:
+        s = _ensure_loaded()
+        if s.one_shot_until_ts <= 0:
+            return False
+        s.one_shot_until_ts = 0.0
+        s.one_shot_turn = ''
+        _save_state_to_disk(s)
+    return True
+
+
 def should_silence_voice() -> bool:
-    """[Reaction Gate] TTS voice 是否要静默. Stand Down active → True."""
-    return is_active()
+    """[Reaction Gate] TTS voice 是否要静默. Stand Down active → True.
+
+    🆕 [Phase 3] EXCEPT 在 one-shot summon 窗口期 (Sir 叫"Jarvis ..." 那一轮).
+    """
+    with _LOCK:
+        s = _ensure_loaded()
+        if not s.is_active_now():
+            return False
+        # active 但在 one-shot 窗口 → 不静默 (Sir 听 reply)
+        if s.is_one_shot_active():
+            return False
+        return True
 
 
 def should_silence_visual_pulse() -> bool:
