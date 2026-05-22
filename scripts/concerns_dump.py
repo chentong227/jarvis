@@ -201,6 +201,41 @@ def _snooze(ledger: ConcernsLedger, cid: str, hours: float) -> int:
     return 0
 
 
+# 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点 — 语言控制 concern
+def _dismiss(ledger: ConcernsLedger, cid: str, reason: str) -> int:
+    """软关闭 concern: triggers_proactive=False + severity 上限 0.3.
+    Sir 后续问起仍可被动答, 只是不再主动 nudge.
+    """
+    c = ledger.get(cid)
+    if c is None:
+        print(f"[ERROR] concern '{cid}' 不存在")
+        return 2
+    old_trig = c.triggers_proactive
+    old_sev = c.severity
+    ok = ledger.dismiss(cid, reason=reason or 'CLI dismiss', source='cli')
+    ledger.persist()
+    print(f"[OK] '{cid}' triggers_proactive {old_trig}→{c.triggers_proactive}, "
+          f"severity {old_sev:.2f}→{c.severity:.2f} (returned={ok})")
+    print(f"  reason: {reason or '(none)'}")
+    print(f"  Sir 后续提及仍可答, 但 ProactiveCare 不再主动 nudge.")
+    return 0
+
+
+def _reactivate(ledger: ConcernsLedger, cid: str, reason: str) -> int:
+    """重激活: triggers_proactive=True, severity 不动."""
+    c = ledger.get(cid)
+    if c is None:
+        print(f"[ERROR] concern '{cid}' 不存在")
+        return 2
+    old_trig = c.triggers_proactive
+    ok = ledger.reactivate(cid, reason=reason or 'CLI reactivate', source='cli')
+    ledger.persist()
+    print(f"[OK] '{cid}' triggers_proactive {old_trig}→{c.triggers_proactive} "
+          f"(returned={ok})")
+    print(f"  reason: {reason or '(none)'}")
+    return 0
+
+
 def _force_decay(ledger: ConcernsLedger) -> None:
     stats = ledger.apply_decay()
     ledger.persist()
@@ -299,6 +334,14 @@ def main():
                         help='把指定 concern 暂停 N 小时')
     parser.add_argument('--hours', type=float, default=24.0,
                         help='snooze 小时数（默认 24）')
+    # 🆕 [P5-fix24-concern-dismiss / 2026-05-22]
+    parser.add_argument('--dismiss', metavar='CONCERN_ID',
+                        help='软关闭 concern (Sir 不在意了): triggers_proactive=False, '
+                             'severity 上限 0.3, Sir 后续仍可被动问起')
+    parser.add_argument('--reactivate', metavar='CONCERN_ID',
+                        help='重激活 dismissed concern: triggers_proactive=True')
+    parser.add_argument('--reason', default='',
+                        help='dismiss/reactivate 原因 (写进 signal + notes_for_self)')
     parser.add_argument('--json', action='store_true',
                         help='机读 JSON 输出（覆盖 ASCII 表）')
     parser.add_argument('--decay', action='store_true',
@@ -315,6 +358,10 @@ def main():
         return _reject(ledger, args.reject)
     if args.snooze:
         return _snooze(ledger, args.snooze, args.hours)
+    if args.dismiss:
+        return _dismiss(ledger, args.dismiss, args.reason)
+    if args.reactivate:
+        return _reactivate(ledger, args.reactivate, args.reason)
     if args.review:
         _print_review(ledger, interactive=(not args.no_interactive))
         return 0

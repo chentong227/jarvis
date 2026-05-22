@@ -402,6 +402,138 @@ class ConcernsLedger:
             self._dirty = True
         return True
 
+    # 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点
+    # =========================================================
+    # Sir 真理: "我跟他说了很多次不要在意了, 他还是提, 感觉是我们没有
+    # 语言控制长期关心的手段". concerns.json 没"主脑/Sir 显式 dismiss"路径,
+    # 主脑嘴上说"I shall stop monitoring..." 但 state 仍 active, severity 仍 1.0.
+    #
+    # 设计 (准则 6 三维耦合):
+    #   - 数据 publish SWM: concern_dismissed event 让 Reflector 看到 + 主脑下轮 prompt 知
+    #   - 决策 LLM: 主脑听 Sir dismissal 类话 → emit FAST_CALL concern.dismiss
+    #   - 持久化 + CLI: scripts/concerns_dump.py --dismiss / --reactivate
+    #   - 正交: 软关闭 (triggers_proactive=False), 不动 state — Sir 问起仍可被动答
+    # =========================================================
+    def dismiss(self, concern_id: str, reason: str = '',
+                  source: str = 'sir_voice',
+                  source_turn_id: str = '',
+                  severity_floor: float = 0.3) -> bool:
+        """[P5-fix24-concern-dismiss / 2026-05-22] Sir 显式 dismiss.
+
+        软关闭: triggers_proactive=False (不主动 nudge), severity 拉到 floor 以下
+        (默认 0.3, 防止再被 SOUL inject 排 top), 写 signal + 持久化 + SWM publish.
+
+        Args:
+            concern_id: concern ID, 必须存在
+            reason: Sir 原话 / dismiss 原因 (写进 signal + notes_for_self)
+            source: 'sir_voice' (主脑 FAST_CALL) | 'cli' (Sir CLI 手动)
+                   | 'reflector_auto' (后续 Phase 2: missed_count 自动 dismiss)
+            source_turn_id: 主脑 turn_id (如 source='sir_voice')
+            severity_floor: severity 上限封顶 (默认 0.3, 不再排 top concern)
+
+        Returns:
+            True if dismissed, False if concern_id 不存在.
+        """
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False
+            c.triggers_proactive = False
+            # severity 不归 0 (仍记录 Sir 关心程度), 但拉到 floor 以下不抢 top
+            if c.severity > severity_floor:
+                c.severity = severity_floor
+            # signal 记一条 dismiss 事件 (Reflector / Sir CLI 可查)
+            tag = f'[dismiss/{source}] '
+            sig_what = (tag + (reason or 'no reason given'))[:200]
+            c.recent_signals.append({
+                'when': time.time(),
+                'when_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                                time.localtime(time.time())),
+                'what': sig_what,
+                'severity_delta': 0,
+                'turn_id': source_turn_id,
+            })
+            if len(c.recent_signals) > 10:
+                c.recent_signals = c.recent_signals[-10:]
+            # notes_for_self 记 (主脑下轮看)
+            note_tag = f"[dismissed/{source}] {(reason or 'Sir dismissed')[:80]}"
+            existing = c.notes_for_self or ''
+            if note_tag not in existing:
+                c.notes_for_self = (existing + ' | ' + note_tag).strip(' |')[:300]
+            c.last_updated = time.time()
+            self._dirty = True
+
+        # SWM publish (Reflector + 主脑下轮 prompt 看)
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='concern_dismissed',
+                    description=f"Sir dismissed concern {concern_id} via {source}",
+                    source='concerns_ledger',
+                    metadata={
+                        'concern_id': concern_id,
+                        'reason': (reason or '')[:200],
+                        'source': source,
+                        'turn_id': source_turn_id,
+                        'ts': time.time(),
+                    },
+                    ttl=86400.0,  # 24h
+                )
+        except Exception:
+            pass
+        return True
+
+    def reactivate(self, concern_id: str, reason: str = '',
+                       source: str = 'sir_voice',
+                       source_turn_id: str = '') -> bool:
+        """[P5-fix24-concern-dismiss / 2026-05-22] Sir 撤销 dismiss, 重激活.
+
+        triggers_proactive=True 复原, 写 signal, publish SWM event.
+        severity 不动 (Sir 决定优先级, 由后续真实 signal 重 calibrate).
+        """
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False
+            c.triggers_proactive = True
+            tag = f'[reactivated/{source}] '
+            sig_what = (tag + (reason or 'Sir asked to resume monitoring'))[:200]
+            c.recent_signals.append({
+                'when': time.time(),
+                'when_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                                time.localtime(time.time())),
+                'what': sig_what,
+                'severity_delta': 0,
+                'turn_id': source_turn_id,
+            })
+            if len(c.recent_signals) > 10:
+                c.recent_signals = c.recent_signals[-10:]
+            c.last_updated = time.time()
+            self._dirty = True
+
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='concern_reactivated',
+                    description=f"Sir reactivated concern {concern_id} via {source}",
+                    source='concerns_ledger',
+                    metadata={
+                        'concern_id': concern_id,
+                        'reason': (reason or '')[:200],
+                        'source': source,
+                        'turn_id': source_turn_id,
+                        'ts': time.time(),
+                    },
+                    ttl=86400.0,
+                )
+        except Exception:
+            pass
+        return True
+
     # ---- decay ----
 
     def apply_decay(self) -> dict:

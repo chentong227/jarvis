@@ -947,6 +947,76 @@ def _trigger_dashboard_intent(ctx: DirectiveContext) -> bool:
     return any(w in t for w in get_dashboard_intent_patterns())
 
 
+# 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点 — 语言控制 concern
+# ============================================================
+# Sir 真理: "我跟他说了很多次不要在意了, 他还是提". 主脑听 Sir dismissal
+# 类话 → emit FAST_CALL concerns.dismiss. 不教句式 (准则 6), 但给宽松 vocab
+# 提示让主脑识别 (持久化 memory_pool/concern_dismiss_vocab.json).
+# ============================================================
+
+_CONCERN_DISMISS_VOCAB_PATH = os.path.join('memory_pool',
+                                              'concern_dismiss_vocab.json')
+
+# Seed (vocab JSON 缺/坏时 fallback). 中英都覆盖, fuzzy match 让 LLM 自己理解.
+_SEED_CONCERN_DISMISS_PATTERNS = [
+    '不在意', '别在意', '别再提', '别提了', '不用管', '不用提', '别管了',
+    '算了', '不重要', '不要紧', '没事的', '过去了',
+    '别监控', '不用监控', '别再监控', '停止监控', '不用盯着', '别盯着',
+    'drop it', 'let it go', "don't worry about", 'stop monitoring',
+    'no need to', 'forget about', 'never mind',
+]
+
+_CONCERN_DISMISS_CACHE = None
+_CONCERN_DISMISS_MTIME = 0.0
+
+
+def _load_concern_dismiss_vocab():
+    """读 memory_pool/concern_dismiss_vocab.json (准则 6.5: vocab 持久化, CLI 可改)."""
+    if not os.path.exists(_CONCERN_DISMISS_VOCAB_PATH):
+        return None
+    try:
+        with open(_CONCERN_DISMISS_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        patterns = data.get('patterns', []) or []
+        if not isinstance(patterns, list):
+            return None
+        return [str(p).lower() for p in patterns if str(p).strip()]
+    except Exception:
+        return None
+
+
+def get_concern_dismiss_patterns():
+    global _CONCERN_DISMISS_CACHE, _CONCERN_DISMISS_MTIME
+    try:
+        mtime = os.path.getmtime(_CONCERN_DISMISS_VOCAB_PATH) \
+            if os.path.exists(_CONCERN_DISMISS_VOCAB_PATH) else 0.0
+    except Exception:
+        mtime = 0.0
+    if _CONCERN_DISMISS_CACHE is None or mtime > _CONCERN_DISMISS_MTIME:
+        loaded = _load_concern_dismiss_vocab()
+        _CONCERN_DISMISS_CACHE = (loaded if loaded is not None
+                                       else _SEED_CONCERN_DISMISS_PATTERNS)
+        _CONCERN_DISMISS_MTIME = mtime
+    return _CONCERN_DISMISS_CACHE
+
+
+def _trigger_concern_dismissal(ctx: DirectiveContext) -> bool:
+    """[P5-fix24-concern-dismiss / 2026-05-22] 双 trigger:
+
+    1. Sir 输入含 dismissal 类短语 (vocab 命中) → fire (主脑该思考 dismiss)
+    2. SOUL inject 含 active triggers_proactive concern (concerns_block 非空)
+       且本轮主脑提到 concern_id 类 token — 也 fire (让主脑评估是否要 dismiss)
+
+    简化策略 Phase 1: 仅条件 1. 条件 2 留 Phase 2 看 SOUL ctx.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    return any(w in t for w in get_concern_dismiss_patterns())
+
+
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
     past-action 诚信 directive 触发.
@@ -1689,6 +1759,50 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
             """).rstrip(),
             trigger=_trigger_dashboard_intent,
+        ),
+        # 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点
+        # Sir 真测: "我跟他说了很多次不要在意了, 他还是提". 主脑嘴上说 "I shall
+        # stop monitoring..." 但 concerns.json 没真改 → next tick 又 nudge.
+        # 治本: 加 FAST_CALL concerns.dismiss / reactivate, 主脑听 Sir
+        # dismissal 类话时 emit, 真改 concerns.json.
+        Directive(
+            id='concern_dismissal_judge',
+            source_marker='P5-fix24-concern-dismiss',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],
+            purpose_short='Sir 显式 dismiss/reactivate concern 时主脑 emit FAST_CALL 真改 concerns.json',
+            text=_tw.dedent("""\
+                [CONCERN DISMISSAL / REACTIVATION]:
+                Sir 此刻像在让你"别再操心某件事"或"恢复关注某件事". 你不能只是嘴上
+                答应 (旧 BUG: "Understood, Sir, I shall stop monitoring..." 但
+                concerns.json 没真改 → 下一 tick ProactiveCare 又主动 nudge).
+                必须 emit FAST_CALL 真改状态.
+
+                判断步骤:
+                  1. SOUL inject 的 [Concerns] block 列出当前 active concerns 与 ID.
+                     找最匹配 Sir 提到的那条 concern (e.g. Cursor / 订阅 / 支付 →
+                     sir_cursor_payment; 番茄钟 → sir_pomodoro_compliance; 睡眠 →
+                     sir_sleep_streak; 喝水 → sir_hydration_habit).
+                  2. 如果 Sir 在 dismiss (不在意了/别监控/算了/drop it 类): emit FAST_CALL
+                     concerns.dismiss.
+                  3. 如果 Sir 在 reactivate (重新盯着/继续监控/start watching again): emit
+                     FAST_CALL concerns.reactivate.
+                  4. 找不到匹配 concern_id, 且 Sir 模糊 (没指明具体事): 反问 1 句
+                     澄清"Sir 是说哪一项 — Cursor 订阅 / 番茄钟 / 睡眠?", 别瞎 dismiss.
+
+                FAST_CALL 语法 (id 必传):
+                  <FAST_CALL>{"organ":"concerns","command":"dismiss","params":{"id":"sir_cursor_payment","reason":"Sir 多次表示不在意"}}</FAST_CALL>
+                  <FAST_CALL>{"organ":"concerns","command":"reactivate","params":{"id":"sir_cursor_payment","reason":"Sir 想恢复监控"}}</FAST_CALL>
+
+                诚信硬规:
+                  - 嘴上说 "I'll stop monitoring" 必须配 FAST_CALL — 否则
+                    ClaimTracer 会标 unverified, 下一轮 INTEGRITY ALERT.
+                  - dismiss 是软关闭 (triggers_proactive=False) — Sir 后续问起仍可
+                    答, 你只是不再主动提.
+                  - 不要冤枉 dismiss 一个 Sir 没说的 concern (准则 5 言出必行).
+            """).rstrip(),
+            trigger=_trigger_concern_dismissal,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

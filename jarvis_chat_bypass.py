@@ -1468,6 +1468,52 @@ Spoken English:"""
                     return f"❌ ui_control.dashboard_close: {_ce}"
             return f"❌ ui_control: 未知指令 {ctrl_cmd}"
 
+        # 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点
+        # ============================================================
+        # Sir: "我跟他说了很多次不要在意了, 他还是提, 感觉是我们没有
+        # 语言控制长期关心的手段". 这里加 concerns.dismiss / reactivate
+        # FAST_CALL handler — 主脑听 Sir 显式 dismiss 类话 → emit FAST_CALL
+        # 直接调 ConcernsLedger.dismiss(), 真改 concerns.json + publish SWM event.
+        # 配套 directive: jarvis_directives.py:concern_dismissal_judge
+        # ============================================================
+        if organ_name == "concerns":
+            try:
+                from jarvis_concerns import get_default_ledger
+                ledger = get_default_ledger()
+            except Exception as _le:
+                return f"❌ concerns.{command}: ledger 不可用 ({_le})"
+            cid = (params.get('id', '') or params.get('concern_id', '') or '').strip()
+            reason = (params.get('reason', '') or '')[:200]
+            turn_id = (params.get('turn_id', '') or '')[:60]
+            if command == "dismiss":
+                if not cid:
+                    return "❌ concerns.dismiss: missing 'id' param"
+                ok = ledger.dismiss(cid, reason=reason, source='sir_voice',
+                                          source_turn_id=turn_id)
+                if ok:
+                    try:
+                        ledger.persist()
+                    except Exception:
+                        pass
+                    return (f"✅ concerns.dismiss: {cid} 软关闭 "
+                              f"(triggers_proactive=False, severity≤0.3) — "
+                              f"Sir 后续仍可主动问起")
+                return f"❌ concerns.dismiss: 未找到 concern_id={cid}"
+            if command == "reactivate":
+                if not cid:
+                    return "❌ concerns.reactivate: missing 'id' param"
+                ok = ledger.reactivate(cid, reason=reason, source='sir_voice',
+                                              source_turn_id=turn_id)
+                if ok:
+                    try:
+                        ledger.persist()
+                    except Exception:
+                        pass
+                    return (f"✅ concerns.reactivate: {cid} 重新主动监控 "
+                              f"(triggers_proactive=True)")
+                return f"❌ concerns.reactivate: 未找到 concern_id={cid}"
+            return f"❌ concerns: 未知指令 {command} (支持 dismiss/reactivate)"
+
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
             try:
