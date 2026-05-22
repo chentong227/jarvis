@@ -491,6 +491,55 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
         return []
 
 
+# ============================================================
+# 🆕 [P5-fix22 / 2026-05-22] retract context detection
+# Sir 17:05 真测痛点: 主脑被 INTEGRITY ALERT prepend 强制撤回 "95%" → reply 含
+# "withdraw 95%" → ClaimTracer 抽 "95%" 当 unverified → 入 audit → 下轮 ALERT
+# 又 inject → 主脑又撤回 → 死循环 7-8 轮.
+# 修法: claim 在 retract context (主脑明确撤回的话术) 中 → skip audit.
+# 准则 5: 主脑在退缩 = 不 commit, 不应当 factual claim.
+# 准则 6 next-iter: 把 phrases 持久化到 memory_pool/claim_retract_vocab.json + CLI.
+# ============================================================
+
+_RETRACT_PHRASES_HARDCODED = (
+    # 英文 retract patterns
+    'withdraw', 'retract', 'unfounded', 'baseless',
+    'unverified estimate', 'unverified figure', 'no data to support',
+    'no live sensor', 'no live telemetry', 'cannot verify',
+    "can't verify", 'lack the data', 'lack empirical',
+    'i must correct', 'i must withdraw', 'i must retract',
+    'must formally withdraw', 'must formally retract',
+    'on reflection', 'in hindsight', 'must withdraw',
+    # 中文 retract patterns
+    '撤回', '收回', '没有依据', '没有数据', '无凭据',
+    '不应该提', '不该提到', '我必须撤回', '必须收回',
+    '没有实时数据', '没有实时传感', '没有依据的估算',
+    '没有事实依据', '不实', '没有支持', '我没有数据',
+    '没有可证实', '一个未经核实', '未经核实',
+)
+
+
+def _is_claim_in_retract_context(reply: str, claim_text: str,
+                                     window_chars: int = 150) -> bool:
+    """检测 claim 是否在 retract 话术上下文中 (P5-fix22).
+
+    主脑 reply 含 "withdraw 95%" / "我必须撤回 95%" 等 → 周围 ±150 chars
+    含 retract phrase → return True. trace_reply 看到 True → skip audit.
+    """
+    if not reply or not claim_text:
+        return False
+    try:
+        idx = reply.find(claim_text)
+        if idx < 0:
+            return False
+        start = max(0, idx - window_chars)
+        end = min(len(reply), idx + len(claim_text) + window_chars)
+        snippet = reply[start:end].lower()
+        return any(p in snippet for p in _RETRACT_PHRASES_HARDCODED)
+    except Exception:
+        return False
+
+
 def trace_reply(jarvis_reply: str,
                   tool_results: Optional[List[str]] = None,
                   stm_recent: Optional[List[Dict]] = None,
@@ -544,8 +593,16 @@ def trace_reply(jarvis_reply: str,
 
     n_verified = 0
     n_unverified = 0
+    n_skipped_retract = 0
     unverified_examples: List[str] = []
     for c in claims:
+        # 🆕 [P5-fix22 / 2026-05-22] retract context skip — 治死循环
+        # 主脑明确 withdraw/retract 当前 claim → 不当 factual, 不入 audit
+        # 否则下轮 build_integrity_alert 又 inject → 主脑又撤 → 死循环.
+        if _is_claim_in_retract_context(jarvis_reply, c.text):
+            n_skipped_retract += 1
+            continue
+
         ok = trace_to_evidence(
             c, tool_results, stm_recent,
             system_clock=system_clock, ltm_context=ltm_context,
@@ -569,6 +626,16 @@ def trace_reply(jarvis_reply: str,
                                     reason=_audit_reason)
             except Exception:
                 pass
+
+    if n_skipped_retract > 0:
+        try:
+            bg_log(
+                f"🛡️ [ClaimTracer/RetractSkip P5-fix22] turn={turn_id or '?'} "
+                f"skipped {n_skipped_retract} claim(s) in retract context "
+                f"(主脑明确撤回, 不入 audit, 防死循环)"
+            )
+        except Exception:
+            pass
 
     if n_unverified > 0:
         try:

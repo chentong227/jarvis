@@ -2094,6 +2094,22 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [P5-fix21-c / 2026-05-22] [WATCH TASK REGISTER FAIL] block
+        # Sir 14:50 痛点: jarvis 答应"盯着 X" 但 LLM 挂没真注册成功 → 下轮 prompt
+        # 看到 fail event, 主脑必须自然承认 + 提议 (重说/手动加/换说法).
+        # 同时显 [ACTIVE WATCH TASKS] block 让主脑知道自己正在 watch 哪些.
+        try:
+            from jarvis_watch_task import (render_register_fail_block as _wt_fail,
+                                              render_active_tasks_block as _wt_active)
+            _fail_text = _wt_fail(within_seconds=600.0, max_show=2)
+            if _fail_text:
+                _parts.append(_fail_text)
+            _active_text = _wt_active(max_show=5)
+            if _active_text:
+                _parts.append(_active_text)
+        except Exception:
+            pass
+
         # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] [SIR'S DECLARED STATUS] block
         # Sir 13:49 痛点: Smart Nudge 话术 "Soul Drive doc still active in Windsurf 90min"
         # — 但 Sir 12:06 明确说"睡觉了下午见". 系统不知道 → 用 IDE 窗口 idle 判.

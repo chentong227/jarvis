@@ -244,6 +244,56 @@ class KeyRouter:
         key = self._resolve_key(key_name)
         if not key:
             return
+
+        # 🆕 [P5-fix21-a / 2026-05-22] label vs error provider 一致性 check
+        # Sir 14:50 真测痛点: log 里 "[KeyRouter] google_1 标记为不健康
+        # (错误: [OpenRouter] API Key 无效或已过期 (401))" — Google pool 的 key
+        # 被 OpenRouter 的错误污染, 导致健康 Google key 误标 unhealthy.
+        # caller 报错时若 label 在 google pool 但 error_msg 头含 "[OpenRouter]"
+        # → 这是 caller 报错归类 BUG, 我们 defensive: log warn + skip 标记,
+        # 真正的 OpenRouter key 由它自己的 caller 路径报.
+        try:
+            err_head = error_msg[:80].lower()
+            label_lower = (key_name or '').lower()
+            in_google_pool = label_lower.startswith('google_')
+            in_openrouter_pool = label_lower.startswith('openrouter_')
+            error_says_openrouter = '[openrouter]' in err_head or 'openrouter' in err_head[:30]
+            error_says_google_only = ('project_denied' in err_head or
+                                          'project has been denied' in err_head or
+                                          'aistudio' in err_head)
+            mismatch = False
+            mismatch_reason = ''
+            if in_google_pool and error_says_openrouter:
+                mismatch = True
+                mismatch_reason = (f'caller report google label but error msg cites '
+                                       f'[OpenRouter] — likely caller mis-routed')
+            elif in_openrouter_pool and error_says_google_only:
+                mismatch = True
+                mismatch_reason = (f'caller report openrouter label but error msg cites '
+                                       f'Google project_denied/aistudio — likely mis-routed')
+            if mismatch:
+                try:
+                    from jarvis_utils import bg_log
+                    bg_log(f"⚠️ [KeyRouter/MisroutedError] skip mark unhealthy: "
+                           f"label={key_name} but error head='{error_msg[:60]}'. "
+                           f"{mismatch_reason}. caller bug — fix upstream report_error()")
+                except Exception:
+                    pass
+                # publish ErrorBus 让 Sir Dashboard 看到 caller bug
+                try:
+                    from jarvis_error_bus import report_error as _eb_report, SEVERITY_LOW
+                    _eb_report(
+                        module='key_router',
+                        kind='misrouted_error_skip',
+                        detail=f'label={key_name} err_head={error_msg[:80]}',
+                        severity=SEVERITY_LOW,
+                        recoverable=True,
+                    )
+                except Exception:
+                    pass
+                return  # 不标 unhealthy
+        except Exception:
+            pass  # defensive 失败别破坏 report_error 主路径
         now = time.time()
         status = self._key_status[key]
         status['error_count'] += 1

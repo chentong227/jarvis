@@ -313,15 +313,59 @@ class WatchTaskRegistrar:
             extracted = self._call_registrar_llm(sir_text, jarvis_reply,
                                                     key_router=key_router)
             if extracted is None:
-                bg_log(f"📌 [WatchTask/Skip] LLM judged not event-watch: "
-                       f"'{sir_text[:60]}'")
+                # 🆕 [P5-fix21-c / 2026-05-22] 区分两种 None:
+                # 1. LLM 判 not event-watch (Sir 没真要 watch) — 不需 SWM event
+                # 2. LLM call fail / parse fail (无法判) — publish 'watch_task_register_fail'
+                #    让主脑下轮承认"答应了但 LLM 挂没真注册".
+                # 用 phrase pre-filter 来区分: 命中 phrase 但 None → fail; 没命中 → not watch.
+                phrase_hit = self._has_trigger_phrase(sir_text)
+                if phrase_hit:
+                    bg_log(f"⚠️ [WatchTask/RegisterFail] phrase hit but LLM 没出 schema "
+                           f"(LLM 挂或返垃圾) → 拒注册 + publish SWM. sir='{sir_text[:60]}'")
+                    self._publish_register_fail(sir_text, jarvis_reply, turn_id,
+                                                    reason='llm_unavailable_or_parse_fail')
+                else:
+                    bg_log(f"📌 [WatchTask/Skip] no trigger phrase / LLM judged not event-watch: "
+                           f"'{sir_text[:60]}'")
                 return
             self._persist(extracted, sir_text, jarvis_reply, turn_id)
         except Exception as e:
             try:
                 bg_log(f"⚠️ [WatchTask/Register] err: {e}")
+                self._publish_register_fail(sir_text, jarvis_reply, turn_id,
+                                                reason=f'exception: {type(e).__name__}: {str(e)[:80]}')
             except Exception:
                 pass
+
+    def _publish_register_fail(self, sir_text: str, jarvis_reply: str,
+                                  turn_id: str, reason: str) -> None:
+        """🆕 [P5-fix21-c] publish 'watch_task_register_fail' SWM event.
+
+        主脑下轮 prompt 看 [WATCH TASK REGISTER FAIL] block, 自然承认
+        "Sir 我答应'盯着 X' 但其实 LLM 挂没真注册成功, 要不要换说法或我手动加".
+        准则 5 言出必行 — 没成功也要说清楚.
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='watch_task_register_fail',
+                    description=f"WatchTask register fail (Sir asked to watch but LLM failed): "
+                                  f"{sir_text[:100]}",
+                    source='WatchTaskRegistrar',
+                    salience=0.9,  # 高 salience — 主脑必看必说
+                    ttl=600.0,  # 10min — 给主脑 1-2 轮承认
+                    metadata={
+                        'sir_text': sir_text[:300],
+                        'jarvis_reply_excerpt': jarvis_reply[:300],
+                        'turn_id': turn_id,
+                        'reason': reason[:200],
+                        'ts': time.time(),
+                    },
+                )
+        except Exception:
+            pass
 
     def _call_registrar_llm(self, sir_text: str, jarvis_reply: str,
                               key_router: Any) -> Optional[Dict[str, str]]:
@@ -405,17 +449,19 @@ class WatchTaskRegistrar:
 
     def _template_fallback(self, sir_text: str,
                               jarvis_reply: str) -> Optional[Dict[str, str]]:
-        """LLM 不可用时 fallback. 用 sir_text 整段当 what_to_watch."""
-        # 仅当含 trigger phrase 才 fallback
-        if not self._has_trigger_phrase(sir_text):
-            return None
-        return {
-            'what_to_watch': sir_text[:200],
-            'trigger_evidence': 'an event Sir mentioned in his utterance',
-            'notify_msg_en': 'Sir, the event you mentioned has occurred.',
-            'notify_msg_zh': '先生, 您说的事件发生了.',
-            'rationale': 'fallback template (LLM unavailable)',
-        }
+        """🆕 [P5-fix21-c / 2026-05-22] LLM 不可用 → 拒绝注册 (返 None).
+
+        Sir 14:50 真测痛点: 老 fallback 写"trigger_evidence='an event Sir mentioned'"
+        空壳 task → judge LLM 永远判不出"命中" → fired_at 永远 0 → Jarvis 嘴上说
+        "I shall keep an eye on" 但其实没真盯. 准则 5 言出必行被破坏.
+
+        修法: LLM fail → 直接 return None (拒绝注册) + caller 端 publish
+        'watch_task_register_fail' SWM event 让主脑下轮 prompt 看到, 自然承认
+        "Sir 我答应了但其实没真注册成功 (LLM 挂), 您要不要换说法或我手动加".
+        """
+        # 不再 fallback 写空壳 task. caller 在 _register_blocking 里看到 None
+        # 会 publish 'watch_task_register_fail' SWM (见 _persist 调用前判断).
+        return None
 
     def _persist(self, extracted: Dict[str, str], sir_text: str,
                    jarvis_reply: str, turn_id: str) -> None:
@@ -603,6 +649,7 @@ class WatchTaskJudge:
             tasks_str='\n'.join(tasks_lines),
         )
         raw = ''
+        primary_err = ''
         try:
             raw = safe_openrouter_call(
                 openrouter_key=okey,
@@ -611,7 +658,8 @@ class WatchTaskJudge:
                 max_tokens=int(cfg.get('max_output_tokens', 300)),
                 temperature=float(cfg.get('temperature', 0.1)),
             )
-        except Exception:
+        except Exception as e_p:
+            primary_err = str(e_p)[:120]
             try:
                 raw = safe_openrouter_call(
                     openrouter_key=okey,
@@ -620,7 +668,21 @@ class WatchTaskJudge:
                     max_tokens=int(cfg.get('max_output_tokens', 300)),
                     temperature=float(cfg.get('temperature', 0.1)),
                 )
-            except Exception:
+            except Exception as e_f:
+                # 🆕 [P5-fix21-c2 / 2026-05-22] judge LLM 双 fallback 失败 → ErrorBus
+                # Sir 14:50 真意: judge daemon 一直 polling 但 LLM 全挂时主脑不知道.
+                # publish ErrorBus + 不报为 critical (高频可能刷屏, 用 LOW 静默)
+                try:
+                    from jarvis_error_bus import report_error as _eb_report, SEVERITY_LOW
+                    _eb_report(
+                        module='watch_task_judge',
+                        kind='llm_judge_fail',
+                        detail=f'primary={primary_err[:60]} fallback={str(e_f)[:60]}',
+                        severity=SEVERITY_LOW,
+                        recoverable=True,
+                    )
+                except Exception:
+                    pass
                 return []
         # parse
         t = (raw or '').strip()
@@ -632,6 +694,18 @@ class WatchTaskJudge:
         try:
             data = json.loads(t)
         except Exception:
+            # 🆕 [P5-fix21-c2 / 2026-05-22] LLM 返垃圾 JSON → ErrorBus LOW
+            try:
+                from jarvis_error_bus import report_error as _eb_report, SEVERITY_LOW
+                _eb_report(
+                    module='watch_task_judge',
+                    kind='llm_parse_fail',
+                    detail=f'parse fail: {(raw or "")[:60]}',
+                    severity=SEVERITY_LOW,
+                    recoverable=True,
+                )
+            except Exception:
+                pass
             return []
         return [str(x) for x in (data.get('fired_task_ids') or []) if x]
 
@@ -736,6 +810,91 @@ def register_async(sir_text: str, jarvis_reply: str,
         sir_text=sir_text, jarvis_reply=jarvis_reply,
         turn_id=turn_id, key_router=key_router,
     )
+
+
+# ============================================================
+# 🆕 [P5-fix21-c / 2026-05-22] Prompt block renders 给主脑下轮看
+# ============================================================
+
+def render_register_fail_block(within_seconds: float = 600.0,
+                                  max_show: int = 2) -> str:
+    """渲染 [WATCH TASK REGISTER FAIL] block 给主脑下轮 prompt.
+
+    Sir 14:50 真意 — 主脑答应"盯着 X" 但 LLM 挂没真注册成功 → 下轮主脑必须
+    自然承认 + 提议 (重说/手动加/换说法). 准则 5 言出必行 — 没成功也要说清楚.
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return ''
+        events = bus.recent_events(within_seconds=within_seconds,
+                                       types={'watch_task_register_fail'}) or []
+        if not events:
+            return ''
+        # de-dup by sir_text head
+        seen = set()
+        items = []
+        for e in events:
+            meta = e.get('metadata') or {}
+            sir_h = (meta.get('sir_text') or '')[:80]
+            if sir_h in seen:
+                continue
+            seen.add(sir_h)
+            items.append({
+                'sir_text': (meta.get('sir_text') or '')[:200],
+                'reason': (meta.get('reason') or '')[:80],
+                'turn_id': (meta.get('turn_id') or '')[:30],
+                'age_s': int(time.time() - float(meta.get('ts', 0) or 0)),
+            })
+        if not items:
+            return ''
+        items = items[:max_show]
+        lines = [
+            '[WATCH TASK REGISTER FAIL — P5-fix21-c / Sir 14:50 痛点: 嘴上盯着但没真盯]',
+            '  你之前 reply 答应"keep an eye on / 提醒您"等, 但 LLM 没真出 schema, '
+            '系统拒绝了空壳注册:',
+        ]
+        for it in items:
+            lines.append(
+                f"    - turn={it['turn_id']} ({it['age_s']}s ago): "
+                f"\"{it['sir_text'][:80]}...\" reason={it['reason']}"
+            )
+        lines.append('')
+        lines.append('  你本轮自然承认 (准则 5 言出必行):')
+        lines.append('    - "Sir, 关于刚说要盯着 X — 我答应了但其实没真注册成功 '
+                       '(LLM 挂或时机不好). 您要不要重说一遍, 或我换其他方式 (手动加 / 跳过)?"')
+        lines.append('  ❌ 错误反应: 装没说过 / 再次空答应 "I\'ll keep an eye on" 但仍不真注册.')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def render_active_tasks_block(max_show: int = 5) -> str:
+    """渲染 [ACTIVE WATCH TASKS] block — 主脑知道当前正在盯哪些事.
+
+    Sir 真意: 主脑下轮看自己正在 watch 哪些, 避免重复答应 / 跨 turn 一致性.
+    """
+    try:
+        active = list_active_tasks()
+        if not active:
+            return ''
+        lines = [
+            '[ACTIVE WATCH TASKS — 你正在盯着的事 (ScreenVision daemon judge 中)]',
+        ]
+        for t in active[:max_show]:
+            age_min = int((time.time() - t.created_at) / 60)
+            ttl_left = int((t.expires_at - time.time()) / 60) if t.expires_at > 0 else -1
+            lines.append(
+                f"    - {t.id}: watch=\"{t.what_to_watch[:80]}\" "
+                f"trig=\"{t.trigger_evidence[:80]}\" "
+                f"(age={age_min}min, ttl={ttl_left}min, judges={t.judge_count})"
+            )
+        if len(active) > max_show:
+            lines.append(f"    ... +{len(active) - max_show} more")
+        return '\n'.join(lines)
+    except Exception:
+        return ''
 
 
 # ============================================================
