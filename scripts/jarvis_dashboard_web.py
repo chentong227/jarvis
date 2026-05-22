@@ -1582,6 +1582,148 @@ def api_key_reset():
 
 
 # ============================================================
+# 🆕 [P5-fix21-c-dashboard / 2026-05-22] WatchTask panel
+# Sir 14:50 痛点: "答应盯 S 联赛比赛 但其实没真注册" — dashboard 一眼看哪些
+# active task / 失败注册的 SWM event / 哪些是空壳 fallback (trigger='an event...')
+# ============================================================
+
+@app.route('/api/watch_tasks')
+def api_watch_tasks():
+    """🆕 [P5-fix21-c] WatchTask snapshot — active / fired / cancelled / expired.
+
+    Query params:
+      - state: 'active' (default) | 'all'
+      - limit: max records (default 50)
+
+    Returns:
+      {ok, data: {active: [...], total: N, register_fails: [...]}}
+    """
+    try:
+        sys.path.insert(0, ROOT)
+        from jarvis_watch_task import _load_tasks, list_active_tasks
+        state = (request.args.get('state', 'active') or 'active').strip().lower()
+        try:
+            limit = int(request.args.get('limit', '50') or '50')
+        except Exception:
+            limit = 50
+        if limit <= 0 or limit > 500:
+            limit = 50
+
+        if state == 'all':
+            raw = _load_tasks()
+        else:
+            raw = list_active_tasks()
+
+        records = []
+        now = time.time()
+        for t in raw[:limit]:
+            age_s = max(0, int(now - t.created_at))
+            ttl_s = int(t.expires_at - now) if t.expires_at > 0 else -1
+            # 检测是否空壳 fallback (旧 _template_fallback 写的)
+            is_empty_shell = (
+                t.trigger_evidence == 'an event Sir mentioned in his utterance'
+                and t.notify_msg_en.startswith('Sir, the event you')
+            )
+            records.append({
+                'id': t.id,
+                'state': t.state,
+                'turn_id': t.turn_id,
+                'what_to_watch': t.what_to_watch[:200],
+                'trigger_evidence': t.trigger_evidence[:200],
+                'notify_msg_en': t.notify_msg_en[:200],
+                'notify_msg_zh': t.notify_msg_zh[:200],
+                'created_at': t.created_at,
+                'created_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                                time.localtime(t.created_at)),
+                'expires_at': t.expires_at,
+                'fired_at': t.fired_at,
+                'fired_evidence': t.fired_evidence[:200] if t.fired_at > 0 else '',
+                'judge_count': t.judge_count,
+                'last_judge_at': t.last_judge_at,
+                'last_judge_age_s': (max(0, int(now - t.last_judge_at))
+                                          if t.last_judge_at > 0 else -1),
+                'last_judge_summary': t.last_judge_summary[:200],
+                'age_s': age_s,
+                'ttl_s': ttl_s,
+                'is_empty_shell': is_empty_shell,  # 老版 fallback 留下的
+            })
+
+        # register_fail SWM events (recent 600s)
+        register_fails = []
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                evs = bus.recent_events(within_seconds=600.0,
+                                            types={'watch_task_register_fail'}) or []
+                for e in evs[-20:]:
+                    meta = e.get('metadata') or {}
+                    register_fails.append({
+                        'sir_text': (meta.get('sir_text') or '')[:200],
+                        'reason': (meta.get('reason') or '')[:120],
+                        'turn_id': (meta.get('turn_id') or '')[:30],
+                        'ts': float(meta.get('ts', 0) or 0),
+                        'age_s': max(0, int(now - float(meta.get('ts', 0) or 0))),
+                    })
+        except Exception:
+            pass
+
+        # stats
+        all_tasks = _load_tasks()
+        stats = {'active': 0, 'fired': 0, 'cancelled': 0, 'expired': 0}
+        empty_shell_active = 0
+        for t in all_tasks:
+            stats[t.state] = stats.get(t.state, 0) + 1
+            if (t.state == 'active'
+                and t.trigger_evidence == 'an event Sir mentioned in his utterance'):
+                empty_shell_active += 1
+
+        return jsonify({
+            'ok': True,
+            'data': {
+                'records': records,
+                'total': len(raw),
+                'state_filter': state,
+                'stats': stats,
+                'empty_shell_active': empty_shell_active,
+                'register_fails': register_fails,
+            }
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/watch_task_action', methods=['POST'])
+def api_watch_task_action():
+    """🆕 [P5-fix21-c] cancel / expire 一个 task. POST {action, task_id}."""
+    try:
+        sys.path.insert(0, ROOT)
+        from jarvis_watch_task import cancel_task, expire_task
+        payload = request.get_json(silent=True) or {}
+        action = (payload.get('action', '') or '').strip().lower()
+        task_id = (payload.get('task_id', '') or '').strip()
+        if action not in ('cancel', 'expire'):
+            return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
+        if not task_id:
+            return jsonify({'ok': False, 'error': 'task_id required'}), 400
+
+        if action == 'cancel':
+            ok = cancel_task(task_id)
+        else:
+            ok = expire_task(task_id)
+
+        if ok:
+            return jsonify({'ok': True,
+                              'message': f"{action}ed {task_id}",
+                              'detail': f"{action}ed {task_id}"})
+        return jsonify({'ok': False,
+                          'error': f'task not found or not active: {task_id}',
+                          'message': f'失败: not found / not active'}), 404
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ============================================================
 # 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] Sir 13:13 立 Layer 1 主脑 thinking pass
 # 可视化集成 — 把 main_brain_meta_audit.jsonl 数据搬上 dashboard.
 # Sir 14:31 反馈: "把这些信息能放都放到可视化窗口方便我看".
