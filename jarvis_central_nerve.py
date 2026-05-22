@@ -4192,6 +4192,14 @@ User: {new_cmd}
         gate = getattr(self, 'nudge_gate', None)
         if not gate:
             return
+        # 🩹 [β.5.46-fix15 / 2026-05-22] Sir 10:59 真测 BUG: 287K 行 spam (99.9% log).
+        # 第二道防线 cooldown — 即使 SmartNudge 误调多次, 此处也 30s 内只 print 1 次.
+        # 系统级常量 (准则 6 β.3.5 递归边界), 不 vocab 化.
+        _now = time.time()
+        if getattr(self, '_last_activity_wake_print', 0) > 0 and \
+           (_now - self._last_activity_wake_print) < 30:
+            return
+        self._last_activity_wake_print = _now
         sleep_duration = gate.sleep_duration_seconds()
         print(f"[CentralNerve] 检测到用户活动唤醒 (睡眠模式持续 {sleep_duration/60:.1f}分钟)")
         self._check_short_sleep(sleep_duration)

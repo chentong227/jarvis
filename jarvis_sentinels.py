@@ -1095,18 +1095,22 @@ class NudgeGate:
     # 🩹 [β.5.32 / 2026-05-20] Sir 03:55 实测 BUG: dismissal 后 0.0 min 自动解除 + 立刻问"只 1 分钟".
     # Root cause: dismissal 时 Sir 刚说完命令 idle_ms=0, sleep mode 一激活下一 tick 就 < 30000ms → 解除.
     # 修法: 加 30s minimum lock - 非 force 路径 30s 内 deactivate 直接拒, 给 sleep 站稳脚步.
-    def deactivate_sleep_mode(self, force: bool = False):
+    # 🩹 [β.5.46-fix15 / 2026-05-22] Sir 10:59 真测 BUG: 287000 行 spam ("检测到用户活动唤醒...")
+    # Root cause: 此函数 30s 内拒绝时 silent return, 但 caller (SmartNudge) 不知道,
+    # 仍调 _on_activity_wake → spam print. 修: 返 bool 让 caller 看真假.
+    def deactivate_sleep_mode(self, force: bool = False) -> bool:
         with self._lock:
             was_sleeping = self._sleep_mode
             if was_sleeping and not force:
                 duration_so_far = time.time() - self._sleep_activated_at
                 if duration_so_far < 30:
                     # 非 force 路径 (auto activity wake) 30s 内拒绝解除
-                    return
+                    return False
             self._sleep_mode = False
             if was_sleeping:
                 duration = time.time() - self._sleep_activated_at
                 print(f"[NudgeGate] 休眠模式{'强制' if force else '自动'}解除 (持续 {duration/60:.1f}分钟)，恢复主动发言")
+            return was_sleeping or force
 
     def is_sleep_mode(self) -> bool:
         with self._lock:

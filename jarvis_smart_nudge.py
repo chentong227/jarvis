@@ -303,7 +303,14 @@ class SmartNudgeSentinel(threading.Thread):
                     # 让 Sir 瞬时键鼠扰动 (碰一下鼠标) 就解 sleep mode. 准则 6 反例.
                     # 改 30s 阈值 — Sir 真坐回电脑前 30s 持续活跃才算"真醒".
                     if idle_ms < 30000:
-                        self.gate.deactivate_sleep_mode()
+                        # 🩹 [β.5.46-fix15 / 2026-05-22] Sir 10:59 真测 BUG: 287K 行 spam.
+                        # Root cause: deactivate 30s 内拒, 但仍调 _on_activity_wake → print 死循环.
+                        # 修: deactivate 返 bool, 假就 sleep 30s 等 sleep_activated_at 过门槛.
+                        deactivated = self.gate.deactivate_sleep_mode()
+                        if not deactivated:
+                            # 30s lock 拒了, 不调 wake (否则 spam), 下一 tick 再看
+                            time.sleep(30)
+                            continue
                         # [P0+20-β.2.4 hotfix / 2026-05-16] P0+19 split 后 worker
                         # 直持 _on_activity_wake，原 worker.jarvis 守卫永不通 → 失效。
                         try:
