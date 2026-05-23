@@ -2701,38 +2701,14 @@ class CentralNerve:
             ttl=86400.0
         )
 
+        # 🆕 [P5-fix70 Phase 4a / 2026-05-23 17:01] Sir 17:01 拍板 — 砍 static block
+        # 老 tier_routing 1862 chars (SIMPLE/COMPLEX 详细 example 1K+). 主脑已经
+        # 学会 FAST_CALL 用法, 不需要每 turn 重看 example. 砍到 ~500 chars.
         tier_routing = self.prompt_cache.get_or_build(
-            'tier_routing', lambda: """[3-TIER ROUTING & FAST TOOLS]:
-- Tier 1 (Chat): No tools. Chat naturally. ALWAYS end with ---ZH--- and Chinese translation.
-
-- Tier 2 (Fast Tools): Verbosity adapts to action complexity. Pick mode by judgement:
-
-  [SIMPLE actions] — single tool, obvious params, reversible/safe (open file, search, copy, launch, query info):
-    • NO intro. Emit <FAST_CALL>{...}</FAST_CALL> immediately after Sir's request.
-    • After result, ONE short confirmation: "Done, Sir." / "Here you are." / "Open." / "Got it."
-    • Then ---ZH--- + brief Chinese ("完成。" / "已打开。" / "在这里。").
-    • Example flow — Sir: "open D drive" → you: <FAST_CALL>... → result → "Open." ---ZH--- 已打开。
-
-  [COMPLEX actions] — multi-tool chain, ambiguous params, destructive (delete/move), or Sir needs awareness:
-    • Brief intro (ONE sentence max): "Pulling the logs now, Sir." / "Let me check that for you."
-    • ---ZH--- (brief translation).
-    • <FAST_CALL>{...}</FAST_CALL>. Chain silently between tools (no talking between calls).
-    • When ALL done, ONE concluding sentence summarizing the outcome.
-    • Final ---ZH---.
-
-  HOW TO PICK MODE:
-    • If Sir's intent is unambiguous AND one tool suffices AND no risk → SIMPLE.
-    • If you need to think about params, or chain multiple tools, or the action is irreversible → COMPLEX.
-    • When in doubt: prefer SIMPLE. The action itself is the answer.
-    • NEVER pad with "Let me X for you" or "I shall now Y" — these are noise, not service.
-
-- Tier 3 (Deep Workflow): >=3 tools, visual UI, or true autonomous task. Output <REQUEST_PHYSICAL>.
-
-- Error Handling: If a FAST_CALL fails, admit it plainly in your concluding sentence ("That didn't take, Sir."). 
-  NEVER say "I have done X" when X just failed — that is the worst kind of dishonesty.
-
-- Output <IGNORE> for side-conversations.
-- Output [CLIPBOARD] for code/content at the VERY END.""",
+            'tier_routing', lambda: """[ROUTING]: Tier 1 chat (no tool, end ---ZH--- + 中文). Tier 2 tools (<FAST_CALL>{...}</FAST_CALL>, 简单 action 直接调 + "Done"; 复杂 action 1 句 intro + 工具链 + 1 句总结). Tier 3 deep workflow (<REQUEST_PHYSICAL>).
+- Pick: 单工具 + 无风险 → SIMPLE (no intro). 多工具/不可逆 → COMPLEX (1 句 intro). 不确定 → SIMPLE.
+- Error: tool fail → 诚实承认 "That didn't take, Sir.". NEVER 说"已做"当 X 失败.
+- 特殊: <IGNORE> side-conv, [CLIPBOARD] code at end.""",
             ttl=86400.0
         )
 
@@ -2802,7 +2778,9 @@ class CentralNerve:
         life_log_context = ""
         try:
             if hasattr(self, 'status_ledger'):
-                life_log_context = self.status_ledger.get_recent_daily_summaries(days=3)
+                # 🆕 [P5-fix70 Phase 4a / 2026-05-23 17:01] days=3 → days=2 缩 ~30%
+                # life_log 是历史日志, 2 天足够主脑做 callback. 节省 ~700 chars.
+                life_log_context = self.status_ledger.get_recent_daily_summaries(days=2)
         except:
             pass
 

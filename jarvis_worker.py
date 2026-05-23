@@ -5045,29 +5045,17 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                 # 👇 维护一个黑名单，把重型的 UI 器官排除在快思考之外。
                 FAST_CALL_BLACKLIST =["web_hands", "desktop_hands", "terminal_hands"]
 
-                # [P0+18-d.6 / 2026-05-15] 主脑能看到的工具 hint：除了 manifest 顶层 description，
-                # 额外明示高频"读"类子命令，让主脑知道"列代办 = memory_hands.list_reminders"
-                # 这种语义→工具映射，避免它在 prompt block 空时只能猜。
-                _KEY_SUBCOMMAND_HINTS = {
-                    'memory_hands': (
-                        '主要子命令: list_reminders={} (列未来日程) / search_memory={"query":...,"time_range_hours":N} '
-                        '(检索过去聊天/任务) / add_reminder={"intent":..., "trigger_time":"YYYY-MM-DD HH:MM:00"} / '
-                        'delete_record={"id":N} / modify_record={"id":N, "new_intent":..., "new_time":...}'
-                    ),
-                    'system_hands': '主要子命令: find_process / kill_process / shutdown / restart / lock_workstation',
-                    'window_hands': '主要子命令: close_window / focus_window / minimize_window / maximize_window',
-                    'audio_hands': '主要子命令: set_volume / mute / unmute',
-                }
-
+                # 🆕 [P5-fix70 Phase 4a / 2026-05-23 17:01] Sir 17:01 拍板 — 砍 static block
+                # 老 chat_organs 2039 chars (含 sub_command 详细 hint ~700). 主脑可
+                # 通过 organ.command 自描述 (FAST_CALL fail 时返回 valid commands).
+                # 砍 sub_command hints → ~1200 chars. 节省 ~800 chars.
+                #
+                # 老 [P0+18-d.6] _KEY_SUBCOMMAND_HINTS 删 (主脑动态发现, 不需 prompt 教).
                 _tool_lines = []
                 for name, info in self.jarvis.hand_manifests.items():
                     if name in FAST_CALL_BLACKLIST:
                         continue
-                    line = f"- {name}: {info['description']}"
-                    hint = _KEY_SUBCOMMAND_HINTS.get(name)
-                    if hint:
-                        line += f"\n    {hint}"
-                    _tool_lines.append(line)
+                    _tool_lines.append(f"- {name}: {info['description']}")
                 tool_instructions = "\n".join(_tool_lines)
                 tool_instructions += "\n- ui_control: subtitle_on/off, orb_on/off"
                 chat_organs = tool_instructions
