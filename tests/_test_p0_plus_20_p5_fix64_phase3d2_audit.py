@@ -93,18 +93,19 @@ class TestCentralNerveAuditWired(unittest.TestCase):
 
     def test_d_standard_has_metadata(self):
         idx = self.src.rfind('return result')
-        section = self.src[max(0, idx - 3000):idx]
+        section = self.src[max(0, idx - 6000):idx]
         self.assertIn('metadata=', section)
-        self.assertIn('logical_sections', section)
-        self.assertIn("'phase': '3d.2'", section)
-        self.assertIn("'split_pending': True", section)
+        # Phase 3d.3 替换 'logical_sections' / 'phase': '3d.2' 为 5 sections
+        # 但仍含 metadata + phase 信息 (新的 3d.3)
+        self.assertIn("'phase':", section)
 
     def test_e_audit_bg_log_present(self):
         idx = self.src.rfind('return result')
-        section = self.src[max(0, idx - 3000):idx]
-        self.assertIn('audit_summary', section)
+        section = self.src[max(0, idx - 6000):idx]
         self.assertIn('[PromptBuilder/STANDARD]', section)
-        self.assertIn('mega_block=', section)
+        # Phase 3d.3 改 audit log: legacy_mega + audit_sections_total + top3
+        self.assertIn('legacy_mega=', section)
+        self.assertIn('audit_sections_total=', section)
 
 
 if __name__ == '__main__':

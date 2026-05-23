@@ -3900,46 +3900,79 @@ User: {user_input}
         except Exception:
             pass
 
-        # 🆕 [P5-fix61 / 2026-05-23 16:18] Phase 3d.1 (最小增量, 字面零变化):
-        # standard/full mode 集成 PromptBuilder 路径 (整 result 作 1 mega block).
-        # 主脑看到的 prompt 字面**完全一致**, 仅执行路径走 builder.
-        # Sir 实测验证 builder 不破 → Phase 3d.2 再真拆 block 增量.
+        # 🆕 [P5-fix61/64/66 / 2026-05-23 16:18-16:40] Phase 3d.1/2/3:
+        # standard/full mode 集成 PromptBuilder. 字面零变化 (output = legacy mega).
+        # 3d.1 (61): builder wrapper 路径集成
+        # 3d.2 (64): mega block + metadata + audit_summary bg_log
+        # 3d.3 (66): 注册 5 audit-only logical sections (Phase 4 瘦身规划基础)
+        #            audit_only=True → 不渲染, 仅 audit. legacy mega 仍是真输出.
         # fallback: builder 异常 → 直接 return result (准则 8 不破现有).
-        #
-        # 🆕 [P5-fix64 / 2026-05-23 16:28] Phase 3d.2: 加 builder audit logging.
-        # mega block 内含 metadata (logical sections + size). bg_log 输出
-        # prompt 体积. Sir 可看 audit 找冗余 — Phase 4 瘦身基线.
         try:
             from jarvis_prompt_builder import PromptBuilder, BlockSpec
             _sb = PromptBuilder(tier='STANDARD')
-            _legacy_block = BlockSpec(
-                id='legacy_full',
-                content=result.strip(),
-                tiers=['STANDARD'],
-                salience=1.0,
-                metadata={
-                    # 内省: mega block 含的 logical sections (Phase 4 拆细用)
-                    'logical_sections': [
-                        'persona', 'yesterday', 'stm', 'continuity',
-                        'open_threads', 'project', 'active_reminders',
-                        'skills', 'tool_honesty', 'fuzzy_candidates',
-                        'promise_protocol', 'swm', 'event_bus', 'attention',
-                        'working_feed', 'active_plan', 'tone', 'avoid_phrases',
-                        'verbosity', 'soul_chapters', 'how_to_respond',
-                        'time_context', 'context', 'profile_card',
-                        'correction', 'style', 'content_pref',
-                        'unified_memory', 'skill_tree', 'anticipator',
-                        'real_time_state', 'life_log', 'system_env',
-                        'tier_routing', 'tool_library', 'ltm', 'commitment',
-                        'clock', 'sensor', 'l2', 'user_input', 'system_alert',
-                    ],
-                    'phase': '3d.2',
-                    'split_pending': True,  # Phase 3d.3 真拆细
-                },
-            )
-            _sb.register(_legacy_block)
+
+            # 🆕 [P5-fix66] 注册 5 audit-only logical sections (Phase 4 用)
+            # 这些 block 不渲染 (audit_only=True), 仅 audit_summary 用. Phase 4
+            # 把 audit_only=False 改 True + 删 legacy = 真拆细 + tier filter 砍.
+            _l2_inj = getattr(self, '_l2_injected_block', '') or ''
+            _audit_sections = [
+                # Section 1: persona (核心人设)
+                ('persona_section', core_persona, 1.0,
+                  'persona — 核心人设 + 风格基线'),
+                # Section 2: recent (历史/STM/continuity/open_threads/project/active_reminders)
+                ('recent_section', '\n\n'.join(filter(bool, [
+                    yesterday_block,
+                    f"=== WHAT JUST HAPPENED ===\n{stm_context}" if stm_context else '',
+                    open_threads_block, project_block, active_reminders_block,
+                ])), 0.80, 'recent — 历史 + STM + open threads + projects'),
+                # Section 3: skills + directives
+                ('skills_section', '\n\n'.join(filter(bool, [
+                    available_skills_block, tool_honesty_directive,
+                    fuzzy_candidates_policy, promise_protocol_directive,
+                ])), 0.75, 'skills — 可用工具 + honesty/fuzzy/promise 协议'),
+                # Section 4: state + style (SWM + 多 sensor block + 风格)
+                ('state_section', '\n\n'.join(filter(bool, [
+                    swm_block, event_bus_block, attention_block,
+                    working_feed_block, active_plan_block,
+                    tone_directive, avoid_phrases_block, verbosity_block,
+                    soul_chapters_str, how_to_respond,
+                    f"=== TIME CONTEXT ===\n{time_persona}" if time_persona else '',
+                    context_str, _pc_block_value,
+                    correction_context, style_adjustment, content_pref,
+                    unified_memory, skill_tree_str, anticipator_ctx,
+                ])), 0.70, 'state — SWM/event/attention + tone/style/soul + time/context'),
+                # Section 5: knowledge + tail (real_time/life_log/sys_env/tools/ltm/commitment/clock/sensor/l2)
+                ('knowledge_tail_section', '\n\n'.join(filter(bool, [
+                    f"=== REAL-TIME STATE ===\n{ledger_str}" if ledger_str else '',
+                    f"[RECENT LIFE LOG]:\n{life_log_context}" if life_log_context else '',
+                    f"[SYSTEM ENVIRONMENT]:\n{landmarks_str}" if landmarks_str else '',
+                    tier_routing,
+                    f"[Tier 2 Tool Library]:\n{chat_organs}" if chat_organs else '',
+                    f"[YOUR KNOWLEDGE BASE]:\n{ltm_context}" if ltm_context else '',
+                    commitment_context,
+                    f"[SYSTEM CLOCK]: {current_time}",
+                    sensor_state_block, _l2_inj,
+                ])), 0.65, 'knowledge_tail — ledger/life_log/env/tools/ltm/clock/sensor/l2'),
+            ]
+            for sid, content, sal, desc in _audit_sections:
+                if content:
+                    _sb.register(BlockSpec(
+                        id=sid, content=content, tiers=['STANDARD'],
+                        salience=sal, audit_only=True,  # 不渲染
+                        metadata={'section': sid.replace('_section', ''),
+                                   'desc': desc, 'phase': '3d.3'},
+                    ))
+
+            # legacy mega block (audit_only=False → 真渲染)
+            _sb.register(BlockSpec(
+                id='legacy_full', content=result.strip(),
+                tiers=['STANDARD'], salience=1.0, audit_only=False,
+                metadata={'phase': '3d.3', 'split_method': '5_audit_sections',
+                           'render_path': 'mega_passthrough'},
+            ))
+
             _via_builder = _sb.compose(
-                persona=result.strip(),
+                persona='',
                 user_input='',
                 footer='',
                 system_alert='',
@@ -3948,14 +3981,24 @@ User: {user_input}
             # 安全闸: builder 输出含 user_input → 接受
             if _via_builder and user_input and user_input in _via_builder:
                 result = _via_builder
-            # 🆕 [Phase 3d.2] audit bg_log — Sir 可看 prompt 体积监控
+            # 🆕 [Phase 3d.3] audit bg_log — 5 section 体积分布 (Phase 4 砍依据)
             try:
                 from jarvis_utils import bg_log as _bd_bg
-                _audit = _sb.audit_summary()
+                # audit_summary 不包 audit_only blocks (list_block_ids 用 active)
+                # → 用 size_breakdown 手动遍 audit_only blocks 统计
+                _audit_sizes = [(bid, _sb.get(bid).char_len())
+                                  for bid in ['persona_section',
+                                                'recent_section',
+                                                'skills_section',
+                                                'state_section',
+                                                'knowledge_tail_section']
+                                  if _sb.get(bid) is not None]
+                _audit_sizes.sort(key=lambda x: x[1], reverse=True)
+                _total_audit = sum(c for _, c in _audit_sizes)
+                _top3 = ', '.join(f"{n}={c}" for n, c in _audit_sizes[:3])
                 _bd_bg(
-                    f"📐 [PromptBuilder/STANDARD] mega_block={_audit['total_chars']} chars "
-                    f"| n_blocks={_audit['n_blocks']} "
-                    f"| split_pending=True (Phase 3d.3 待拆)"
+                    f"📐 [PromptBuilder/STANDARD] legacy_mega={_sb.get('legacy_full').char_len()} chars "
+                    f"| audit_sections_total={_total_audit} | top3: {_top3}"
                 )
             except Exception:
                 pass

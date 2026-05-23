@@ -36,15 +36,19 @@ class TestPhase3d1StandardBuilder(unittest.TestCase):
 
     def test_a_standard_route_uses_builder(self):
         """_assemble_prompt 末尾含 builder route."""
-        # 找 'return result' 前的 builder route (range 大 — Phase 3d.2 加 metadata 后变长)
+        # 找 'return result' 前的 builder route (range 大 — Phase 3d.3 加 audit sections)
         idx = self.src.rfind('return result')
         self.assertGreater(idx, 0)
-        section = self.src[max(0, idx - 4000):idx]
+        section = self.src[max(0, idx - 6000):idx]
         self.assertIn('PromptBuilder', section,
                           'standard/full 应集成 PromptBuilder')
         self.assertIn("tier='STANDARD'", section,
                           'PromptBuilder 应 tier=STANDARD')
-        self.assertIn('Phase 3d.1', section)
+        # Phase 3d.3 改了 marker, 检查 P5-fix61/64/66 任一存在
+        self.assertTrue(
+            'fix61' in section or 'fix66' in section or '3d.1' in section,
+            'Phase 3d 系列 marker 应存在'
+        )
 
     def test_b_safety_gate_user_input(self):
         """安全闸: user_input in _via_builder 才接受."""

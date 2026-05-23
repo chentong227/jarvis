@@ -56,6 +56,11 @@ class BlockSpec:
     # 让 Phase 3d.3 可以记录 mega block 内 logical sections (head/body/tail/...)
     # debug / Phase 4 瘦身需要这个数据找冗余块.
     metadata: Dict[str, object] = field(default_factory=dict)
+    # 🆕 [P5-fix66 / 2026-05-23 16:40] Phase 3d.3: audit_only flag
+    # True = 注册但不渲染 (仅 audit_summary 用, Phase 4 瘦身规划基础)
+    # 让 central_nerve 注册 5 logical sections + 1 actual legacy mega block,
+    # 字面零变化 (output = legacy), 但 audit 可看 5 section 体积分布.
+    audit_only: bool = False
 
     def is_active_for(self, tier: str) -> bool:
         """是否适用此 tier."""
@@ -134,12 +139,14 @@ class PromptBuilder:
         }
 
     def render_blocks(self) -> str:
-        """渲染所有 active block (按注册顺序)."""
+        """渲染所有 active block (按注册顺序). 跳过 audit_only blocks."""
         parts = []
         for bid in self._order:
             block = self._blocks[bid]
             if not block.is_active_for(self.tier):
                 continue
+            if block.audit_only:
+                continue  # 🆕 [P5-fix66] audit_only block 不渲染
             rendered = block.render()
             if rendered:
                 parts.append(rendered)
