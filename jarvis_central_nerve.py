@@ -3436,7 +3436,114 @@ User: {user_input}
             except Exception:
                 _short_active_plan = ""
 
-            return f"""{core_persona}
+            # 🆕 [P5-fix59 / 2026-05-23 16:13] Phase 3c: SHORT_CHAT 迁 builder
+            try:
+                from jarvis_prompt_builder import PromptBuilder, BlockSpec
+                sb = PromptBuilder(tier='SHORT_CHAT')
+                if yesterday_block:
+                    sb.register(BlockSpec(
+                        id='yesterday', content=yesterday_block,
+                        tiers=['SHORT_CHAT'], salience=0.55))
+                if stm_context:
+                    sb.register(BlockSpec(
+                        id='stm', content=f"=== WHAT JUST HAPPENED ===\n{stm_context}",
+                        tiers=['SHORT_CHAT'], hint='stm:turn_<id>', salience=0.75))
+                if open_threads_block:
+                    sb.register(BlockSpec(
+                        id='open_threads', content=open_threads_block,
+                        tiers=['SHORT_CHAT'], salience=0.60))
+                if project_block:
+                    sb.register(BlockSpec(
+                        id='project', content=project_block,
+                        tiers=['SHORT_CHAT'], salience=0.55))
+                if available_skills_block:
+                    sb.register(BlockSpec(
+                        id='skills', content=available_skills_block,
+                        tiers=['SHORT_CHAT'], salience=0.50))
+                if _short_tool_honesty:
+                    sb.register(BlockSpec(
+                        id='tool_honesty', content=_short_tool_honesty,
+                        tiers=['SHORT_CHAT'], salience=0.80))
+                if _short_fuzzy_policy:
+                    sb.register(BlockSpec(
+                        id='fuzzy_policy', content=_short_fuzzy_policy,
+                        tiers=['SHORT_CHAT'], salience=0.65))
+                if _short_promise_mini:
+                    sb.register(BlockSpec(
+                        id='promise_mini', content=_short_promise_mini,
+                        tiers=['SHORT_CHAT'], salience=0.85))
+                if _short_active_plan:
+                    sb.register(BlockSpec(
+                        id='active_plan', content=_short_active_plan,
+                        tiers=['SHORT_CHAT'], salience=0.75))
+                if _short_bus:
+                    sb.register(BlockSpec(
+                        id='event_bus', content=_short_bus,
+                        tiers=['SHORT_CHAT'], hint='swm:<etype>', salience=0.75))
+                if _short_attn:
+                    sb.register(BlockSpec(
+                        id='attention', content=_short_attn,
+                        tiers=['SHORT_CHAT'], salience=0.70))
+                if _short_feed:
+                    sb.register(BlockSpec(
+                        id='working_feed', content=_short_feed,
+                        tiers=['SHORT_CHAT'], salience=0.75))
+                if _short_tone:
+                    sb.register(BlockSpec(
+                        id='tone', content=_short_tone,
+                        tiers=['SHORT_CHAT'], salience=0.55))
+                if how_to_respond:
+                    sb.register(BlockSpec(
+                        id='how_to_respond', content=how_to_respond,
+                        tiers=['SHORT_CHAT'], salience=0.85))
+                sb.register(BlockSpec(
+                    id='time_persona',
+                    content=f"=== TIME CONTEXT ===\n{time_persona}",
+                    tiers=['SHORT_CHAT'], salience=0.65))
+                if context_str:
+                    sb.register(BlockSpec(
+                        id='context', content=context_str,
+                        tiers=['SHORT_CHAT'], salience=0.65))
+                if _pc_block_value:
+                    sb.register(BlockSpec(
+                        id='profile_card', content=_pc_block_value,
+                        tiers=['SHORT_CHAT'], hint='profile:<field>', salience=0.70))
+                if correction_context:
+                    sb.register(BlockSpec(
+                        id='correction', content=correction_context,
+                        tiers=['SHORT_CHAT'], salience=0.80))
+                if style_adjustment:
+                    sb.register(BlockSpec(
+                        id='style', content=style_adjustment,
+                        tiers=['SHORT_CHAT'], salience=0.55))
+                if ledger_str and ledger_str != "No status data":
+                    sb.register(BlockSpec(
+                        id='ledger',
+                        content=f"=== REAL-TIME STATE ===\n{ledger_str}",
+                        tiers=['SHORT_CHAT'], hint='ledger:<field>', salience=0.70))
+                sb.register(BlockSpec(
+                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                    tiers=['SHORT_CHAT'], salience=0.85))
+                if sensor_state_block:
+                    sb.register(BlockSpec(
+                        id='sensor', content=sensor_state_block,
+                        tiers=['SHORT_CHAT'], hint='sensor:<field>',
+                        salience=0.85))
+                _l2 = getattr(self, '_l2_injected_block', '') or ''
+                if _l2:
+                    sb.register(BlockSpec(
+                        id='l2', content=_l2,
+                        tiers=['SHORT_CHAT'], hint='l2:<directive_id>',
+                        salience=0.65))
+                return sb.compose(
+                    persona=core_persona,
+                    user_input=user_input,
+                    system_alert=system_alert_text,
+                    include_meta_hint=True,
+                )
+            except Exception:
+                # fallback 老 f-string
+                return f"""{core_persona}
 
 {yesterday_block}
 
