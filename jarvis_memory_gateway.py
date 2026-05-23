@@ -694,6 +694,306 @@ class MemoryMutationGateway:
 
 
 # ============================================================
+# [Reshape M2.A / 2026-05-24] 6 write_* 方法 — 按 6 source of truth 分写
+# ============================================================
+# 设计: 老 update_sir_field 是 routing-by-field_path 单入口 (内部识 layer);
+# 新 6 write_* 是 caller 显式选 layer (更清晰 + 各自 contract). 老接口保留,
+# 新接口推荐. 内部都走同一 _do_mutation, 保证一致性.
+#
+# 6 source of truth (GRAND_ARCHITECTURE_RESHAPE §3 设计):
+#   1. write_identity   → ProfileCard (sir_profile.json)
+#   2. write_event      → Hippocampus (long_term_memory.db)
+#   3. write_commitment → CommitmentWatcher (commitments.db)
+#   4. write_concern    → ConcernsLedger (concerns.json)
+#   5. write_state      → status_ledger / state files
+#   6. write_relation   → RelationalStateStore (relational_state.json)
+
+def _add_write_methods(_cls):
+    """attach 6 write_* helpers to MemoryMutationGateway. 不破老 update_sir_field."""
+
+    def write_identity(self, field_path: str, value, source: str = 'unknown',
+                        confidence: float = 0.7, old_value='', turn_id: str = '',
+                        nerve=None) -> WriteReceipt:
+        """写 ProfileCard (sir_profile.json). field_path 自动加 'profile.' 前缀如缺失."""
+        if not field_path.startswith(('profile.', 'biographic.', 'sir.', 'preferences.', 'traits.')):
+            field_path = f'profile.{field_path}'
+        return self.update_sir_field(field_path=field_path, new_value=value,
+                                       source=source, old_value=old_value,
+                                       confidence=confidence, turn_id=turn_id, nerve=nerve)
+
+    def write_event(self, summary: str, kind: str = 'event', entities=None,
+                     embedding=None, source: str = 'unknown', turn_id: str = '',
+                     nerve=None) -> WriteReceipt:
+        """写 Hippocampus event. 直接调 hippocampus.add_memory + receipt."""
+        mutation_id = f"mut_{uuid.uuid4().hex[:10]}"
+        if nerve is None:
+            try:
+                import jarvis_central_nerve as _cn
+                nerve = getattr(_cn, '_GLOBAL_NERVE', None)
+            except Exception:
+                nerve = None
+        ok, err = False, ''
+        try:
+            hc = getattr(nerve, 'hippocampus', None) if nerve else None
+            if hc is None:
+                err = 'Hippocampus not available'
+            elif hasattr(hc, 'add_memory'):
+                # add_memory 签名: (intent, summary, entities, ...) — 现有
+                hc.add_memory(intent=kind, summary=summary,
+                              entities=entities or [], gemini_key='')
+                ok = True
+            else:
+                err = 'hippocampus.add_memory not available'
+        except Exception as e:
+            err = f'write_event exception: {e}'
+        _now = time.time()
+        receipt = WriteReceipt(
+            mutation_id=mutation_id, ts=_now,
+            iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(_now)),
+            field_path=f'hippocampus.{kind}', new_value_excerpt=summary[:100],
+            old_value_excerpt='', source=source, confidence=1.0,
+            layer_targeted='Hippocampus', ok=ok, error=err, turn_id=turn_id,
+        )
+        self._write_receipt(receipt)
+        self._publish_swm(receipt)
+        return receipt
+
+    def write_commitment(self, description: str, kind: str = 'commitment',
+                          who_promised: str = 'jarvis', deadline=None,
+                          source: str = 'unknown', turn_id: str = '',
+                          nerve=None, **kwargs) -> WriteReceipt:
+        """写 CommitmentWatcher. 直接调 commitment_watcher.register_commitment."""
+        mutation_id = f"mut_{uuid.uuid4().hex[:10]}"
+        if nerve is None:
+            try:
+                import jarvis_central_nerve as _cn
+                nerve = getattr(_cn, '_GLOBAL_NERVE', None)
+            except Exception:
+                nerve = None
+        ok, err, new_excerpt = False, '', description[:100]
+        try:
+            cw = getattr(nerve, 'commitment_watcher', None) if nerve else None
+            if cw is None:
+                err = 'CommitmentWatcher not available'
+            elif hasattr(cw, 'register_commitment'):
+                cid = cw.register_commitment(
+                    description=description, kind=kind,
+                    who_promised=who_promised, deadline=deadline,
+                    source=source, turn_id=turn_id, **kwargs)
+                ok = bool(cid)
+                if cid:
+                    new_excerpt = f'cid={cid}: {description[:80]}'
+            else:
+                err = 'commitment_watcher.register_commitment not available'
+        except Exception as e:
+            err = f'write_commitment exception: {e}'
+        _now = time.time()
+        receipt = WriteReceipt(
+            mutation_id=mutation_id, ts=_now,
+            iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(_now)),
+            field_path=f'commitment.{kind}', new_value_excerpt=new_excerpt,
+            old_value_excerpt='', source=source, confidence=1.0,
+            layer_targeted='CommitmentWatcher', ok=ok, error=err, turn_id=turn_id,
+        )
+        self._write_receipt(receipt)
+        self._publish_swm(receipt)
+        return receipt
+
+    def write_concern(self, concern_id: str, field: str, new_value,
+                       source: str = 'unknown', old_value='', confidence: float = 0.7,
+                       turn_id: str = '', nerve=None) -> WriteReceipt:
+        """写 ConcernsLedger. 委托给 update_sir_field with 'concerns.<cid>.<field>' path."""
+        return self.update_sir_field(
+            field_path=f'concerns.{concern_id}.{field}',
+            new_value=new_value, source=source, old_value=old_value,
+            confidence=confidence, turn_id=turn_id, nerve=nerve)
+
+    def write_state(self, field_path: str, value, source: str = 'unknown',
+                     old_value='', confidence: float = 0.7, turn_id: str = '',
+                     nerve=None) -> WriteReceipt:
+        """写 status_ledger / state files. 占位接口 - 现 status_ledger 没统一 mutate API,
+        暂走 update_sir_field (routing 命中 'state.*' → unknown layer → audit only).
+        M2+ 跟 status_ledger 重构一起做真实现."""
+        if not field_path.startswith('state.'):
+            field_path = f'state.{field_path}'
+        return self.update_sir_field(field_path=field_path, new_value=value,
+                                       source=source, old_value=old_value,
+                                       confidence=confidence, turn_id=turn_id, nerve=nerve)
+
+    def write_relation(self, kind: str, item_id: str, field: str, new_value,
+                        source: str = 'unknown', old_value='', confidence: float = 0.7,
+                        turn_id: str = '', nerve=None) -> WriteReceipt:
+        """写 RelationalStateStore. 委托给 update_sir_field with 路径式 'inside_joke.update.<id>.<field>'."""
+        # 沿用现有 routing 表 (在 _detect_target_layer 中):
+        # 'inside_joke.update.<id>.phrase' → RelationalStateStore.update_field
+        return self.update_sir_field(
+            field_path=f'{kind}.update.{item_id}.{field}',
+            new_value=new_value, source=source, old_value=old_value,
+            confidence=confidence, turn_id=turn_id, nerve=nerve)
+
+    _cls.write_identity = write_identity
+    _cls.write_event = write_event
+    _cls.write_commitment = write_commitment
+    _cls.write_concern = write_concern
+    _cls.write_state = write_state
+    _cls.write_relation = write_relation
+    return _cls
+
+
+_add_write_methods(MemoryMutationGateway)
+
+
+# ============================================================
+# [Reshape M2.A / 2026-05-24] query + to_prompt_block — 搬运自
+# jarvis_memory_core.UnifiedMemoryGateway. 把 READ 入口收回 Hub 里 (R+W 单入口).
+# 老 UnifiedMemoryGateway 仍存在 (向后兼容), M2.C 阶段标 deprecated.
+# ============================================================
+
+_SOURCE_WEIGHTS = {
+    'stm': 0.30, 'ltm': 0.25, 'profile': 0.15,
+    'ledger': 0.15, 'causal': 0.15,
+}
+
+
+def _add_query_methods(_cls):
+    """attach READ helpers (query / to_prompt_block) to Hub."""
+
+    def _bind_nerve(self, nerve=None):
+        if nerve is not None:
+            return nerve
+        try:
+            import jarvis_central_nerve as _cn
+            return getattr(_cn, '_GLOBAL_NERVE', None)
+        except Exception:
+            return None
+
+    def _fuzzy_match(self, query: str, text: str) -> float:
+        if not query or not text:
+            return 0.3
+        q = set(query.lower().split())
+        t = set(text.lower().split())
+        if not q:
+            return 0.3
+        return min(1.0, len(q & t) / len(q) * 1.5)
+
+    def query(self, query_text: str, top_k: int = 5, nerve=None) -> list:
+        """跨 source 模糊查 (STM + LTM + Profile + Ledger + CausalChain). 返 fragment list."""
+        nerve = self._bind_nerve(nerve)
+        if nerve is None:
+            return []
+        # lazy import 防 circular
+        try:
+            from jarvis_memory_core import MemoryFragment
+        except Exception:
+            return []
+        fragments = []
+        now = time.time()
+
+        stm = getattr(nerve, 'short_term_memory', [])
+        if stm:
+            for m in stm[-20:]:
+                content = f"[{m.get('time', '')}] User: {m.get('user', '')} | Jarvis: {m.get('jarvis', '')}"
+                fragments.append(MemoryFragment(
+                    source='stm', content=content,
+                    relevance_score=self._fuzzy_match(query_text, content),
+                    freshness_hours=0.01, source_weight=_SOURCE_WEIGHTS['stm']))
+
+        try:
+            hc = getattr(nerve, 'hippocampus', None)
+            gk = getattr(nerve, 'gemini_key', '')
+            if hc is not None and hasattr(hc, 'search_memory'):
+                ltm_results = hc.search_memory(gk, query_text, top_k=5)
+                for r in ltm_results or []:
+                    age_hours = (now - r['timestamp']) / 3600
+                    fragments.append(MemoryFragment(
+                        source='ltm',
+                        content=f"[{time.strftime('%Y-%m-%d %H:%M', time.localtime(r['timestamp']))}] {r['intent']} -> {r['summary']}",
+                        timestamp=r['timestamp'],
+                        relevance_score=r.get('similarity', 0.5),
+                        freshness_hours=age_hours,
+                        source_weight=_SOURCE_WEIGHTS['ltm']))
+        except Exception:
+            pass
+
+        try:
+            pc = getattr(nerve, 'profile_card', None)
+            if pc is not None and hasattr(pc, 'snapshot'):
+                profile = pc.snapshot() or {}
+                if profile:
+                    profile_text = json.dumps(profile, ensure_ascii=False)[:500]
+                    fragments.append(MemoryFragment(
+                        source='profile', content=profile_text,
+                        relevance_score=self._fuzzy_match(query_text, profile_text),
+                        freshness_hours=0.5, source_weight=_SOURCE_WEIGHTS['profile']))
+        except Exception:
+            pass
+
+        try:
+            sl = getattr(nerve, 'status_ledger', None)
+            if sl is not None and hasattr(sl, 'get_recent_daily_summaries'):
+                ledger_text = sl.get_recent_daily_summaries(days=2)
+                if ledger_text:
+                    fragments.append(MemoryFragment(
+                        source='ledger', content=ledger_text[:500],
+                        relevance_score=self._fuzzy_match(query_text, ledger_text),
+                        freshness_hours=12, source_weight=_SOURCE_WEIGHTS['ledger']))
+        except Exception:
+            pass
+
+        try:
+            cc = getattr(nerve, 'causal_chain', None)
+            if cc is not None and hasattr(cc, 'get_llm_enhanced_summary'):
+                causal_text = cc.get_llm_enhanced_summary()
+                if causal_text:
+                    fragments.append(MemoryFragment(
+                        source='causal', content=causal_text[:300],
+                        relevance_score=self._fuzzy_match(query_text, causal_text),
+                        freshness_hours=1, source_weight=_SOURCE_WEIGHTS['causal']))
+        except Exception:
+            pass
+
+        # 时间衰减 + 排序 + dedup
+        for f in fragments:
+            freshness_bonus = max(0, 1.0 - f.freshness_hours / 168)
+            f.relevance_score = f.relevance_score * 0.6 + freshness_bonus * 0.4
+        fragments.sort(key=lambda x: x.relevance_score * x.source_weight, reverse=True)
+        seen, out = set(), []
+        for f in fragments:
+            key = f.content[:80]
+            if key not in seen:
+                seen.add(key)
+                out.append(f)
+        return out[:top_k]
+
+    def to_prompt_block(self, query_text: str, top_k: int = 5, nerve=None) -> str:
+        """render 跨 source recall block 给主脑 prompt."""
+        results = self.query(query_text, top_k, nerve=nerve)
+        if not results:
+            return ""
+        lines = ["\n[UNIFIED MEMORY - Cross-source recall]:"]
+        for r in results:
+            lines.append(f"[{r.source.upper()}] {r.content[:200]}")
+        return '\n'.join(lines)
+
+    _cls._bind_nerve = _bind_nerve
+    _cls._fuzzy_match = _fuzzy_match
+    _cls.query = query
+    _cls.to_prompt_block = to_prompt_block
+    return _cls
+
+
+_add_query_methods(MemoryMutationGateway)
+
+
+# ============================================================
+# [Reshape M2.A / 2026-05-24] MemoryHub 命名别名 — 新代码用 Hub, 老代码 Gateway 仍 work
+# Q3 决议: MemoryMutationGateway 改名 MemoryHub. M2.C 阶段 git mv file, 现先双名 alias.
+# ============================================================
+
+MemoryHub = MemoryMutationGateway
+
+
+# ============================================================
 # 单例
 # ============================================================
 
@@ -713,6 +1013,11 @@ def reset_default_gateway_for_test() -> None:
     global _DEFAULT_GATEWAY
     with _LOCK:
         _DEFAULT_GATEWAY = None
+
+
+# [Reshape M2.A] 新名 alias
+get_default_hub = get_default_gateway
+reset_default_hub_for_test = reset_default_gateway_for_test
 
 
 def update_sir_field(field_path: str, new_value: Any,
