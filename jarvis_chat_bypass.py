@@ -5082,11 +5082,21 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
         except Exception:
             pass
 
+        # 🆕 [P5-fix53 / 2026-05-23 15:30] 加 current_window_stay_s — Sir 15:27 痛点:
+        # 主脑被问 "我在 QQ 多久" 误用 work_duration_min (整 session 累计) reply "19 min"
+        # 但 Sir 刚切 QQ. 修: prompt 加 per-app current_window_stay_s 让主脑分清 2 字段.
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as _Pep
+            _window_stay_s = int(_Pep.current_window_stay_seconds or 0)
+        except Exception:
+            _window_stay_s = 0
+
         prompt = f"""{public_layers}
 
 [CURRENT CONTEXT]
 Time: {current_time} ({weekday})
-Sir has been: {work_category} for {int(work_duration)} minutes
+work_session_total_min: {int(work_duration)} (整 Jarvis 启动以来 {work_category} 累计, **非当前 app 时长**)
+current_window_stay_s: {_window_stay_s} (Sir 在**当前 active window** 停留秒数 — 问"在 X 多久"用此)
 Active window: {window_title}
 Process: {process_name}
 {sensor_hints}

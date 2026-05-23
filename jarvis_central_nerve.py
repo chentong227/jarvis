@@ -3057,6 +3057,7 @@ Do NOT re-confirm. Do NOT ask permission. Do NOT explain how you know.
 {reminder_firing_directive}
 {context_str}
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 [BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END. This is MANDATORY.
 {user_input}
 """
@@ -3149,6 +3150,7 @@ expects an instant reply from your recent memory, not a tool round-trip.
 {_fr_working}
 
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -3175,6 +3177,7 @@ Sir just called your name. Reply in UNDER 6 WORDS.
 {short_stm}
 
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -3311,6 +3314,7 @@ User: {user_input}
 {ledger_str}
 
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -3326,6 +3330,7 @@ User: {user_input}
 {style_adjustment}
 {content_pref}
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}
@@ -3385,6 +3390,25 @@ User: {user_input}
                 working_feed_block = feed.to_prompt_block(max_chars=500, within_seconds=1800.0)
         except Exception:
             working_feed_block = ""
+
+        # 🆕 [P5-fix53 / 2026-05-23 15:30] [SENSOR STATE] block — Sir 15:27 真痛点 +
+        # Sir 15:29 深层痛点: '主脑必须知道我的一切信息, 才能保证话术不是 hallucinate'
+        # Sir 15:31 设计指示: '动态注入, 不是全量 prompt' + '准则 6 持久化, 不硬编码'.
+        # 
+        # 设计 (为 prompt 瘦身 refactor 预先落位):
+        #   1. vocab JSON  memory_pool/sensor_state_inject_vocab.json  — 字段 list + tier filter
+        #   2. builder     jarvis_sensor_state_block.build(tier, max_chars) — 按 tier 选子集
+        #   3. CLI         scripts/sensor_state_dump.py — Sir 看/改字段
+        #   4. central_nerve  调 builder (= 3 行, 不 inline 13 字段)
+        # 后续 prompt 瘦身 refactor 直接复用 builder, 不再改 central_nerve.
+        sensor_state_block = ""
+        try:
+            from jarvis_sensor_state_block import build_sensor_state_block
+            _tier_hint = getattr(self, '_current_prompt_tier', 'CHAT')
+            sensor_state_block = build_sensor_state_block(
+                tier=_tier_hint, max_chars=600)
+        except Exception:
+            sensor_state_block = ""
 
         # [R7-α/PlanLedger] 当前 active plan（drafted / awaiting_go / running / paused）。
         # 如果有 plan 在 awaiting_go，prompt 末尾会提示 Sir 可以说 "go" 启动。
@@ -3514,6 +3538,7 @@ Path landmarks:
 
 {commitment_context}
 [SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
 {getattr(self, '_l2_injected_block', '')}
 
 User: {user_input}

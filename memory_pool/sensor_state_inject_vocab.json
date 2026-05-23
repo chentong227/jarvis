@@ -1,0 +1,134 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-23T15:33:00",
+    "marker": "P5-fix53",
+    "purpose": "[SENSOR STATE] block 字段配置 — 主脑 prompt 注入 Sir 真实物理状态. 准则 6 持久化 + 准则 8 优雅, Sir 15:31 设计指示.",
+    "consumer": "jarvis_sensor_state_block.build_sensor_state_block",
+    "edit_via": "scripts/sensor_state_dump.py --list / --activate <field> / --reject <field>",
+    "tier_design": "按 prompt tier 注入子集. SHORT_CHAT 紧凑 (4-6 核心字段), CHAT 中等 (8-10), DEEP_QUERY 全量 (13+). 主脑 reply 复杂程度匹配 evidence 量.",
+    "field_naming_rule": "命名严格语义清晰. e.g. current_window_stay_s (per-app, 秒) vs work_session_total_min (整 session, 分). Sir 15:27 真痛点根因 = 字段语义不清晰主脑误用."
+  },
+  "fields": [
+    {
+      "id": "active_window",
+      "source": "PhysicalEnvironmentProbe.current_window_title",
+      "transform": "str_truncate_80",
+      "label": "active_window",
+      "annotation": "Sir 当前在看的 window 标题",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
+      "active": true,
+      "format": "\"{value}\""
+    },
+    {
+      "id": "process",
+      "source": "PhysicalEnvironmentProbe.current_process_name",
+      "transform": "str_truncate_40",
+      "label": "process",
+      "annotation": "active 进程名",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "work_category",
+      "source": "PhysicalEnvironmentProbe.current_work_category",
+      "transform": "str_default_idle",
+      "label": "work_category",
+      "annotation": "分类: Coding/Reading/Writing/Communication/Media/Idle...",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "current_window_stay_s",
+      "source": "PhysicalEnvironmentProbe.current_window_stay_seconds",
+      "transform": "int_default_0",
+      "label": "current_window_stay_s",
+      "annotation": "Sir 在**当前 active window** 停留秒数 — Sir 问'在 X 多久'用此",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "work_session_total_min",
+      "source": "PhysicalEnvironmentProbe.work_duration_minutes",
+      "transform": "int_default_0",
+      "label": "work_session_total_min",
+      "annotation": "整 Jarvis 启动以来累计 — **非当前 app 时长**",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "idle_seconds",
+      "source": "PhysicalEnvironmentProbe.idle_seconds",
+      "transform": "int_default_0",
+      "label": "idle_seconds",
+      "annotation": "Sir 上次键鼠输入距今, > 60 = AFK 趋势",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "switch_freq_5min",
+      "source": "PhysicalEnvironmentProbe.switch_frequency_5min",
+      "transform": "int_default_0",
+      "label": "switch_freq_5min",
+      "annotation": "5min 内切窗次数, > 10 = 频繁切换/分心",
+      "tiers": ["DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "key_count_5min",
+      "source": "PhysicalEnvironmentProbe.key_press_count_5min",
+      "transform": "int_default_0",
+      "label": "key_count_5min",
+      "annotation": "5min 内按键, 反映打字活跃度",
+      "tiers": ["DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "click_count_5min",
+      "source": "PhysicalEnvironmentProbe.click_count_5min",
+      "transform": "int_default_0",
+      "label": "click_count_5min",
+      "annotation": "5min 内鼠标点击",
+      "tiers": ["DEEP_QUERY"],
+      "active": false
+    },
+    {
+      "id": "audio_playing",
+      "source": "PhysicalEnvironmentProbe.audio_playing",
+      "transform": "bool",
+      "label": "audio_playing",
+      "annotation": "Sir 是否在听音乐/视频",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "video_editor_open",
+      "source": "PhysicalEnvironmentProbe.video_editor_open",
+      "transform": "bool",
+      "label": "video_editor_open",
+      "annotation": "视频剪辑软件是否打开",
+      "tiers": ["DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "bg_distraction_count",
+      "source": "PhysicalEnvironmentProbe.background_distraction_count",
+      "transform": "int_default_0",
+      "label": "bg_distraction_count",
+      "annotation": "后台分心 app 数 (WeChat/QQ/Discord/...)",
+      "tiers": ["DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "is_night_time",
+      "source": "PhysicalEnvironmentProbe.is_night_time",
+      "transform": "bool",
+      "label": "is_night_time",
+      "annotation": "是否夜间时段",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true
+    }
+  ],
+  "header_text": "[SENSOR STATE — Sir 真实物理传感数据, **任何 specific claim 必须用这里的数字, 不可 hallucinate**]:",
+  "footer_text": "  ⚠️ 严格遵守: Sir 问'我在 X 多久'用 current_window_stay_s, 问'我今天忙了多久'用 work_session_total_min."
+}
