@@ -1,59 +1,67 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 07:48 Sir — M1 全 PASS + M2.A/M2.B 已完成, 等真测** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 07:58 Sir — M2 全部 done 5 commit (A+B+C.1+2+C.3), 等真测** 🚨🚨🚨
 >
-> Sir 7:41 第二轮 M1 真测全 OK ("blocks=2 / 0 broken chain / 0 unknown source"), Cascade 立刻动工 M2 — `MemoryHub` 演化.
+> Sir 7:53 M2.B 真测全 OK ("chat 流畅 / mutation 写 / lineage record / blocks=2"), Cascade 按 Sir 指示按顺序推 M2.C cleanup 全部完成.
 >
-> ## ✅ M2.A+B 完成 (2 commit, +544 行 code+test, 0 破坏)
+> ## ✅ M2 全部 done (5 commit, ~1700 行 code+test+shim, 0 破坏)
 >
 > | Commit | Step | 内容 |
 > |---|---|---|
-> | `2dc2458` | **M2.A** | `MemoryHub` alias = `MemoryMutationGateway` + 6 `write_*` (identity/event/commitment/concern/state/relation) + `query/to_prompt_block` 从 `UnifiedMemoryGateway` 搬运 (17 test + 80 regression) |
-> | `c4a2cb5` | **M2.B** | `central_nerve.memory_gateway = get_default_hub()` 切换 R+W 单 facade — Sir Q3 决议落地 (262 regression pass) |
+> | `2dc2458` | **M2.A** | `MemoryHub` alias + 6 `write_*` + `query/to_prompt_block` 搬运 (17 test) |
+> | `c4a2cb5` | **M2.B** | `central_nerve.memory_gateway` swap to Hub R+W 单 facade (262 regression) |
+> | `c310737` | **M2.C.1+2** | `UnifiedMemoryGateway` → deprecated stub (110 → 50 行) + DeprecationWarning + flaky test fix |
+> | `4630648` | **M2.C.3** | `git mv jarvis_memory_gateway.py → jarvis_memory_hub.py` + 老 file 留 backward-compat shim (18 caller 0 改) |
+> | `b8f0ffd` | TODO | 上轮真测 checklist |
 >
-> ## 📋 Sir M2 真测 (~3 min, 重启 jarvis 跑 1-3 轮)
+> ## 📋 Sir M2 全部真测 (~3 min, 重启 jarvis)
 >
 > ```powershell
-> # 1. 重启 jarvis (memory_gateway 已切换到 hub)
->
-> # 2. Sir 真聊 1-3 轮, 看主脑 reply 正常
-> #   预期: chat 流畅, "[UNIFIED MEMORY - Cross-source recall]:" block 仍出现在 prompt 中 (主脑能用)
->
-> # 3. 看 mutation_receipts.jsonl 仍有写 (M2.A 老 update_sir_field 没动)
-> Get-Content memory_pool/mutation_receipts.jsonl -Tail 5
->
-> # 4. 看 lineage 仍记录 (M1 + M2 不冲突)
+> # 1. 重启 jarvis 跑 1-3 轮
+> # 2. 验证 file rename 后所有 import work
+> python -c "from jarvis_memory_gateway import MemoryHub; from jarvis_memory_hub import MemoryHub as H2; print('Same:', MemoryHub is H2)"
+> # 3. 看 mutation 仍写
+> Get-Content memory_pool/mutation_receipts.jsonl -Tail 3
+> # 4. 看 lineage 仍记录 + blocks=1-2 + 0 broken chain
 > python scripts/lineage_dump.py --list-decisions --limit 3
->
-> # 5. 看 SWM publish 'sir_field_updated' (M2 mutation 自动 publish)
 > python scripts/lineage_dump.py --stats
 > ```
 >
-> **预期看到 (M2.B 加强)**:
-> - chat 流畅, 无 AttributeError / TypeError
-> - prompt block 含 `[UNIFIED MEMORY - Cross-source recall]:` (说明 hub.to_prompt_block 正确 render)
-> - mutation_receipts.jsonl 仍有 record (老 caller 兼容)
-> - lineage 仍 record decision (M1 不受影响)
+> **预期 (M2 全部加强)**:
+> - chat 流畅, 无 ImportError / AttributeError
+> - prompt 仍含 `[UNIFIED MEMORY - Cross-source recall]:` block (hub.to_prompt_block 走 nerve=self 路径)
+> - mutation_receipts.jsonl 仍 append (老 caller 兼容)
+> - lineage 仍 record decision (M1 + M2 不冲突)
+> - 没看到 `DeprecationWarning: UnifiedMemoryGateway is deprecated` (因为现 0 真使用)
 >
-> ## ⏸ M2.C 后置 (Sir 真测 OK 后做)
+> ## 🏗 M2 架构成果 (R+W 单 facade)
 >
-> - 删 `jarvis_memory_core.UnifiedMemoryGateway` class (~120 行)
-> - 删 9 个 `noqa: F401` import (`jarvis_worker / env_probe / ui / smart_nudge / sentinels / sensors / safety / routing / return_sentinel / nerve` 各 1)
-> - `git mv jarvis_memory_gateway.py jarvis_memory_hub.py` (8 个 import 改, alias 保留过渡期)
+> ```
+> # 老的 (混乱)
+> central_nerve.memory_gateway = UnifiedMemoryGateway(self)  # READ only
+> get_default_gateway() = MemoryMutationGateway()             # WRITE only (不同 module!)
 >
-> ## 🐛 Pre-existing BUG (跟 M2 无关, 待修)
->
-> 同上 — `concern_dampen_self_decide` directive trigger callable issue + 喝水 `register_event_type` 不存在.
+> # 新的 (Sir Q3)
+> central_nerve.memory_gateway = MemoryHub.get_default()  # R+W 单 facade
+>   ├─ READ:  .query(text, top_k, nerve)
+>   │         .to_prompt_block(text, top_k, nerve)
+>   └─ WRITE: .write_identity(...)
+>             .write_event(...)
+>             .write_commitment(...)
+>             .write_concern(...)
+>             .write_state(...)
+>             .write_relation(...)
+>             .update_sir_field(...)  # backward compat 老入口
+> ```
 >
 > ## 🎯 Sir M2 真测 OK 后下一步
 >
 > ```
-> Cascade, M2.B 真测全 OK, 动工 M2.C cleanup.
-> # 或
-> Cascade, M2 全部 done, 直接动工 M3 (legacy 移到 _legacy/).
+> Cascade, M2 全 OK, 动工 M3.
+> # M3 = 死代码 + 同名 class + 3-brain 移到 _legacy/, 1 周低风险
 > ```
 >
-> 详 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §6.3-6.4.
+> 详 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §6.4 + Phase A.5 audit `docs/JARVIS_LEGACY_AUDIT.md`.
 >
 > ---
 >
