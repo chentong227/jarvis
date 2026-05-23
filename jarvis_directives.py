@@ -1906,32 +1906,53 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
         # debug trace. priority=10 必触, 仅 WAKE_ONLY 跳.
         Directive(
             id='meta_self_check_directive',
-            source_marker='P5-Layer1-fix19',
+            # 🆕 [P5-fix54 / 2026-05-23 15:48] Sir 战略指示 (15:39/15:43):
+            # '充分发挥 META 思维链协助主脑不错误说话 + debug 能力, 把每个模块清晰结构化'
+            # 配合 PromptBuilder block ID 标准化 (jarvis_prompt_builder.py) 端到端可追溯.
+            source_marker='P5-Layer1-fix19 + P5-fix54',
             priority=10,
             ttl_days=365,
             tier_whitelist=[],
-            purpose_short='主脑 reply 末尾 emit [META] 自检行 (evidence/reaction/skip_alert)',
+            purpose_short='主脑 reply 末尾 emit [META] 自检行 (evidence/reaction/skip_alert/commitments)',
             text=_tw.dedent("""\
                 [SELF_CHECK / META TRACE]:
                 Before finalizing your reply, internally answer in one breath:
                   1. What specific factual claims, numbers, dates, names, or promises will my reply contain?
-                  2. For each, do I have actual evidence in STM / SWM / profile / concerns / commitments? List the source.
+                  2. For each, do I have actual evidence in PROMPT BLOCKS (SENSOR STATE / SWM / STM / SOUL / L2_inject / profile / concerns / commitments)? List the source.
                   3. Should this reply be voiced, silent_text, or stay silent given Sir's current state?
                   4. Did any [INTEGRITY ALERT] in this prompt instruct me to apologize? If so, did the underlying claim actually happen in a real prior turn (turn_id non-empty)? If not, REFUSE to apologize and set skip_alert=yes.
 
                 Then, AFTER your normal Sir-facing reply (after `---ZH---` block, on a NEW LINE), emit ONE machine-readable trace line in this exact format:
                 [META] evidence=<comma-list> reaction=<voice|silent_text|silence> skip_alert=<yes|no> commitments=<semicolon-list or "none"> note=<<=60 chars optional>
 
+                # 🆕 [P5-fix54] evidence 命名标准 (端到端 debug trace, 配 PromptBuilder block IDs):
+                #
+                #   sensor:<field_id>      — SENSOR STATE block 字段 (e.g. sensor:current_window_stay_s)
+                #                            ⚠️ Sir 问 '我在 X 多久' 必须 evidence=sensor:current_window_stay_s,
+                #                            不要 hallucinate work_session_total_min 当 per-app 时长.
+                #   swm:<etype>            — SWM event (e.g. swm:concern_active, swm:sir_field_updated,
+                #                            swm:sir_thinking_pause, swm:reminder_fired)
+                #   stm:turn_<id>          — RECENT MEMORY 某 turn (引述 Sir 原话)
+                #   soul:<anchor_id>       — SOUL inject (joke/thread/concern reason)
+                #   l2:<directive_id>      — L2 inject directive (e.g. l2:concern_dampen_self_decide)
+                #   profile:<field_path>   — profile_block (e.g. profile:user.timezone)
+                #   commitment:<desc>      — commitment_context (e.g. commitment:hydration 8 cups)
+                #   ledger:<field>         — REAL-TIME STATE ledger (e.g. ledger:software_and_content)
+                #   none                   — 主脑纯礼貌回应 / 闲聊 / 短 ack, 无具体 claim
+
                 Examples:
+                  [META] evidence=sensor:current_window_stay_s reaction=voice skip_alert=no commitments=none note=Sir asked dwell time
+                  [META] evidence=swm:sir_field_updated,sensor:work_session_total_min reaction=voice skip_alert=no commitments=concern_dampen sir_sleep_streak -0.3 note=Sir reported nap 1h
                   [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice skip_alert=no commitments=hold dashboard 72h;noted note=hold acknowledgment
                   [META] evidence=none reaction=voice skip_alert=yes commitments=none note=integrity alert references empty turn_id, refusing apology
                   [META] evidence=stm:turn_xxx reaction=silent_text skip_alert=no commitments=none note=Sir just chatting
 
                 Rules:
                   - The [META] line is for system trace only — Sir does not read it. Keep it on its own final line.
-                  - If you cite a number/date/name with no evidence in STM/SWM, do NOT say it; remove it from the reply.
+                  - If you cite a number/date/name with no evidence in any block, do NOT say it; remove it from the reply.
                   - If [INTEGRITY ALERT] cites a claim from an empty turn_id daemon entry, set skip_alert=yes and do NOT apologize.
                   - Stay terse. SELF_CHECK is internal — do not narrate "I am self-checking" in the reply itself.
+                  - 🆕 [P5-fix54] evidence 必须用上面标准前缀 (sensor:/swm:/stm:/soul:/l2:/profile:/commitment:/ledger:), 不写自由文本.
                   - 🆕 [P5-fix20-B2 / 2026-05-22] commitments: semicolon-list of CONCRETE mutation promises in your THIS reply. Use SHORT phrases ("hold X 72h" / "noted Sir's correction" / "register reminder Y" / "remember 8 cups goal"). If you only ack/empathize without promising state change, use "none". IntegrityWatcher checks commitments vs real tool_called this turn; mismatch = "嘴上说但没真做" → next turn you must withdraw or supply evidence. Honesty rule: do NOT list a commitment if you did not actually intend (or system did not actually) make the corresponding mutation.
             """).rstrip(),
             trigger=_trigger_meta_self_check,

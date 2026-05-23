@@ -197,6 +197,23 @@ def publish_meta(meta: MetaSelfCheck, turn_id: str = '',
     payload['turn_id'] = turn_id or ''
     payload['ts'] = time.time()
     payload['iso'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+    # 🆕 [P5-fix54 / 2026-05-23 15:48] evidence_resolved — 按 prefix 分组 evidence IDs
+    # debug 神器: Sir 看 'main_brain_meta_dump.py --evidence sensor' 找哪些 reply 用了 sensor.
+    # 配合 PromptBuilder block ID 标准, 端到端 trace 主脑 reply ← 源 block 的关系.
+    try:
+        _resolved: Dict[str, List[str]] = {}
+        for ev in (meta.evidence or []):
+            if not isinstance(ev, str) or ':' not in ev:
+                continue
+            prefix, _, suffix = ev.partition(':')
+            prefix = prefix.strip().lower()
+            suffix = suffix.strip()
+            if not prefix:
+                continue
+            _resolved.setdefault(prefix, []).append(suffix)
+        payload['evidence_resolved'] = _resolved
+    except Exception:
+        pass
     payload['user_input_excerpt'] = (user_input or '')[:120]
 
     # 1. SWM publish
