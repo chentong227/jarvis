@@ -1195,6 +1195,41 @@ class CareSpeechSynth:
                 f"(node throttled 30min for same urgency bucket)"
             )
             return False
+        # 🆕 [P5-fix75 / 2026-05-23 18:42] BUG-G 漏修: ProactiveCare 通道也要
+        # reminder_acknowledged guard. Sir 18:01 ack reminder "stand up and stretch"
+        # 后, 18:41 ProactiveCare 又 fire suggest_break "interview training too long".
+        # fix72 只 cover SmartNudge + commitment_watcher, ProactiveCare 漏了.
+        # 修法 (准则 6 数据强耦合): 同 fix72 — 看 SWM 近 30min reminder_acknowledged,
+        # 若 concern_id 含 break/rest/sit/stretch/stand 关键词 AND ack intent 含
+        # 同类关键词 → skip. 跨主题 (e.g. ack 喝水 vs concern 提醒久坐) 不阻止.
+        try:
+            _concern_lower = (evi.concern_id or '').lower()
+            _is_break_concern = any(
+                kw in _concern_lower for kw in
+                ('break', 'rest', 'sit', 'stretch', 'stand', 'pomodoro',
+                 'back_pain', 'fatigue', 'long_focus', 'screen_break')
+            )
+            if _is_break_concern:
+                from jarvis_utils import get_event_bus as _geb_pc
+                _bus_pc = _geb_pc()
+                if _bus_pc is not None:
+                    _recent_acks = _bus_pc.recent_events(
+                        within_seconds=1800.0,  # 30min 同 fix72
+                        types={'reminder_acknowledged'},
+                    )
+                    for _ev in _recent_acks:
+                        _ack_intent = (_ev.get('metadata', {}) or {}).get('intent', '').lower()
+                        if any(kw in _ack_intent for kw in
+                                ('stand', 'stretch', 'break', 'rest',
+                                 '休息', '活动', '起来', '走动')):
+                            bg_log(
+                                f"🛡️ [ProactiveCare] skip concern={evi.concern_id} — "
+                                f"reminder 已 ack 30min 内 (intent='{_ack_intent[:40]}')"
+                            )
+                            return False  # skip, 不 push
+        except Exception:
+            pass
+
         # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
         # ProactiveCare 也参与协调, 跟 SmartNudge / Conductor / ReturnSentinel 同档.
         try:
