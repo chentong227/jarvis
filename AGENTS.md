@@ -58,15 +58,9 @@
 - **行为弱耦合**: sentinel `gate_mode` 三档 `hard | soft | publish_only`, 持久化 `memory_pool/gate_mode_vocab.json`, CLI `scripts/gate_mode_dump.py` 可切换
 - **决策集中主脑**: stream_nudge 加 `reaction_space` (silence / voice / silent_text / visual_pulse / tool_call), 主脑输出 JSON 选 action + 内容
 
-**示例 (已立此规范)**:
-- `concerns.json` + `concerns_review.json` + `scripts/concerns_dump.py` + `ConcernsReflector / WeeklyReflector` ✅
-- `directive_registry.json` + `directive_review.json` + `scripts/registry_dump.py` + Sir 手动 (L7 待做) ⚠️
-- `behavior_inference_vocab.json` + `scripts/behavior_vocab_dump.py` + L7 待做 (β.2.9.12 本轮立) ⚠️
-- `relational_state.json` + `relational_review.json` + `scripts/relational_dump.py` + L4 Reflector ✅
-- `commitment_conditional_vocab.json` (β.4.11) + `scripts/cmt_vocab_dump.py` 待做 ⚠️
-- `ConversationEventBus.salience + top_n()` (β.5.0-A 本轮新) ✅
+**已立此规范的示例 (持久化 JSON + CLI + Reflector)**: `concerns.json` / `directive_registry.json` / `behavior_inference_vocab.json` / `relational_state.json` / `commitment_conditional_vocab.json` / `gate_mode_vocab.json` (各自配 `scripts/<thing>_dump.py` + L4-L7 Reflector daemon).
 
-**反例 (违规)**: 任何看到 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须立刻迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 TICK_INTERVAL=60) 可以.
+**反例 (违规)**: 任何 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 `TICK_INTERVAL=60`).
 
 **准则 6 递归边界 (β.3.5 立)**: testcase 红线 / 系统级常量 (`TICK_INTERVAL` / `_NON_RETRYABLE_KEYWORDS` / HTTP 错误码黑名单 / `_COLOR_PATTERNS` ANSI regex) / `< 400 行` 核心 .md (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md`) 是 **"持久化的硬规"** — 不再下钻 vocab 化, 防止递归到地心.
 
@@ -95,6 +89,25 @@
 
 **正例**:
 - ✅ "这与 §6 vocab 持久化冲突, 我会执行 Sir 决定, 同时记一笔 TODO `<...>` 等 Sir 决定后续是否升级章程"
+
+### 准则 8 — 优雅高效可持续 > 最简单 (META-PRINCIPLE, 2026-05-23 14:48 立)
+
+> Sir 原话: "不要追求最简单的办法，我不怕花 tokens 也不怕花时间，我们要的是符合设计守则最优雅高效可持续维护的解法"
+
+任何 BUG fix / refactor / feature, Agent 必须走完整准则 6 三维耦合 + 4 问筛查, **不允许 hot-fix / 糖衣 patch 跳过设计架构**. 追求**正确架构** > 追求**今天能交差的最简 patch**.
+
+**写 fix 前自查 4 问**:
+- 想 hot-fix → "**5 分钟后 BUG 换个形式又出现?**" 是 = 糖衣
+- 想加 hard cooldown → "**主脑能看到这个 evidence 吗?**" 不能 = 真问题是 SWM 没 publish
+- 想加 regex blacklist → "**这个 vocab 持久化到 JSON 了吗?**" 没 = 真问题是准则 6 持久化没做
+- 想 special-case `if x == Y` → "**能用 Predicate / vocab 抽象吗?**" 能 = 真问题是 schema 没设计好
+
+**典型 反例 → 正例 对照**:
+- ❌ nudge 6s 3 连发 → 30s cooldown 糖衣 / ✅ publish 'proactive_nudge_fired' + 主脑 SWM 自决 [SILENCE]
+- ❌ ClaimTracer 漏抓 → 直接 .py regex 加 verb / ✅ vocab JSON 持久化 + CLI + L7 LLM-propose
+- ❌ Reminder 唤醒 sleep → hard skip / ✅ publish 'reminder_fired' (永远) + sleep+非 alarm = push only (publish 不 deliver) + Sir 醒后主脑 SWM 自决补 ack
+
+**和准则 6/7 关系**: §6 = 架构本身, §7 = Sir 元否决权, §8 = agent 默认姿态 (Sir 没显式喊 hot-fix 时, 一律走 §6 优雅解).
 
 ---
 
