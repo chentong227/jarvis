@@ -1,5 +1,20 @@
 ﻿# Jarvis TODO
 
+> 🚨🚨🚨 **2026-05-24 00:55 Sir 醒来第一眼看这里** 🚨🚨🚨
+>
+> **JARVIS 大重构 Phase A+B+C 已全部完成**. Sir 委托 Cascade 4 项决议已拍板.
+>
+> Sir 醒来 5 步进 Phase D 动工:
+> 1. 看 `docs/AGENT_KICKOFF_GRAND_RESHAPE.md` (~5 min)
+> 2. (可选) 看 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §1 §6.2 (~20 min)
+> 3. accept Q1-Q4 4 项决议 (Q1 拆 enhanced.py / Q2 3-brain → _legacy / Q3 MemoryHub / Q4 cross_session 保留)
+> 4. 跟 Cascade 说 "动工 M1"
+> 5. Cascade 按 Reshape doc §6.2 Step 1.1-1.7 执行 M1 (Lineage Trace 基础设施)
+>
+> 总产出: 11 份 doc, ~7300 行 audit + 设计. 11 commit (`b53b751` → `1861c9a`).
+>
+> ---
+>
 > **更新**: 2026-05-21 16:13 (P5 整夜 + 早晨 + 下午 14 commit) — Gap 1+2 + 早起 5 BUG + dashboard i18n + add_reminder + callback 痛点 + **下午 P5-fixCB-revise (12:06 ritual)** + **P5-IntegrityWatcher L4.5 (Sir 14:11 真意 — 8 类 mutation verify+retry+handoff)** + **P5-SirStatusTracker (Sir 13:49 nudge 话术 context aware)**. **14 commit, 98 testcase 全绿, 待 Sir 真机实测**. 详 `docs/JARVIS_P5_FINAL_REPORT_2026_05_21.md` (尚未 sync 下午).
 > **滚档**: 老 β.5.x/β.4.x/β.3.x/P0+19 等 ~530 行已沉档 `docs/TODO_ARCHIVE.md`. 本文件 > 700 行 > 300 cap (β.5.34-41 + P5 段待 archive). AGENTS.md 章程.
 
