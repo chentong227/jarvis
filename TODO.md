@@ -1,6 +1,63 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 07:35 Sir 醒来第一眼看这里 — M1 全部 7/7 step 完成** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 07:48 Sir — M1 全 PASS + M2.A/M2.B 已完成, 等真测** 🚨🚨🚨
+>
+> Sir 7:41 第二轮 M1 真测全 OK ("blocks=2 / 0 broken chain / 0 unknown source"), Cascade 立刻动工 M2 — `MemoryHub` 演化.
+>
+> ## ✅ M2.A+B 完成 (2 commit, +544 行 code+test, 0 破坏)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `2dc2458` | **M2.A** | `MemoryHub` alias = `MemoryMutationGateway` + 6 `write_*` (identity/event/commitment/concern/state/relation) + `query/to_prompt_block` 从 `UnifiedMemoryGateway` 搬运 (17 test + 80 regression) |
+> | `c4a2cb5` | **M2.B** | `central_nerve.memory_gateway = get_default_hub()` 切换 R+W 单 facade — Sir Q3 决议落地 (262 regression pass) |
+>
+> ## 📋 Sir M2 真测 (~3 min, 重启 jarvis 跑 1-3 轮)
+>
+> ```powershell
+> # 1. 重启 jarvis (memory_gateway 已切换到 hub)
+>
+> # 2. Sir 真聊 1-3 轮, 看主脑 reply 正常
+> #   预期: chat 流畅, "[UNIFIED MEMORY - Cross-source recall]:" block 仍出现在 prompt 中 (主脑能用)
+>
+> # 3. 看 mutation_receipts.jsonl 仍有写 (M2.A 老 update_sir_field 没动)
+> Get-Content memory_pool/mutation_receipts.jsonl -Tail 5
+>
+> # 4. 看 lineage 仍记录 (M1 + M2 不冲突)
+> python scripts/lineage_dump.py --list-decisions --limit 3
+>
+> # 5. 看 SWM publish 'sir_field_updated' (M2 mutation 自动 publish)
+> python scripts/lineage_dump.py --stats
+> ```
+>
+> **预期看到 (M2.B 加强)**:
+> - chat 流畅, 无 AttributeError / TypeError
+> - prompt block 含 `[UNIFIED MEMORY - Cross-source recall]:` (说明 hub.to_prompt_block 正确 render)
+> - mutation_receipts.jsonl 仍有 record (老 caller 兼容)
+> - lineage 仍 record decision (M1 不受影响)
+>
+> ## ⏸ M2.C 后置 (Sir 真测 OK 后做)
+>
+> - 删 `jarvis_memory_core.UnifiedMemoryGateway` class (~120 行)
+> - 删 9 个 `noqa: F401` import (`jarvis_worker / env_probe / ui / smart_nudge / sentinels / sensors / safety / routing / return_sentinel / nerve` 各 1)
+> - `git mv jarvis_memory_gateway.py jarvis_memory_hub.py` (8 个 import 改, alias 保留过渡期)
+>
+> ## 🐛 Pre-existing BUG (跟 M2 无关, 待修)
+>
+> 同上 — `concern_dampen_self_decide` directive trigger callable issue + 喝水 `register_event_type` 不存在.
+>
+> ## 🎯 Sir M2 真测 OK 后下一步
+>
+> ```
+> Cascade, M2.B 真测全 OK, 动工 M2.C cleanup.
+> # 或
+> Cascade, M2 全部 done, 直接动工 M3 (legacy 移到 _legacy/).
+> ```
+>
+> 详 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §6.3-6.4.
+>
+> ---
+>
+> ## 历史: M1 (Lineage Trace) 全部 7/7 step 完成 (07:35)
 >
 > Sir 早上 7:06 "全 accept 动工 M1" + 7:28 真测 "修复 bug 加推进" 后, Cascade 完成 M1 Lineage Trace 全部 step + Sir 3 真测 bug fix + M1.3-min 反向追溯增强.
 >
