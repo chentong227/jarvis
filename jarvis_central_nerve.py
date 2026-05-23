@@ -1534,6 +1534,18 @@ class CentralNerve:
         current_time = time.strftime('%Y-%m-%d %H:%M:%S %A')
         current_hour = int(time.strftime('%H'))
 
+        # 🚨 [P5-fix53-hotfix / 2026-05-23 15:42] sensor_state_block 必须在所有 tier
+        # 短路 return 之前定义 (UnboundLocalError 修复). REMINDER_FIRING/FACTUAL_RECALL/
+        # WAKE_ONLY/SHORT_CHAT/light/full 6 个 template 都用到 {sensor_state_block}.
+        sensor_state_block = ""
+        try:
+            from jarvis_sensor_state_block import build_sensor_state_block
+            _tier_hint = prompt_tier or 'CHAT'
+            sensor_state_block = build_sensor_state_block(
+                tier=_tier_hint, max_chars=600)
+        except Exception:
+            sensor_state_block = ""
+
         # 🩹 [β.3.5 INTEGRITY_STACK L4 enforce / 2026-05-18]
         # 上轮 unverified factual claim → prepend [INTEGRITY ALERT] 到 system_alert_text.
         # 准则 5: 主脑被强制 acknowledge 上轮未 verify 的 claim, 撤回 或 补 evidence.
@@ -3391,24 +3403,9 @@ User: {user_input}
         except Exception:
             working_feed_block = ""
 
-        # 🆕 [P5-fix53 / 2026-05-23 15:30] [SENSOR STATE] block — Sir 15:27 真痛点 +
-        # Sir 15:29 深层痛点: '主脑必须知道我的一切信息, 才能保证话术不是 hallucinate'
-        # Sir 15:31 设计指示: '动态注入, 不是全量 prompt' + '准则 6 持久化, 不硬编码'.
-        # 
-        # 设计 (为 prompt 瘦身 refactor 预先落位):
-        #   1. vocab JSON  memory_pool/sensor_state_inject_vocab.json  — 字段 list + tier filter
-        #   2. builder     jarvis_sensor_state_block.build(tier, max_chars) — 按 tier 选子集
-        #   3. CLI         scripts/sensor_state_dump.py — Sir 看/改字段
-        #   4. central_nerve  调 builder (= 3 行, 不 inline 13 字段)
-        # 后续 prompt 瘦身 refactor 直接复用 builder, 不再改 central_nerve.
-        sensor_state_block = ""
-        try:
-            from jarvis_sensor_state_block import build_sensor_state_block
-            _tier_hint = getattr(self, '_current_prompt_tier', 'CHAT')
-            sensor_state_block = build_sensor_state_block(
-                tier=_tier_hint, max_chars=600)
-        except Exception:
-            sensor_state_block = ""
+        # 🆕 [P5-fix53 / 2026-05-23] sensor_state_block 已在 _assemble_prompt 顶部
+        # (L1540) 定义, 所有 tier 短路 return 之前可用. 此处不再重复.
+        # 详 jarvis_sensor_state_block.py + memory_pool/sensor_state_inject_vocab.json
 
         # [R7-α/PlanLedger] 当前 active plan（drafted / awaiting_go / running / paused）。
         # 如果有 plan 在 awaiting_go，prompt 末尾会提示 Sir 可以说 "go" 启动。
