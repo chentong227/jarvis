@@ -3719,6 +3719,14 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     or (_circuit_broken_reason in (
                             'consecutive_failures', 'malformed_calls'
                         ) and _all_tools_failed)
+                    # 🆕 [P5-fix63 / 2026-05-23 16:25] Sir 16:23 BUG-B: 主脑重复调
+                    # progress.status → duplicate_call 熔断 → 主脑 stream 只说 "According"
+                    # (9 char) 就 stop. 老条件不抓 reply 过短的 case → 沉默退场.
+                    # 修法: duplicate_call + tool 成功 + reply 极短 (< 30 char) → 强制合成
+                    # wrap-up 让 Sir 听到完整 reply (含 tool 结果摘要).
+                    or (_circuit_broken_reason.startswith('duplicate_call:')
+                        and _any_tool_ok
+                        and len(_stripped_full or '') < 30)
                 )
             )
 
@@ -3741,7 +3749,12 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     # B12 扩展：max_iterations 但工具至少有一次成功 → 视觉/字幕足够
                     or (_circuit_broken_reason == 'max_iterations' and _any_tool_ok)
                     # B12 扩展：duplicate_call + 工具成功（LLM 没抢答也抑制，因为字幕已表态）
-                    or (_circuit_broken_reason.startswith('duplicate_call:') and _any_tool_ok)
+                    # 🆕 [P5-fix63 / 2026-05-23 16:25] **EXCEPT** 主脑 reply 极短 (< 30 char)
+                    # 此时 LLM 没说完整, Sir 听到截断 (e.g. "According" 9 char).
+                    # 此 case 不抑制 audio, 让 wrap-up synthesis 播出完整 reply 给 Sir.
+                    or (_circuit_broken_reason.startswith('duplicate_call:')
+                        and _any_tool_ok
+                        and len(_stripped_full or '') >= 30)  # 仅 reply 足够长 (>=30) 才抑制
                 )
             )
 
