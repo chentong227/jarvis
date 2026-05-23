@@ -81,3 +81,166 @@
 
 ---
 
+### #2 `jarvis_utils.py` (4862 行) — **核心工具 + ⭐ ConversationEventBus (SWM 数据强耦合枢纽)**
+
+**职责**: 全 Jarvis 共享工具库. 含 **SWM 核心** (ConversationEventBus) + Trace ID + LLM 调度装甲 + Attention + WorkingMemory + 状态机 + ANSI / 日志 / TTS Echo 防回灌 等 20+ class 50+ 函数. 是**所有模块的依赖底座**.
+
+**核心 class** (按重要性排序):
+
+| L | class | 1 句话 | 重要性 |
+|---|---|---|---|
+| 1270 | **`ConversationEventBus`** | **SWM (SharedWorldModel) 数据强耦合枢纽** — publish/recent_events/top_n/to_swm_block | ⭐⭐⭐ |
+| 613 | **`TraceContext`** | 进程级 session_id + turn_id 生成 + bg_log 自动注入 | ⭐⭐⭐ |
+| 2993 | **`JarvisState`** | 中央状态机 (ready/listening/thinking/speaking/focused) | ⭐⭐ |
+| 1812 | **`WorkingMemoryFeed`** | 30min 环境快照 (窗口 / 剪贴板 / 终端命令) | ⭐⭐ |
+| 1751 | **`AttentionSlot`** | Layer 3 — Sir 说话当下的注意力快照 (单槽 + 8s TTL) | ⭐⭐ |
+| 2084 | **`PlanLedger`** | Sir 计划账本 (跨 session 持久化) | ⭐⭐ |
+| 3717 | `QuickClassifier` | 短语快速分类 (cache + LLM fallback) | ⭐ |
+| 3167 | `ApiRateLimiter` | API 速率限制器 | ⭐ |
+| 3488 | `LocalLLMFallback` | 本地 LLM 兜底 (无网络时) | ⭐ |
+| 2548 | `ToneSelector` | 主脑 reply tone 选择 | ⭐ |
+| 2671 | `AntiCommonPhraseTracker` | 反陈词滥调追踪 | ⭐ |
+| 2800 | `VerbosityPreferenceTracker` | Sir 偏好长短追踪 | ⭐ |
+| 4469 | `ProjectContextProbe` | 当前项目识别 (git root / cwd) | ⭐ |
+| 4623 | `SessionDigest` | session 结束摘要 | ⭐ |
+| 1915 | `ClipboardWatcher` | 剪贴板变化监听 | ⭐ |
+| 1990 | `PSHistoryWatcher` | PowerShell 历史命令 watch | ⭐ |
+| 1047 | `_TTSEchoRing` | 防 TTS 自言自语回灌 (Sir 听不到 Jarvis 自己) | ⭐ |
+| 485 | `_BgLogBuffer` | bg_log 缓冲层 (避免 print 漏到对话框) | ⭐ |
+| 231 | `_TeeStream` | Tee print → file + stdout | basic |
+| 54 | `_ANSI` | ANSI 颜色常量 | basic |
+
+**核心 function** (50+, 重要的):
+
+| L | func | 1 句话 |
+|---|---|---|
+| 908 | `bg_log(msg)` | **关键日志 API** — auto-prefix `[sess_xxx][turn_yyy]` (TraceContext 注入), 不漏到对话框 |
+| 1201 | `get_event_bus()` | SWM 全局单例获取 (lazy init) |
+| 3147 | `get_default_event_bus()` | 同上 alias |
+| 3298 | **`safe_gemini_call(...)`** | **核心 LLM 装甲** — KeyRouter + retry + non-retryable detection + Quota fallback |
+| 4220 | `safe_openrouter_call(...)` | OpenRouter 装甲 (类似但走 openrouter) |
+| 3713 | `get_local_fallback()` | 本地 LLM fallback singleton |
+| 3158 | `create_genai_client()` | google-genai client 创建 (key 轮换内置) |
+| 3256 | `network_retry` decorator | 网络重试装甲 |
+| 1224 | `read_gate_mode()` | gate_mode_vocab.json 读 (sentinel hard/soft/publish_only) |
+| 4394 | `extract_open_threads(stm)` | STM → 未完话题抽取 |
+| 4574 | `render_project_block` | prompt block — 当前 project context |
+| 4703 | `render_yesterday_block` | prompt block — 昨日 highlights |
+| 4721 | `render_open_threads_block` | prompt block — 未完话题 |
+| 4764 | `render_active_reminders_block` | prompt block — 活跃 reminders |
+| 1163 | `register_jarvis_tts(text)` | TTS echo ring 注册 (防 Jarvis 听到自己) |
+| 1168 | `is_recent_jarvis_echo(text)` | 检测 Sir input 是不是 TTS echo |
+
+**ConversationEventBus 详细 (⭐⭐⭐ SWM 核心)**:
+
+```python
+# 已注册 etype 数: ~40+ (横跨 sensor/sentinel/reflector/intent_resolver/integrity/...)
+# 完整列表见 DEFAULT_TTL dict (L1276-1328) + DEFAULT_SALIENCE dict (L1333-1380)
+
+# 核心 etype 分类:
+# ── 主脑必看 (salience ≥ 0.85):
+#    intent_resolved (0.90), commitment_overdue (0.95), hallucination_detected (0.92),
+#    manual_standby (0.90), tool_called (0.85)
+# ── 重要 (salience 0.7-0.84):
+#    reply_interrupted (0.75), system_error_visible (0.75), active_window_hung (0.70),
+#    sir_watch_request_proposed (0.70), tool_chain_circuit_broken (0.78),
+#    soft_focus_active (0.70), sleep_intent_declared (0.85)
+# ── 一般 (salience 0.4-0.69):
+#    concern_active (0.65), commitment_detected (0.80), gate_advice (0.55),
+#    afk_return (0.55), sir_progress_evidence (0.65), sir_intent_*_candidate (0.50-0.60),
+#    proactive_nudge (0.50), tool_executed (0.50), conversation_event (0.55)
+# ── 背景 (salience 0.1-0.39):
+#    sensor_change (0.30), jarvis_state (0.30), nudge_window_advice (0.35),
+#    persona_note (0.40), utterance_appended (0.20)
+
+# 核心 method:
+.publish(etype, description, ttl=None, source='unknown', metadata=None, salience=None)
+   - 8s 去重 (etype + desc[:60] 指纹)
+   - max_events=60 (deque maxlen)
+.recent_events(within_seconds, types)
+.top_n(n=12, types, within_seconds, salience_floor=0.0)
+   - score = salience × 0.7 + recency × 0.3
+   - recency = e^(-age/180) (3min halflife)
+.to_swm_block(n=12, max_chars=800, salience_floor=0.3, critical_salience=0.85)
+   - 智能截断: critical (≥0.85) 强制保留, 低 salience 优先扔
+.has_type(etype, within_seconds) — 快速判
+.register_global(bus_instance) — 单例注册
+```
+
+**TraceContext 详细 (⭐⭐⭐ 可追溯性)**:
+
+```python
+TraceContext.init_session() → sess_YYYYMMDD_HHMMSS_<PID> (进程级)
+TraceContext.new_turn() → turn_YYYYMMDD_HHMMSS_<4hex> (对话级)
+TraceContext.current_session() / current_turn() — getter
+TraceContext.set_turn(tid) — 接收外部 ID
+
+bg_log(msg) → 自动 prefix `[sess_xxx][turn_yyy] msg` 写到 docs/runtime_logs/jarvis_<sess_id>.log
+```
+
+**数据**:
+- 读: `memory_pool/gate_mode_vocab.json` (read_gate_mode)
+- 写: `docs/runtime_logs/jarvis_<sess>.log` (TeeStream + _BgLogBuffer)
+- 维护: 进程内全局 — `_GLOBAL_EVENT_BUS` (SWM 单例) / `_TTSEchoRing` / 各 default tracker
+- SWM publish: 不直接 publish, 但提供 publish API 给所有 module 用
+
+**上游 (谁 import 它 — 几乎全 Jarvis)**:
+- 真测: `grep "from jarvis_utils import" *.py` → ~85+ 文件 import 它
+- 关键 callers: `central_nerve` / `chat_bypass` / `worker` / 全部 sentinel / 全部 reflector / 全部 hand
+
+**下游 (它调谁)**:
+- `jarvis_key_router` (safe_gemini_call 内部)
+- `google.genai` / `openai` (SDK)
+- `win32gui` / `win32process` / `win32api` (capture_attention_snapshot)
+- `requests` (LocalLLMFallback)
+- 几乎不调其他 jarvis_*.py (是底座, 不是 caller)
+
+**跟记忆的耦合**:
+- 直接写: 无 (utils 不持久化记忆)
+- 直接读: `memory_pool/gate_mode_vocab.json` (read_gate_mode)
+- 间接耦合: **极重** — ConversationEventBus 是**所有记忆 mutation 的 SWM publish 通道**:
+  - `MemoryGateway._publish_swm()` 调它
+  - `ProfileCard.overwrite_field()` publish 'sir_profile_overwritten'
+  - `CommitmentWatcher.add_commitment()` publish 'sir_intent_deadline_candidate'
+  - `Hippocampus.add_completed_event()` (fix82-X) publish 'completion_cascaded'
+  - 所有 mutation source 都通过 SWM 让主脑下轮看到 evidence
+
+**跟其他模块的耦合**:
+- **底座级** — 全 Jarvis 90+ 模块都依赖 utils
+- 关键 attr 注入: `voice_worker._attention_slot` / `jarvis_worker._attention_slot` / `jarvis._attention_slot` 都共享 utils.AttentionSlot 实例
+
+**已知问题 / TODO marker** (grep "TODO" / "FIXME" / "BUG"):
+- `DEFAULT_TTL` + `DEFAULT_SALIENCE` 字典硬编码 40+ etype (L1276-1380) — **小违 §6 准则 6 持久化原则**, 但实际可能合理 (~40 etype 用 json 反而难维护. 待 Phase B 设计判)
+- `_dedupe_window=8.0` 硬编码 (L1387) — 对所有 etype 同 8s 去重, 没分类 (e.g. critical event 应允许更密)
+- `max_events=60` deque (L1382) — 超过最早被丢, 跨 session 不持久化 → **重启丢全部 SWM evidence**
+- L1467-1482 `type_priority` dict 硬编码 (legacy `to_prompt_block`, 已被 `to_swm_block` 替) — 可清
+- 4861 行无 module-level docstring → audit 时已发现, **Phase A 后期补 docstring**
+
+**关联 design doc**:
+- `JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md` (β.5.37) — SWM 三维耦合设计, 但**没专细到 EventBus API**
+- `AGENTS.md` §3 Trace ID 体系 — 提 TraceContext
+- `JARVIS_ARCHITECTURE_MAP.md` §2.5 — 提及但未深入
+
+**重构含义 (Phase B 设计参考)**:
+
+⭐ **utils.py 是 Jarvis 的中枢神经核心**, 重构必须谨慎:
+
+- **保留 + 强化**:
+  - ConversationEventBus 是 SWM 唯一 truth — 任何记忆 refactor 必须**经过它**
+  - TraceContext 是诚信审计的基石 (每条 audit / mutation 必带 turn_id)
+  - safe_gemini_call 是 LLM 装甲, 不可绕
+
+- **应该改进**:
+  - SWM 跨 session 不持久化 — Phase D 应加可选 `swm_history.jsonl` (当前重启丢 60 event)
+  - DEFAULT_TTL/SALIENCE 硬编码 → 可迁 `memory_pool/swm_etype_config.json` + L7 Reflector LLM-propose 新 etype
+  - 4861 行单文件应拆 (e.g. `jarvis_swm.py` / `jarvis_trace.py` / `jarvis_llm_armor.py`)
+
+- **跟 Memory Refactor 关系**:
+  - **utils.ConversationEventBus 是 MemoryHub 的下游 publish 通道** — refactor 不重写, 只增加 publish 类型
+  - **utils.TraceContext 是 MemoryRecord.turn_id 的来源** — 不动
+  - **utils.WorkingMemoryFeed + AttentionSlot** 应纳入"State source" (E 类) 的 component, 不重写
+
+**审计结论**: utils.py 是 Jarvis **数据耦合的中枢**. 真重构记忆系统 = 重写 utils 大半 (尤其 ConversationEventBus). 但**应增强不应推翻** — 已有 SWM 设计经历 β.5.0-A 真正经验积累. Phase B 应聚焦"扩 + 拆", 不是"重写".
+
+---
+

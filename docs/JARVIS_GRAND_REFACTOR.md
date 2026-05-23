@@ -306,7 +306,7 @@
 | Phase | Sub-phase | 进度 | 备注 |
 |---|---|---|---|
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
-| Phase A.1 | 模块审计 (115 + 25) | 1/140 (0.7%) | 批次 a 进行中, 已完成 #1 nerve.py |
+| Phase A.1 | 模块审计 (115 + 25) | 2/140 (1.4%) | 批次 a 进行中, 已完成 #1 nerve.py / #2 utils.py |
 | Phase A.2 | 数据流全审 | ⬜ pending | A.1 完成后 |
 | Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
@@ -321,16 +321,17 @@
 
 ```
 当前阶段: Phase A.1 批次 a (5 核心枢纽)
-进度: 1/5 完成 (jarvis_nerve.py ✅)
-下一动作: 审 jarvis_utils.py (4861 行, 含 ConversationEventBus SWM 核心)
-最后 commit: (即将 commit 本立项书 + audit_cards + nerve.py card)
+进度: 2/5 完成 (jarvis_nerve.py ✅ + jarvis_utils.py ✅)
+下一动作: 审 jarvis_central_nerve.py (5086 行, CentralNerve 主控 + PERSONA + _assemble_prompt)
+最后 commit: b53b751 (Phase 0 启动 + #1 nerve.py)
 ```
 
 ### 6.3 已完成 audit cards
 
 | # | 模块 | card 位置 | commit | 时间 |
 |---|---|---|---|---|
-| 1 | `jarvis_nerve.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #1 | (即将) | 2026-05-23 22:55 |
+| 1 | `jarvis_nerve.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #1 | b53b751 | 2026-05-23 22:55 |
+| 2 | `jarvis_utils.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #2 | (即将) | 2026-05-23 23:00 |
 
 ---
 
