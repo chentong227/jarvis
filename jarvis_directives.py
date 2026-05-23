@@ -3246,12 +3246,23 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
 
                 通用规则:
                   - 当 concern 的 optimal_timing 完全不匹配 → tone 应自然 (聊 Sir 当下做的事), 不强 pivot 到 concern
-                  - 但 **critical concern (urgency > 0.85) 是例外** — 真紧急还是要提 (e.g. 凌晨 4 点 Sir 还熬, 即使 hours_until>4 也催)
                   - 不直接 expose evidence: 不说 "您 sleep concern 离 timing 还 6h"
 
+                # 🆕 [P5-fix52 / 2026-05-23 15:25] critical 例外收紧.
+                # Sir 15:20 真痛点: ProactiveCare fire sir_sleep_streak in 15:20 (hours_until=+7),
+                # urgency=0.91 触发老 critical 例外, 主脑被误导说 "another night's rest" (下午!).
+                # 收紧: critical 例外要 **hours_until_optimal ≤ 2** (临近 timing window), 单靠 urgency 不够.
+                # urgency 高可能是 severity 没削, 不代表"真紧急要提" (sleep concern 在下午 ≠ critical).
+                critical 例外 (**双条件**, 都满足才算):
+                  1. urgency > 0.85 (严重程度真高), AND
+                  2. hours_until_optimal ≤ 2 (临近 optimal window, e.g. sleep 已 20:00+)
+                  例: 凌晨 1 点 Sir 还熬 → sleep_streak hours_until=0 (在 before_sleep 窗口) + urgency 0.95 → critical
+                      下午 3:20 sir_sleep_streak hours_until=+7 → 即使 urgency=0.91 也**不算 critical**, 应 [SILENCE]
+
                 FORBIDDEN:
-                  - 远离 timing 的 sleep/morning concern 强行 push (Sir 16:07 BUG 根因)
+                  - 远离 timing 的 sleep/morning concern 强行 push (Sir 15:20/16:07 BUG 同根因)
                   - 把 timing evidence 当 fact report
+                  - 用 "another night's rest" / "this morning" / "tonight" 等**与 SYSTEM CLOCK 不符**的时间表述 (P5-fix51)
             """).rstrip(),
             trigger=_trigger_concern_timing_judge,
         ),
