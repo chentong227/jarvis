@@ -4757,25 +4757,62 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                                         )
                                                         _new_val_lower = (new_val or '').lower()
                                                         _new_has_time = any(t in _new_val_lower for t in _time_anchors)
+                                                        # 🆕 [P5-fix35-emergency / 2026-05-23 10:54] BUG#11:
+                                                        # Sir 真测死循环 — 教正 "今早 10 点完成体检" → 老兜底全当 REMINDER
+                                                        # → 时间已过 → ChronosSentinel 立刻 fire → 主脑被唤醒 → 又 emit
+                                                        # modify_record → 再注册 reminder → 死循环.
+                                                        # 修: 时间锚 + 完成态 vocab → 走 [完成态纠正] CHAT, 不注册 REMINDER.
+                                                        _completed_vocab = (
+                                                            '已完成', '已经完成', '完成了', '做完了', '搞定了',
+                                                            '弄完了', '解决了', '已做', '已做完', '已经做',
+                                                            '已经搞定', '已经解决', '体检完了', '面试完了',
+                                                            '会议完了', '考试完了', '从医院回来', '从面试回来',
+                                                            '从公司回来', 'completed', 'finished', 'done with',
+                                                            "i'm done", 'wrapped up', 'taken care of',
+                                                            'already done', 'already completed',
+                                                        )
+                                                        _is_completed = any(c in _new_val_lower for c in _completed_vocab)
                                                         if _new_has_time:
-                                                            try:
-                                                                from jarvis_utils import bg_log as _e1_bg
-                                                                _e1_bg(
-                                                                    f" └─ ⚠️ [P0+18-e.1] new_val='{new_val}' 含时间锚词但上游未给 trigger，"
-                                                                    "兜底为 REMINDER 占位（trigger=0 → render 显示 [time unknown]）"
-                                                                )
-                                                            except Exception:
-                                                                pass
-                                                            result['gate_data_to_save'] = [{
-                                                                "clean_intent": f"[需重新确认时间] {new_val}（原 '{old_val}' 已取消）",
-                                                                "memory_type": "REMINDER",
-                                                                "entities": {},
-                                                                "is_future_task": True,
-                                                                "trigger_time_str": "",
-                                                                "trigger_timestamp": 0.0,
-                                                                "needs_ltm": False,
-                                                                "search_query": new_val,
-                                                            }]
+                                                            if _is_completed:
+                                                                # 完成态 + 时间锚: 事实标记 (e.g. "今早 10 点完成") 不是 future task.
+                                                                # 不注册 REMINDER, 走 [完成态纠正] CHAT 兜底, 防 BUG#11 死循环.
+                                                                try:
+                                                                    from jarvis_utils import bg_log as _ce_bg
+                                                                    _ce_bg(
+                                                                        f" └─ ✅ [P5-fix35/BUG#11] new_val='{new_val[:60]}' "
+                                                                        f"含完成态 vocab → 跳过 REMINDER 注册 (避免死循环), "
+                                                                        f"走 [完成态纠正] CHAT 兜底"
+                                                                    )
+                                                                except Exception:
+                                                                    pass
+                                                                result['gate_data_to_save'] = [{
+                                                                    "clean_intent": f"[完成态纠正] {new_val}",
+                                                                    "memory_type": "CHAT",
+                                                                    "entities": {},
+                                                                    "is_future_task": False,
+                                                                    "trigger_time_str": "",
+                                                                    "needs_ltm": False,
+                                                                    "search_query": new_val,
+                                                                }]
+                                                            else:
+                                                                try:
+                                                                    from jarvis_utils import bg_log as _e1_bg
+                                                                    _e1_bg(
+                                                                        f" └─ ⚠️ [P0+18-e.1] new_val='{new_val}' 含时间锚词但上游未给 trigger，"
+                                                                        "兜底为 REMINDER 占位（trigger=0 → render 显示 [time unknown]）"
+                                                                    )
+                                                                except Exception:
+                                                                    pass
+                                                                result['gate_data_to_save'] = [{
+                                                                    "clean_intent": f"[需重新确认时间] {new_val}（原 '{old_val}' 已取消）",
+                                                                    "memory_type": "REMINDER",
+                                                                    "entities": {},
+                                                                    "is_future_task": True,
+                                                                    "trigger_time_str": "",
+                                                                    "trigger_timestamp": 0.0,
+                                                                    "needs_ltm": False,
+                                                                    "search_query": new_val,
+                                                                }]
                                                         else:
                                                             result['gate_data_to_save'] = [{
                                                                 "clean_intent": f"[纠正] {new_val}",

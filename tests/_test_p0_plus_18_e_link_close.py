@@ -62,7 +62,9 @@ class TestE1MemoryCorrectionFallbackPreservesReminder(unittest.TestCase):
 
     def test_fallback_reminder_branch_when_time_anchor_only(self):
         # 当 new_val 含时间锚 + 上游无 future_task → 兜底成 REMINDER (is_future_task=True)
-        snippet = self.src[self.src.find('P0+18-e.1'):self.src.find('P0+18-e.1') + 8000]
+        # 🆕 [P5-fix35-emergency / 2026-05-23] 窗口 8000 → 12000:
+        # 加 BUG#11 完成态分支 (~1500 char) + 嵌套结构, REMINDER 分支推到 ~8500 char.
+        snippet = self.src[self.src.find('P0+18-e.1'):self.src.find('P0+18-e.1') + 12000]
         # 关键守门：time_anchors 词典 + REMINDER 兜底
         self.assertIn('_time_anchors', snippet)
         self.assertIn('需重新确认时间', snippet)
@@ -72,7 +74,8 @@ class TestE1MemoryCorrectionFallbackPreservesReminder(unittest.TestCase):
 
     def test_fallback_chat_branch_for_pure_name_correction(self):
         # 当 new_val 不含时间锚 → 仍保留 CHAT 兜底（语义纠正）
-        snippet = self.src[self.src.find('P0+18-e.1'):self.src.find('P0+18-e.1') + 8000]
+        # 🆕 [P5-fix35-emergency / 2026-05-23] 同上, 窗口 8000 → 12000
+        snippet = self.src[self.src.find('P0+18-e.1'):self.src.find('P0+18-e.1') + 12000]
         self.assertIn('[纠正]', snippet, "纯语义纠正仍走 [纠正] CHAT 兜底")
 
 
