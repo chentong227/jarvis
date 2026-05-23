@@ -560,3 +560,161 @@ bg_log(msg) → 自动 prefix `[sess_xxx][turn_yyy] msg` 写到 docs/runtime_log
 **审计结论**: chat_bypass 是 Jarvis **运行时主流程的实际执行**, 跟 central_nerve 紧密耦合 (装配 prompt 在 CN, 调 LLM 在 CB). NERVE_SPLIT_PLAN 拆分 chat_bypass 是 Phase D 重头戏. Memory refactor 必扩展 `_execute_fast_call` 的 organ dispatch.
 
 ---
+
+### #5 `jarvis_worker.py` (5823 行) — **PyQt5 Worker + ASR + Gatekeeper + memory_correction**
+
+**职责**: PyQt5 worker thread 主体. 含 2 个 thread class — VoiceListenThread (ASR + 唤醒) + JarvisWorkerThread (主 worker, 调 chat_bypass.stream_chat + Gatekeeper LLM + memory_correction guard + sleep 模式管理).
+
+**核心 class**:
+
+| L | class | 行数估 | 职责 |
+|---|---|---|---|
+| 288 | **`VoiceListenThread`** | ~1280 | ASR + 唤醒词 + 语义分类 (struggle/dismiss/stop) + emit text_ready |
+| 1568 | **`JarvisWorkerThread`** | ~4250 | PyQt5 主 worker — 调 chat_bypass + Gatekeeper LLM + memory_correction + sleep 路由 |
+
+**Top-level functions**:
+
+| L | func | 1 句话 |
+|---|---|---|
+| 125 | `sanitize_trigger_time` | reminder 时间字符串清洗 |
+| 228 | `detect_semantic_category` | utterance → category (struggle/dismiss/etc.) |
+| 263 | `_load_wake_filler_vocab` | wake filler 短语 vocab 加载 |
+
+**VoiceListenThread 关键 method**:
+
+| L | method | 功能 |
+|---|---|---|
+| 992 | **`run`** | ASR 主循环 (~600 行) — 监听 mic + Whisper/Azure 转译 + emit text_ready |
+| 376 | `_load_struggle_vocab` | sir_struggle_vocab.json 加载 |
+| 398 | `_detect_sir_struggle` | Sir 困难检测 |
+| 444 | `_publish_listening_done` | listening 状态 publish SWM |
+| 455 | `in_active_conversation` (property) | 判断对话激活态 |
+| 508 | `detect_stop_command` | 急停命令检测 |
+| 540 | `detect_dismiss_command` | dismiss 命令检测 (Ctrl+Alt+J 触发) |
+| 587 | `set_speaking_state` | speaking 状态切换 |
+| 649 | `parse_wake_word` | 唤醒词识别 (openWakeWord) |
+| 787 | `classify_jarvis_directness` | Jarvis 语气直接度分类 (灰区检测) |
+| 867 | `_handle_acoustic_wake` | 声学唤醒回调 |
+| 904 | `_emit_with_attention` | text_ready emit + AttentionSlot capture |
+| 476-495 | `_phrase_at_head/tail` | 短语开头/结尾匹配 |
+
+**JarvisWorkerThread 关键 method**:
+
+| L | method | 功能 |
+|---|---|---|
+| 3123 | **`run`** | **Worker 主循环 (~2000+ 行)** — 接 cmd_queue → chat_bypass.stream_chat → Gatekeeper → memory_correction guard → sleep mode |
+| 1572 | `__init__` | 实例化 CentralNerve + 持有 chat_bypass / state / interrupt 信号 |
+| 1666 | `emit_state` | state 变化 PyQt5 signal |
+| 1673 | `is_awake` (property) | 判断 awake |
+| 1764 | `_classify_prompt_tier` | utterance → tier (WAKE_ONLY / SHORT_CHAT / TOOL_REQUEST / DEEP_QUERY / CRITICAL / FACTUAL_RECALL) |
+| 1827 | `_compute_wake_weight` | 唤醒权重 |
+| 1912 | `play_acknowledgment_chime` | 唤醒音效 |
+| 1945 | `enter_focus_mode` | 焦点模式 (90s) |
+| 1958 | `push_command` | 接收 voice cmd 进 queue |
+| 1961 | `interrupt_all` | Sir 打断主脑 stream |
+| 2146 | `_detect_joke_feedback` | 笑话反馈检测 |
+| 2258 | `_detect_help_refusal` | help 拒绝检测 |
+| 2506 | `_load_audio_ducking_targets` | audio_ducking_targets.json 加载 |
+| 2527 | `cancel_sleep_routine` | 取消 sleep 流程 |
+| 2551 | `_fire_sleep_due_nudge` | sleep 到点 nudge |
+| 2631 | `_trigger_sleep_mode_routine` | 进入 sleep mode (TTS off + nudge off) |
+| 2814 | `_detect_sleep_intent` | Sir 睡眠表态 |
+| 3057 | `_detect_sleep_cancel` | Sir 取消睡眠 |
+| 3117 | `_detect_sleep_window_intent` | sleep window 时段判定 |
+
+**JarvisWorkerThread.run() 内嵌逻辑** (估计 ~2000 行):
+
+```
+loop:
+  cmd = cmd_queue.get()  # block 等
+  trace_new_turn()
+  
+  ├─ ScreenVision.async_describe (并发, fire-and-forget)
+  ├─ Gatekeeper LLM (含 commitment_register / cancel / clarify 检测)
+  │   └─ 真注册 commit → publish 'sir_intent_deadline_candidate' SWM
+  ├─ MemoryCorrectionGuard (Sir 教正语义检测 + Bayesian)
+  │   ├─ <MEMORY_UPDATE> tag 检测
+  │   ├─ ProfileCard.apply_correction 调
+  │   └─ MemoryGateway.update_sir_field 调 (新路径)
+  ├─ Sleep 模式:
+  │   ├─ _detect_sleep_intent / _detect_sleep_window_intent
+  │   ├─ _trigger_sleep_mode_routine (TTS off + nudge off)
+  │   └─ _detect_sleep_cancel (Sir 改主意)
+  ├─ chat_bypass.stream_chat(cmd) → 主对话 (调 #4)
+  │   └─ stream_chat 内部装配 prompt + emit FAST_CALL + dispatch organ
+  ├─ post-process:
+  │   ├─ _detect_help_refusal
+  │   ├─ _detect_joke_feedback
+  │   └─ ConcernFeedbackJudge.judge_async
+  ├─ STM update + persist
+  └─ idle wait next cmd
+```
+
+**数据**:
+- 读: `sir_struggle_vocab.json` / `wake_filler_vocab.json` / `audio_ducking_targets.json` / `refusal_vocab.json` / `sleep_cancel_vocab.json`
+- 写: 经各 component (memory_correction → ProfileCard → mutation_receipts.jsonl + sir_profile.json) / 经 Hippocampus.seal_memory_async → TaskMemories sqlite
+- SWM publish: `sir_intent_*_candidate` (Gatekeeper) / `commitment_detected` / `sleep_intent_declared` / `reply_interrupted` / `proactive_nudge` 等
+
+**上游 (谁调它)**:
+- `jarvis_nerve.py:__main__` 实例化 `JarvisWorkerThread(api_key, gemini_key, key_router)` → `.start()`
+- `VoiceListenThread.text_ready signal` → `jarvis_worker.push_command(cmd)`
+- `BreathingLightUI` → 通过 PyQt5 signal 状态联动
+
+**下游 (它调谁)**:
+- `CentralNerve` (持有 self.jarvis = CN 实例)
+- `chat_bypass.stream_chat / stream_nudge`
+- `Gatekeeper LLM` (Gemini-flash-lite 短 LLM 抽 commitment / cancel)
+- `MemoryGateway` / `ProfileCard` / `Hippocampus`
+- `IntegrityWatcher` (post-stream verify trigger)
+- `ConcernFeedbackJudge.judge_async`
+
+**跟记忆的耦合**:
+- **直接写**: 通过 `MemoryGateway.update_sir_field` (memory_correction path L4607+) → ProfileCard.preferences.user_correction
+- **直接写**: 通过 `Gatekeeper` LLM 抽 commitment → `CommitmentWatcher.add_commitment` → sqlite Commitments
+- **STM**: 通过 `CentralNerve._append_stm` 间接
+
+**跟其他模块的耦合**:
+- **极重** — Worker 是主对话流程的 orchestrator, 90% 主模块耦合
+- 持有 `central_nerve` ref → 通过它访问全部 component
+- 跟 `chat_bypass` 紧密 (ChatBypass 是 self.jarvis.chat_bypass)
+- VoiceListenThread 跟 `AttentionSlot` (utils.py) 共享实例
+
+**已知问题 / TODO marker**:
+- **5823 行 2 class** — 难维护
+- `JarvisWorkerThread.run` 单 method ~2000 行 — 极难审计
+- 多处 `# 🩹 [P0+18-X / β.X.Y]` marker — 渐进 patch 累积
+- VoiceListenThread.run 600 行 ASR 状态机, 复杂 — 需独立 audit
+- Gatekeeper LLM 调用 + memory_correction guard + sleep 模式 全在 1 个 run() 里 — 应分模块
+- 5823 行无 module docstring (顶 `# [P0+19-9]` comment)
+
+**关联 design doc**:
+- `JARVIS_VOICE_PIPELINE_LATENCY.md` — VoiceListenThread ASR 优化
+- `NERVE_SPLIT_PLAN.md` — Worker 拆分 (未执行)
+- `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` — memory_correction → MemoryGateway 路由
+
+**重构含义 (Phase B 设计参考)**:
+
+⭐⭐⭐ **worker 是 Sir 真意"教 1 次, 多处同步"的 trigger 起点**:
+
+- **必拆**:
+  - `JarvisWorkerThread.run` 2000 行 → 拆 8 个 method (Gatekeeper / memory_correction / sleep / chat_bypass / post_process / ...)
+  - VoiceListenThread.run 600 行 → 拆成 ASR loop + wake handler + struggle detector
+  - 把 vocab loaders / detectors 迁到独立 sub-module
+
+- **必整合**:
+  - memory_correction guard 现状有 2 路径 (老 ProfileCard.apply_correction + 新 MemoryGateway.update_sir_field) — 应统一
+  - Gatekeeper LLM + Conductor 重叠 — 待 Phase B 判
+
+- **不动**:
+  - PyQt5 Worker 模式 (稳定)
+  - Sleep 模式逻辑 (Sir 真测稳)
+  - VoiceListenThread ASR 主循环 (β.4.x 调优过)
+
+- **跟 Memory Refactor 关系**:
+  - worker 是 Sir 教正的**第一接收者** — Sir 说"今天血压咨询完成" → Worker.MemoryCorrectionGuard 抓 → 调 MemoryGateway.update_sir_field → cascade
+  - Gatekeeper LLM 抽 commitment 也走 Worker → 这是 fix82-Z (Gatekeeper publish + chat_bypass skip dup) 的入口
+  - Worker 的 `run()` 是 MemoryHub.write 的**唯一调用入口**之一 (主脑 emit FAST_CALL 是另一)
+
+**审计结论**: worker.py 是记忆 refactor 的**主流程入口**之一. 2000 行的 run() 必拆. memory_correction 双路径必合. Gatekeeper / Conductor 重叠需 Phase B 决议. 跟 chat_bypass + central_nerve 联动拆分.
+
+---
