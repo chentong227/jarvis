@@ -4859,20 +4859,39 @@ No ZH translation. No closing remark. Nothing else.
         self.is_interrupted = False
 
         try:
-            from PIL import ImageGrab
-            screen_img = ImageGrab.grab()
-            screen_img.thumbnail((1280, 720))
-
-            img_buf = io.BytesIO()
-            screen_img.save(img_buf, format="JPEG", quality=50)
-            img_bytes = img_buf.getvalue()
-            chat_history = [types.Content(role="user", parts=[
-                types.Part(text=prompt),
-                types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-            ])]
-            
+            # 🩹 [P5-fix33 / 2026-05-23 08:45] BUG-D: screen grab failed → empty nudge
+            # Sir 真测: AFK 539min 后 ReturnSentinel 推 return_greeting nudge,
+            # ImageGrab.grab() 抛 "screen grab failed" (锁屏/屏保) → 跳外层 except →
+            # print 'screen grab failed' / box close / return '' → worker 报 empty_reply.
+            # Sir 看到 `║ 🤖 [Jarvis] ╚═══════` 不知所云.
+            # 修法: 截图失败时 fallback 到 text-only chat_history (Sir 锁屏久 → 早就该 expect 没图)
             full_text = ""
             streamed_text = ""
+            chat_history = None
+            try:
+                from PIL import ImageGrab
+                screen_img = ImageGrab.grab()
+                screen_img.thumbnail((1280, 720))
+
+                img_buf = io.BytesIO()
+                screen_img.save(img_buf, format="JPEG", quality=50)
+                img_bytes = img_buf.getvalue()
+                chat_history = [types.Content(role="user", parts=[
+                    types.Part(text=prompt),
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+                ])]
+            except Exception as _ss_err:
+                # 锁屏/屏保 / 多 monitor 切 / 用户切 RDP 都常见. 不阻塞 nudge.
+                try:
+                    from jarvis_utils import bg_log as _ss_bg
+                    _ss_bg(f"⚠️ [Nudge/NoScreenshot] {type(_ss_err).__name__}: "
+                            f"{_ss_err} → fallback text-only chat_history")
+                except Exception:
+                    pass
+                # text-only fallback: 只发 prompt, 没 image
+                chat_history = [types.Content(role="user", parts=[
+                    types.Part(text=prompt),
+                ])]
 
             _nudge_key_name = ''
             response = None
