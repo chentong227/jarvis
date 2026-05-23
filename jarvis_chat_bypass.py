@@ -3791,8 +3791,30 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     zh = "已完成。"
                 elif _circuit_broken_reason.startswith("duplicate_call:"):
                     if last_ok:
-                        en = "Done, Sir — the action already completed on the first call."
-                        zh = "已经完成了，Sir，第一次调用就生效了。"
+                        # 🆕 [P5-fix74-B / 2026-05-23 18:38] BUG-O: 老模板硬编码"已完成"
+                        # 不切题. Sir 18:38 真痛点: 问"项目历史" → search_memory 重复
+                        # → 熔断 → 模板回"already completed" 完全对不上 Sir 真请求.
+                        # 准则 5 重大违反 (PreFlight Q1 已 catch 但已 stream 出去).
+                        # 修法: 不再 fabricate "completed", 改诚实 + 承认 tool 没拿到 Sir
+                        # 想要的 — 让 Sir 知道. 准则 5 透明优于 fake "已完成".
+                        # 提取 last_ok 的工具名 (e.g. memory_hands.search_memory) 让句子
+                        # 更具体 — Sir 知道哪个 tool 重复了.
+                        _tool_repeated = ''
+                        try:
+                            # _circuit_broken_reason e.g. "duplicate_call:memory_hands.search_memory"
+                            _tool_repeated = _circuit_broken_reason.split(':', 1)[1] if ':' in _circuit_broken_reason else ''
+                        except Exception:
+                            pass
+                        if _tool_repeated:
+                            en = (f"I called {_tool_repeated} once already, Sir — "
+                                  f"the same query won't reveal more. Could you give me "
+                                  f"a different angle to dig from?")
+                            zh = (f"Sir，我刚已经调过一次 {_tool_repeated} 了 — "
+                                  f"重复同样的查询不会有新结果。能换个切入点让我再查吗？")
+                        else:
+                            en = ("I tried that step once, Sir, but the same call doesn't "
+                                  "yield new information. Could you give me more context?")
+                            zh = "Sir，那一步我已经调过一次了，重复不会有新结果。能给我多点上下文吗？"
                     else:
                         # [R7-β1] D 方向：duplicate_call 且全失败 + 失败原因含"未知指令/unknown"
                         # → 这是"调了不存在的工具命令名"的典型现象。不要道歉式收尾，

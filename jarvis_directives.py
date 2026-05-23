@@ -2718,10 +2718,15 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
 
                 STEP 2 (case b' — set, 绝对值覆写, Sir 纠正场景):
                   Sir 纠正"我搞错了, 总共应该是 X" → MUST 用 set, NEVER += update.
+                  
+                  ⚠️ 单位换算优先级 (set 同 update, 都必须):
+                    Sir 说"6 杯" → MUST 看 [Units] cup_ml 算 ml, 不能 set new_current=6!
+                    profile 没记 → 主动问 (ambiguous_unit_handling directive).
+                  
                   <FAST_CALL>{"organ":"progress","command":"set","params":{
                     "track_id": "hydration_2026-05-23",
                     "new_current": 2000,
-                    "note": "Sir 纠正: 总共喝了 2000ml"
+                    "note": "Sir 纠正: 总共喝了 2000ml (= 200 + 6×300)"
                   }}</FAST_CALL>
                   → store 返 'set 4900→2000 (delta=-2900)' 给你下轮看.
                   → 你 ack: "已修正 Sir, 当前 2000/3000 ml." (用真新值)
@@ -2731,6 +2736,13 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - Sir 报"总共应该是 N" / "搞错了, 实际是 N" / "纠正一下, 总共 N"
                     → **MUST set new_current=N**, 不能 +=. 之前的 += 已经记入,
                       再加一次会双倍累加 → 准则 5 重大违反 (Sir 17:55 真测痛点).
+
+                ⚠️ 任何 amount/new_current 必须是**单位 unit 内的真数值**, 不是 raw count.
+                  - track unit=ml + Sir 说"6 杯" → 必须先换算 (6 × cup_ml) 才填 amount/new_current
+                  - track unit=km + Sir 说"3 圈" → 必须先确认"一圈多少 km" 才换算
+                  - 单位不明 → ambiguous_unit_handling 主动问, 不瞎填 raw
+                  - **Sir 18:36 真测痛点**: 主脑 set new_current=6 (raw 杯数当 ml) 导致
+                    4900ml → 6ml 灾难性回退. 准则 5 重大违反.
 
                 STEP 2 (case c — status):
                   <FAST_CALL>{"organ":"progress","command":"status","params":{
