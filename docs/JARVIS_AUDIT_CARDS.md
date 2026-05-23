@@ -1051,3 +1051,554 @@ loop:
 
 ---
 
+## 批次 c: 记忆 11 模块 (refactor 核心战场)
+
+> 是 Sir 真意"记忆是底座"的具体载体. 11 模块都是 Memory Refactor 的目标.
+
+### #13 `jarvis_routing.py` (1480 行) — **ProfileCard + 3 Center + Router**
+
+**职责**: 4 个 router/center class. 主体是 `ProfileCard` (Sir 静态画像), 3 Center 是 PromptCenter/GuardianCenter/CompanionCenter (历史 wiring 容器).
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 51 | `SoulRouter` | LLM 路由器 (legacy?) |
+| 188 | `ContextRouter` | 上下文路由 |
+| 281 | `ContentPreferenceTracker` | 内容偏好追踪 |
+| 487 | **`ProfileCard`** | ⭐⭐⭐ Sir 静态画像 + apply_correction + overwrite_field (核心记忆类!) |
+| 1087 | `PromptCenter` | wiring 容器 (持有 prompt_cache) |
+| 1123 | `GuardianCenter` | wiring 容器 (持有 commitment_watcher / return_sentinel) |
+| 1173 | `CompanionCenter` | wiring 容器 (持有 smart_nudge / humor_memory) |
+
+**ProfileCard 关键 method** (~600 行):
+- `apply_correction(source_module, field, old_value, new_value, confidence)` — 老路径写 `profile_corrections.jsonl` (audit only, 不真改 sir_profile.json)
+- `overwrite_field(field, new_value, source, turn_id, reason)` — **新路径** (P5-fix32-B + fix81 嵌套支持) 真覆写 sir_profile.json + audit jsonl + SWM publish
+- `_persist_correction_to_disk` — atomic write
+- `render_for_prompt` — sir_profile → prompt block
+- `_OVERWRITE_ALLOWED_FIELDS` set (white list)
+
+**数据**:
+- 读: `jarvis_config/sir_profile.json` (主 profile)
+- 写 (audit): `memory_pool/profile_corrections.jsonl`
+- 写 (真): `jarvis_config/sir_profile.json` (atomic via tmp+rename, fix81 支持嵌套)
+- SWM publish: `sir_profile_overwritten`
+
+**上游**:
+- `central_nerve.__init__` 实例化 `self.profile_card = ProfileCard(self)`
+- `MemoryGateway.update_sir_field` (layer=ProfileCard) → 调 overwrite_field
+- 老路径 `worker.memory_correction` → 调 apply_correction (走 audit only)
+
+**下游**:
+- 写 sir_profile.json + corrections.jsonl + SWM bus
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **ProfileCard 是 Layer A 身份的 source of truth** (`JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §3.1)
+- 是 MemoryHub 的 6 source 之首 (Identity)
+- 老 `apply_correction` + 新 `overwrite_field` **2 路径** — Phase B 必合
+
+**已知问题**:
+- 老路径 `apply_correction` 仅 audit, 不真改 — 半失效死代码 (β.2.9.9 起 P5-fix32-B 转新路径)
+- 1480 行单文件, 4 个 router 杂在一起 — 可拆 (ProfileCard 独立成 jarvis_profile_card.py)
+- 3 Center (PromptCenter / GuardianCenter / CompanionCenter) 是历史 wiring 容器, **可能 deprecated** (现状只是 attr 容器)
+
+**重构含义**:
+- ⭐⭐⭐ ProfileCard 是 MemoryHub.identity source — **必扩展** (apply_correction 路径下线)
+- 3 Center 应**清理** — wiring 转到 CentralNerve 直接持有
+- 跟 `jarvis_memory_gateway.py` (新路径) 是同一记忆系统 2 半, **必合并**
+
+**审计结论**: ⭐ ProfileCard 是 refactor 核心. 老 vs 新路径必合. 3 Center 评估清理.
+
+---
+
+### #14 `jarvis_hippocampus.py` (1479 行) — **Hippocampus (LTM SQLite + 向量检索)**
+
+**职责**: Jarvis 长期记忆海马体. SQLite (`jarvis_memory.db`) 含 4 表 (TaskMemories / Commitments / ProjectTimeline / CorrectionMemory). Gemini embedding 向量检索 + Backfill daemon.
+
+**核心 class** (1 个超大):
+
+| L | class | 功能 |
+|---|---|---|
+| 14 | `Hippocampus` | 主类 (~1450 行!) |
+
+**核心 method (40+)**:
+- 向量: `_safe_embed_call` / `_embed_with_rotation` / `_fuzzy_fallback_search` / `search_memory` / `search_memory_default` (with time decay)
+- TaskMemories: `seal_memory(env, intent, goal, summary, ...)` (主写入) / `update_memory` / `delete_memory` / `restore_memory`
+- Commitments: `add_commitment_row` / `mark_commitment_nudged` / `update_commitment_row` / `soft_delete_commitment` / `load_active_commitments`
+- 完成事件: `add_completed_event(summary, keywords, source, turn_id)` (fix82-X 加) / `list_recent_completed_events(days_back, max_n)` (fix82-X 加)
+- Backfill: `_start_backfill_worker` (15s tick, 补 NULL 向量) / `_run_backfill_batch` / `_is_embed_in_cooldown`
+- 熔断: `_mark_embed_failed` (cooldown 60s on quota/auth fail)
+
+**数据**:
+- 读/写: `memory_pool/jarvis_memory.db` (sqlite, 4 表)
+- 调用: Gemini embedding API (gemini-embedding-2, 768 dim)
+- 不 publish SWM (除了 fix82-X completed_event 间接 cascade)
+
+**上游**:
+- `central_nerve.__init__` 实例化
+- `chat_bypass.stream_chat` 末尾 `seal_memory_async`
+- `worker.run` Gatekeeper → `add_commitment_row`
+- `MemoryGateway.cascade_completion` (fix82-X) → `add_completed_event`
+- `_assemble_prompt` → `search_memory` (LTM retrieve)
+
+**下游**:
+- Gemini embedding API (key router via _embed_with_rotation 跨 3 keys)
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **Hippocampus 是 Layer C 长期事实 + Commitments (Layer E) 的 source of truth**
+- TaskMemories: 历史 / 完成事件
+- Commitments: 时间承诺
+- ProjectTimeline + CorrectionMemory: 子表
+
+**已知问题**:
+- 1479 行单 class — 极难维护
+- 无 module docstring (audit 时已发现)
+- TaskMemories schema 含 `is_future_task` / `trigger_time` 字段 — 跟 Commitments 表概念重叠 ("future_task" 跟 "commitment" 模糊)
+- 4 表混在 1 个 db — 可拆 (但 sqlite 不一定要拆)
+- backfill daemon 跑在主进程 daemon 线程, 启动后立刻试 (β.4.1 起改 5s sleep)
+
+**重构含义**:
+- ⭐⭐⭐ Hippocampus 是 MemoryHub 的 B 事件 + C 承诺源
+- TaskMemories.is_future_task 字段重叠 Commitments — Phase B 必判
+- backfill / 熔断 logic 稳定, 不动
+- `add_completed_event` (fix82-X) 是 Phase 0 战术加 — Phase B 应正式集成
+
+**审计结论**: ⭐ 1479 行核心模块. schema 重叠是 refactor 重点. seal_memory + add_completed_event 是 Phase B 关键 API.
+
+---
+
+### #15 `jarvis_memory_core.py` (1513 行) — **12 类老记忆/纠错/睡意类**
+
+**职责**: P0+19-5 拆分时整合的 12 类 — HumorMemory / PromptLayer / PromptCache / CorrectionEntry / CorrectionMemory / MemoryFragment / **UnifiedMemoryGateway** / FeedbackTracker / TaskWorkerPool / Anticipator / CorrectionLoop / SleepIntentDetector.
+
+**核心 class** (12 个):
+
+| L | class | 功能 |
+|---|---|---|
+| 94 | `HumorMemory` | 笑点 (重叠 RelationalState.inside_jokes!) |
+| 300 | `PromptLayer` / 311 `PromptCache` | prompt 缓存 |
+| 352 `CorrectionEntry` / 362 `CorrectionMemory` | 老纠错记忆 (重叠 ProfileCard.apply_correction) |
+| 506 | `MemoryFragment` | 记忆碎片 |
+| **515** | **`UnifiedMemoryGateway`** | ⚠️ **同名不同 class** vs `jarvis_memory_gateway.py:MemoryMutationGateway` |
+| 756 | `FeedbackTracker` | 反馈追踪 |
+| 819 | `TaskWorkerPool` | 任务 worker 池 (注释 "C1-3 死代码清扫", 实例不再创建) |
+| 868 | `Anticipator` | 预期 / 前瞻 |
+| 965 | `CorrectionLoop` | 纠正循环 |
+| 1048 | `SleepIntentDetector` | 睡眠意图检测 |
+
+**数据**:
+- 读: `memory_pool/feedback_vocab.json`
+- 各类各自管自己的状态
+
+**上游**:
+- `central_nerve.__init__` 实例化 7+ 类 (UnifiedMemoryGateway / CorrectionLoop / SleepIntentDetector / etc.)
+
+**下游**: 内部 + 调 ProfileCard
+
+**跟记忆的耦合**:
+- ⚠️ **UnifiedMemoryGateway** vs **MemoryMutationGateway** (P2-Gap7) 同名不同 class!
+  - 老 UMG (memory_core.py:515) 是早期路径
+  - 新 MMG (memory_gateway.py) 是 P2-Gap7 重写
+  - **重叠**, Phase B 必合并
+- HumorMemory 重叠 RelationalState.inside_jokes
+- CorrectionMemory 重叠 ProfileCard.apply_correction → profile_corrections.jsonl
+
+**已知问题**:
+- ⚠️ **本文件混了 12 类不同概念** — Sir 5/16 拆分时为方便整合, 现状概念边界模糊
+- TaskWorkerPool 注释 "C1-3 死代码清扫" — 实例不再创建, 但类还在
+- HumorMemory 跟 RelationalState.inside_jokes 概念重叠
+- CorrectionMemory 跟 ProfileCard.apply_correction 路径重叠
+- UnifiedMemoryGateway 跟 MemoryMutationGateway 同名不同物 — **混淆名空间**
+
+**重构含义**:
+- ⭐⭐ **本文件是 Memory Refactor 的清理重灾区**
+- **必清理**:
+  - UnifiedMemoryGateway → 合并到 MemoryMutationGateway (统一名 MemoryHub)
+  - HumorMemory → 合并到 RelationalState.inside_jokes
+  - CorrectionMemory → 合并到 MemoryGateway 的 audit log
+  - TaskWorkerPool → 删 (死代码)
+- **保留**: SleepIntentDetector / CorrectionLoop / Anticipator (各自有用)
+
+**审计结论**: ⭐⭐ 1513 行 12 类**最严重的概念重叠区**. 是 Phase B 核心清理目标.
+
+---
+
+### #16 `jarvis_memory_gateway.py` (734 行) — **MemoryMutationGateway (新统一 mutation API)**
+
+**职责**: P2-Gap7 (2026-05-20) 立的统一 mutation API. 接收主脑 emit `<FAST_CALL>{"organ":"mutation",...}}` → 路由到 6 layer source (ProfileCard / Hippocampus / Concerns / Milestones / CommitmentWatcher / PromiseLog / RelationalState) → 写 audit `mutation_receipts.jsonl` + SWM publish.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 53 | `WriteReceipt` | dataclass — mutation_id / ts / iso / field_path / new/old_excerpt / source / confidence / layer_targeted / ok / error / turn_id |
+| 97 | **`MemoryMutationGateway`** | ⭐⭐⭐ 主类 — `update_sir_field(field_path, new_value, source, confidence, turn_id, nerve)` |
+
+**核心 method**:
+- `update_sir_field` (~250 行) — 主入口, 路由 + audit + SWM publish
+- `_maybe_cascade_completion(field_path, new_value, source, turn_id, nerve)` — fix82-X 加 (cascade Commitments cancel + add_completed_event + publish)
+- `_load_completion_vocab()` — fix82-X 加 (vocab 持久化 `memory_pool/completion_event_vocab.json`)
+- `_publish_swm(receipt)` — publish 'sir_field_updated' SWM
+- `_write_receipt(receipt)` — append `mutation_receipts.jsonl`
+- `recent_receipts(max_n, within_seconds)` — 查询
+- top-level `_detect_target_layer(field_path)` — `field_path` 前缀 → layer 路由
+
+**field_path 路由规则** (`_detect_target_layer`):
+- `profile.X` / `biographic.X` / `sir.X` → ProfileCard
+- `concerns.<cid>` / `concerns.<cid>.<attr>` → ConcernsLedger
+- `milestones.X` → Milestones
+- `commitment.cancel.<k>` / `commitment.update.<k>` → CommitmentWatcher
+- `promise.fulfill.<k>` / `promise.cancel.<k>` → PromiseLog
+- `relationships.<op>.<id>` / `protocol.X` / `unfinished.X` / `thread.X` → RelationalState
+
+**数据**:
+- 写: `memory_pool/mutation_receipts.jsonl` (统一 audit)
+- 写: 通过 layer 路由调各 source
+- SWM publish: 'sir_field_updated' (salience 0.80) / 'completion_cascaded' (fix82-X)
+- 读: `memory_pool/completion_event_vocab.json` (fix82-X)
+
+**上游**:
+- `chat_bypass._execute_fast_call` organ='mutation' → 调 update_sir_field
+- `worker.memory_correction` (P3-BUG#2) → 调 update_sir_field (路径 'preferences.user_correction', conf=0.5)
+- `IntentResolver tool_*` → 调 update_sir_field (conf=0.9)
+
+**下游**:
+- 7 个 layer source: ProfileCard / Hippocampus / Concerns / Milestones / CW / PromiseLog / RelationalState
+- SWM bus + receipts.jsonl
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **是 MemoryHub 的核心原型** — 现状已实现 6 layer routing, fix82-X 加 cascade. **应直接演化为 MemoryHub**, 不重写
+- 唯一统一 mutation 入口
+
+**已知问题**:
+- `field_path` 前缀字符串 hardcoded 在 `_detect_target_layer` (74-95 行) — 可 vocab 化
+- cascade 仅 1 类 (completion) — Phase B 应加更多 (param_update / commitment_cancel / etc.)
+- 跟 `UnifiedMemoryGateway` (memory_core.py) **同名不同物** → Phase B 改名 MemoryHub
+
+**重构含义**:
+- ⭐⭐⭐ **本模块是 MemoryHub 的 80% 实现** — Phase D 应基于此演化, 不另起炉灶
+- 改名: MemoryMutationGateway → MemoryHub (避免跟 UnifiedMemoryGateway 混淆)
+- 加 cascade rules (现仅 completion, 加 param_update / commitment_cancel / promise_fulfill / etc.)
+- 加 `read_context()` API (现状只 write, 无统一 read)
+
+**审计结论**: ⭐⭐⭐ **是 MemoryHub refactor 的起点**. 不重写, 增量演化.
+
+---
+
+### #17 `jarvis_milestones.py` (235 行) — **Sir 终生 milestones (lifetime declaration)**
+
+**职责**: Sir 自己声明的"重要时刻 / 不可对我用"的事 (e.g. "我有颈椎病" / "我和某人 5 年友谊"). 不是普通 profile field, 有特殊 do_not_use_against 规则.
+
+**核心 functions** (无 class, 全函数式):
+
+| L | func | 功能 |
+|---|---|---|
+| 86 | `load_milestones()` | 读 sir_milestones.json |
+| 41 | `_store_path` | 路径 |
+| 49 | `_empty_store` | 空 schema |
+| 63 | `_load_raw` / 77 `_save_raw` | atomic IO |
+| (其他 ~8 个) | add / list / archive / render_prompt_block / `tool_milestone_register` (Hippocampus 路由) |
+
+**数据**:
+- 读/写: `memory_pool/sir_milestones.json`
+
+**上游**:
+- `_assemble_prompt` render `[MILESTONES]` block
+- `MemoryGateway` layer='Milestones' → 调 tool_milestone_register
+
+**下游**: 仅 IO
+
+**跟记忆的耦合**:
+- ⭐ Layer A 子集 (静态身份的特殊部分)
+- 跟 sir_profile.lifetime 概念上重叠 — `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §2.3 模糊 3
+
+**已知问题**:
+- 跟 sir_profile.lifetime (如有) 重叠 — Phase B 判保留独立
+- 无 class, 全函数式 — 可改 class style 一致
+
+**重构含义**:
+- **保留独立** — milestones 有 do_not_use_against 特殊规则, 不应混入 profile
+- **跟 Memory Refactor 关系**: 是 MemoryHub.identity 的子 source
+
+**审计结论**: 薄, 235 行函数式, 不大改.
+
+---
+
+### #18 `jarvis_stm_summarizer.py` (355 行) — **STM Reply 概括 (Gap-Z1)**
+
+**职责**: 主脑 reply 太长时, 异步用小 LLM (Gemini-flash-lite) 概括成短文 → 写入 STM. 让 STM 30 turn 内不被长 reply 占满.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 158 | `STMSummarizer` | 主类 |
+
+**核心 method / function**:
+- `summarize_async(text, callback)` — fire-and-forget LLM
+- `_call_summarize_llm` — 短 LLM
+- `_load_config` (top-level) — 读 `memory_pool/stm_summarize_config.json`
+- `is_enabled` — 配置开关
+- `_cache_get / _cache_put` — LRU cache (避免重复概括)
+
+**数据**:
+- 读: `memory_pool/stm_summarize_config.json`
+- 写: 通过 callback 写回 STM (`central_nerve._append_stm`)
+
+**上游**:
+- `chat_bypass.stream_chat` 末尾 fire-and-forget (reply 长时)
+
+**下游**:
+- LLM (Gemini-flash-lite via OR)
+- callback → STM
+
+**跟记忆的耦合**:
+- 写 STM (短期), 不写 Hippocampus (长期)
+
+**已知问题**:
+- LLM cost (虽 lite 模型, 但每 reply 1 次) — 跟 Reflector Budget 联动
+- LRU cache 大小 hardcoded?
+
+**重构含义**:
+- **保留** — STM 概括降低 prompt 长度, 有用
+- **跟 Memory Refactor 关系**: STM 是 Layer B 事件的短期缓冲, 概括是优化
+
+**审计结论**: 实用工具, 不大改.
+
+---
+
+### #19 `jarvis_profile_reflector.py` (414 行) — **ProfileReflector (sir_profile.json 演化 daemon)**
+
+**职责**: 24h tick (fix81 改 5min) 扫 `profile_corrections.jsonl` 累积 → LLM propose 改动 → 写 `profile_review.json` → Sir CLI activate/reject.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 51 | `ProfileProposal` | dataclass — proposal_id / field_path / action / new_value / rationale / state |
+| 69 | `ProfileReflector` | 主 daemon |
+
+**核心 method**:
+- `_scan_corrections` — 读 jsonl tail
+- `_propose_changes_llm` — LLM 看 corrections + STM 提议 profile 改动
+- `_persist_review_queue` — 写 `profile_review.json`
+- `start_daemon(tick_interval_s)` — daemon 启动
+- `apply_proposal(proposal_id, decision)` — Sir CLI 调 (activate / reject)
+
+**数据**:
+- 读: `memory_pool/profile_corrections.jsonl` (audit)
+- 读: STM + ProfileCard (从 nerve 拿)
+- 写: `memory_pool/profile_review.json` (review queue)
+- 写: `jarvis_config/sir_profile.json` (Sir activate 后, 通过 ProfileCard.overwrite_field)
+
+**上游**:
+- `central_nerve.__init__` 启 daemon (env JARVIS_PROFILE_REFLECTOR=1)
+- `scripts/profile_reflector_dump.py` Sir CLI
+
+**下游**:
+- LLM (Gemini-flash via OR)
+- ProfileCard.overwrite_field
+
+**跟记忆的耦合**:
+- ⭐ profile.json 演化 — 是 Layer A 的更新机制
+- 跟 ProfileCard.apply_correction 配套 (corrections 累积 → reflector propose)
+
+**已知问题**:
+- 默认 24h tick, fix81 缩到 5min (但默认未启)
+- min_corrections=5 (fix81 改 1) 也太严
+- 跟 IntentResolver 直接 emit profile.update_field 路径**冲突** — 主脑直 emit 走 MemoryGateway, Reflector 走 review queue, 但概念重叠
+
+**重构含义**:
+- ⭐ **保留** — Reflector 模式是准则 6.5 模范
+- **整合**: 跟 MemoryGateway 的高置信跳 review 路径联动
+
+**审计结论**: 414 行 daemon 实用, 但 tick / threshold 需 Sir 真测调.
+
+---
+
+### #20 `jarvis_promise_log.py` (575 行) — **Jarvis 自承诺账本 (PromiseExecutionLog)**
+
+**职责**: Jarvis 嘴上说"我会监督你 X" 类承诺的真追踪. 区分 hard (有时间) / soft (无时间), 跟 ClaimTracer 配合 verify.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 90 | `Promise` | dataclass — id / kind (hard/soft) / description / created_at / deadline / state (pending/fulfilled/cancelled/overdue) |
+| 120 | `PromiseExecutionLog` | 主 store |
+| 515 | `PromiseSweepDaemon` | 周期 daemon (清 stale promise) |
+
+**核心 method**:
+- `register(description, kind, deadline_ts)` — 添加
+- `mark_fulfilled(pid, evidence_kind, evidence_what)` — 兑现
+- `mark_cancelled(pid, reason)` — 取消
+- `mark_overdue(pid)` — 超时
+- `list_pending` / `list_fulfilled` / `list_overdue`
+- top-level `try_pair_evidence(evidence_kind, evidence_what)` (β.2.8.5) — tool 成功后自动配对最近 promise → fulfilled
+
+**数据**:
+- 读/写: `memory_pool/jarvis_promise_log.json`
+- SWM publish: `_publish_promise_event` (top-level helper)
+
+**上游**:
+- `SelfPromiseDetector` 抽 promise → register
+- `chat_bypass._execute_fast_call` 末尾 → try_pair_evidence
+- `MemoryGateway` layer='PromiseLog' → 调 mark_fulfilled / mark_cancelled
+
+**下游**: 内部 + SWM
+
+**跟记忆的耦合**:
+- ⭐ **Layer E 承诺的子 source** (Jarvis 自己的承诺 vs Sir 的承诺 = CommitmentWatcher)
+- 跟 CommitmentWatcher 概念上重叠 — `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §2.2 重叠 1 提出: "Promise Log + Commitment Watcher + concerns.notes_for_self 三套合并"
+
+**已知问题**:
+- 跟 CommitmentWatcher 重叠 — design doc 提出 PromiseLog 单源 + CW 退化为 timer engine, **未执行**
+- soft promise 跟 concerns.notes_for_self 概念重叠
+
+**重构含义**:
+- ⭐⭐ **是 Layer E 的合并候选** — Phase B 必决定: PromiseLog 单源 vs 双源 (Jarvis + Sir 分开)
+- `try_pair_evidence` 是 promise 兑现的核心 — Phase D 应保留
+
+**审计结论**: ⭐ 跟 CommitmentWatcher 合并是 refactor 关键决策点.
+
+---
+
+### #21 `jarvis_commitment_watcher.py` (1933 行) — **CommitmentWatcher (Sir 承诺 + sqlite + 定时 nudge)**
+
+**职责**: Sir 嘴上的承诺 (e.g. "10:30 提醒去洗澡"). 含: 抽承诺 + sqlite 持久化 (Commitments 表) + in-memory list + 定时检查 + nudge 触发 + cancel/update by keyword.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 267 | `CommitmentWatcher` | 主类 (~1700 行!) |
+
+**核心 method (50+)**:
+- `add_commitment(description, deadline_str, source='gatekeeper'/'self_promise')` — 主入口 (含 sqlite INSERT + in-memory + SWM publish 'sir_intent_deadline_candidate')
+- `cancel_by_keyword(keyword, max_age_seconds=1800)` — fuzzy match 取消 (P0-3, fix82-X 用 24h 窗口)
+- `update_by_keyword(keyword, new_description, new_deadline_str)` — 改
+- `_check_due_commitments` — tick (1s) 检查到期
+- `_fire_nudge(commit)` — 触发 [REMINDER FIRING NOW]
+- `_to_24h(h, m, ampm)` — 时间转换
+- top-level `_load_behavior_patterns_from_json` (vocab 加载) / `infer_concern_link` / `infer_expected_behavior` (β.5.46-fix13 行为推断)
+
+**数据**:
+- 读/写: `memory_pool/jarvis_memory.db` (Commitments 表, 通过 Hippocampus.add_commitment_row)
+- 读: `memory_pool/behavior_inference_vocab.json` (准则 6.5)
+- 读: `memory_pool/commitment_conditional_vocab.json`
+- SWM publish: 'sir_intent_deadline_candidate' (β.5.44-B) / 'commitment_overdue' / 'reminder_fired'
+
+**上游**:
+- `worker.run` Gatekeeper LLM 抽 commit → 调 add_commitment
+- `SelfPromiseDetector` (jarvis_self_promise.py) → 调 add_commitment
+- `MemoryGateway` layer='CommitmentWatcher' → 调 cancel_by_keyword / update_by_keyword
+- fix82-X cascade_completion → 调 cancel_by_keyword
+- `_check_due_commitments` (tick daemon) 自启
+
+**下游**:
+- `Hippocampus.add_commitment_row / soft_delete_commitment`
+- `chat_bypass.stream_nudge` (commitment_check fire 时)
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **是 Layer E 承诺的 source of truth** (Sir 承诺), 配套 PromiseLog (Jarvis 自承诺)
+- 跟 PromiseLog 重叠 — `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §2.2 重叠 1
+- 跟 `cyclic_task` (循环承诺) + `watch_task` (等屏幕事件) 概念上 4 套时间承诺 系统
+
+**已知问题**:
+- 1933 行单 class — 极大
+- 跟 PromiseLog / cyclic_task / watch_task **4 套时间承诺**, design doc 提出合并未执行
+- `cancel_by_keyword` fuzzy match 不准 — Sir 22:06 真测痛点 (description "明天去医院咨询医生血压跟降压药" vs Sir 说"明天去血压咨询" 没命中)
+- in-memory list 跟 sqlite 双层数据 — 同步不一致风险
+
+**重构含义**:
+- ⭐⭐⭐ **是 Layer E 的核心**, 跟 PromiseLog / cyclic_task / watch_task 必合并设计
+- fuzzy match 应升级 (LLM-based, 不是字面 LIKE)
+- in-memory + sqlite 应统一 (sqlite 唯一 truth)
+
+**审计结论**: ⭐⭐ 1933 行核心模块. 4 套时间承诺合并是 refactor 重点.
+
+---
+
+### #22 `jarvis_self_promise.py` (580 行) — **SelfPromiseDetector (Jarvis 自承诺检测器)**
+
+**职责**: 看 Jarvis reply, 检测"我会 X" 类承诺. 区分 hard (有时间, 进 CommitmentWatcher) vs soft (无时间, 进 concerns.notes_for_self / PromiseLog).
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 225 | `SelfPromiseDetector` | 主类 |
+
+**核心 method / function**:
+- `detect(reply)` — 主入口, 返 promises list
+- `detect_and_register(reply, commitment_watcher)` — detect + 自动注册到 CW
+- top-level `_load_promise_vocab` / `_get_compiled_soft_patterns` (vocab 加载)
+
+**数据**:
+- 读: `memory_pool/promise_soft_vocab.json` (准则 6.5)
+- 写: 通过 CommitmentWatcher.add_commitment + PromiseLog.register
+
+**上游**: `chat_bypass.stream_chat` 末尾 fire-and-forget
+
+**下游**:
+- CommitmentWatcher.add_commitment (hard)
+- PromiseLog.register (soft)
+
+**跟记忆的耦合**:
+- 间接 — 是 PromiseLog 和 CommitmentWatcher 的写入者
+
+**已知问题**:
+- vocab 持久化 ✅ (准则 6 模范)
+- 跟 ConcernsLedger.notify_concern_aligned (Jarvis 对齐 concern 时的"我会监督") 概念交叉
+
+**重构含义**:
+- **保留** — vocab + L7 范式好
+- **跟 Memory Refactor 关系**: 是 Layer E 的写入侧 detector
+
+**审计结论**: 580 行实用 detector, 不大改.
+
+---
+
+### #23 `jarvis_cyclic_task.py` (398 行) — **CyclicTask (通用循环协议)**
+
+**职责**: P5-fix35-C / 2026-05-23 立的"每 N 分钟/小时/天 X" 循环承诺. 主脑 emit `<FAST_CALL>{"organ":"cyclic_task",...}` 后, 系统展开成 N 个 reminder.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 55 | `CyclicTask` | dataclass — task_id / kind / interval_s / next_fire_ts / max_fires |
+| 81 | `CyclicTaskStore` | 主 store + tick daemon |
+
+**核心 method**:
+- `register(kind, interval_s, ...)` — 添加, 自动展开 N 次
+- `cancel(task_id)` — 取消
+- `list_active`
+- `_tick_check_due` — daemon 检查到期
+
+**数据**:
+- 读/写: `memory_pool/cyclic_task_dispatcher_vocab.json` (准则 6.5)
+- 通过 CommitmentWatcher.add_commitment 间接写 sqlite
+
+**上游**:
+- `chat_bypass._execute_fast_call` organ='cyclic_task' → register
+
+**下游**:
+- CommitmentWatcher.add_commitment (注册每个展开的 reminder)
+
+**跟记忆的耦合**:
+- ⭐ Layer E 子 source (循环承诺特殊化, 区别于单次 commitment)
+- 跟 CommitmentWatcher 是依赖 (cyclic 展开 = N 个 commitment)
+
+**已知问题**:
+- 跟 CommitmentWatcher 是双层 (cyclic 是抽象, commitment 是具体), refactor 时考虑合并
+
+**重构含义**:
+- **保留** — 循环承诺是真实需求, 抽象正确
+- **跟 Memory Refactor 关系**: Layer E 子 source
+
+**审计结论**: 398 行薄 store + tick, 实现合理.
+
+---
+
+
