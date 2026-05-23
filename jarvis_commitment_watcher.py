@@ -1650,6 +1650,35 @@ class CommitmentWatcher(threading.Thread):
 
     def _dispatch_commitment_nudge(self, commitment):
         overdue_minutes = int((time.time() - commitment['deadline_ts']) / 60)
+        # 🆕 [P5-fix42 / 2026-05-23 14:34] inject sleep evidence — 主脑 evidence-based
+        # 自决, 不再直觉断言 'still working'. Sir 14:32 真痛点: NudgeGate 显示 sleep
+        # 132min 但主脑三连"您没睡". 让 directive 看 NudgeGate 真状态.
+        sleep_mode_active = False
+        sleep_duration_min = 0
+        recent_sleep_min = 0
+        try:
+            if self.gate and hasattr(self.gate, 'is_sleep_mode'):
+                sleep_mode_active = bool(self.gate.is_sleep_mode())
+                if sleep_mode_active and hasattr(self.gate, 'sleep_duration_seconds'):
+                    sleep_duration_min = int(self.gate.sleep_duration_seconds() / 60)
+        except Exception:
+            pass
+        # recent_sleep_min: 过去 1h 内 ReturnSentinel afk 累计 (代理量, 简单 proxy:
+        # 当前 sleep_duration_min 也算入). 主脑读 evidence 判断.
+        try:
+            recent_sleep_min = sleep_duration_min  # 简版: sleep_mode 是主信号
+            # 若已退出 sleep mode, 看 jarvis._last_user_active 距 commitment_time 是否
+            # 有 > 30min gap (Sir 真睡过纳).
+            if not sleep_mode_active and self.jarvis is not None:
+                last_active = getattr(self.jarvis, '_last_user_active', 0) or 0
+                # ReturnSentinel afk 时长 (近 1h)
+                rs = getattr(self.jarvis, 'return_sentinel', None)
+                if rs is not None and hasattr(rs, '_last_afk_seconds'):
+                    afk_s = float(getattr(rs, '_last_afk_seconds', 0) or 0)
+                    if afk_s > 1800:  # 30min+ AFK = 真休息过
+                        recent_sleep_min = max(recent_sleep_min, int(afk_s / 60))
+        except Exception:
+            pass
         context = {
             "type": "commitment_check",
             "commitment_description": commitment['description'],
@@ -1657,7 +1686,11 @@ class CommitmentWatcher(threading.Thread):
             "commitment_source_text": commitment.get('source_text', '')[:200],
             "commitment_time": time.strftime("%H:%M", time.localtime(commitment['deadline_ts'])),
             "source_text": commitment['source_text'],
-            "overdue_minutes": overdue_minutes
+            "overdue_minutes": overdue_minutes,
+            # 🆕 [P5-fix42] sleep evidence
+            "sleep_mode_active": sleep_mode_active,
+            "sleep_duration_min": sleep_duration_min,
+            "recent_sleep_min": recent_sleep_min,
         }
         if self.gate and not self.gate.can_speak('guardian', is_urgent=True, nudge_type='commitment_check'):
             return

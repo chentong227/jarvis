@@ -425,6 +425,82 @@ class ChronosSentinel(threading.Thread):
         self.hippocampus = hippocampus
         self.jarvis = jarvis
 
+    # 🆕 [P5-fix41 / 2026-05-23 14:36] Sir 准则 6 / β.5.0 三维耦合 reminder 链路修.
+    #
+    # Sir 真痛点 (14:32): hydration cycle reminder 在 sleep mode (132min) 中强行
+    # fire → NudgeGate 休眠模式强制解除 → SmartNudge commitment_check 三连"您没睡".
+    # Sir 真意: "提醒喝水还主动打断了睡眠模式, 这个优先级不该有 CLOCK 优先级高吧.
+    # 哪怕他不走之前的模块, 也该只是 push only, 植入数据整理模块然后 LLM 主脑决策".
+    #
+    # 设计 (准则 6 三维耦合):
+    #   - **数据强耦合**: 任何 reminder due → publish 'reminder_fired' 到 SWM
+    #     (永远 publish, 主脑可看历史 evidence)
+    #   - **行为弱耦合**: sleep_mode + 非 alarm-style → push only (publish 不 deliver)
+    #   - **决策集中主脑**: Sir 主动唤醒后主脑 SWM 看 reminder_fired 历史 → 自决补 ack
+    #   - **Sir 显式硬规底线**: sleep + alarm-style (Sir 显式预设闹钟) → 仍 deliver
+    #     (β.5.18 同款 last resort, 主脑无法 override, 因为 sleep 时主脑不跑)
+    #
+    # alarm-style 启发是 last-resort safety, 不属于"硬编码决策"范畴 (准则 6 允许
+    # Sir 显式硬规作底线). 后续可抽到 memory_pool/reminder_priority_vocab.json +
+    # CLI + L7 reflector LLM-propose 新 alarm verb.
+    _ALARM_KEYWORDS_EN = (
+        'wake me', 'alarm', 'wake up', 'wake-up', 'set an alarm',
+        'get me up', 'wake-me-up', 'rise me',
+    )
+    _ALARM_KEYWORDS_ZH = (
+        '叫醒', '叫我', '唤醒', '起床', '把我叫', '把我唤', '闹钟', '闹铃',
+    )
+
+    def _is_alarm_style(self, intent: str) -> bool:
+        """是否是 Sir 显式 alarm/wake-up — 这类即使 sleep mode 也要 fire."""
+        if not intent:
+            return False
+        s = intent.lower()
+        for kw in self._ALARM_KEYWORDS_EN:
+            if kw in s:
+                return True
+        for kw in self._ALARM_KEYWORDS_ZH:
+            if kw in intent:
+                return True
+        return False
+
+    def _publish_reminder_fired(self, r: dict, sleep_mode_active: bool,
+                                  is_alarm: bool, delivered: bool) -> None:
+        """[P5-fix41] publish 'reminder_fired' 到 SWM — 准则 6 数据强耦合.
+
+        永远 publish, 不管 deliver 与否. 主脑 SWM 看历史 evidence 自决.
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            mode_str = (
+                'push_only' if (sleep_mode_active and not delivered)
+                else 'delivered'
+            )
+            desc = (
+                f"reminder ID:{r.get('id', '?')} '{(r.get('intent') or '')[:80]}' "
+                f"fire 模式={mode_str}"
+                f"{' (sleep+alarm hard fire)' if (sleep_mode_active and is_alarm and delivered) else ''}"
+            )
+            bus.publish(
+                etype='reminder_fired',
+                description=desc,
+                source='ChronosSentinel',
+                metadata={
+                    'reminder_id': r.get('id'),
+                    'intent': (r.get('intent') or '')[:200],
+                    'trigger_time': r.get('trigger_time'),
+                    'sleep_mode_active': sleep_mode_active,
+                    'is_alarm_style': is_alarm,
+                    'delivered': delivered,
+                    'mode': mode_str,
+                },
+            )
+        except Exception:
+            pass
+
     def run(self):
         time.sleep(10) # 延迟启动，避开开机高峰
         while True:
@@ -437,6 +513,31 @@ class ChronosSentinel(threading.Thread):
                     intent = r['intent']
                     if self.jarvis and r['id'] in getattr(self.jarvis, '_pending_reminders', {}):
                         continue
+                    # 🆕 [P5-fix41] sleep mode + alarm-style 三维耦合判断
+                    gate = getattr(self.jarvis, 'nudge_gate', None) if self.jarvis else None
+                    in_sleep = False
+                    if gate is not None:
+                        try:
+                            in_sleep = gate.is_sleep_mode()
+                        except Exception:
+                            in_sleep = False
+                    is_alarm = self._is_alarm_style(intent)
+
+                    # sleep + 非 alarm → push only (publish 不 deliver)
+                    if in_sleep and not is_alarm:
+                        self._publish_reminder_fired(
+                            r, sleep_mode_active=True, is_alarm=False, delivered=False)
+                        try:
+                            from jarvis_utils import bg_log as _bg41
+                            _bg41(
+                                f"💤 [Chronos/PushOnly] reminder ID:{r['id']} "
+                                f"'{intent[:60]}' 在 sleep mode push-only "
+                                f"(publish SWM, 不 deliver. Sir 唤醒后主脑 SWM 自决补 ack)"
+                            )
+                        except Exception:
+                            pass
+                        continue
+
                     # [P0+18-c.2 / 2026-05-15] 同 _escalate_reminder：触发文案改成"FIRING NOW"
                     # 不再用"it is time to trigger the following reminder" 让 LLM 误读
                     content = (
@@ -454,6 +555,9 @@ class ChronosSentinel(threading.Thread):
                         reminder_intent=intent,
                         reminder_trigger_time=r['trigger_time']
                     )
+                    # 🆕 [P5-fix41] deliver 路径也 publish (数据强耦合) — 主脑历史可见
+                    self._publish_reminder_fired(
+                        r, sleep_mode_active=in_sleep, is_alarm=is_alarm, delivered=True)
                     
             except Exception as e:
                 pass 

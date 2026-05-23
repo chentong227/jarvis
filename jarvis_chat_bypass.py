@@ -4744,10 +4744,27 @@ Sir uses a DESKTOP PC with no battery. There is NO battery percentage, NO power 
             "commitment_check": (
                 # 删句式锁 "Express gentle dry concern / sound like a friend not a parent".
                 # 保留 anti-hallucination (这是 integrity 规则不是句式锁, Sir 准则 5).
+                # 🆕 [P5-fix42 / 2026-05-23 14:34] Sir 14:32 真痛点: 主脑三连"您没睡, 计划被
+                # 专注取代", 但实际 NudgeGate 显示 Sir 真 sleep mode 132min. 主脑没读 sleep
+                # evidence, 直觉说"still working". 治: 加 sleep_duration_min / was_napping
+                # evidence, 让主脑 evidence-based 自决说什么.
                 f"Sir said he would {nudge_context.get('commitment_description', 'rest')} "
                 f"at {nudge_context.get('commitment_time', 'a certain time')}. "
                 f"It is now {nudge_context.get('overdue_minutes', 'some')} minutes past "
-                f"that time and he is still working.\n\n"
+                f"that time.\n\n"
+                f"[SLEEP/REST EVIDENCE — read before assuming Sir didn't rest]:\n"
+                f"  sleep_mode_active: {nudge_context.get('sleep_mode_active', False)} "
+                f"(NudgeGate 当前是否在 sleep mode)\n"
+                f"  sleep_duration_min: {nudge_context.get('sleep_duration_min', 0)} "
+                f"(若 > 0 说明 Sir 此刻确实在睡 / 刚睡醒)\n"
+                f"  recent_sleep_min: {nudge_context.get('recent_sleep_min', 0)} "
+                f"(过去 1h 内累计 sleep 时长 — 若 > 30, Sir 真睡过 nap 了)\n"
+                f"  → 若上面 sleep_duration_min > 30 或 recent_sleep_min > 30, "
+                f"Sir 真的休息过 (不是 'still working'). 此时不要说"
+                f"'计划被专注取代' / 'sacrificed to focus'. 改说 '看您休息了 X 分钟, "
+                f"承诺已兑现' 或类似 acknowledge 语义.\n"
+                f"  → 若 sleep_duration_min == 0 且 recent_sleep_min == 0, Sir 没休息 — "
+                f"才是 'still working past commitment time'.\n\n"
                 f"[ANTI-HALLUCINATION — Sir 准则 5 言出必行]:\n"
                 f"1. His EXACT original words were: "
                 f"\"{(nudge_context.get('commitment_source_text', '') or '(no source)')[:160]}\". "
