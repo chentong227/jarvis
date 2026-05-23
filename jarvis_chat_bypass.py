@@ -4749,19 +4749,27 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             if _ln_turn_id and final_reply:
                 _ln_decision_id = make_brain_decision_id(_ln_turn_id)
                 # 拼 claims_extracted from _claim_result (line 4374, 可能未定义)
+                # [M1-fix1 / Sir 真测] 总记 ClaimTracer summary, 即使 n_claims=0
+                # 也显示 '<0 claims tracked>' 表 ClaimTracer 跑了 (vs 没跑).
                 _ln_claims = []
                 if '_claim_result' in dir():
                     try:
+                        _ln_n_total = int(_claim_result.get('n_claims', 0))
+                        _ln_n_ver = int(_claim_result.get('n_verified', 0))
+                        _ln_n_unv = int(_claim_result.get('n_unverified', 0))
+                        # unverified examples (max 5)
                         for _ex in (_claim_result.get('unverified_examples', []) or [])[:5]:
                             _ln_claims.append({'text': str(_ex)[:100], 'verified': False})
-                        # verified count (no examples list, 仅 stats)
-                        _ln_n_ver = int(_claim_result.get('n_verified', 0))
-                        if _ln_n_ver > 0:
-                            _ln_claims.append({
-                                'text': f'<{_ln_n_ver} verified claims>',
-                                'verified': True,
-                                'is_aggregate': True,
-                            })
+                        # aggregate summary (always)
+                        _ln_claims.append({
+                            'text': f'<ClaimTracer ran: {_ln_n_total} claims, '
+                                    f'{_ln_n_ver} verified, {_ln_n_unv} unverified>',
+                            'verified': bool(_ln_n_unv == 0),
+                            'is_aggregate': True,
+                            'n_claims': _ln_n_total,
+                            'n_verified': _ln_n_ver,
+                            'n_unverified': _ln_n_unv,
+                        })
                     except Exception:
                         pass
                 get_default_tracer().record_decision(

@@ -195,11 +195,32 @@ def _autouse_isolate_prod_persistence(tmp_path, monkeypatch):
     except Exception:
         pass
 
+    # [Reshape M1 / 2026-05-24] 隔离 LineageTracer 生产 jsonl
+    # Sir 真测发现 100+ testcase 跑 SWM publish 污染 memory_pool/lineage.jsonl
+    # (1367 unknown / 1452 evidence). 每个 test 切自己 tmp path, 测完丢.
+    try:
+        import jarvis_lineage as _jln
+        tmp_lineage_jsonl = tmp_path / "lineage_test.jsonl"
+        _isolated_tracer = _jln.LineageTracer(
+            jsonl_path=str(tmp_lineage_jsonl),
+            auto_start_flush=False,   # 不启 daemon, 测试 deterministic
+        )
+        _jln.reset_default_tracer_for_test(_isolated_tracer)
+    except Exception:
+        pass
+
     yield
 
     # 测试完: 重置单例 (next test / cleanup 用 prod path 再 lazy init)
     try:
         import jarvis_promise_log as _jpl
         _jpl.reset_default_log_for_test()
+    except Exception:
+        pass
+
+    # [Reshape M1 / 2026-05-24] 测试完重置 LineageTracer 单例
+    try:
+        import jarvis_lineage as _jln
+        _jln.reset_default_tracer_for_test(None)
     except Exception:
         pass

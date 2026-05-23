@@ -136,6 +136,7 @@ def cmd_list_decisions(args):
         print(f'[{ts}] {did}')
         print(f'  turn={tid}  blocks={n_blocks}  actions={n_actions}  claims={n_claims}')
         print(f'  reply: {rep}')
+        print(f'  → trace: python scripts/lineage_dump.py --reply-id={did}')
         print('')
 
 
