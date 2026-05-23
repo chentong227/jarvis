@@ -4772,11 +4772,21 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         })
                     except Exception:
                         pass
+                # [M1.3-min / 2026-05-24] 拿 _assemble_prompt 装好的 evidence_log
+                # 现在 swm_conversation / swm_high_salience block 已有真 evidence_id.
+                # 后续 M7 PromptBuilder polymorphic 时再补 soul_block / profile_block 等.
+                _ln_prompt_log = {}
+                try:
+                    _ln_jarvis = getattr(self, 'jarvis', None)
+                    if _ln_jarvis is not None:
+                        _ln_prompt_log = dict(getattr(_ln_jarvis, '_last_prompt_evidence_log', {}) or {})
+                except Exception:
+                    _ln_prompt_log = {}
                 get_default_tracer().record_decision(
                     decision_id=_ln_decision_id,
                     turn_id=_ln_turn_id,
                     reply_text=final_reply or '',
-                    prompt_evidence_log={},   # TODO M1.3/M7: PromptBlock 装配时填
+                    prompt_evidence_log=_ln_prompt_log,  # M1.3-min: SWM blocks ✓; M7 后补 soul/profile
                     actions_emitted=[],       # TODO 后续: FAST_CALL trace_ids
                     claims_extracted=_ln_claims,
                 )

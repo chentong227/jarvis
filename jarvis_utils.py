@@ -1500,6 +1500,24 @@ class ConversationEventBus:
         """是否近期有某类型事件（用于 NudgeGate / focus_lock 等快速判断）。"""
         return bool(self.recent_events(within_seconds=within_seconds, types={etype}))
 
+    def collect_evidence_ids(self, within_seconds: float = None,
+                              types: set = None) -> list:
+        """[Reshape M1.3-min / 2026-05-24] 返回近期 events 的 evidence_id list.
+
+        用法 (Lineage Trace 反向追溯):
+            ids = bus.collect_evidence_ids(within_seconds=360.0)
+            # 主脑 prompt 装配时, 把 ids 存进 prompt_evidence_log,
+            # decision 写入 lineage.jsonl 后可反向 trace 这些 evidence.
+
+        Args:
+            within_seconds: 同 recent_events
+            types: 同 recent_events
+        Returns:
+            list of evidence_id (str). 跳过没 evidence_id 的 event (legacy 兼容).
+        """
+        events = self.recent_events(within_seconds=within_seconds, types=types)
+        return [e['evidence_id'] for e in events if e.get('evidence_id')]
+
     def to_prompt_block(self, max_chars: int = 600,
                         within_seconds: float = 360.0,
                         title: str = "=== CONVERSATION STATE ===") -> str:

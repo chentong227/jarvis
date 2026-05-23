@@ -3681,6 +3681,23 @@ User: {user_input}
         except Exception:
             swm_block = ""
 
+        # [Reshape M1.3-min / 2026-05-24] 装 prompt_evidence_log
+        # 主脑读了这些 SWM evidence (event_bus / swm_block), 主脑 reply 后
+        # chat_bypass.stream_chat 末尾用这个 dict 填 record_decision.prompt_evidence_log.
+        # 反向追溯: reply → decision → 这里 evidence_id → 各 publisher source row.
+        try:
+            bus = getattr(self, 'event_bus', None)
+            if bus is not None and hasattr(bus, 'collect_evidence_ids'):
+                _evidence_log = {}
+                if event_bus_block:
+                    _evidence_log['swm_conversation_360s'] = bus.collect_evidence_ids(within_seconds=360.0)
+                if swm_block:
+                    # to_swm_block 用 top_n + salience_floor=0.3, 这里 collect 同 window
+                    _evidence_log['swm_high_salience_pool'] = bus.collect_evidence_ids(within_seconds=900.0)
+                self._last_prompt_evidence_log = _evidence_log
+        except Exception:
+            self._last_prompt_evidence_log = {}
+
         # [R7-α/AttentionContext] 注意力锚点：Sir 讲话当下盯着的窗口/光标位置/最近窗口切换。
         # 用 ≤ 5s 内的快照，过时则丢（避免把陈旧 attention 当成"现在"）。
         # 让 LLM 解 "这里/这个/那段" 这类指代成本接近零。
