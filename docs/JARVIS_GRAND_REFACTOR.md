@@ -312,27 +312,36 @@
 | Phase A.4 | 耦合矩阵 | ✅ done | `JARVIS_COUPLING_MATRIX.md` (~400 行, 耦合 7 形态 + 6 同名 class 冲突 + 8 概念重叠 + god object 反模式) |
 | Phase A.5 | 历史 audit | ✅ done | `JARVIS_LEGACY_AUDIT.md` (死代码 4 / 半死代码 5+ / 35 design doc 状态 / 历史教训 / Sir 待拍板 4 项)
 | Phase B | 设计 | ✅ done | `JARVIS_PHASE_B_DESIGN.md` (~700 行, 13 章 / 4 护城河 + 3 薄弱点 + 4 铁律 / 6 source / Lineage Trace / 8 milestone) — 等 Sir Q1-Q4 拍板
-| Phase C | 拍板 | ⬜ pending | B 完成后 |
-| Phase D | 重构 | ⬜ pending | C 拍板后 |
+| Phase C | 拍板 | ✅ done (Cascade 受委拍 4 项) | Q1 拆 4 file / Q2 3-brain _legacy / Q3 MemoryHub / Q4 保留 |
+| Phase D | 重构 | ⬜ pending | 等 Sir 醒来 accept 决议 → 动工 M1 |
 
 ### 6.2 当前位置 (LIVE)
 
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: 🎉 **Phase A + Phase B 全部完成!** 等 Sir Q1-Q4 拍板进 Phase C
-进度: Phase A (5 sub-phase 6000 行) + Phase B (700 行 设计 doc)
-下一动作: 等 Sir 看完 `JARVIS_PHASE_B_DESIGN.md` → 给 4 项决议 → 进 Phase C
-Phase A+B 8 份核心 doc:
-  1. `docs/JARVIS_GRAND_REFACTOR.md` (本 doc, 立项)
+当前阶段: 🎉🎉🎉 **Phase A+B+C 全部完成!** 等 Sir 醒来 accept 4 项决议 → 动工 Phase D-M1
+进度: Phase A (6000 行) + Phase B (700 行) + Reshape (1300 行) + Kickoff (300 行)
+下一动作: Sir 醒来 → 看 `docs/AGENT_KICKOFF_GRAND_RESHAPE.md` (~5 min) → 拍板 Q1-Q4 → 动工 M1
+Phase A+B+Reshape 11 份核心 doc:
+  1. `docs/JARVIS_GRAND_REFACTOR.md` (本 doc, 立项 + LIVE 进度)
   2. `docs/JARVIS_AUDIT_CARDS.md` (140 模块 cards)
   3. `docs/JARVIS_DATAFLOW_MAP.md` (数据流)
   4. `docs/JARVIS_STORAGE_MAP.md` (storage)
   5. `docs/JARVIS_COUPLING_MATRIX.md` (耦合)
   6. `docs/JARVIS_LEGACY_AUDIT.md` (历史)
   7. `docs/JARVIS_ARCHITECTURE_MAP.md` (架构总览)
-  8. **`docs/JARVIS_PHASE_B_DESIGN.md`** (设计, 4 护城河 + Lineage Trace + 8 milestone) ⭐
-最后 commit: 3179720 (A.5 legacy)
+  8. `docs/JARVIS_PHASE_B_DESIGN.md` (Phase B 简化版)
+  9. **`docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md`** ⭐⭐⭐ (~1300 行, 最终设计书 + M1-M8 详细手册)
+  10. **`docs/AGENT_KICKOFF_GRAND_RESHAPE.md`** ⭐ (Sir 醒来 5 min 起步)
+  11. `docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR_v1_archive.md` (archive)
+最后 commit: 72bc6d7 (Reshape Part 1-5)
+
+Sir 醒来 决议拍板 checklist:
+  Q1 拆 jarvis_enhanced.py 4 file? │ ✅ Cascade 拆
+  Q2 3-brain 彻底放弃?       │ ✅ Sir 拍板 → _legacy/3_brain_attempt/
+  Q3 memory_gateway → Hub?    │ ✅ Cascade 拆
+  Q4 cross_session_callback?    │ ✅ 保留 (Phase A 误判, 跨进程 IPC 真用)
 ```
 
 ### 6.3 已完成 audit cards
