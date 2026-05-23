@@ -244,3 +244,180 @@ bg_log(msg) → 自动 prefix `[sess_xxx][turn_yyy] msg` 写到 docs/runtime_log
 
 ---
 
+### #3 `jarvis_central_nerve.py` (5086 行) — **CentralNerve + PERSONA + _assemble_prompt (主脑大脑)**
+
+**职责**: Jarvis 主大脑控制器. 持有所有 sub-component 实例 (30+) + 装配每轮主脑 prompt + STM 管理 + Sleep 模式 + 主循环. **CentralNerve 实例是 Jarvis 系统的中心节点**, 90% 主模块都通过它访问其他.
+
+**核心 class** (仅 1 个):
+
+| L | class | 1 句话 |
+|---|---|---|
+| 251 | **`CentralNerve`** | 主大脑控制器 (持有 30+ component + 装配 prompt + STM + Sleep) |
+
+**核心 method** (按重要性排序):
+
+| L | method | 功能 | 行数 | 重要性 |
+|---|---|---|---|---|
+| 259 | **`__init__`** | 实例化 30+ component (Hippocampus / ProfileCard / Concerns / Relational / SelfAnchor / EventBus / SoulEval / SoulReflector / SkillRegistry / Directives / StandDown / PlanLedger / WorkingMemoryFeed / ...) | ~950 行 | ⭐⭐⭐ |
+| 1495 | **`_assemble_prompt`** | 装配每轮主脑 prompt (PERSONA + 30+ render block, ~25K-36K chars) | ~2500 行 | ⭐⭐⭐ |
+| 4289 | `run` | 主循环 — process_command + 调 chat_bypass.stream_chat | ~400 行 | ⭐⭐ |
+| 4018 | `_build_nudge_prompt` | nudge 专用 prompt 装配 | ~50 行 | ⭐⭐ |
+| 4008 | `_build_time_persona` | 动态时间 PERSONA (含 day-of-week / 当前小时) | ~10 行 | ⭐ |
+
+**STM 管理 method**:
+
+| L | method | 功能 |
+|---|---|---|
+| 1287 | `push_command` | 接收 Sir 命令进 STM |
+| 1317 | `_calc_importance` | STM 单条 importance 评分 |
+| 1336 | `_compress_stm_if_needed` | STM 超 30 条压缩 |
+| 1355 | `_append_stm` | append + dirty flag + publish 'utterance_appended' SWM |
+| 1392 | `_restore_stm_from_disk` | 启动时 restore (β.4.10) |
+| 1437 | `_persist_stm_to_disk` | atomic dump 整 STM 到 `memory_pool/stm_recent.jsonl` |
+| 1472 | `_start_stm_persist_daemon` | 30s tick daemon 持续 dump |
+| 1223 | `_restore_short_term_memory` | 老路径 (可能 deprecated) |
+| 1262 | `_restore_task_snapshot` | 启动 restore active task |
+
+**Sleep + Wake 模式**:
+
+| L | method | 功能 |
+|---|---|---|
+| 4672 | `_detect_sleep_intent` | Sir 表态睡眠语义检测 |
+| 4703 | `_detect_deep_sleep_request` | 深睡 (TTS off + nudge off) |
+| 4709 | `_trigger_sleep_mode` | 进入睡眠模式 |
+| 4738 | `_detect_wake_up` | Sir 唤醒语义 (e.g. 早安) |
+| 4750 | `_on_activity_wake` | 物理 input 激活 (键鼠 / 屏幕动) |
+| 4766 | `_check_short_sleep` | 短睡确认 (< 30min 不算真睡) |
+| 4823 | `_trigger_end_of_day_archive` | 每日结束归档 |
+
+**热重载 + 其他**:
+
+| L | method | 功能 |
+|---|---|---|
+| 4068 | `_init_soul_router` | SoulRouter 实例化 |
+| 4079 | `preload_session_context` | 预热 session (启动后异步预查) |
+| 4146 | `_process_concurrent_interruption` | Sir 打断主脑 stream 时 |
+| 4263 | `_set_state` | 状态设 (调 JarvisState) |
+| 4267 | `_hot_reload_organs` | 热重载 hands + eyes manifest |
+| 4904 | `_duck_task` | task ducking (后台任务 mute browser) |
+
+**`__init__` 实例化的 30+ component** (这是耦合枢纽 — 任何 audit 必查):
+
+| 类别 | attr | 类型 | 持久化 |
+|---|---|---|---|
+| **Soul Layer 0** | `self.self_anchor` | `SelfAnchor` | (内存) |
+| **Soul Layer 1** | `self.concerns_ledger` | `ConcernsLedger` | `concerns.json` |
+| **Soul Layer 2** | `self.relational_state` | `RelationalState` | `relational_state.json` |
+| **Soul Layer 3** | (no attr) | `build_attention_block` helper | (动态) |
+| **Soul Layer 4** | `self.concerns_reflector` / `self.weekly_reflector` | Reflector daemons | (内存) |
+| **Soul Layer 5** | `self.soul_evaluator` | `SoulAlignmentEvaluator` | (内存) |
+| **ToM** | (待审 `self.sir_mental_model` 待 #11) | `SirMentalModel` | `sir_mental_state.json` |
+| **记忆** | `self.hippocampus` | `Hippocampus` | sqlite + jsonl |
+| **记忆** | `self.profile_card` | `ProfileCard` | `sir_profile.json` |
+| **记忆** | `self.memory_gateway` | `UnifiedMemoryGateway` (注意 — **跟 MemoryMutationGateway 同名但不同 class**, 见 audit gap §) | (代理) |
+| **记忆** | `self.short_term_memory` | list (max 30) | `stm_recent.jsonl` |
+| **记忆** | `self.plan_ledger` | `PlanLedger` | `memory_pool/plans.json` |
+| **记忆** | `self.working_feed` | `WorkingMemoryFeed` | (30min 内存 TTL) |
+| **SWM** | `self.event_bus` | `ConversationEventBus` | (内存) |
+| **状态** | `self.state` | `JarvisState` | (内存) |
+| **承诺** | `self.commitment_watcher` | 后续 wire by `jarvis_nerve.__main__` |  |
+| **承诺** | `self.guardian_center.commitment_watcher` | 同上 (alias?) |  |
+| **指挥** | `self.conductor` | `Conductor` (后续 wire) |  |
+| **指挥** | `self.guardian_center` / `self.companion_center` / `self.prompt_center` | 3 Center (PromptCenter / GuardianCenter / CompanionCenter) |  |
+| **物理** | `self.vocal` | `VocalCord` (TTS) |  |
+| **物理** | `self.blood` | `JarvisBlood` (Action protocol) |  |
+| **观察** | `self.context_router` | `ContextRouter` |  |
+| **观察** | `self.content_tracker` | `ContentPreferenceTracker` |  |
+| **观察** | `self.causal_chain` | `CausalChain` |  |
+| **观察** | `self.habit_clock` | `HabitClock` |  |
+| **观察** | `self.project_timeline` | `ProjectTimeline` (sqlite) |  |
+| **反思** | `self.reflector` | `LlmReflector` (共享 LLM 调度) |  |
+| **反思** | `self.reflection_scheduler` | (后续 wire) |  |
+| **门** | `self.nudge_gate` | `NudgeGate` (90s cooldown) |  |
+| **门** | `self.sleep_detector` | `SleepIntentDetector` |  |
+| **3-brain (legacy?)** | `self.right_brain` / `self.left_brain` / `self.l5_brain` | RightBrain / LeftBrain / ReflectionBrain | **待审是否 deprecated** |
+| **registry** | `self.eye_registry` / `self.hand_registry` / `self.eye_manifests` / `self.hand_manifests` | dict (热加载) | |
+| **prompt cache** | `self.prompt_cache` | `PromptCache` | (内存) |
+| **correction** | `self.correction_loop` | `CorrectionLoop` | |
+| **clipboard / ps** | `self._clipboard_watcher` / `self._ps_history_watcher` | watcher thread | feed |
+
+**`_assemble_prompt` 装配的 30+ render block** (按顺序, 详 `JARVIS_ARCHITECTURE_MAP.md` §7 数据流):
+
+> 这是**主脑 prompt 装配的核心**, 决定主脑每轮看什么 evidence. 详细顺序见 `_assemble_prompt` 内 `_parts.append(...)` 调用链:
+> 1. `_base_persona` (PERSONA 7400 chars)
+> 2. `self_anchor_block` (Layer 0)
+> 3. `soul_block` (Layer 1 concerns)
+> 4. `relational_block` (Layer 2)
+> 5. `attention_block` (Layer 3)
+> 6. `reply_feedback` + `profile_corrections` + `milestones` + `recent_nudges` + `profile_card` + `sir_mental_model` + `integrity_watcher` + `memory_correction` + `watch_tasks` + `stand_down` + `sir_status` + `screen_vision` + `sir_resting` + `watch_task_trig` + `project_hold` + `error_bus` + `intent_resolver_tools` + `wake_callback` + `L2 Directives` + `[RECENT COMPLETED]` (fix82-X) + `[SENSOR STATE]` + ... + `STM SOURCE TAGS` + `INTEGRITY 红线`
+> 7. `swm_block = event_bus.to_swm_block(n=12, salience_floor=0.3)` ⭐ SWM evidence
+
+**数据**:
+- 读: `sir_profile.json` (ProfileCard) / `concerns.json` (Ledger) / `relational_state.json` / `stm_recent.jsonl` / `jarvis_memory.db` (Hippocampus) / `plans.json` / `gate_mode_vocab.json` / ... (几乎所有 storage)
+- 写: `stm_recent.jsonl` (STM persist) / 任务 snapshot
+- SWM publish: 'utterance_appended' (STM append) / state 变化 / 其他 component 通过 self.event_bus
+
+**上游 (谁调它)**:
+- `jarvis_worker.py` 通过 `self.jarvis = CentralNerve(...)` 持有 + 调
+- `jarvis_chat_bypass.py` 通过 `self.jarvis = central_nerve` 持有 (CN 实例化 ChatBypass 时传 self)
+- `jarvis_nerve.py:__main__` 通过 `JarvisWorkerThread` 间接
+
+**下游 (它调谁 — 极多)**:
+- **所有 30+ component** (持有 + 调用)
+- LLM (通过 `safe_gemini_call` + KeyRouter)
+
+**跟记忆的耦合**:
+- **CentralNerve 是 Jarvis 记忆 component 的 owner** — `self.hippocampus / profile_card / concerns_ledger / relational_state / memory_gateway / plan_ledger / working_feed` 全在它手里
+- `_assemble_prompt` 是**主脑读所有记忆 source 的统一入口** (但分散在 30+ render block, 不是 1 个 facade)
+- STM 管理 (`_append_stm` / `_persist_stm_to_disk`) — 短期记忆持久化
+
+**跟其他模块的耦合**:
+- **极重** — 是中心 owner, 全 Jarvis 依赖
+- 不直接 import 90 模块, 通过 `__init__` lazy import 各 sub-component
+- 暴露所有 attr 给 worker / chat_bypass / sentinel / reflector 用
+
+**已知问题 / TODO marker**:
+- `__init__` 950+ 行 — **极难维护**, NERVE_SPLIT_PLAN.md 提出拆分但未执行
+- `_assemble_prompt` 2500+ 行 — **同上**
+- 启动音量恢复 (L265-296) — **跟主功能无关**, 应迁到独立 utility
+- L312-314 `RightBrain / LeftBrain / ReflectionBrain` 老 3-brain 架构 — **可能 deprecated** (与 `jarvis_nerve.py` 重复 import). 待 Phase A.5 确认
+- L385 `UnifiedMemoryGateway` vs `MemoryMutationGateway` (jarvis_memory_gateway.py) — **同名不同 class!**:
+  - `UnifiedMemoryGateway` (utils → memory_core) 是老路径
+  - `MemoryMutationGateway` (P2-Gap7) 是新路径
+  - **重叠**, Phase B 应合并
+- 30+ component try/except 都 `(非致命)` — 启动 silent fail 会被掩盖 (audit 时已发现)
+- `self.eyes / self.hands / self.env = None` (L345-347) — 显式 None, 似乎死代码
+- 多处 `bg_log` + traceback 嵌套深, 可统一 helper
+
+**关联 design doc**:
+- `JARVIS_SOUL_DRIVE.md` — 灵魂 Layer 0/1/2/3/4/5 在 __init__ wire
+- `NERVE_SPLIT_PLAN.md` — 拆分计划 (未执行)
+- `PROMPT_REFACTOR_PLAN.md` — prompt 减肥 (部分执行)
+- `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` — memory_gateway wire
+
+**重构含义 (Phase B 设计参考)**:
+
+⭐⭐⭐ **CentralNerve 是记忆 refactor 的核心 caller**, 几乎所有改动都涉及它:
+
+- **必拆**:
+  - `__init__` 950 行 → 拆 `__init__` 50 行 + N 个 `_init_<subsystem>()` method (NERVE_SPLIT_PLAN 已设计)
+  - `_assemble_prompt` 2500 行 → 30+ render block 各自模块化, **应统一通过 `MemoryHub.read_context()`** (设想中) 入口
+
+- **必整合**:
+  - `UnifiedMemoryGateway` vs `MemoryMutationGateway` — **必须合并**
+  - 30+ component 启动 wiring 应集中到 `_wire_components()` 方法
+
+- **不动**:
+  - STM persist (β.4.10 已稳定)
+  - Sleep 模式逻辑 (Sir 真测稳定)
+  - JarvisState integration
+
+- **跟 Memory Refactor 关系**:
+  - `_assemble_prompt` 现状 30+ render block 应**统一收敛** — 这是 Memory Unification 设计的 `read_context()` 落地点
+  - `__init__` 30+ component 实例化应**整合到 MemoryHub** (统一 source of truth 实例化)
+  - **CentralNerve 应变薄** — 从"30+ component owner" 变 "MemoryHub + IntentRouter + PromptBuilder 的轻协调器"
+
+**审计结论**: central_nerve 是 Jarvis **最大单文件**, 是记忆 refactor 的**直接战场**. NERVE_SPLIT_PLAN.md 已提出但未执行 — Phase D 必落地. _assemble_prompt 30+ render block 是 Phase B 核心设计点. 必跟 utils + memory_gateway 一起重构, 不能孤立.
+
+---
+
