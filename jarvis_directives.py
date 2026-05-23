@@ -712,8 +712,14 @@ def _trigger_smart_routing_working_feed(ctx: DirectiveContext) -> bool:
 # 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: ambiguous_unit_handling trigger
 # Sir 17:02 痛点: '我喝了 5 杯水' 主脑直接调 progress.update 失败 + 不主动问.
 # Trigger: user_input 含模糊单位 (杯/cup/勺/spoonful/碗/份/把/勺/匙/...) + 数字.
+# 🆕 [P5-fix79 BUG-S / 2026-05-23 21:36] Sir 21:33 真测: "已经喝了八杯水" 中文
+# 数字 "八" 不命中 \d+ → directive 不注 → 主脑直接 set new_current=8 (raw 当 ml)
+# 灾难: progress 2300ml → 8ml. 补中文数字 一/二/.../十 + 两/俩 + 半/几/数 (模糊数量).
+_CN_NUMBER_CHARS = r'(?:一|二|两|俩|三|四|五|六|七|八|九|十|十一|十二|半|几|数|多)'
 _AMBIGUOUS_UNIT_PATTERNS = [
     r'\d+\s*(?:杯|碗|份|把|勺|匙|片|颗|个|只|盘|盒|包)',
+    # 中文数字 + 杯/碗/...
+    _CN_NUMBER_CHARS + r'\s*(?:杯|碗|份|把|勺|匙|片|颗|个|只|盘|盒|包)',
     r'\d+\s*(?:cup|cups|bowl|bowls|spoon|spoonful|portion|slice|piece|pack)',
     r'(?:几|多少|how many)\s*(?:杯|碗|份|勺|cup)',
     r'(?:再|又|又一)\s*(?:杯|碗|份|勺)',

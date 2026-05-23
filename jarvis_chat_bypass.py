@@ -793,9 +793,32 @@ class ChatBypass:
                     self.text = text
 
             def _stream_wrapper():
+                _final_finish_reason = None
+                _total_chunks = 0
+                _total_chars = 0
                 for chunk in response:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        yield _ChunkWrapper(chunk.choices[0].delta.content)
+                    _total_chunks += 1
+                    if chunk.choices:
+                        ch = chunk.choices[0]
+                        if ch.delta.content:
+                            _total_chars += len(ch.delta.content)
+                            yield _ChunkWrapper(ch.delta.content)
+                        # 🆕 [P5-fix79 BUG-T / 2026-05-23 21:36] log finish_reason
+                        # Sir 21:33 真测: stream 31 char 后停, max_tokens=8192 没用.
+                        # finish_reason='length'? 'stop'? 'content_filter'? 'error'?
+                        # 不 log 永远不知道. 加 1 行 bg_log 找真因.
+                        if getattr(ch, 'finish_reason', None):
+                            _final_finish_reason = ch.finish_reason
+                if _final_finish_reason and _final_finish_reason != 'stop':
+                    try:
+                        from jarvis_utils import bg_log as _bgfr
+                        _bgfr(
+                            f"⚠️ [Stream Finish] reason='{_final_finish_reason}' "
+                            f"chunks={_total_chunks} chars={_total_chars} "
+                            f"model={or_model} — 非 'stop', 可能截断."
+                        )
+                    except Exception:
+                        pass
 
             return _stream_wrapper(), key_name
         except Exception:
