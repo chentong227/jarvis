@@ -3171,12 +3171,56 @@ User: {user_input}
 
         # [R6/Tier] WAKE_ONLY 短路返回：只塞核心人设 + 最近 3 条 STM + 一句指令
         # 目标 prompt 体积 ≤ 1.5K，TTFT 期望降到 1s 以内
+        # 🆕 [P5-fix55 / 2026-05-23 15:55] Phase 2 示范: WAKE_ONLY 迁 PromptBuilder.
+        # 验证 builder 不破坏现有行为. 其他 5 template 后续 Phase 3 follow.
         if prompt_tier == self.PROMPT_TIER_WAKE_ONLY:
-            # STM 只看最近 3 条对话（更短）
-            short_stm = stm_context
-            if short_stm and len(short_stm) > 500:
-                short_stm = "..." + short_stm[-500:]
-            return f"""{core_persona}
+            try:
+                from jarvis_prompt_builder import PromptBuilder, BlockSpec
+                # STM 只看最近 3 条对话 (更短)
+                short_stm = stm_context
+                if short_stm and len(short_stm) > 500:
+                    short_stm = "..." + short_stm[-500:]
+                _how_to_respond = (
+                    "=== HOW TO RESPOND (WAKE_ONLY) ===\n"
+                    "Sir just called your name. Reply in UNDER 6 WORDS.\n"
+                    "- If recent STM shows ongoing conversation, acknowledge briefly: \"Yes, Sir?\" / \"I'm here.\"\n"
+                    "- If no recent context: just \"Sir?\" / \"At your service.\"\n"
+                    "- NEVER fabricate. NEVER ask questions.\n"
+                    "- Append `---ZH---` and a 1-3 character Chinese acknowledgment at the very end."
+                )
+                wb = PromptBuilder(tier='WAKE_ONLY')
+                wb.register(BlockSpec(
+                    id='how_to_respond', content=_how_to_respond,
+                    tiers=['WAKE_ONLY'], salience=0.95))
+                if short_stm:
+                    wb.register(BlockSpec(
+                        id='stm', content=f"=== RECENT TURNS ===\n{short_stm}",
+                        tiers=['WAKE_ONLY'], hint='stm:turn_<id>', salience=0.70))
+                wb.register(BlockSpec(
+                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                    tiers=['WAKE_ONLY'], salience=0.85))
+                if sensor_state_block:
+                    wb.register(BlockSpec(
+                        id='sensor', content=sensor_state_block,
+                        tiers=['WAKE_ONLY'], hint='sensor:<field>', salience=0.85))
+                _l2 = getattr(self, '_l2_injected_block', '') or ''
+                if _l2:
+                    wb.register(BlockSpec(
+                        id='l2', content=_l2,
+                        tiers=['WAKE_ONLY'], hint='l2:<directive_id>', salience=0.65))
+                # WAKE_ONLY 极简 — META cheat sheet 也省了 (主脑 ≤ 6 词 reply, 不用 META 自检)
+                return wb.compose(
+                    persona=core_persona,
+                    user_input=user_input,
+                    system_alert=system_alert_text,
+                    include_meta_hint=False,
+                )
+            except Exception:
+                # builder 失败 → fallback 老路径 (保证不破现有行为)
+                short_stm = stm_context
+                if short_stm and len(short_stm) > 500:
+                    short_stm = "..." + short_stm[-500:]
+                return f"""{core_persona}
 
 === HOW TO RESPOND (WAKE_ONLY) ===
 Sir just called your name. Reply in UNDER 6 WORDS.
