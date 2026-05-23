@@ -1601,4 +1601,307 @@ loop:
 
 ---
 
+## 批次 d: INTEGRITY 9 模块 (言出必行栈)
+
+> 详 `JARVIS_INTEGRITY_STACK.md` (21KB 完整 design). INTEGRITY ABSOLUTE 是 Sir 立的"和 SOUL 同等地位" 第一原则.
+
+### #24 `jarvis_claim_classifier.py` (290 行) — **INTEGRITY L1: Claim Classifier**
+
+**职责**: 主脑 reply 抽 claim — 用 vocab patterns 分类 (commitment / completion / mutation / promise / refusal / etc.).
+
+**核心 functions** (无 class, 全函数式 — vocab driven):
+
+| L | func | 功能 |
+|---|---|---|
+| 161 | `get_classify_vocab()` | 加载 `memory_pool/claim_classify_vocab.json` |
+| 196 | `_active_patterns` | 获取激活 patterns |
+| 212 | `classify(reply)` | 主入口 — 返 list of (kind, span, confidence) |
+| 268 | `get_loaded_stats` | 调试 |
+
+**数据**:
+- 读: `memory_pool/claim_classify_vocab.json` (准则 6.5 持久化)
+- 配 CLI: `scripts/claim_classify_dump.py`
+
+**上游**: `claim_tracer.extract_claims` 调
+
+**下游**: 无 (纯函数式)
+
+**跟记忆的耦合**: 无直接, 是 INTEGRITY 链路的第 1 步
+
+**已知问题**: vocab 持久化 + L7 propose ✅ (准则 6 模范)
+
+**关联 design doc**: `JARVIS_INTEGRITY_STACK.md` L1 完整设计
+
+**重构含义**: ⭐ **保留** — 模式典范, 不大改
+
+---
+
+### #25 `jarvis_evidence_requirements.py` (244 行) — **INTEGRITY L2: Evidence Requirements**
+
+**职责**: 各 claim kind 应该有什么 evidence (e.g. commitment claim 应该有 CommitmentWatcher receipt + deadline). vocab driven.
+
+**核心 functions** (无 class):
+
+| L | func | 功能 |
+|---|---|---|
+| 141 | `get_evidence_requirements_vocab()` | 加载 vocab |
+| 189 | `get_requirements(claim_kind)` | 主入口 |
+
+**数据**:
+- 读: `memory_pool/evidence_requirements.json`
+
+**上游**: `claim_tracer.verify` 调
+
+**跟记忆的耦合**: 无 (是规则定义)
+
+**已知问题**: vocab 持久化 ✅
+
+**重构含义**: ⭐ **保留** — L2 evidence 规则中央定义
+
+---
+
+### #26 `jarvis_claim_tracer.py` (889 行) — **INTEGRITY L3: Claim Tracer (通用防说谎)**
+
+**职责**: 主入口 — 抽 claim + 跟实际 mutation_receipts / SWM / commitment / promise / reminder 配对 verify. 主脑说"我已记下" 没真改 → 标 unverified → 下轮 INTEGRITY ALERT.
+
+**核心 class + functions**:
+
+| L | item | 功能 |
+|---|---|---|
+| 104 | `Claim` (dataclass) | claim 实体 (kind / span / confidence / extracted_meta) |
+| 123 | `extract_claims(reply)` (top-level) | 主入口 — 调 classifier + 抽 meta |
+| ~30 个 helpers | `_check_time_within_2min` / `_check_evidence_kind` / `verify_against_*` / `retry_*` | 各 claim kind 的 verifier |
+
+**数据**:
+- 读: `memory_pool/integrity_claim_vocab.json`
+- 读: `mutation_receipts.jsonl` (gateway audit) / SWM events / Hippocampus / CommitmentWatcher / PromiseLog
+- 写: `memory_pool/claim_revisions.json` (revision 路径) / `claim_stats.json`
+
+**上游**:
+- `chat_bypass.stream_chat` 末尾 + `stream_nudge` 末尾 调
+- `IntegrityWatcher` post-stream verify
+
+**下游**:
+- `MemoryGateway.recent_receipts` (查 mutation 审计)
+- 各 source (Hippocampus / CW / PromiseLog) 的 list / search
+
+**跟记忆的耦合**:
+- ⭐⭐ **是 INTEGRITY 跟 Memory 的 bridge** — 验主脑 claim 是否真有 mutation receipt
+- 是 mutation_receipts.jsonl 的主消费者
+
+**已知问题**:
+- 889 行函数式 + 30+ helper — 可拆 (各 verifier 独立)
+- vocab 持久化 ✅
+
+**重构含义**: ⭐⭐ **保留 + 拆** — 核心 verify 逻辑, 应保留. helper 可独立 sub-module
+
+---
+
+### #27 `jarvis_claim_revision_log.py` (528 行) — **Claim Revision Log (区分 ritual vs functional revision)**
+
+**职责**: P5-fixCB-revise — 主脑 reply 主动 functional revision (e.g. 改自己说错的话) 应记录, 区别于纯礼仪修正.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 63 | `ClaimRevision` (dataclass) | revision 实体 |
+| 103 | `ClaimRevisionStore` | 主 store |
+| 286 (top) | `capture_revision_from_reply(reply)` | 主入口 — 抽 revision |
+| 388 | `detect_sir_querying_capability` | Sir 反讥能力时检测 |
+
+**数据**:
+- 读/写: `memory_pool/claim_revisions.json`
+
+**上游**: `chat_bypass.stream_chat` 末尾 调 capture_revision_from_reply
+
+**下游**: 内部 + audit log
+
+**跟记忆的耦合**: ⭐ 跟 mutation_receipts 配套 (revision 跟 mutation 是 2 类记录)
+
+**已知问题**: 跟 `claim_stats.json` 重叠 (3 个 jsonl 都跟 claim 有关)
+
+**重构含义**:
+- ⭐ 保留 — functional revision 是 INTEGRITY 真意
+- **整合**: 跟 `mutation_receipts.jsonl` + `claim_stats.json` 三 audit 应合并 1 个统一 audit log (`mem_audit.jsonl`)
+
+**审计结论**: 528 行实用. audit 合并是 Phase D 任务.
+
+---
+
+### #28 `jarvis_integrity_watcher.py` (1847 行) — **IntegrityWatcher (post-stream verify + retry)**
+
+**职责**: P5-IntegrityWatcher — Jarvis 自检栈核心. 后台 verify + retry 失败 claim. e.g. 主脑说"set reminder" 失败 → watcher 重新调 hippocampus.add_reminder retry.
+
+**核心 class + helpers**:
+
+| L | item | 功能 |
+|---|---|---|
+| 106 | `Claim` (dataclass, 这里有自己的版本! 跟 #26 重叠?) | watcher 内部的 claim |
+| 514 | `IntegrityWatcherStore` | 持久化 |
+| 1043 | **`IntegrityWatcher`** | 主类 (~800 行!) |
+| 1572 | `_LlmClaimJudge` | LLM 评估 (Gemini-flash) |
+| 30+ top-level | `_load_claim_vocab` / `_get_compiled_detectors` / `_load_suspicious_kw` / various retry helpers | helpers |
+
+**核心 method** (在 IntegrityWatcher class):
+- `verify_async(reply, ...)` — 主入口
+- `retry_reminder` / `retry_commitment` / `retry_memory` / `retry_promise` — 各 claim 类型 retry
+- `_load_*` (vocab loaders)
+
+**数据**:
+- 读: `memory_pool/integrity_claim_vocab.json` / `integrity_suspicious_kw.json`
+- 写: `memory_pool/integrity_audit.jsonl` (audit) / `integrity_watcher.json` (state)
+- SWM publish: `hallucination_detected` (主脑 claim 没 evidence)
+
+**上游**: `chat_bypass.stream_chat` 末尾 fire-and-forget
+
+**下游**:
+- Hippocampus / CommitmentWatcher / PromiseLog (retry 时调)
+- LLM (LlmClaimJudge)
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **是 INTEGRITY 防主脑撒谎的最后防线**
+- retry 失败 claim → 真调 module → 真补救 (β.5.43 立, Sir 准则 5 言出必行)
+
+**已知问题**:
+- 1847 行单文件含 4 class + 30+ helpers — 太大
+- `Claim` 跟 `claim_tracer.py:Claim` 同名不同 dataclass (不同字段) → **混淆**
+- 跟 `claim_tracer` 重叠 — 都做 verify, 但概念分: tracer = 抽 + 验 (sync), watcher = 后台 retry (async)
+
+**关联 design doc**: `JARVIS_INTEGRITY_STACK.md` 完整 21KB
+
+**重构含义**:
+- ⭐⭐ **是 INTEGRITY 真治本机制** — Phase B 应保留, 但 1847 行必拆
+- `Claim` 跟 tracer 应统一 dataclass
+- 跟 tracer 边界要清
+
+**审计结论**: ⭐ 1847 行核心模块. 拆 + Claim 统一是 refactor 重点.
+
+---
+
+### #29 `jarvis_integrity_reflector.py` (767 行) — **INTEGRITY L7: Reflector (LLM-propose 新 evidence rule)**
+
+**职责**: L7 LLM-propose — 看 audit log 抽 patterns, propose 新 evidence rule 进 review queue.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 66 | `ClaimStatsDumper` | claim 统计 dump 工具 (1d tick) |
+| 235 | `IntegrityReflector` | 主 daemon |
+| 36 (top) | `dump_claim_stats` | 工具 |
+
+**数据**:
+- 读: `memory_pool/integrity_audit.jsonl` (audit) + `claim_stats.json`
+- 写: `memory_pool/claim_stats.json` + Reflector propose review queue
+
+**上游**: `central_nerve.__init__` start daemon
+
+**下游**: LLM (Gemini-flash via OR)
+
+**跟记忆的耦合**: 间接 — 是 INTEGRITY audit 的反思层
+
+**已知问题**: 跟 ProfileReflector / SoulReflector / Reflector Budget 共享 LLM pool — Phase B 应统一调度
+
+**重构含义**: ⭐ 保留 — L7 LLM-propose 是准则 6 模范
+
+**审计结论**: 767 行 daemon, 不大改.
+
+---
+
+### #30 `jarvis_inconsistency_watcher.py` (462 行) — **Commitment Inconsistency Watcher (Layer B)**
+
+**职责**: 检测 Sir 真行为 vs Sir 自己承诺的不一致 (e.g. Sir 说"我会 11 点睡" 但 23:30 还在 coding). 写 inconsistency events, 让主脑下轮看到 evidence 自决怎么提醒 (不预设话术).
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 168 | `InconsistencyWatcher` | 主类 |
+| 80 (top) | `_load_inconsistency_vocab_from_json` | vocab 加载 |
+| 113 | `_get_inconsistency_vocab` | getter |
+| 135-145 | `get_sir_sleep_verbs` / `get_sir_break_verbs` / `get_jarvis_wrapper_markers` | helper |
+
+**数据**:
+- 读: `memory_pool/inconsistency_vocab.json`
+- 读: STM + CommitmentWatcher
+- SWM publish: `inconsistency_detected` (主脑下轮看 evidence)
+
+**上游**: daemon (周期 tick) 或 `chat_bypass` 触发
+
+**下游**: SWM bus
+
+**跟记忆的耦合**: 间接 — 读 STM + Commitments
+
+**已知问题**: vocab 持久化 ✅
+
+**重构含义**: ⭐ **保留** — 是 INTEGRITY 行为层的实时检测
+
+**审计结论**: 462 行实用, 不大改.
+
+---
+
+### #31 `jarvis_callback_guard.py` (416 行) — **Unsolicited Callback Guard (5+ 防误报)**
+
+**职责**: P5-fixCB — 检测主脑 reply 含"未邀请的 callback" (e.g. Sir 说"晚安", Jarvis 跟"你昨天的代码 BUG 我修了"是 unsolicited). 抓 5+ 类 forbidden 短语.
+
+**核心 functions** (无 class):
+
+| L | func | 功能 |
+|---|---|---|
+| 47 | `_load_vocab` | 加载 `forbidden_callback_vocab.json` |
+| 93 | `reset_vocab_cache` | reset |
+| 104 | **`scan_for_unsolicited_callback(reply, sir_utterance, vocab_path)`** | 主入口 |
+| 159 | `_sir_invited_callback` | Sir 主动邀请检测 |
+| 174 | `publish_callback_violation` | publish 违规 SWM |
+
+**数据**:
+- 读: `memory_pool/forbidden_callback_vocab.json` (准则 6.5)
+
+**上游**: PreFlight / chat_bypass scan reply
+
+**下游**: SWM publish + log audit
+
+**跟记忆的耦合**: 无直接 — 是 reply 后的检测器
+
+**已知问题**: vocab 持久化 ✅
+
+**重构含义**: ⭐ 保留 — 准则 6 模范
+
+**审计结论**: 416 行 detector, 不大改.
+
+---
+
+### #32 `jarvis_meta_self_check.py` (459 行) — **META Self-Check parser (thinking pass 元层自检)**
+
+**职责**: P5-Layer1-fix19 — 主脑 reply 末尾 emit `[META] evidence=... reaction=... skip_alert=...` 格式自评. 本模块 parse + 验真. 检测主脑是否乱说自己 reaction.
+
+**核心 class + helpers**:
+
+| L | item | 功能 |
+|---|---|---|
+| 56 | `MetaSelfCheck` | 主类 |
+| 95 (top) | `parse_meta(reply)` | 抽 META block + parse |
+| 186 | `publish_meta` | publish META 信号 |
+| 261 | `read_recent_meta` | 查最近 META |
+| 291 | `check_commitments_vs_mutations` | 验 META 跟实际 mutation 一致 |
+
+**数据**:
+- 读: STM + reply
+- 写: `memory_pool/main_brain_meta_audit.jsonl` (META audit)
+- SWM publish: 'meta_self_check'
+
+**上游**: `chat_bypass.stream_chat` 末尾
+
+**下游**: 内部 + SWM + audit
+
+**跟记忆的耦合**: ⭐ META 是主脑自评机制, 跟 mutation_receipts 配对验
+
+**已知问题**: META block 格式 hardcoded — 但跟 directive 教学一致, 不是 vocab
+
+**重构含义**: ⭐ 保留 — 是主脑自检环节
+
+**审计结论**: 459 行实用 parser + verifier, 不大改.
+
+---
 

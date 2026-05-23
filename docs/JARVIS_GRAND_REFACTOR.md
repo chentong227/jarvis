@@ -306,7 +306,7 @@
 | Phase | Sub-phase | 进度 | 备注 |
 |---|---|---|---|
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
-| Phase A.1 | 模块审计 (115 + 25) | 23/140 (16.4%) | **批次 a + b + c ✅ 完成**! #1-23 (枢纽 5 + Soul 7 + 记忆 11) |
+| Phase A.1 | 模块审计 (115 + 25) | 32/140 (22.9%) | **批次 a-d ✅ 完成**! #1-32 (枢纽 5 + Soul 7 + 记忆 11 + INTEGRITY 9) |
 | Phase A.2 | 数据流全审 | ⬜ pending | A.1 完成后 |
 | Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
@@ -320,10 +320,10 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: Phase A.1 批次 a + b + c ✅ 完成! 准备进批次 d (INTEGRITY 9 模块)
-进度: 23/140 (批次 a 5 + 批次 b 7 + 批次 c 11)
-下一动作: 进批次 d — 审 jarvis_claim_classifier.py (289 行, INTEGRITY L1)
-最后 commit: fefbac0 (Soul 批次 b)
+当前阶段: Phase A.1 批次 a-d ✅ 完成! 准备进批次 e (IntentResolver + Directive + Mutation 8 模块)
+进度: 32/140 (批次 a 5 + b 7 + c 11 + d 9)
+下一动作: 进批次 e — 审 jarvis_directives.py (3958 行, L2 Directives Registry)
+最后 commit: 0ac4f39 (记忆 11)
 ```
 
 ### 6.3 已完成 audit cards
@@ -342,7 +342,8 @@
 | 10 | `jarvis_soul_reflector.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #10 | (即将) | 2026-05-23 23:30 |
 | 11 | `jarvis_soul_evaluator.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #11 | (即将) | 2026-05-23 23:30 |
 | 12 | `jarvis_sir_mental_model.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #12 | fefbac0 | 2026-05-23 23:30 |
-| 13-23 | 记忆 11 模块 (routing/hippocampus/memory_core/memory_gateway/milestones/stm_summarizer/profile_reflector/promise_log/commitment_watcher/self_promise/cyclic_task) | `JARVIS_AUDIT_CARDS.md` §批次 c | (即将) | 2026-05-23 23:42 |
+| 13-23 | 记忆 11 模块 (routing/hippocampus/memory_core/memory_gateway/milestones/stm_summarizer/profile_reflector/promise_log/commitment_watcher/self_promise/cyclic_task) | `JARVIS_AUDIT_CARDS.md` §批次 c | 0ac4f39 | 2026-05-23 23:42 |
+| 24-32 | INTEGRITY 9 模块 (claim_classifier/evidence_requirements/claim_tracer/claim_revision_log/integrity_watcher/integrity_reflector/inconsistency_watcher/callback_guard/meta_self_check) | `JARVIS_AUDIT_CARDS.md` §批次 d | (即将) | 2026-05-23 23:55 |
 
 ---
 
