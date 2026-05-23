@@ -1,20 +1,18 @@
 {
-  "_comment": "[P5-fix35-D / 2026-05-23 11:30] progress_tracker_dispatcher 触发词. Sir 报告进度 (喝了/跑了/写了 N 单位) OR Sir 设数值目标 → MUST emit progress FAST_CALL. 准则 6 持久化.",
+  "_comment": "[P5-fix35-D / 2026-05-23 11:30 + P5-fix49 / 2026-05-23 15:25] progress_tracker_dispatcher 触发词. Sir 报告**数值进度** (喝了 N ml/跑了 N km/写了 N 字) OR Sir 设数值目标 → MUST emit progress FAST_CALL. 准则 6 持久化.",
+  "_fix49_note": "Sir 14:51 真痛点: '我中午睡了 1h, 你记录一下' 误命中 progress_tracker (vocab '记录' '做了' 过宽). 'nap 1h' 是 mutation (一次记录), 不是数值 progress (跟踪累计). 移除过宽词: 做了/做完/做够/记录/记到/登记/log/已完成/进度/目前/还有多少/差多少 (这些是 mutation/correction/status 信号, 不是 progress 强信号).",
   "_consumers": ["progress_tracker_dispatcher (P5-fix35-D)"],
   "patterns": [
     "喝了", "喝完了", "喝光了", "刚喝",
-    "跑了", "跑完了", "走了", "走完",
+    "跑了", "跑完了", "跑步",
+    "走完",
     "写了", "写完", "写够",
-    "做了", "做完", "做够",
     "读了", "读完",
     "目标", "今日目标", "总目标",
-    "一共要", "总共要", "需要 ",
-    "还差", "差多少", "还有多少",
-    "进度", "目前", "已完成",
-    "记录", "记到", "登记", "log",
-    "ml", "毫升", "克", "公里", "米", "字", "页", "个",
-    "drank", "ran", "walked", "wrote", "logged",
-    "completed", "finished today", "remaining",
-    "i drank", "i ran", "i wrote", "log it", "track this"
+    "一共要", "总共要",
+    "还差",
+    "ml", "毫升", "克", "公里", "千米", "字数", "页",
+    "drank", "ran", "wrote", "logged",
+    "i drank", "i ran", "i wrote", "track this"
   ]
 }

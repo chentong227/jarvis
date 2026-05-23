@@ -206,9 +206,11 @@ class TestCDirective(unittest.TestCase):
         from jarvis_directives import (
             _trigger_progress_tracker_dispatcher, DirectiveContext
         )
+        # 🆕 [P5-fix49 / 2026-05-23 15:25] vocab 收紧后, '还差多少' 移除. 仍 fire 的:
+        # 数值 progress 强信号 (动词 + 单位).
         for phrase in ['我刚喝了 500 毫升水',
                           '今天目标 3000ml',
-                          '还差多少',
+                          '还差 2 公里',  # '还差' kept
                           '我跑了 3 公里']:
             ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
             self.assertTrue(_trigger_progress_tracker_dispatcher(ctx),
@@ -220,12 +222,29 @@ class TestCDirective(unittest.TestCase):
         from jarvis_directives import (
             _trigger_progress_tracker_dispatcher, DirectiveContext
         )
+        # 🆕 [P5-fix49] 'log it for me' 移除 (vocab 收紧 — log 太通用), 改用具体 progress 短语
         for phrase in ['i drank 500ml',
                           'i ran 3km today',
-                          'log it for me']:
+                          'i wrote 800 words']:
             ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
             self.assertTrue(_trigger_progress_tracker_dispatcher(ctx),
                               f'should fire on: {phrase}')
+
+    def test_fix49_no_misfire_on_mutation_phrases(self):
+        """[P5-fix49] Sir 14:51 真痛点: '我中午睡了 1h, 你记录一下' 不该 fire progress."""
+        import jarvis_directives as jd
+        jd._PROGRESS_CACHE = None
+        from jarvis_directives import (
+            _trigger_progress_tracker_dispatcher, DirectiveContext
+        )
+        # 这些是 mutation/correction 信号, 不该 fire progress tracker
+        for phrase in ['你现在记录一下我中午睡了一个小时',
+                          '帮我登记这件事',
+                          '做了 / 完成了 / 我做完了',  # 通用 verb 不带数值单位
+                          '今天什么时候睡的']:
+            ctx = DirectiveContext(user_input=phrase, tier='CHAT', stm=[])
+            self.assertFalse(_trigger_progress_tracker_dispatcher(ctx),
+                                f'should NOT fire (no numeric progress signal): {phrase}')
 
     def test_trigger_skip_unrelated(self):
         import jarvis_directives as jd

@@ -3565,8 +3565,14 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
         ),
         Directive(
             id='thinking_pause_aware_judge',
-            source_marker='P0+20-β.5.43-E',
-            priority=8,
+            # 🆕 [P5-fix48 / 2026-05-23 15:20] Sir 14:57 真痛点: Sir '嗯，闪' (2 字
+            # thinking pause conf=0.85) 主脑展开长 reply hallucinate '1.5b/3b model
+            # transition'. directive fire 了 (fired list 有), 但 priority=8 → brief
+            # tier 几十字符表达不够 imperative. 提到 11 (跟 cyclic/progress/dampen
+            # 同级), 进 full tier 主脑看完整 ✅/❌ 文案. PreFlight verdict=scrap 已
+            # backstop, 但减少 hallucinate 概率本身就是 Sir 体验提升.
+            source_marker='P0+20-β.5.43-E + P5-fix48',
+            priority=11,  # 8 → 11 (full tier, 主脑必看)
             ttl_days=120,
             tier_whitelist=[],
             text=_tw.dedent("""\
@@ -3689,14 +3695,20 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             # JSON entry 含 purpose_short → 直接用; 否则查 _SEED_DEFS fallback
             # (JSON 没填的 directive 退而其次拿 .py seed 的 purpose_short).
             ps = str(entry.get('purpose_short') or '').strip()
-            if not ps:
-                # JSON 没填, 查 seed_defs (重点 P10+ 我已经在 .py 加了)
-                _seed_match = next((s for s in seed_defs if s.id == did), None)
-                if _seed_match is not None:
-                    ps = (_seed_match.purpose_short or '').strip()
+            # 🆕 [P5-fix50 / 2026-05-23 15:25] fix47 sync 把 11 directive 加到 JSON 但
+            # **没 sync text** (准则 8: text 太长不放 JSON, .py 仍 source-of-truth).
+            # 这里 JSON 只提供 state/priority/metadata, text 要从 seed_defs 查回来.
+            # 没 fix → directive 加载后 text='' → directive 实际不工作 (主脑看空 directive).
+            _seed_match = next((s for s in seed_defs if s.id == did), None)
+            if not ps and _seed_match is not None:
+                ps = (_seed_match.purpose_short or '').strip()
+            # text: JSON 优先, JSON 没 → seed fallback
+            text = str(entry.get('text') or '').strip()
+            if not text and _seed_match is not None:
+                text = (_seed_match.text or '').strip()
             d = Directive(
                 id=did,
-                text=str(entry.get('text') or ''),
+                text=text,
                 trigger=trigger_fn,
                 priority=int(entry.get('priority') or 5),
                 tier_whitelist=list(entry.get('tier_whitelist') or []),
