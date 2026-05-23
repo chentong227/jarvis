@@ -198,10 +198,19 @@ class VocalCord:
                         except Exception:
                             pass
             self._render_count += 1
-            if self._render_count >= 10:
+            # 🆕 [P5-fix62 / 2026-05-23 16:25] Sir 16:23 真测痛点: TTS 卡顿渐重
+            # (turn 1 OK / turn 2 渐卡 / turn 3 full 16.4s 严重). 根因: 老阈值 10
+            # 才清 GPU, CosyVoice-300M GPU 内存碎片累积 → 后续 render 卡.
+            # Sir 听感真痛点, BUG-A.
+            #
+            # 修法: 阈值 10 → 3 (更频繁清). 不动 stream=False (避免 cascading 改动).
+            # 每次 render 后轻 empty_cache (无 gc.collect 重负担).
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()  # 轻 cache 清理 (无 gc.collect 重负担)
+            if self._render_count >= 3:
                 self._render_count = 0
                 import gc
-                gc.collect()
+                gc.collect()  # 重 GC 每 3 次 (vs 老 10 次)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
