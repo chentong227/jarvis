@@ -369,7 +369,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.40-fix",
-      "note": "Concern timing evidence judge (Sir 16:07 BUG fix \u51c6\u52196 evidence-driven)",
+      "note": "Concern timing evidence judge (Sir 16:07 BUG fix 准则6 evidence-driven)",
       "source": "seed"
     },
     {
@@ -380,7 +380,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-B",
-      "note": "Multi-person conversation aware (Sir \u8ddf\u522b\u4eba\u8bf4\u8bdd\u65f6\u9ed8\u8ba4 SILENT)",
+      "note": "Multi-person conversation aware (Sir 跟别人说话时默认 SILENT)",
       "source": "seed"
     },
     {
@@ -391,7 +391,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-C",
-      "note": "Sir \u4e2d\u65ad reply \u540e\u4e3b\u8111\u4e0d\u590d\u8bfb / pivot \u65b0\u8bdd\u9898",
+      "note": "Sir 中断 reply 后主脑不复读 / pivot 新话题",
       "source": "seed"
     },
     {
@@ -402,7 +402,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-fix1",
-      "note": "Sir 18:11 \u771f\u7406 \u2014 \u4e3b\u8111\u4e0d offer/promise \u6ca1 tool \u80fd\u529b\u7684\u4e8b (\u9876\u7ea7\u4f18\u5148\u7ea7)",
+      "note": "Sir 18:11 真理 — 主脑不 offer/promise 没 tool 能力的事 (顶级优先级)",
       "source": "seed"
     },
     {
@@ -413,7 +413,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-fix1",
-      "note": "Sir utterance \u542b'\u5439\u725b/\u522b\u5439/\u505a\u4e0d\u5230' \u2014 \u4e3b\u8111\u7acb\u523b acknowledge \u4e0d\u518d promise",
+      "note": "Sir utterance 含'吹牛/别吹/做不到' — 主脑立刻 acknowledge 不再 promise",
       "source": "seed"
     },
     {
@@ -424,7 +424,7 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-fix4",
-      "note": "Sir 18:55 \u8a00\u884c\u4e0d\u4e00\u7ea2\u7ebf \u2014 \u4e3b\u8111\u4e0d\u80fd\u8bf4 'I've corrected/saved/updated' \u9664\u975e\u672c\u8f6e\u771f\u8c03\u4e86 mutation tool. always-on priority 12 \u6781\u9876.",
+      "note": "Sir 18:55 言行不一红线 — 主脑不能说 'I've corrected/saved/updated' 除非本轮真调了 mutation tool. always-on priority 12 极顶.",
       "source": "seed"
     },
     {
@@ -435,8 +435,129 @@
       "tier_whitelist": [],
       "ttl_days": 120,
       "source_marker": "P0+20-beta.5.43-E",
-      "note": "Sir 17:10 6 \u7f3a\u53e3 E silence intelligence \u2014 SWM \u542b sir_thinking_pause (uh/\u55ef/let me think) \u2192 \u4e3b\u8111\u9ed8\u8ba4\u6c89\u9ed8\u6216\u6781\u77ed ack, \u4e0d\u6253\u65ad\u601d\u7ef4.",
+      "note": "Sir 17:10 6 缺口 E silence intelligence — SWM 含 sir_thinking_pause (uh/嗯/let me think) → 主脑默认沉默或极短 ack, 不打断思维.",
       "source": "seed"
+    },
+    {
+      "id": "concern_dampen_self_decide",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 180,
+      "source_marker": "P5-fix45",
+      "purpose_short": "Sir 报",
+      "tier_whitelist": [],
+      "trigger_fn_name": "None",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "concern_dismissal_judge",
+      "state": "active",
+      "priority": 8,
+      "ttl_days": 120,
+      "source_marker": "P5-fix24-concern-dismiss",
+      "purpose_short": "Sir 显式 dismiss/reactivate concern 时主脑 emit FAST_CALL 真改 concerns.json",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_concern_dismissal",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "correction_dispatcher",
+      "state": "active",
+      "priority": 12,
+      "ttl_days": 180,
+      "source_marker": "P5-fix32-D+P5-fix35",
+      "purpose_short": "Sir 教正某事 → 主脑判 (intent, layer) → MUST emit FAST_CALL mutation 修对应源",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_correction_dispatcher",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "cyclic_task_dispatcher",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 180,
+      "source_marker": "P5-fix35-B",
+      "purpose_short": "Sir 要循环/周期 X → MUST emit cyclic_task FAST_CALL (通用, 不只 reminder)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_cyclic_task_dispatcher",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "integrity_watcher_report_use",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 180,
+      "source_marker": "P0+20-P5-IntegrityWatcher",
+      "purpose_short": "看 [INTEGRITY WATCHER REPORT] block 引导 surface (recovered/handoff/no_tool)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_no_hallucinated_tool_use_judge",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "meta_self_check_directive",
+      "state": "active",
+      "priority": 10,
+      "ttl_days": 365,
+      "source_marker": "P5-Layer1-fix19",
+      "purpose_short": "主脑 reply 末尾 emit [META] 自检行 (evidence/reaction/skip_alert)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_meta_self_check",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "morning_warmth_priority",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 180,
+      "source_marker": "P0+20-P5-fixB",
+      "purpose_short": "Sir 醒来 first reply: 温度优先, 不数落老账 (Soul Drive 第二原则)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_morning_mood_judge",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "progress_tracker_dispatcher",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 180,
+      "source_marker": "P5-fix35-D",
+      "purpose_short": "Sir 报数值进度/设目标 → MUST emit progress FAST_CALL (通用)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_progress_tracker_dispatcher",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "promise_completion_judge",
+      "state": "active",
+      "priority": 9,
+      "ttl_days": 120,
+      "source_marker": "P5-fix27-promise-fulfill",
+      "purpose_short": "Sir 说",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_promise_completion",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "stand_down_judge",
+      "state": "active",
+      "priority": 8,
+      "ttl_days": 120,
+      "source_marker": "P5-fix25-stand-down",
+      "purpose_short": "Sir 显式说",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_stand_down",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "unsolicited_callback_guard",
+      "state": "active",
+      "priority": 12,
+      "ttl_days": 180,
+      "source_marker": "P0+20-P5-fixCB-revise",
+      "purpose_short": "禁主动翻老账道歉 — 道歉只来自 watcher SWM event 引导",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_no_hallucinated_tool_use_judge",
+      "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
     }
   ]
 }
