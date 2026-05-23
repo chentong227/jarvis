@@ -288,6 +288,93 @@ class ProgressTrackerStore:
             'brief': pt.render_brief(),
         }
 
+    # 🆕 [P5-fix73 / 2026-05-23 17:58] BUG-J: progress.set 绝对值覆写
+    # Sir 17:55 痛点: progress.update 只能 += delta. Sir 纠正"应该是 2000ml" 主脑
+    # 又 += 1800 → 4900 (超目标). 加 set_absolute 让主脑能"reset 到绝对值".
+    # 主脑调 progress.set track_id=X new_current=2000 → store 算 delta=2000-old, 写 history.
+    def set_absolute(self, *, track_id: str, new_current: float,
+                       note: str = '', source: str = 'main_brain') -> Dict[str, Any]:
+        try:
+            new_current = float(new_current)
+        except Exception:
+            return {'ok': False, 'error': f'new_current 非法: {new_current!r}'}
+        if new_current < 0:
+            return {'ok': False, 'error': f'new_current 不能 < 0 (got {new_current})'}
+
+        with self._lock:
+            pt = self.tracks.get(track_id)
+            if pt is None:
+                return {'ok': False, 'error': f"track_id '{track_id}' 不存在 (先 register)"}
+            old_current = pt.current
+            delta = new_current - old_current
+            pt.current = new_current
+            pt.history.append(ProgressEntry(
+                ts=time.time(), amount=delta, note=f'[set] {note}'[:200], source=source,
+            ))
+            # 自动 completed (set 也可能恰好 ≥ target)
+            became_complete = False
+            if pt.target > 0 and pt.current >= pt.target and pt.state == 'active':
+                pt.state = 'completed'
+                pt.completed_at = time.time()
+                became_complete = True
+            # set 后 < target 但之前 completed → reopen?
+            # 不自动 reopen. Sir 真要 reopen 应显式 register / cancel + register 新.
+
+        self._save()
+        self._publish_swm(
+            etype='progress_set',
+            description=(
+                f"{pt.kind}: set {old_current}→{new_current}{pt.unit} "
+                f"(delta={delta:+}) → {pt.render_brief()}"
+            ),
+            metadata={'track_id': track_id, 'kind': pt.kind,
+                       'old_current': old_current, 'new_current': pt.current,
+                       'delta': delta, 'note': note[:200],
+                       'progress_ratio': pt.progress_ratio,
+                       'became_complete': became_complete,
+                       'is_correction': True},  # 标识这是覆写 (Sir 纠正)
+            salience=0.65,  # 略高于 update (覆写=高置信意图)
+        )
+
+        # 联动 cyclic_task — 完成时 cancel
+        cancelled_cycle = ''
+        if became_complete and pt.linked_cyclic_task:
+            try:
+                from jarvis_cyclic_task import get_default_store as _get_ct_store
+                ct_store = _get_ct_store()
+                r = ct_store.cancel(
+                    pt.linked_cyclic_task,
+                    reason=f"linked progress {track_id} completed (via set)")
+                if r.get('ok'):
+                    cancelled_cycle = pt.linked_cyclic_task
+            except Exception:
+                pass
+        if became_complete:
+            self._publish_swm(
+                etype='progress_completed',
+                description=(f"🎯 {pt.kind} 完成! {pt.render_brief()}"),
+                metadata={'track_id': track_id, 'kind': pt.kind,
+                           'cancelled_linked_cycle': cancelled_cycle,
+                           'via': 'set_absolute'},
+                salience=0.80,
+            )
+
+        return {
+            'ok': True,
+            'track_id': track_id,
+            'old_current': old_current,
+            'new_current': pt.current,
+            'delta': delta,
+            'target': pt.target,
+            'unit': pt.unit,
+            'progress_ratio': pt.progress_ratio,
+            'remaining': pt.remaining,
+            'state': pt.state,
+            'became_complete': became_complete,
+            'cancelled_linked_cycle': cancelled_cycle,
+            'brief': pt.render_brief(),
+        }
+
     def cancel(self, track_id: str, reason: str = '') -> Dict[str, Any]:
         with self._lock:
             pt = self.tracks.get(track_id)

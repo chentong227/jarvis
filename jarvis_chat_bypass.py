@@ -1948,6 +1948,29 @@ Spoken English:"""
                         msg += f" (linked cycle '{r['cancelled_linked_cycle']}' 已自动 cancel)"
                 return msg
 
+            # 🆕 [P5-fix73 / 2026-05-23 17:58] BUG-J: progress.set 绝对值覆写
+            # Sir 17:55 真测痛点: 主脑在 Sir 纠正时只能 += → 双倍累加超目标.
+            # set 让主脑覆写当前值到 Sir 期望的绝对值 (e.g. "总共 2000ml" → set 2000).
+            elif command == 'set':
+                track_id = (params.get('track_id') or '').strip()
+                new_current = params.get('new_current', params.get('value', 0))
+                note = (params.get('note') or '')[:200]
+                if not track_id:
+                    return "❌ progress.set: missing track_id"
+                r = store.set_absolute(
+                    track_id=track_id, new_current=new_current,
+                    note=note, source='main_brain',
+                )
+                if not r.get('ok'):
+                    return f"❌ progress.set fail: {r.get('error')}"
+                msg = (f"✅ progress.set: {r['old_current']}→{r['new_current']} "
+                          f"(delta={r['delta']:+}) {r['brief']}")
+                if r.get('became_complete'):
+                    msg += f" 🎯 已达成!"
+                    if r.get('cancelled_linked_cycle'):
+                        msg += f" (linked cycle '{r['cancelled_linked_cycle']}' 已 cancel)"
+                return msg
+
             elif command == 'status':
                 track_id = (params.get('track_id') or '').strip()
                 if not track_id:
@@ -1987,7 +2010,7 @@ Spoken English:"""
 
             else:
                 return (f"❌ progress: 未知指令 {command} "
-                          f"(支持 register / update / status / cancel / list)")
+                          f"(支持 register / update / set / status / cancel / list)")
 
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
@@ -3943,6 +3966,44 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     # [P0+18-c.12 / 2026-05-15] 多段 ZH (含 \n\n) 走 _box_newline,每行加 ║ 前缀
                     print("\n" + _box_newline(f"║ 📺  [Subtitle] {clean_zh}"))
 
+            # 🆕 [P5-fix73 / 2026-05-23 17:58] BUG-H + I: ZH 缺失诊断 + SWM publish
+            # Sir 17:54/17:55 真测痛点: 主脑 reply 含完整英文但 ---ZH--- 翻译没出
+            # (LLM stream truncate). 当前 silently 丢, Sir 看不见英文等于没字幕.
+            # 修法: detect (final_clean 含 >= 30 char 英文 + zh_subtitle_text='')
+            # → bg_log warn + publish 'bilingual_truncated' SWM event 让 Sir 可见.
+            try:
+                _en_net = re.sub(r'<[^>]+>', '',
+                                   _strip_structural_tag_blocks(final_clean or '')
+                                   ).strip()
+                if _en_net and len(_en_net) >= 30 and not zh_subtitle_text:
+                    # 含足够英文但 0 ZH → 翻译被 LLM truncate
+                    from jarvis_utils import bg_log as _zh_miss_bg
+                    _zh_miss_bg(
+                        f"⚠️ [Bilingual/Truncated] reply has English ({len(_en_net)}ch) "
+                        f"but no ---ZH--- translation. LLM stream may be cut off. "
+                        f"snippet='{_en_net[:80]}...'"
+                    )
+                    try:
+                        from jarvis_utils import get_event_bus as _geb_zh
+                        _bus_zh = _geb_zh()
+                        if _bus_zh is not None:
+                            _bus_zh.publish(
+                                etype='bilingual_truncated',
+                                description=(
+                                    f"reply 缺 ---ZH--- 翻译 (en={len(_en_net)}ch)"
+                                ),
+                                source='chat_bypass.stream_main',
+                                metadata={
+                                    'en_length': len(_en_net),
+                                    'en_snippet': _en_net[:200],
+                                },
+                                salience=0.45,
+                            )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             if buffer.strip() and not getattr(self, 'is_interrupted', False):
                 sentence = buffer.strip()
                 # [P0+18-c.1] 末尾 buffer 同步剥所有结构化标签 block（FAST_CALL +
@@ -5538,6 +5599,32 @@ No ZH translation. No closing remark. Nothing else.
                         content=final_reply,
                         trigger=_trigger,
                         turn_id=_turn_id)
+            except Exception:
+                pass
+
+            # 🆕 [P5-fix73 / 2026-05-23 17:58] BUG-L: Sir 17:56 真测痛点 — Nudge
+            # reply 没接 ClaimTracer. 主脑说 "I've updated the hydration logs to
+            # 2000ml" 但**没真调 progress**. ClaimTracer 抓 chat reply 但漏 nudge.
+            # 修法: stream_nudge 末尾也 trace_reply (nudge 没 tool_results 通常,
+            # 所以"已做 X"类 claim 必 unverified, ClaimTracer audit 抓回).
+            try:
+                if final_reply and final_reply.strip():
+                    from jarvis_claim_tracer import trace_reply as _ct_nudge
+                    from jarvis_utils import TraceContext as _TC_n
+                    _ttid_n = ''
+                    try:
+                        _ttid_n = _TC_n.get_turn_id() or ''
+                    except Exception:
+                        pass
+                    _channel_n = (nudge_context or {}).get('nudge_type', 'nudge')
+                    _ct_nudge(
+                        jarvis_reply=final_reply,
+                        tool_results=[],  # nudge 无 tool_results (publish_only)
+                        stm_recent=list(getattr(self.jarvis,
+                                                 'short_term_memory', []) or []),
+                        turn_id=f'nudge:{_channel_n}:{_ttid_n}',
+                        ltm_context='',
+                    )
             except Exception:
                 pass
 

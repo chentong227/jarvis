@@ -214,6 +214,9 @@ class STMSummarizer:
             jarvis_reply=str(raw_reply or '')[:1500],
             max_chars=self.cfg.get('max_summary_chars', 120),
         )
+        # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: try/finally release 防泄漏.
+        # caller 责任 release once (wrapper 不 release 避免 fallback 路径双 release).
+        _label = ''
         try:
             from jarvis_utils import safe_openrouter_call
             okey, _label = self.key_router.get_openrouter_key(
@@ -250,6 +253,12 @@ class STMSummarizer:
         except Exception:
             with self._lock:
                 self._stats['failed_llm'] += 1
+        finally:
+            if _label:
+                try:
+                    self.key_router.release(_label)
+                except Exception:
+                    pass
         return None
 
     def summarize_async(self,

@@ -393,26 +393,33 @@ class WatchTaskRegistrar:
             jarvis_reply=jarvis_reply[:500],
         )
 
+        # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: try/finally release 防泄漏.
         raw = ''
         try:
-            raw = safe_openrouter_call(
-                openrouter_key=okey,
-                model=cfg.get('primary_model', 'google/gemini-2.5-flash-lite'),
-                prompt=prompt,
-                max_tokens=int(cfg.get('max_output_tokens', 400)),
-                temperature=float(cfg.get('temperature', 0.2)),
-            )
-        except Exception:
             try:
                 raw = safe_openrouter_call(
                     openrouter_key=okey,
-                    model=cfg.get('fallback_model', 'google/gemini-3-flash-preview'),
+                    model=cfg.get('primary_model', 'google/gemini-2.5-flash-lite'),
                     prompt=prompt,
                     max_tokens=int(cfg.get('max_output_tokens', 400)),
                     temperature=float(cfg.get('temperature', 0.2)),
                 )
             except Exception:
-                return self._template_fallback(sir_text, jarvis_reply)
+                try:
+                    raw = safe_openrouter_call(
+                        openrouter_key=okey,
+                        model=cfg.get('fallback_model', 'google/gemini-3-flash-preview'),
+                        prompt=prompt,
+                        max_tokens=int(cfg.get('max_output_tokens', 400)),
+                        temperature=float(cfg.get('temperature', 0.2)),
+                    )
+                except Exception:
+                    return self._template_fallback(sir_text, jarvis_reply)
+        finally:
+            try:
+                key_router.release(_label)
+            except Exception:
+                pass
 
         return self._parse_llm_json(raw or '', sir_text, jarvis_reply)
 
@@ -648,42 +655,49 @@ class WatchTaskJudge:
             vision_summary=vision_summary[:600],
             tasks_str='\n'.join(tasks_lines),
         )
+        # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: try/finally release 防泄漏.
         raw = ''
         primary_err = ''
         try:
-            raw = safe_openrouter_call(
-                openrouter_key=okey,
-                model=cfg.get('primary_model', 'google/gemini-2.5-flash-lite'),
-                prompt=prompt,
-                max_tokens=int(cfg.get('max_output_tokens', 300)),
-                temperature=float(cfg.get('temperature', 0.1)),
-            )
-        except Exception as e_p:
-            primary_err = str(e_p)[:120]
             try:
                 raw = safe_openrouter_call(
                     openrouter_key=okey,
-                    model=cfg.get('fallback_model', 'google/gemini-3-flash-preview'),
+                    model=cfg.get('primary_model', 'google/gemini-2.5-flash-lite'),
                     prompt=prompt,
                     max_tokens=int(cfg.get('max_output_tokens', 300)),
                     temperature=float(cfg.get('temperature', 0.1)),
                 )
-            except Exception as e_f:
-                # 🆕 [P5-fix21-c2 / 2026-05-22] judge LLM 双 fallback 失败 → ErrorBus
-                # Sir 14:50 真意: judge daemon 一直 polling 但 LLM 全挂时主脑不知道.
-                # publish ErrorBus + 不报为 critical (高频可能刷屏, 用 LOW 静默)
+            except Exception as e_p:
+                primary_err = str(e_p)[:120]
                 try:
-                    from jarvis_error_bus import report_error as _eb_report, SEVERITY_LOW
-                    _eb_report(
-                        module='watch_task_judge',
-                        kind='llm_judge_fail',
-                        detail=f'primary={primary_err[:60]} fallback={str(e_f)[:60]}',
-                        severity=SEVERITY_LOW,
-                        recoverable=True,
+                    raw = safe_openrouter_call(
+                        openrouter_key=okey,
+                        model=cfg.get('fallback_model', 'google/gemini-3-flash-preview'),
+                        prompt=prompt,
+                        max_tokens=int(cfg.get('max_output_tokens', 300)),
+                        temperature=float(cfg.get('temperature', 0.1)),
                     )
-                except Exception:
-                    pass
-                return []
+                except Exception as e_f:
+                    # 🆕 [P5-fix21-c2 / 2026-05-22] judge LLM 双 fallback 失败 → ErrorBus
+                    # Sir 14:50 真意: judge daemon 一直 polling 但 LLM 全挂时主脑不知道.
+                    # publish ErrorBus + 不报为 critical (高频可能刷屏, 用 LOW 静默)
+                    try:
+                        from jarvis_error_bus import report_error as _eb_report, SEVERITY_LOW
+                        _eb_report(
+                            module='watch_task_judge',
+                            kind='llm_judge_fail',
+                            detail=f'primary={primary_err[:60]} fallback={str(e_f)[:60]}',
+                            severity=SEVERITY_LOW,
+                            recoverable=True,
+                        )
+                    except Exception:
+                        pass
+                    return []
+        finally:
+            try:
+                key_router.release(_label)
+            except Exception:
+                pass
         # parse
         t = (raw or '').strip()
         if t.startswith('```'):

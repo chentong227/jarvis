@@ -4220,6 +4220,17 @@ def get_quick_classifier() -> QuickClassifier:
 def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                          max_tokens: int = 100, temperature: float = 0.2,
                          max_retries: int = 3, base_delay: float = 1.5) -> str:
+    """
+    🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: KeyRouter resource leak fix
+    Sir 18:09 真测痛点: '所有 OpenRouter Key 均不可用' — 但 key_router_health.json
+    显示所有 key healthy=True, active_calls 却是 9/10/10/10 几乎顶满.
+    Root cause: caller (stm_summarizer/struggle_reflector/soul_evaluator/watch_task)
+    调 get_openrouter_key() → _active_calls += 1, 但**从不 release**.
+    成功路径漏 release 累积 → 池满 → "所有 key 均不可用".
+
+    修法 (caller 责任): 每个 caller 加 try/finally release once.
+    wrapper 本身不持 key_router 引用 (避免 caller fallback 路径双 release 污染池).
+    """
     import time as _time
     from openai import OpenAI
 
@@ -4235,89 +4246,94 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
 
     last_error = None
     last_error_type = "unknown"
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            last_error = e
-            error_str = str(e).lower()
+    try:
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
 
-            if any(kw in error_str for kw in ['401', 'unauthorized', 'invalid api key', 'invalid_key']):
-                last_error_type = "auth"
+                if any(kw in error_str for kw in ['401', 'unauthorized', 'invalid api key', 'invalid_key']):
+                    last_error_type = "auth"
+                    raise RuntimeError(
+                        f"[OpenRouter] API Key 无效或已过期 (401)。"
+                        f"请检查 https://openrouter.ai/keys 确认 Key 状态。"
+                        f"原始错误: {str(e)[:200]}"
+                    ) from e
+
+                if any(kw in error_str for kw in ['402', 'payment', 'insufficient', 'quota', 'billing', 'credits']):
+                    last_error_type = "billing"
+                    raise RuntimeError(
+                        f"[OpenRouter] 账户余额不足或配额耗尽 (402)。"
+                        f"请在 https://openrouter.ai/credits 充值。"
+                        f"原始错误: {str(e)[:200]}"
+                    ) from e
+
+                if any(kw in error_str for kw in ['403', 'forbidden', 'access denied', 'blocked']):
+                    last_error_type = "access"
+                    raise RuntimeError(
+                        f"[OpenRouter] 模型访问被拒绝 (403)。"
+                        f"模型 {model} 可能未启用或已被禁用。"
+                        f"原始错误: {str(e)[:200]}"
+                    ) from e
+
+                if any(kw in error_str for kw in ['404', 'not found', 'model not found']):
+                    last_error_type = "model"
+                    raise RuntimeError(
+                        f"[OpenRouter] 模型 {model} 不存在 (404)。"
+                        f"请检查模型名称是否正确。"
+                        f"原始错误: {str(e)[:200]}"
+                    ) from e
+
+                is_retryable = any(kw in error_str for kw in [
+                    '503', '429', 'unavailable', 'overloaded', 'rate', 'capacity',
+                    'timeout', 'connection', 'reset', 'internal', 'server error',
+                    'bad gateway', 'service unavailable', 'temporarily'
+                ])
+
+                if is_retryable:
+                    last_error_type = "retryable"
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** min(attempt, 4))
+                        _time.sleep(delay)
+                        continue
+
+                if any(kw in error_str for kw in ['timeout', 'timed out', 'connection', 'network', 'dns', 'resolve', 'refused']):
+                    last_error_type = "network"
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** min(attempt, 4))
+                        _time.sleep(delay)
+                        continue
+                    raise RuntimeError(
+                        f"[OpenRouter] 网络连接失败。"
+                        f"请检查网络是否正常，或 OpenRouter (openrouter.ai) 是否可访问。"
+                        f"原始错误: {str(e)[:200]}"
+                    ) from e
+
+                break
+
+        if last_error:
+            if last_error_type == "retryable":
                 raise RuntimeError(
-                    f"[OpenRouter] API Key 无效或已过期 (401)。"
-                    f"请检查 https://openrouter.ai/keys 确认 Key 状态。"
-                    f"原始错误: {str(e)[:200]}"
-                ) from e
-
-            if any(kw in error_str for kw in ['402', 'payment', 'insufficient', 'quota', 'billing', 'credits']):
-                last_error_type = "billing"
-                raise RuntimeError(
-                    f"[OpenRouter] 账户余额不足或配额耗尽 (402)。"
-                    f"请在 https://openrouter.ai/credits 充值。"
-                    f"原始错误: {str(e)[:200]}"
-                ) from e
-
-            if any(kw in error_str for kw in ['403', 'forbidden', 'access denied', 'blocked']):
-                last_error_type = "access"
-                raise RuntimeError(
-                    f"[OpenRouter] 模型访问被拒绝 (403)。"
-                    f"模型 {model} 可能未启用或已被禁用。"
-                    f"原始错误: {str(e)[:200]}"
-                ) from e
-
-            if any(kw in error_str for kw in ['404', 'not found', 'model not found']):
-                last_error_type = "model"
-                raise RuntimeError(
-                    f"[OpenRouter] 模型 {model} 不存在 (404)。"
-                    f"请检查模型名称是否正确。"
-                    f"原始错误: {str(e)[:200]}"
-                ) from e
-
-            is_retryable = any(kw in error_str for kw in [
-                '503', '429', 'unavailable', 'overloaded', 'rate', 'capacity',
-                'timeout', 'connection', 'reset', 'internal', 'server error',
-                'bad gateway', 'service unavailable', 'temporarily'
-            ])
-
-            if is_retryable:
-                last_error_type = "retryable"
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** min(attempt, 4))
-                    _time.sleep(delay)
-                    continue
-
-            if any(kw in error_str for kw in ['timeout', 'timed out', 'connection', 'network', 'dns', 'resolve', 'refused']):
-                last_error_type = "network"
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** min(attempt, 4))
-                    _time.sleep(delay)
-                    continue
-                raise RuntimeError(
-                    f"[OpenRouter] 网络连接失败。"
-                    f"请检查网络是否正常，或 OpenRouter (openrouter.ai) 是否可访问。"
-                    f"原始错误: {str(e)[:200]}"
-                ) from e
-
-            break
-
-    if last_error:
-        if last_error_type == "retryable":
+                    f"[OpenRouter] API 暂时不可用（重试 {max_retries} 次后仍失败）。"
+                    f"可能原因：服务过载 / 限流 / 临时故障。请稍后重试。"
+                    f"原始错误: {str(last_error)[:200]}"
+                ) from last_error
             raise RuntimeError(
-                f"[OpenRouter] API 暂时不可用（重试 {max_retries} 次后仍失败）。"
-                f"可能原因：服务过载 / 限流 / 临时故障。请稍后重试。"
-                f"原始错误: {str(last_error)[:200]}"
+                f"[OpenRouter] 未知错误: {str(last_error)[:300]}"
             ) from last_error
-        raise RuntimeError(
-            f"[OpenRouter] 未知错误: {str(last_error)[:300]}"
-        ) from last_error
-    raise RuntimeError("[OpenRouter] 所有重试已耗尽，无可用响应")
+        raise RuntimeError("[OpenRouter] 所有重试已耗尽，无可用响应")
+    finally:
+        # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: caller 责任 release.
+        # wrapper 不 release (避免 caller fallback 路径双 release 污染池).
+        pass
 
 
 def create_genai_client_old(api_key=None, model_name='gemini-2.5-flash'):

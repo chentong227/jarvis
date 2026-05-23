@@ -2707,7 +2707,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                     (短确认, 让 TTS 给 Sir 听到. 不要 emit 第二个 FAST_CALL 除非
                     Sir 明确要"提醒我每隔 X 分钟喝水". 那时再 emit cyclic_task.)
 
-                STEP 2 (case b — update):
+                STEP 2 (case b — update, +delta 累加):
                   <FAST_CALL>{"organ":"progress","command":"update","params":{
                     "track_id": "hydration_2026-05-23",
                     "amount": 500,
@@ -2715,6 +2715,22 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   }}</FAST_CALL>
                   → store 返 'progress: 500/3000 ml (16.7%), 余 2500 ml' 给你下轮看.
                   → 你 ack: "已记下 Sir, 当前 500/3000 ml, 还差 2500." (用真数据)
+
+                STEP 2 (case b' — set, 绝对值覆写, Sir 纠正场景):
+                  Sir 纠正"我搞错了, 总共应该是 X" → MUST 用 set, NEVER += update.
+                  <FAST_CALL>{"organ":"progress","command":"set","params":{
+                    "track_id": "hydration_2026-05-23",
+                    "new_current": 2000,
+                    "note": "Sir 纠正: 总共喝了 2000ml"
+                  }}</FAST_CALL>
+                  → store 返 'set 4900→2000 (delta=-2900)' 给你下轮看.
+                  → 你 ack: "已修正 Sir, 当前 2000/3000 ml." (用真新值)
+
+                update vs set 选择 (准则 5 言出必行 — 关键):
+                  - Sir 报"刚 +XX" / "又喝了 N 杯" → update amount=delta
+                  - Sir 报"总共应该是 N" / "搞错了, 实际是 N" / "纠正一下, 总共 N"
+                    → **MUST set new_current=N**, 不能 +=. 之前的 += 已经记入,
+                      再加一次会双倍累加 → 准则 5 重大违反 (Sir 17:55 真测痛点).
 
                 STEP 2 (case c — status):
                   <FAST_CALL>{"organ":"progress","command":"status","params":{

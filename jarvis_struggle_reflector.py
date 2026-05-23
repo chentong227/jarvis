@@ -235,6 +235,10 @@ class StruggleReflector(threading.Thread):
             result['reason'] = 'no key_router'
             self._stats['last_error'] = result['reason']
             return result
+        # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: try/finally release 防泄漏.
+        # 老代码: acquire → wrapper call → 永不 release → 池累积满.
+        # 注: 老 timeout_s 参数不是 wrapper signature, 触发 TypeError → exception 静默
+        # 吃掉 → key 永不 release. 此修同时移除老 timeout_s.
         try:
             okey, _label = self.key_router.get_openrouter_key(caller='struggle_reflector')
         except Exception as e:
@@ -244,33 +248,37 @@ class StruggleReflector(threading.Thread):
 
         response_text = ''
         try:
-            response_text = safe_openrouter_call(
-                openrouter_key=okey,
-                model=self.config['primary_model'],
-                prompt=prompt,
-                max_tokens=self.config['max_output_tokens'],
-                temperature=self.config['temperature'],
-                timeout_s=self.config['timeout_s'],
-            )
-        except Exception as e_primary:
             try:
                 response_text = safe_openrouter_call(
                     openrouter_key=okey,
-                    model=self.config['fallback_model'],
+                    model=self.config['primary_model'],
                     prompt=prompt,
                     max_tokens=self.config['max_output_tokens'],
                     temperature=self.config['temperature'],
-                    timeout_s=self.config['timeout_s'],
                 )
-            except Exception as e_fallback:
-                result['reason'] = (
-                    f'LLM both failed: primary={str(e_primary)[:60]} '
-                    f'fallback={str(e_fallback)[:60]}'
-                )
-                self._stats['last_error'] = result['reason']
-                self._last_run_ts = time.time()
-                self._stats['runs_total'] += 1
-                return result
+            except Exception as e_primary:
+                try:
+                    response_text = safe_openrouter_call(
+                        openrouter_key=okey,
+                        model=self.config['fallback_model'],
+                        prompt=prompt,
+                        max_tokens=self.config['max_output_tokens'],
+                        temperature=self.config['temperature'],
+                    )
+                except Exception as e_fallback:
+                    result['reason'] = (
+                        f'LLM both failed: primary={str(e_primary)[:60]} '
+                        f'fallback={str(e_fallback)[:60]}'
+                    )
+                    self._stats['last_error'] = result['reason']
+                    self._last_run_ts = time.time()
+                    self._stats['runs_total'] += 1
+                    return result
+        finally:
+            try:
+                self.key_router.release(_label)
+            except Exception:
+                pass
 
         try:
             txt = response_text.strip()
