@@ -421,3 +421,142 @@ bg_log(msg) → 自动 prefix `[sess_xxx][turn_yyy] msg` 写到 docs/runtime_log
 
 ---
 
+### #4 `jarvis_chat_bypass.py` (5960 行) — **stream_chat 主对话循环 + FAST_CALL 派发**
+
+**职责**: 实际跑每轮对话的循环 — 装配 prompt → 调 LLM stream → 实时 parse `<FAST_CALL>` 标签 → dispatch organ → 拼 continuation prompt → TTS + UI emit. **是 Sir 说话后的主流程实际跑工**.
+
+**核心 class** (仅 1 个):
+
+| L | class | 1 句话 |
+|---|---|---|
+| 238 | **`ChatBypass`** | 主对话循环 + TTS pipeline + FAST_CALL dispatch (24 method) |
+
+**核心 method** (按重要性排序):
+
+| L | method | 功能 | 重要性 |
+|---|---|---|---|
+| 2575 | **`stream_chat`** | **每轮主对话** — 调 _create_stream + parse stream + dispatch FAST_CALL + TTS emit (~2000+ 行) | ⭐⭐⭐ |
+| 1426 | **`_execute_fast_call`** | **FAST_CALL 执行** — alias resolve + organ → hand 派发 + result format (~700 行, fix82-Z 改) | ⭐⭐⭐ |
+| 1333 | `_execute_fast_call_with_soft_timeout` | FAST_CALL 异步 1.5s 软超时, 超时主 stream 不卡 (β.2.9.10) | ⭐⭐⭐ |
+| 737 | `_create_stream` | Gemini stream 创建 (含 vision 截图 / multi-modal) | ⭐⭐ |
+| 4872 | `stream_nudge` | nudge 专用 stream (不同于主对话, 短 prompt) | ⭐⭐ |
+| 2096 | `stream_chat_cloud_followup` | continuation_prompt 主脑续 stream 看 tool result | ⭐⭐ |
+| 1143 | `stream_chat_local` | 本地 LLM fallback (无网络时) | ⭐ |
+| 4742 | `_build_public_layers` | layer composition for prompt | ⭐ |
+| 4848 | `_build_sleep_directive` | sleep mode prompt | ⭐ |
+| 1401 | `drain_pending_tool_results` | 异步 tool 完成后回收 result 喂主脑 | ⭐⭐ |
+| 924 | `_translate_worker` | 后台 ZH 翻译 worker thread | ⭐ |
+| 996 | `_render_worker` | TTS 渲染 worker (PCM 生成) | ⭐ |
+| 1084 | `_play_worker` | TTS 播放 worker (audio out) | ⭐ |
+| 366 | `_warmup_local_phrase_pool` | 启动预渲 5 句本地短语 ("On it" / "One moment" / ...) | ⭐ |
+| 553 | `_mark_first_token` | TTFT 计时 + backchannel 取消 |  |
+| 469 | `_start_backchannel_timer` | TTFT > 10s 时触发本地短句 |  |
+| 879 | `_speak_fallback` / 905 `_speak_local_reply` | 失败 fallback TTS |  |
+
+**stream_chat 内嵌逻辑** (核心黑盒, ~2000 行):
+
+```
+1. 入参: user_input + context + Sir 真意原话
+2. assemble_prompt → CentralNerve._assemble_prompt() (调 #3)
+3. _create_stream(prompt, model, vision_image=screenshot or None)
+4. for chunk in stream:
+   ├─ chunk_text 追加 buffer
+   ├─ 检测 buffer 含 <FAST_CALL>...</FAST_CALL> 标签
+   │  └─ 触发 _execute_fast_call(organ, command, params)
+   │     ├─ alias resolve (fix77-Q: 'memory' → 'memory_hands')
+   │     ├─ Gatekeeper SWM 检测 (fix82-Z: skip dup add_reminder)
+   │     ├─ 调 hand_inst.execute(Action(command, params))
+   │     ├─ tool_result append _tool_results
+   │     └─ continuation_prompt 喂回主脑
+   ├─ 检测 ZH 分割符 ---ZH--- → 切英中
+   ├─ 句子边界 → translate_queue.put + render_queue.put
+   ├─ 检测主脑 stream finish_reason
+   └─ continuation prompt 触发主脑续 stream (看 tool result)
+5. 最后:
+   ├─ _last_tool_results 暴露给 Worker (B 守门)
+   ├─ ClaimTracer 抓 reply 内 mutation claim verify
+   ├─ STM persist (调 _append_stm)
+   ├─ TTS finalize + UI emit complete
+   └─ 后台 reflectors fire-and-forget
+```
+
+**3 个 TTS 线程** (启动时 daemon):
+
+| 线程 | 职责 |
+|---|---|
+| `_render_worker` | PCM 渲染 (vocal.render_only) |
+| `_play_worker` | PCM 播放 (vocal.play_only) |
+| `_translate_worker` | EN → ZH 翻译 (Gemini-flash-lite) |
+| `LocalPhrasePoolWarmup` | 启动 1 次预渲 5 句短语 |
+| `FastCallAsync` (3 worker) | 异步 FAST_CALL pool (避免主 stream 卡) |
+
+**数据**:
+- 读: 主要从 CentralNerve.* 读 (各 component) + `key_router` LLM endpoints + `vocal_cord` TTS
+- 写: `audio_queue` / `wave_queue` / `subtitle_queue` (UI consume) + `_pending_tool_results`
+- SWM publish: 间接通过 organ dispatch 触发各 organ publish (e.g. `mutation` organ → `MemoryGateway` → publish 'sir_field_updated')
+- ENV vars: `JARVIS_MAIN_BRAIN` (default `google/gemini-3-flash-preview`)
+
+**上游 (谁调它)**:
+- `JarvisWorkerThread.run` → `chat_bypass.stream_chat(user_input)` (主对话)
+- `ProactiveCareEngine` → `chat_bypass.stream_nudge` (nudge 触发)
+- `ReturnSentinel` → `chat_bypass.stream_nudge` (return greeting)
+
+**下游 (它调谁)**:
+- `CentralNerve._assemble_prompt` (装配 prompt)
+- `key_router.get_key + safe_gemini_call` (LLM stream)
+- `VocalCord.render_only / play_only` (TTS)
+- `ProfileCard / Hippocampus / CommitmentWatcher / ConcernsLedger / MemoryGateway / promise_log / ...` 通过 organ dispatch
+- 24 个 hand (l4_*.py) 通过 `_execute_fast_call`
+- `IntegrityWatcher` post-stream verify
+- `STMSummarize / SoulReflector / ConcernsReflector / DirectiveEvaluator` fire-and-forget
+
+**跟记忆的耦合**:
+- **直接写**: 通过 organ dispatch 调 `MemoryGateway.update_sir_field` / `Hippocampus.add_completed_event` / `ProfileCard.overwrite_field` / `CommitmentWatcher.cancel_by_keyword` / etc.
+- **直接读**: 调 `_assemble_prompt` (只读 30+ render block) + alias 'memory' → 'memory_hands' 直读 hippocampus.search
+- **STM 写**: 通过 `CentralNerve._append_stm` 间接
+
+**跟其他模块的耦合**:
+- **极重** — 是主对话流程 owner, 几乎调全 Jarvis
+- 持有 `central_nerve` ref → 通过它访问全部 component
+- 通过 SWM 间接耦合所有 sentinel / reflector
+
+**已知问题 / TODO marker**:
+- **5960 行单 file** — 难维护, NERVE_SPLIT_PLAN 提出拆分但未执行
+- `stream_chat` 单 method ~2000 行 — **极难审计**, 含太多分支 (FAST_CALL parse / ZH split / fallback / continuation / claim_tracer / pre_flight / wrap_up_synthesis)
+- `_execute_fast_call` ~700 行 — 24 个 organ 各自分支, 极难加新 organ
+- 多处 `# 🆕 [P5-fixXX]` marker — 渐进 patch 累积, 没整体审视过
+- `stream_chat_cloud_followup` 跟 `stream_chat` 重叠 — continuation 是分支 vs 独立 method 不一致
+- 5960 行无 module docstring (顶部 `# [P0+19-7]` comment 但不是 docstring)
+- TODO: `_screenshot_cache = None` 占位标但说"已废弃" — 应清
+
+**关联 design doc**:
+- `NERVE_SPLIT_PLAN.md` — 拆分计划 (未执行)
+- `JARVIS_VOICE_PIPELINE_LATENCY.md` — TTS pipeline 延迟优化
+- `JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` — `mutation` organ + correction_dispatcher 在这里 dispatch
+- `JARVIS_INTEGRITY_STACK.md` — ClaimTracer post-stream verify 在这里调
+
+**重构含义 (Phase B 设计参考)**:
+
+⭐⭐⭐ **chat_bypass 是记忆 refactor 的运行时执行者**:
+
+- **必拆**:
+  - `stream_chat` ~2000 行 → 拆成 `prompt → stream → parse → dispatch → continuation → finalize` 6 个 method
+  - `_execute_fast_call` ~700 行 → 24 organ 各自有自己的 dispatcher class (类 ClassMutationDispatcher / HandDispatcher / etc.)
+  - 3 个 TTS worker → 单独 module `jarvis_tts_pipeline.py`
+
+- **必整合**:
+  - `mutation` organ dispatch 路径应**统一**到 `MemoryGateway.update_sir_field` (现状有 `mutation` organ 但部分 organ 还走老 `_execute_fast_call` 内嵌 if/else)
+  - alias resolve (e.g. 'memory' → 'memory_hands') 应迁到统一 alias map (`memory_pool/organ_alias.json`, 准则 6)
+
+- **不动**:
+  - TTS 3-worker pipeline 模式 (β.2.9.10 + β.5.10 已优化稳定)
+  - `_warmup_local_phrase_pool` (本地短语预渲, Sir 真测有效)
+
+- **跟 Memory Refactor 关系**:
+  - chat_bypass 是 `MemoryHub.write()` 的**调用方** — 主脑 emit `<FAST_CALL>{"organ":"mutation",...}}` 进入此处, 转 MemoryHub
+  - `_assemble_prompt` 调用 (在 #3 central_nerve) 是 `MemoryHub.read_context()` 的入口
+  - 拆 chat_bypass + 拆 central_nerve 是**联动的**, Phase B 必一起设计
+
+**审计结论**: chat_bypass 是 Jarvis **运行时主流程的实际执行**, 跟 central_nerve 紧密耦合 (装配 prompt 在 CN, 调 LLM 在 CB). NERVE_SPLIT_PLAN 拆分 chat_bypass 是 Phase D 重头戏. Memory refactor 必扩展 `_execute_fast_call` 的 organ dispatch.
+
+---
