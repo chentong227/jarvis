@@ -267,6 +267,31 @@ class ChronosTick(threading.Thread):
                 self.jarvis.hippocampus.consume_reminder(mem_id)
                 consumed_ids.append(mem_id)
                 print(f"\n[Reminder] 用户已确认，消费提醒 ID:{mem_id} '{state['intent']}'")
+                # 🆕 [P5-fix72 / 2026-05-23 17:11] BUG-F/G: Sir ack 后 commitment_check
+                # + Conductor suggest_break 仍 fire (不知 reminder 已 consume).
+                # 修法 (准则 6 数据强耦合): publish 'reminder_acknowledged' SWM event,
+                # sentinel 看到此 event 后 cooldown 30min, 不重复同类 nudge.
+                try:
+                    from jarvis_utils import get_event_bus as _geb_ra
+                    _bus_ra = _geb_ra()
+                    if _bus_ra is not None:
+                        _intent = state.get('intent', '') or ''
+                        _bus_ra.publish(
+                            etype='reminder_acknowledged',
+                            description=(
+                                f"Sir 已 ack 提醒 (id={mem_id}): "
+                                f"{_intent[:80]}"
+                            ),
+                            source='ReminderSentinel',
+                            salience=0.70,
+                            metadata={
+                                'reminder_id': mem_id,
+                                'intent': _intent[:200],
+                                'tier_at_ack': state.get('tier', 1),
+                            },
+                        )
+                except Exception:
+                    pass
                 continue
             
             if state['tier'] == 1 and elapsed > 180:

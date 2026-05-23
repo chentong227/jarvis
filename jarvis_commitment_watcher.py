@@ -1649,6 +1649,42 @@ class CommitmentWatcher(threading.Thread):
         return ctx
 
     def _dispatch_commitment_nudge(self, commitment):
+        # 🆕 [P5-fix72 / 2026-05-23 17:11] BUG-F: Sir 17:01 ack reminder 后,
+        # 17:03 commitment_check 又 fire "stand up and stretch" (同事). 根因:
+        # commitment_watcher 不知 reminder_acknowledged. 修法 (准则 6 数据强耦合):
+        # 检 SWM 近 30min reminder_acknowledged event 含同 keyword → skip nudge.
+        try:
+            _desc_lower = (commitment.get('description', '') or '').lower()
+            if _desc_lower:
+                from jarvis_utils import get_event_bus as _geb_ra
+                _bus_ra = _geb_ra()
+                if _bus_ra is not None:
+                    _recent_acks = _bus_ra.recent_events(
+                        within_seconds=1800.0,  # 30min
+                        types={'reminder_acknowledged'},
+                    )
+                    for _ev in _recent_acks:
+                        _ack_intent = (_ev.get('metadata', {}) or {}).get('intent', '')
+                        if _ack_intent:
+                            _ack_lower = _ack_intent.lower()
+                            # fingerprint: 2 sides share >= 5 char overlap on key noun
+                            # 简单: commitment desc 含 ack intent (or vice versa)
+                            if (_ack_lower[:30] in _desc_lower
+                                or _desc_lower[:30] in _ack_lower):
+                                try:
+                                    from jarvis_utils import bg_log as _skip_bg
+                                    _skip_bg(
+                                        f"🛡️ [CommitmentWatcher] skip nudge — "
+                                        f"reminder 已 ack 30min 内 "
+                                        f"(ack='{_ack_intent[:50]}' vs "
+                                        f"commit='{commitment.get('description', '')[:50]}')"
+                                    )
+                                except Exception:
+                                    pass
+                                return  # skip, 不 dispatch
+        except Exception:
+            pass
+
         overdue_minutes = int((time.time() - commitment['deadline_ts']) / 60)
         # 🆕 [P5-fix42 / 2026-05-23 14:34] inject sleep evidence — 主脑 evidence-based
         # 自决, 不再直觉断言 'still working'. Sir 14:32 真痛点: NudgeGate 显示 sleep

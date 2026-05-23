@@ -499,12 +499,42 @@ class SmartNudgeSentinel(threading.Thread):
                                     f"(剩 {int((_muted_until - now) / 60)}min, Sir 之前拒过) [5min throttle]"
                                 )
                             else:
-                                if nudge_type in ("late_night", "suggest_break"):
-                                    self._track_sleep_nudge_dispatch(nudge_type)
-                                self._dispatch_nudge(nudge_type, nudge_context)
-                                self.last_nudge_time[nudge_type] = now
-                                self._type_counts[nudge_type] = type_count + 1
-                                self.daily_nudge_count += 1
+                                # 🆕 [P5-fix72 / 2026-05-23 17:11] BUG-G: Sir 17:01 ack
+                                # reminder 'stand up and stretch' 后, 17:09 Conductor/
+                                # SmartNudge 仍 fire suggest_break "perhaps a brief pause".
+                                # 根因: SmartNudge 不知 reminder_acknowledged.
+                                # 修法 (准则 6 数据强耦合): suggest_break / commitment_check
+                                # / late_night 等"催做某事"类 nudge 在 reminder ack
+                                # 30min 内 skip — Sir 刚 ack 不会立刻被催同事.
+                                _ra_skip = False
+                                if nudge_type in ('suggest_break', 'commitment_check',
+                                                    'late_night'):
+                                    try:
+                                        from jarvis_utils import get_event_bus as _geb_sn
+                                        _bus_sn = _geb_sn()
+                                        if _bus_sn is not None:
+                                            _recent_acks = _bus_sn.recent_events(
+                                                within_seconds=1800.0,
+                                                types={'reminder_acknowledged'},
+                                            )
+                                            if _recent_acks:
+                                                _ra_skip = True
+                                                _maybe_log_skip(
+                                                    f'reminder_ack:{nudge_type}',
+                                                    f"🛡️ [SmartNudge] {nudge_type} skip "
+                                                    f"— reminder 已 ack 30min 内 "
+                                                    f"({len(_recent_acks)} ack(s))"
+                                                )
+                                    except Exception:
+                                        pass
+
+                                if not _ra_skip:
+                                    if nudge_type in ("late_night", "suggest_break"):
+                                        self._track_sleep_nudge_dispatch(nudge_type)
+                                    self._dispatch_nudge(nudge_type, nudge_context)
+                                    self.last_nudge_time[nudge_type] = now
+                                    self._type_counts[nudge_type] = type_count + 1
+                                    self.daily_nudge_count += 1
 
             except Exception:
                 pass
