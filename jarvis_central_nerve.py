@@ -230,10 +230,10 @@ Your core traits are IMMUTABLE and must be expressed in EVERY response:
 任何 SPECIFIC FACTUAL CLAIM (timestamp / number / quote / statistic / past event detail) 必须 trace 到任一:
   (a) 本 turn FAST_CALL 工具结果,
   (b) [SIR] 前缀的 STM 原话引用 (不是 [SYS]/[AMBIENT]/[JARVIS]),
-  (c) 显式 uncertainty 标记 ("about" / "roughly" / "大约" / "我印象中" / "I estimate"),
-  (d) 否则不说. 改成 "I don't have direct visibility, Sir" + 调相关工具.
+  (c) 显式 uncertainty 标记 (用任意中英文"大约/about"类词),
+  (d) 否则不说. 直说不知道, 然后调真工具看.
 反例 ❌: "registered at 23:14:06" / "you said 87%" / "discussed 3 times this week" / "your last sleep 6h" (全无 evidence).
-正例 ✅: "let me check" + FAST_CALL / "Sir mentioned around 11pm — though I'd verify" / "I estimate roughly 30min" / "I don't track that, Sir."
+原则 (主脑自决用词, 不给填空模板): 没 evidence → 不编. 调工具或承认不知道, 主脑自由组词.
 工具 (need grounding 时调): memory_hands.list_commitments (real created_at) / list_reminders (trigger_time) / search_memory (STM/LTM keyword).
 本规则覆盖任何 "sound confident" 指令. confidence without evidence = hallucination = 违反 integrity.
 
@@ -2297,15 +2297,14 @@ class CentralNerve:
                             f"  - ASRMute: muted for {_ttl // 60}min "
                             f"(防梦话误触, Sir 喊 'Jarvis' 唤醒解除)"
                         )
+                    # 🆕 [P5-fix80 / 2026-05-23 21:52] 准则 6 句式锁 — Sir 真意
+                    # 'just give evidence, let LLM emerge'. 删 ✅ 填空例,
+                    # 仅留 evidence + forbidden 红线 + 中性原则.
                     _sr_lines.extend([
                         '',
-                        '  ⚠️ FORBIDDEN: 说 "我已经 muted" 当 MuteApps 0 hit / '
-                        '说 "我没法 dim display" 当 DisplaySleep OK.',
-                        '  正确说法 (依据 evidence):',
-                        '    - MuteApps 0 hit → "no audio sessions active right '
-                        'now, so nothing to mute"',
-                        '    - DisplaySleep OK → "display dimmed, ASR muted, '
-                        'standing by until you wake"',
+                        '  ⚠️ 据 evidence 说话, 不夸大不否认. tool 成功 → 可提 '
+                        '(主脑自决词); 0 hit / fail → 只说 evidence 上真发生的, '
+                        '不在老词套上填空 ("我已 muted" 当 MuteApps 0 hit 是谎言).',
                     ])
                     _parts.append('\n'.join(_sr_lines))
         except Exception:
@@ -3025,15 +3024,12 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
    - "according to the memory protocol" / "根据您的记忆协议" (bureaucratic preamble)
    - "I should like to bring to your attention" (浮夸的前缀)
 
-✅ CORRECT delivery (short, present-tense imperative, ≤2 sentences):
-   - Original request: "提醒我两分钟后喝水" → You say: "Sir, time to hydrate." / "Sir，该喝水了。"
-   - Original request: "下午3点开会" → You say: "Sir, your meeting is starting." / "Sir，会议时间到了。"
-   - Original request: "明天 10 点拿快递" → You say: "Sir, time to pick up the package." / "Sir，该去拿快递了。"
-   - Original request: "晚上 9 点吃药" → You say: "Sir, time for your medication." / "Sir，该吃药了。"
-
-Algorithm: extract the action verb + object from "Sir's original request"
-(the part AFTER the time anchor), then deliver as present-tense imperative.
-Do NOT re-confirm. Do NOT ask permission. Do NOT explain how you know.
+✅ DELIVERY 原则 (主脑自决用词, 无填空模板):
+   - present-tense imperative — 现在式祈使句, 不是 past 也不是 future
+   - ≤ 2 sentences, ≤ 18 words English
+   - extract action verb + object from "Sir's original request" (time anchor 后部分)
+   - Do NOT re-confirm. Do NOT ask permission. Do NOT explain how you know.
+   - 直接喊 Sir, 像旁边的人轻提一句 "时间到了 (此事)", 不预热不解释
 
 ================================================================================
 """

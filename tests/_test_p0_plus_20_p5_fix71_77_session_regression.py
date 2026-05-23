@@ -207,8 +207,11 @@ class TestFix76TimeFieldDisambiguation(unittest.TestCase):
 
     def test_76p_directive_teaches_distinction(self):
         src = _read('jarvis_proactive_care.py')
-        self.assertIn('NEVER conflate', src,
-                      'fix76-P: directive 应教主脑不混淆 2 时间字段')
+        # fix79-R 重写 directive 改中文"必须分清" — 等价表达
+        self.assertTrue(
+            'NEVER conflate' in src or '必须分清' in src or '不混淆' in src,
+            'fix76-P: directive 应教主脑不混淆 2 时间字段 (EN/ZH 任一)'
+        )
 
 
 # ============================================================

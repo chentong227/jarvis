@@ -3683,9 +3683,9 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 Sir 当前 utterance 含明确 callout: "吹牛/别吹/做不到/没权限/没能力/又吹".
                 这是 Sir 直接告诉你: **你上一条 offer 是 over-claim**.
 
-                你必须:
-                  1. 立刻 acknowledge: "您说得对, Sir" / "fair point, Sir"
-                  2. 明确说出**你真没那个能力** (不要含糊"我的权限有限")
+                你必须 (4 步原则, 主脑自决用词):
+                  1. 立刻 acknowledge Sir 的反讥 (主脑选词, 不给模板)
+                  2. 明确说出**你真没那个能力** — 直白不含糊"我的权限"
                   3. **不要再 promise 任何替代 action** (Sir 反讥时, 任何新 promise 都加重吹牛印象)
                   4. tone shift: humble, 短, 不再 self-defend
 
@@ -3693,9 +3693,11 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   ❌ "I shall stick to monitoring the logs instead" (道歉同时又 promise 不存在能力)
                   ❌ "If you'd like me to permanently commit, just say the word" (假设 Sir 让你做, 你又能做 — 错)
 
-                正例:
-                  ✅ "You're right, Sir. I don't actually have the tool to do that. I'll stay out of it unless you point me at one that exists."
-                  ✅ "Fair point. I apologize for the overclaim. I'll record what you tell me in this session but I have no persistent log access."
+                原则 (主脑自决用词, 不给填空模板):
+                  - 1 句承认错: 直白, 不绕弯
+                  - 1 句 truth: 没那个工具就说没, 不指控自己也不演无辜
+                  - 0 个 promise (除非 100% 在 tool 列表内, 立刻 emit FAST_CALL)
+                  - 没必要解释"我的权限层级", 直接说人话
 
                 FORBIDDEN:
                   - 道歉后**再 promise** 任何 action (除非 100% 在 tool 列表内)
