@@ -3064,7 +3064,34 @@ Do NOT re-confirm. Do NOT ask permission. Do NOT explain how you know.
 
 ================================================================================
 """
-            return f"""{core_persona}
+            # 🆕 [P5-fix56 / 2026-05-23 16:00] Phase 3a: REMINDER_FIRING 迁 builder
+            try:
+                from jarvis_prompt_builder import PromptBuilder, BlockSpec
+                rb = PromptBuilder(tier='REMINDER_FIRING')
+                rb.register(BlockSpec(
+                    id='reminder_directive', content=reminder_firing_directive,
+                    tiers=['REMINDER_FIRING'], salience=0.99))
+                if context_str:
+                    rb.register(BlockSpec(
+                        id='context', content=context_str,
+                        tiers=['REMINDER_FIRING'], salience=0.70))
+                rb.register(BlockSpec(
+                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                    tiers=['REMINDER_FIRING'], salience=0.85))
+                if sensor_state_block:
+                    rb.register(BlockSpec(
+                        id='sensor', content=sensor_state_block,
+                        tiers=['REMINDER_FIRING'], hint='sensor:<field>',
+                        salience=0.80))
+                return rb.compose(
+                    persona=core_persona,
+                    user_input=user_input,
+                    footer='[BILINGUAL DIRECTIVE]: Speak English. Append `---ZH---` Chinese subtitle at the VERY END. This is MANDATORY.',
+                    include_meta_hint=False,  # mail mode 极简, 不写 META
+                )
+            except Exception:
+                # builder fail → fallback 老路径
+                return f"""{core_persona}
 
 {reminder_firing_directive}
 {context_str}
@@ -3378,7 +3405,51 @@ User: {user_input}
 """
 
         if mode == "light":
-            return f"""{core_persona}
+            # 🆕 [P5-fix56 / 2026-05-23 16:00] Phase 3a: light mode 迁 builder
+            try:
+                from jarvis_prompt_builder import PromptBuilder, BlockSpec
+                lb = PromptBuilder(tier='LIGHT')
+                if context_str:
+                    lb.register(BlockSpec(
+                        id='context', content=context_str,
+                        tiers=['LIGHT'], salience=0.70))
+                if _pc_block_value:
+                    lb.register(BlockSpec(
+                        id='profile_card', content=_pc_block_value,
+                        tiers=['LIGHT'], hint='profile:<field>', salience=0.75))
+                if correction_context:
+                    lb.register(BlockSpec(
+                        id='correction', content=correction_context,
+                        tiers=['LIGHT'], salience=0.80))
+                if style_adjustment:
+                    lb.register(BlockSpec(
+                        id='style', content=style_adjustment,
+                        tiers=['LIGHT'], salience=0.60))
+                if content_pref:
+                    lb.register(BlockSpec(
+                        id='content_pref', content=content_pref,
+                        tiers=['LIGHT'], salience=0.60))
+                lb.register(BlockSpec(
+                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                    tiers=['LIGHT'], salience=0.85))
+                if sensor_state_block:
+                    lb.register(BlockSpec(
+                        id='sensor', content=sensor_state_block,
+                        tiers=['LIGHT'], hint='sensor:<field>', salience=0.85))
+                _l2 = getattr(self, '_l2_injected_block', '') or ''
+                if _l2:
+                    lb.register(BlockSpec(
+                        id='l2', content=_l2,
+                        tiers=['LIGHT'], hint='l2:<directive_id>', salience=0.70))
+                return lb.compose(
+                    persona=core_persona,
+                    user_input=user_input,
+                    system_alert=system_alert_text,
+                    include_meta_hint=True,  # light mode 允许 META 自检
+                )
+            except Exception:
+                # fallback 老路径
+                return f"""{core_persona}
 
 {context_str}
 {_pc_block_value}
