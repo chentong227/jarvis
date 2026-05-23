@@ -693,8 +693,20 @@ class CareSignalCollector:
                 timing_hit = True
             elif tm == 'now':
                 timing_hit = True
+            # 🆕 [P5-fix67 / 2026-05-23 16:45] BUG-C: Sir 16:41 真测痛点 — 下午接到
+            # 睡眠提醒 "monitoring your sleep streak, do ensure rest tonight".
+            # 根因: 老逻辑仅 timing 命中 boost (mul=1.5), 不命中**无 decay** (mul=1.0).
+            # sir_sleep_streak base=0.6 + progress (Sir 睡眠不足) = 0.91, 16:41
+            # 非 before_sleep 但 mul=1.0 → urgency 0.91 仍触发 (≥ 0.55 阈值).
+            # 修法 (准则 6 主脑端 evidence 推理 + 准则 8 优雅):
+            #   非 optimal 时段 → timing_mul=0.5 (decay 50%, 不是 0).
+            #   sir_sleep_streak 16:41: 0.91 * 0.5 = 0.46 < 0.55 → 不 push.
+            #   保留**有 optimal_timing 但不命中**的 decay (非 'now' / 无 timing 的 不变).
             if timing_hit:
                 timing_mul = 1.5
+            elif tm in ('before_sleep', 'morning', 'evening'):
+                # 有明确 optimal_timing 但当前不命中 → 衰减
+                timing_mul = 0.5
         except Exception:
             pass
         breakdown['progress_mul'] = round(progress_mul, 3)

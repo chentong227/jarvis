@@ -622,13 +622,26 @@ def _hotkey_loop() -> None:
                 cur = bool(ctrl and alt and j)
                 if cur and not prev_pressed:
                     # rising edge → toggle
+                    # 🆕 [P5-fix68 / 2026-05-23 16:48] Sir 16:41 痛点 BUG-D:
+                    # "C+B+J 静默模式唤醒没生效或没提示". Sir 真按错 hotkey (真是 Ctrl+Alt+J)
+                    # 但即使按对也**没反馈** → Sir 不知道生效. 加显式 ack.
                     if is_active():
                         clear_stand_down(reason='hotkey toggle', source='hotkey')
+                        try:
+                            print("\n🌅 [StandDown/Hotkey] Sir 唤醒 (Ctrl+Alt+J)")
+                            _bg_log("🌅 [StandDown/Hotkey] cleared via hotkey (Ctrl+Alt+J)")
+                        except Exception:
+                            pass
                     else:
                         set_stand_down(reason=REASON_MANUAL,
                                             duration_min=DEFAULT_DURATION_MIN,
                                             exit_hint='hotkey toggle (Sir 按 Ctrl+Alt+J)',
                                             source='hotkey')
+                        try:
+                            print("\n🌙 [StandDown/Hotkey] Sir 静默 (Ctrl+Alt+J), {0}min 自动唤醒".format(int(DEFAULT_DURATION_MIN)))
+                            _bg_log(f"🌙 [StandDown/Hotkey] set via hotkey (Ctrl+Alt+J, {int(DEFAULT_DURATION_MIN)}min)")
+                        except Exception:
+                            pass
                 prev_pressed = cur
             except Exception:
                 pass
