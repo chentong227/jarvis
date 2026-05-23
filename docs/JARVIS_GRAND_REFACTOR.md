@@ -306,7 +306,7 @@
 | Phase | Sub-phase | 进度 | 备注 |
 |---|---|---|---|
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
-| Phase A.1 | 模块审计 (115 + 25) | 5/140 (3.6%) | **批次 a (5 核心枢纽) ✅ 全完成**! #1-5 (nerve / utils / central_nerve / chat_bypass / worker) |
+| Phase A.1 | 模块审计 (115 + 25) | 12/140 (8.6%) | **批次 a + b ✅ 完成**! #1-12 (枢纽 5 + Soul 7) |
 | Phase A.2 | 数据流全审 | ⬜ pending | A.1 完成后 |
 | Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
@@ -320,10 +320,10 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: Phase A.1 批次 a ✅ 完成! 准备进批次 b (Soul 7 模块)
-进度: 5/5 批次 a 完成 (#1 nerve ✅ / #2 utils ✅ / #3 central_nerve ✅ / #4 chat_bypass ✅ / #5 worker ✅)
-下一动作: 进批次 b — 审 jarvis_self_anchor.py (339 行, Soul Layer 0)
-最后 commit: 4e07bbf (#4 chat_bypass.py)
+当前阶段: Phase A.1 批次 a + b ✅ 完成! 准备进批次 c (记忆 11 模块)
+进度: 12/140 (批次 a 5 + 批次 b 7)
+下一动作: 进批次 c — 审 jarvis_routing.py (1479 行, ProfileCard 主体)
+最后 commit: 61a9c46 (#5 worker.py)
 ```
 
 ### 6.3 已完成 audit cards
@@ -334,7 +334,14 @@
 | 2 | `jarvis_utils.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #2 | 4a06438 | 2026-05-23 23:00 |
 | 3 | `jarvis_central_nerve.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #3 | 215ff24 | 2026-05-23 23:06 |
 | 4 | `jarvis_chat_bypass.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #4 | 4e07bbf | 2026-05-23 23:13 |
-| 5 | `jarvis_worker.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #5 | (即将) | 2026-05-23 23:18 |
+| 5 | `jarvis_worker.py` | `JARVIS_AUDIT_CARDS.md` §批次 a #5 | 61a9c46 | 2026-05-23 23:18 |
+| 6 | `jarvis_self_anchor.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #6 | (即将) | 2026-05-23 23:30 |
+| 7 | `jarvis_concerns.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #7 | (即将) | 2026-05-23 23:30 |
+| 8 | `jarvis_relational.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #8 | (即将) | 2026-05-23 23:30 |
+| 9 | `jarvis_attention.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #9 | (即将) | 2026-05-23 23:30 |
+| 10 | `jarvis_soul_reflector.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #10 | (即将) | 2026-05-23 23:30 |
+| 11 | `jarvis_soul_evaluator.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #11 | (即将) | 2026-05-23 23:30 |
+| 12 | `jarvis_sir_mental_model.py` | `JARVIS_AUDIT_CARDS.md` §批次 b #12 | (即将) | 2026-05-23 23:30 |
 
 ---
 

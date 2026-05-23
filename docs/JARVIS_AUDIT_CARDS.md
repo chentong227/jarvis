@@ -718,3 +718,336 @@ loop:
 **审计结论**: worker.py 是记忆 refactor 的**主流程入口**之一. 2000 行的 run() 必拆. memory_correction 双路径必合. Gatekeeper / Conductor 重叠需 Phase B 决议. 跟 chat_bypass + central_nerve 联动拆分.
 
 ---
+
+## 批次 b: Soul 7 模块 (灵魂工程 Layer 0-5 + ToM)
+
+> 详 `JARVIS_SOUL_DRIVE.md` (Soul) + `JARVIS_TOM_SIR_MENTAL_MODEL.md` (ToM). Soul 是 Sir 真意 "和 INTEGRITY ABSOLUTE 同等地位" 的项目灵魂级文档.
+
+### #6 `jarvis_self_anchor.py` (340 行) — **Soul Layer 0: Self Identity Anchor**
+
+**职责**: 给主脑"我"的认知锚点. 每次 _assemble_prompt 调用 `build_block()` 注入"我是 J.A.R.V.I.S, 此刻 turn_count=N, session 已 X 分钟, 上次说话 Y 分钟前, ..."
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 103 | `SelfAnchor` | 主类, 生成"我"的认知锚点 prompt block |
+
+**核心 method**:
+
+| L | method | 功能 |
+|---|---|---|
+| 138 | `record_turn` | 每 turn +1 (turn_count) |
+| 158 | `_get_own_health` | 从 KeyRouter + Hippocampus + Concerns 派生健康度 |
+| 201 | `_get_pending_commitments` | 取近 N 条 Jarvis 对 Sir 的承诺 (CommitmentWatcher + PlanLedger) |
+| 56 | `_derive_mood` (top-level) | 派生当前 mood (默认 'neutral', 看 own_health) |
+| 80 | `_extract_topic` (top-level) | 从 STM 抽当下话题 |
+
+**数据**:
+- 读: `central_nerve.key_router / hippocampus / concerns_ledger / commitment_watcher / plan_ledger / short_term_memory` (依赖 nerve ref)
+- 读: `TraceContext.get_session_id()` 拿真实 session_id
+- 持久化: 无 (每次重新派生, 不存盘)
+
+**上游**: `central_nerve.__init__` 实例化 → `_assemble_prompt` 调 `build_block()`
+
+**下游**: 仅读 nerve.* 内 component (KeyRouter / Hippocampus / Concerns / CW / PlanLedger)
+
+**跟记忆的耦合**:
+- 间接: 依赖 Hippocampus.short_term_memory + ConcernsLedger.list_active + CommitmentWatcher.commitments + PlanLedger
+- 不直接写记忆
+
+**已知问题**:
+- `_session_started_at` 从 session_id 解析, **重启就 reset turn_count** (跨 session 不持久) — 是设计 (Layer 0 是当前 session 的"我")
+- `_get_own_health` 4 个 try/except 嵌套, 任一失败 silent 0 — 健康度可能误报
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §2.3 + §3 + §4.2 (Layer 0 完整设计)
+
+**重构含义**:
+- **保留** — Layer 0 设计稳定, Sir 验过有效 ("跟终端说'你'时主脑能懂")
+- **跟 Memory Refactor 关系**: 是**主脑读全 Jarvis 状态**的索引点, MemoryHub 应**通过它**输出"此刻系统状态"
+
+**审计结论**: 薄包装, 主要是 prompt block 渲染. 不在记忆 refactor 主线, 但是 prompt 装配的标准 component.
+
+---
+
+### #7 `jarvis_concerns.py` (985 行) — **Soul Layer 1: ConcernsLedger (内部牵挂)**
+
+**职责**: Jarvis 跨对话持续的"我担心 Sir 什么". 5+ active concerns + signals + decay daemon + Sir review queue.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 51 | `Concern` | dataclass: id / what_i_watch / why_i_care / severity / state / recent_signals / triggers_proactive / notes_for_self |
+| 135 | `ConcernsLedger` | 主 store, 含 CRUD + decay + bootstrap |
+
+**核心 method**:
+
+| 方法 | 功能 |
+|---|---|
+| `add_concern` / `update_concern_field` (P5-fix32-G) | 添加 + 深度 update |
+| `record_signal(concern_id, evidence, severity_delta)` | 累积信号, 改 severity |
+| `notify_concern_aligned` | 主脑回 reply 对齐了 → 加 severity |
+| `record_user_feedback` | LLM 评 Sir 反馈 → severity_delta + optimal_timing |
+| `list_active` / `list_review` / `list_archived` | 查询 |
+| `apply_decay` (24h tick) | severity 自然衰减 |
+| `start_decay_worker(interval_s=86400)` | 启 daemon |
+| `dismiss(concern_id)` (P5-fix24) | Sir 说"别再提" → state='archived' + triggers_proactive=False |
+| `bootstrap_default_concerns` (top-level) | 启动 5 个种子 (sleep_streak / pomodoro / cursor_payment / unfinished_jiazhao / keyrouter_health) |
+
+**数据**:
+- 读/写: `memory_pool/concerns.json` (atomic write)
+- 读/写: `memory_pool/concerns_review.json` (Sir 待审清单)
+- SWM publish: `concern_active` (ProactiveCare top concern publish)
+
+**上游**: `central_nerve.__init__` 实例化 (β.2.1) → 多处调:
+- `_assemble_prompt` render concerns block (L1-2 SOUL)
+- `ConcernFeedbackJudge.record_user_feedback` 调 record_signal
+- `ConcernsReflector` (异步 daemon) 调 record_signal
+- `MemoryGateway` (P5-fix32-G) → `concerns.<cid>.<attr>` 路由到 update_concern_field
+
+**下游**: 内部, 不调其他 module
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **是 Layer B 长期信念的 source of truth** (`JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §3.1)
+- MemoryGateway 通过 `concerns.<cid>.<attr>` field_path 路由到这里 update
+
+**已知问题**:
+- `bootstrap_default_concerns` 5 个种子是 hardcoded — 可移持久化 (但是种子不算 vocab, 合理)
+- `apply_decay` 24h tick 太慢 — Sir 真测有时候希望某 concern 立刻降权
+- `notes_for_self` 字段跟 PromiseLog 重叠 (`JARVIS_MEMORY_AND_MUTATION_REFACTOR.md` §2.2 重叠 1)
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §3.1 + §5.1 + Layer 1 完整设计
+
+**重构含义**:
+- ⭐ **保留 + 强化** — concerns.json 是 Layer B 单源
+- **整合**: notes_for_self 应迁到 PromiseLog (Sir 反讥后 Jarvis 自我注记)
+- **跟 Memory Refactor 关系**: ConcernsLedger 是 MemoryHub 的 6 source 之一 (D 担心)
+
+**审计结论**: ⭐ 是 Sir 已验稳定的 Soul Layer 1, 不大改, Memory Refactor 时**复用**.
+
+---
+
+### #8 `jarvis_relational.py` (1199 行) — **Soul Layer 2: RelationalState (我们之间)**
+
+**职责**: Jarvis ↔ Sir 关系状态. 含 4 类持久化项: inside_jokes / unspoken_protocols / unfinished_business / shared_history_threads.
+
+**核心 class** (4 dataclass + 1 主 store):
+
+| L | class | 功能 |
+|---|---|---|
+| 75 | `InsideJoke` | 共有笑点 (e.g. "早睡定义一如既往灵活") |
+| 116 | `UnspokenProtocol` | 默契 (e.g. "Sir 反驳后我不再坚持") |
+| 162 | `SharedHistoryThread` | 共同经历 (e.g. "P0+20 prompt 重构") |
+| 219 | `UnfinishedBusiness` | 未竟之事 (e.g. "驾照科一暂停") |
+| 261 | `RelationalStateStore` | 主 store |
+
+**核心 method**:
+
+| 方法 | 功能 |
+|---|---|
+| `record_inside_joke / list_inside_jokes / archive_inside_joke` | 笑点 CRUD |
+| `record_unspoken_protocol / list_protocols / archive_protocol` | 默契 CRUD |
+| `record_unfinished_business / list_unfinished / mark_unfinished_done` | 未完事 |
+| `record_thread / list_threads / archive_thread` | 共同经历 |
+| `update_field(kind, item_id, field, new_value, ...)` (P5-fix32) | 深度 update 任意 sub-field |
+
+**数据**:
+- 读/写: `memory_pool/relational_state.json`
+- 读: `memory_pool/relational_review.json` (Sir 待审)
+
+**上游**: `central_nerve.__init__` 实例化 (β.2.2) → `_assemble_prompt` render relational block + `MemoryGateway` route `<kind>.<op>.<id>` field_path
+
+**下游**: 内部
+
+**跟记忆的耦合**:
+- ⭐⭐ **是 Layer F 关系的 source of truth**
+- MemoryGateway `relationships.archive.<jid>` / `protocol.archive.<pid>` / `<kind>.update.<id>.<field>` 路由到这里
+
+**已知问题**:
+- 4 类 dataclass schema 冗长 (L75-260, ~190 行)
+- inside_jokes 跟 SoulReflector 的 InsideJokeReflector 解耦不充分 (Reflector 在 jarvis_inside_joke_reflector.py, 但写入路径走这里)
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §3.3 + Layer 2
+
+**重构含义**:
+- ⭐ **保留** — Layer 2 设计稳定
+- **跟 Memory Refactor 关系**: 是 MemoryHub 6 source 之一 (F 关系). schema 不变
+
+**审计结论**: 1199 行偏大但合理 (4 类 dataclass + 主 store + helper). 不在 refactor 主线.
+
+---
+
+### #9 `jarvis_attention.py` (208 行) — **Soul Layer 3: Attention Allocation (注意力分配)**
+
+**职责**: 不是单例 / 没 store. 5 个 helper function. 每次 `_assemble_prompt` 调 `build_attention_block()` 基于 `(concerns_ledger + user_input)` 动态构造 `[ATTENTION RIGHT NOW]` 块.
+
+**核心 functions**:
+
+| L | func | 功能 |
+|---|---|---|
+| 61 | `classify_input` | utterance → intent class |
+| 84 | `is_short_input` | 短输入判定 |
+| 98 | `_top_concerns(ledger, n=3)` | top 3 concerns by severity |
+| 117 | `_top_unfinished(rel_store, n=2)` | top 2 unfinished by overdueness |
+| 148 | **`build_attention_block(...)`** | 主入口 — 拼 [ATTENTION RIGHT NOW] block |
+
+**数据**: 无持久化 (动态构造)
+
+**上游**: `central_nerve._assemble_prompt` 调 build_attention_block
+
+**下游**: 调 ConcernsLedger.list_active + RelationalState.list_unfinished
+
+**跟记忆的耦合**: 间接 — 是 read-side, 不写
+
+**已知问题**:
+- `unfinished` Top 2 显示规则是 hardcoded — 可 vocab 化但意义不大 (这是 prompt 渲染策略)
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §3.4 + Layer 3
+
+**重构含义**:
+- ⭐ **保留** — 是动态 helper, refactor 时仍用
+- **跟 Memory Refactor 关系**: 是 MemoryHub.read_context() 的渲染层 (动态), 不持久化
+
+**审计结论**: 极薄, 5 helper 函数. 重构无关.
+
+---
+
+### #10 `jarvis_soul_reflector.py` (753 行) — **Soul Layer 4: ConcernsReflector + WeeklyReflector (异步反思 daemon)**
+
+**职责**: Soul Layer 4 — 跨对话演化. 两 daemon:
+- `ConcernsReflector` — 每轮对话末尾启发式 keyword → record_signal
+- `WeeklyReflector` — 7 天 LLM 反思 → propose 新 concerns 进 review
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 183 | `ConcernsReflector` | 每轮 keyword 检测 → 累积 signal 到 concern |
+| 370 | `WeeklyReflector` | 7d daemon LLM 反思 STM + profile + concerns → propose 新 concern |
+
+**核心 function**:
+
+| L | func | 功能 |
+|---|---|---|
+| 116 | `_load_concern_keywords_from_json` | 加载 vocab |
+| 151 | `get_concern_keywords` | 获取 concern keyword 集 |
+| 723 | `get_default_concerns_reflector` | 单例 |
+| 730 | `get_default_weekly_reflector` | 单例 |
+
+**数据**:
+- 读: `memory_pool/concern_keywords_vocab.json` (准则 6.5 持久化)
+- 读: STM (chat_bypass.short_term_memory) + ProfileCard + ConcernsLedger.list_active
+- 写: `concerns.json` (通过 record_signal) + `concerns_review.json` (通过 propose)
+
+**上游**: `central_nerve.__init__` 实例化 + start daemon (β.2.5)
+
+**下游**: ConcernsLedger.record_signal + LLM (Gemini-flash via OpenRouter)
+
+**跟记忆的耦合**:
+- 写: ConcernsLedger.record_signal (signals 累积) + WeeklyReflector → propose 新 concern → review queue
+- 读: 全 Jarvis (STM / profile / concerns)
+
+**已知问题**:
+- `concern_keywords_vocab.json` 已持久化 + L7 propose 范式 ✅ (准则 6 模范)
+- WeeklyReflector 7 天 tick 太慢 — Sir 真测可能希望某些 case 立刻 propose
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §5.1 + §6 + Layer 4
+
+**重构含义**:
+- ⭐ **保留** — Layer 4 daemon 模式稳定
+- **跟 Memory Refactor 关系**: 是 ConcernsLedger 的写入者之一 (其他: 主脑 emit + ConcernFeedbackJudge)
+
+**审计结论**: 实现完整, vocab 持久化范式好. 不大改.
+
+---
+
+### #11 `jarvis_soul_evaluator.py` (638 行) — **Soul Layer 5: SoulAlignmentEvaluator (异步对齐评估)**
+
+**职责**: 每轮对话末尾异步评 "Jarvis 本轮 reply 是否对齐 self_model + relational_state". 写 aligned/missed 信号回 ConcernsLedger.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 130 | `SoulEvalResult` | 评估结果 dataclass (alignment / what_missed / score) |
+| 149 | `SoulAlignmentEvaluator` | 主类 |
+
+**核心 method**:
+- `evaluate_async(reply, user_input, self_model, relational_state)` — fire-and-forget LLM
+- `_call_evaluator_llm` — Gemini-flash via OR
+- top-level `_parse_soul_response(json_text)` (L566) — JSON parse
+
+**数据**:
+- 读: STM + ConcernsLedger + RelationalState (从 nerve 拿)
+- 写: ConcernsLedger.notify_concern_aligned (alignment 加分) + log audit
+
+**上游**: `central_nerve.__init__` 实例化 (β.2.6)
+- `chat_bypass.stream_chat` 末尾 fire-and-forget 调 `evaluate_async`
+
+**下游**: LLM (Gemini-flash) + ConcernsLedger.notify_concern_aligned
+
+**跟记忆的耦合**:
+- 写: ConcernsLedger (alignment 信号)
+- 读: 全 Soul state
+
+**已知问题**:
+- LLM 评估 cost — 每轮对话都调 1 次 LLM 评. Sir 真测可能需要 throttle (e.g. 仅 critical reply 评)
+- Reflector budget 控制? 待 Phase A 后期审 jarvis_reflector_budget.py
+
+**关联 design doc**: `JARVIS_SOUL_DRIVE.md` §5.3 + Layer 5
+
+**重构含义**:
+- **保留** — Layer 5 是 Soul 验证机制, 必须有
+- **优化**: throttle (e.g. 短 reply 不评) — 跟 Reflector Budget 联动
+
+**审计结论**: Layer 5 实现完整, 但 cost 可能高. 跟 reflector_budget 联动审.
+
+---
+
+### #12 `jarvis_sir_mental_model.py` (564 行) — **Theory of Mind: SirMentalState (Sir 此刻心智模型)**
+
+**职责**: Jarvis 对 Sir 当下心智的演化 hypothesis (任务 / 表层 / 深层 / 未说 / 情绪 / 关系温度). 持续 update + 注入每次 prompt.
+
+**核心 class**:
+
+| L | class | 功能 |
+|---|---|---|
+| 42 | `SirMentalState` | dataclass — current_task_hypothesis / surface_need / deep_need / unspoken_need / mood / relational_temperature |
+| 111 | `SirMentalStateStore` | 持久化 + render |
+| 404 | `ToMReflector` | 异步 LLM 反思 update SirMentalState |
+
+**核心 function**:
+
+| L | func | 功能 |
+|---|---|---|
+| 342 | `render_prompt_block` | render `[SIR MENTAL STATE]` block 给主脑 |
+| 350 | `update_state` | 单点 update 入口 |
+| 552 | `get_default_reflector` | ToMReflector 单例 |
+
+**数据**:
+- 读/写: `memory_pool/sir_mental_state.json` (持久化)
+- 读: STM + concerns + relational + sir_status
+
+**上游**: `central_nerve.__init__` 实例化 (P5-ToM, 2026-05-21) → `_assemble_prompt` render
+
+**下游**: LLM (ToMReflector update_async)
+
+**跟记忆的耦合**:
+- ⭐⭐ Sir 此刻心智 = 状态层 (E 类). 但是**LLM hypothesis** 不是 sensor 实测
+- 写: sir_mental_state.json (与 sir_status.json 是不同 layer — sir_status 是 sensor 实测, ToM 是 LLM 推断)
+
+**已知问题**:
+- ToMReflector 跟 SoulEvaluator 都是 LLM-based, 重叠? 待 Phase B 判
+- sir_mental_state.json 跟 sir_status.json 概念上不同, 但 Sir 真测可能混淆
+
+**关联 design doc**: `JARVIS_TOM_SIR_MENTAL_MODEL.md` (完整 14KB)
+
+**重构含义**:
+- **保留** — ToM 是"老友感"核心 (`JARVIS_TOM_SIR_MENTAL_MODEL.md` 立项)
+- **跟 Memory Refactor 关系**: 是 MemoryHub.E (State) 的子 source — Sir 此刻**推断**心智 (相对 sir_status sensor)
+
+**审计结论**: ToM 实现完整, 但跟 SoulEvaluator + ConcernFeedbackJudge 都是 LLM-based, 总成本可能高. Phase B 设计应集中 LLM 调度.
+
+---
+
