@@ -132,11 +132,16 @@ _STATS_LOCK = threading.Lock()
 
 
 def _record_stats(verdict_data: dict, latency_ms: float, sir_utt: str,
-                   draft_len: int) -> None:
-    """Append verdict to preflight_stats.jsonl (rolling)."""
+                   draft_len: int, draft_reply: str = '') -> None:
+    """Append verdict to preflight_stats.jsonl (rolling).
+
+    🆕 [P5-fix35 / 2026-05-23 BUG#10] 加 draft_excerpt + edited_excerpt — Sir
+       trace "主脑原话 X → PreFlight edit 后 Y" 能看到 diff (之前只 length).
+    """
     try:
         path = _DEFAULT_CONFIG['stats_path']
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        edited_text = verdict_data.get('edited_reply', '') or ''
         entry = {
             'ts': time.time(),
             'iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
@@ -145,7 +150,11 @@ def _record_stats(verdict_data: dict, latency_ms: float, sir_utt: str,
             'latency_ms': round(latency_ms, 1),
             'sir_utterance_excerpt': (sir_utt or '')[:80],
             'draft_len': draft_len,
-            'edited': bool(verdict_data.get('edited_reply')),
+            'edited': bool(edited_text),
+            # 🆕 [BUG#10] 真 diff audit — Sir 能 grep 原文 vs edited
+            'draft_excerpt': (draft_reply or '')[:500],
+            'edited_excerpt': edited_text[:500],
+            'scrap_reason': verdict_data.get('scrap_reason', ''),
         }
         with _STATS_LOCK:
             with open(path, 'a', encoding='utf-8') as f:
@@ -284,7 +293,8 @@ class ReplyPreFlight:
         _cache_put(ckey, result)
         # stats persist (best effort)
         try:
-            _record_stats(result, _latency_ms, sir_utterance, len(draft_reply))
+            _record_stats(result, _latency_ms, sir_utterance, len(draft_reply),
+                            draft_reply=draft_reply)  # 🆕 BUG#10 pass real draft for diff audit
         except Exception:
             pass
 

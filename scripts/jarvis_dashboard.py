@@ -947,28 +947,66 @@ def read_system_health() -> Dict:
 # ---- 待审阅队列 ----
 
 def read_memory_mutations() -> Dict:
-    """🔬 信任审计 — Jarvis 今天真改了什么 (memory_pool/profile_corrections.jsonl)
+    """🔬 信任审计 — Jarvis 今天真改了什么.
 
     🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本卡片. 显示:
       - 今天写入 N 条 (Jarvis 真"改记忆"几次)
       - 最近 5 条 detail (field / old → new / source / 时间)
       - 诊断: ✅ 真做了 / ⚠️ 今天 0 条 (主脑可能空头说"已更新")
+
+    🆕 [P5-fix35 / 2026-05-23 BUG#7] 合并 2 源 audit:
+      - profile_corrections.jsonl (β.2.9.9, ProfileCard.apply_correction 路径)
+      - mutation_receipts.jsonl (P5-fix32, MemoryGateway 6-layer 新路径)
+      按 ts 排序合并, Sir 一处看全.
     """
     out = {'today_n': 0, 'total_n': 0, 'rows': [],
            'sources': {}, 'err': None}
-    path = os.path.join(MEM, 'profile_corrections.jsonl')
-    if not os.path.exists(path):
+    pc_path = os.path.join(MEM, 'profile_corrections.jsonl')
+    mr_path = os.path.join(MEM, 'mutation_receipts.jsonl')
+
+    records = []
+    errs = []
+    try:
+        if os.path.exists(pc_path):
+            for r in _safe_read_jsonl(pc_path, tail=300):
+                r2 = dict(r)
+                r2['_origin'] = 'profile_corrections'
+                records.append(r2)
+    except Exception as e:
+        errs.append(f'pc:{e}')
+    try:
+        if os.path.exists(mr_path):
+            # mutation_receipts schema 跟 profile_corrections 不同, 转齐
+            for r in _safe_read_jsonl(mr_path, tail=300):
+                records.append({
+                    'ts': r.get('ts', 0),
+                    'time': (r.get('iso', '') or '')[-8:] or '?',
+                    'iso': r.get('iso', ''),
+                    'source': r.get('source', '?'),
+                    'field': r.get('field_path', ''),
+                    'old': r.get('old_value_excerpt', ''),
+                    'new': r.get('new_value_excerpt', ''),
+                    'confidence': r.get('confidence', 0),
+                    '_origin': 'mutation_receipts',
+                    '_layer': r.get('layer_targeted', ''),
+                    '_mutation_id': r.get('mutation_id', ''),
+                    '_ok': r.get('ok', True),
+                })
+    except Exception as e:
+        errs.append(f'mr:{e}')
+
+    if errs:
+        out['err'] = '; '.join(errs)
+    if not records:
         out['diagnosis'] = '📝 还没有任何记忆变更记录'
         out['suggestion'] = (
-            '正常 — 文件首次启用需触发 ProfileCard.apply_correction 或 LLM 发 '
-            '<MEMORY_UPDATE> 标签才创建'
+            '正常 — 触发 ProfileCard.apply_correction / FAST_CALL mutation organ '
+            '/ <MEMORY_UPDATE> 标签后产生.'
         )
         return out
-    try:
-        records = _safe_read_jsonl(path, tail=500)
-    except Exception as e:
-        out['err'] = f'读取异常: {e}'
-        return out
+
+    # 按 ts 排序 (旧→新)
+    records.sort(key=lambda r: r.get('ts', 0) or 0)
     out['total_n'] = len(records)
     now = time.time()
     today_start = now - (now % 86400) - time.timezone  # 本地今日 00:00
@@ -978,10 +1016,12 @@ def read_memory_mutations() -> Dict:
     src_counter = {}
     for r in records:
         s = r.get('source', '?')
-        src_counter[s] = src_counter.get(s, 0) + 1
+        # 截短 source label (e.g. 'fast_call_mutation:update:intent=revise' → 取前段)
+        s_short = s.split(':', 1)[0] if ':' in s else s
+        src_counter[s_short] = src_counter.get(s_short, 0) + 1
     out['sources'] = src_counter
-    # 最近 8 条
-    for r in records[-8:]:
+    # 最近 12 条
+    for r in records[-12:]:
         out['rows'].append({
             'time': r.get('time', '?'),
             'iso': r.get('iso', ''),
@@ -991,6 +1031,10 @@ def read_memory_mutations() -> Dict:
             'old': str(r.get('old', ''))[:60],
             'new': str(r.get('new', ''))[:60],
             'confidence': float(r.get('confidence', 0) or 0),
+            'origin': r.get('_origin', ''),
+            'layer': r.get('_layer', ''),
+            'mutation_id': r.get('_mutation_id', ''),
+            'ok': r.get('_ok', True),
         })
     out['rows'].reverse()  # 最新在上
 
