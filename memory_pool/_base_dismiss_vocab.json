@@ -1,0 +1,29 @@
+{
+  "_comment": "[P5-fix35-BUG#6 / 2026-05-23 11:15] BASE dismiss vocab — 'Sir 让别再提/不在意' 类共享词. correction_dispatcher_vocab + concern_dismiss_vocab 都会 union 本文件.",
+  "_consumers": [
+    "correction_dispatcher_vocab (P5-fix32-D)",
+    "concern_dismiss_vocab (P5-fix24-concern-dismiss)"
+  ],
+  "_pattern_class": "dismiss (Sir 让别再提某事)",
+  "patterns": [
+    "别再提",
+    "别提了",
+    "不用提",
+    "不用再提",
+    "你不用再提",
+    "不需要再提",
+    "不需要提",
+    "也不需要提",
+    "我已经知道了",
+    "已经知道了",
+    "我知道这个事",
+    "知道这个事",
+    "我知道这事",
+    "知道这事了",
+    "stop bringing it up",
+    "you don't need to mention",
+    "i already know",
+    "i know already",
+    "i already told you"
+  ]
+}

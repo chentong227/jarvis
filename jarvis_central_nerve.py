@@ -1605,6 +1605,57 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [P5-fix35-BUG#15 / 2026-05-23 11:18] PreFlight Unsolicited Topic Tracker
+        # Sir 真痛点 (10:51-10:52 trace): 主脑反复 ack "I shall strike '87%'" 3 turns,
+        # PreFlight 抓 3 次 UNSOLICITED CALLBACK. 主脑看 STM 自己上轮说过 → 又重复.
+        # 修法: PreFlight publish 含 issues + edited_excerpt → 本 block 提取最近 edited
+        # 类 issue 形成"don't repeat"提示给主脑下轮看. 不改 directive (避免重复教), 直接
+        # 给 prompt evidence: 你最近这事被 PreFlight 编辑过, 没必要再翻.
+        try:
+            _bus_pf_track = getattr(self, 'event_bus', None)
+            if _bus_pf_track is not None:
+                _recent_pf = _bus_pf_track.recent_events(
+                    within_seconds=300.0,
+                    types={'preflight_verdict'},
+                )
+                _unsolicited_excerpts = []
+                for _ev in (_recent_pf or [])[-5:]:
+                    _meta = _ev.get('metadata') or {}
+                    if _meta.get('verdict') not in ('edit', 'scrap'):
+                        continue
+                    _iss = _meta.get('issues', [])
+                    if not _iss:
+                        continue
+                    # check if any issue contains "UNSOLICITED"
+                    has_unsolicited = any(
+                        'UNSOLICITED' in str(i).upper() for i in _iss
+                    )
+                    if has_unsolicited:
+                        _draft = _meta.get('draft_excerpt', '')
+                        if _draft and len(_draft) > 20:
+                            _unsolicited_excerpts.append(_draft[:150])
+                if _unsolicited_excerpts:
+                    _pf_block = (
+                        "[PRE-FLIGHT 已编辑掉的话题 — 别重复 (Sir 没问)]:\n"
+                        + '\n'.join(f"  · 上轮你想说但被编辑: {x}"
+                                       for x in _unsolicited_excerpts[-3:])
+                        + "\n  → 这些话题 PreFlight 判定 Sir 这轮没问, 你别再翻."
+                    )
+                    system_alert_text = (
+                        _pf_block + '\n\n' + system_alert_text
+                        if system_alert_text else _pf_block
+                    )
+                    try:
+                        from jarvis_utils import bg_log as _bg_pf_track
+                        _bg_pf_track(
+                            f"🛂 [PreFlightTopicTracker] inject {len(_unsolicited_excerpts)} "
+                            f"edited topics to prompt"
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # [P0+20-β.0.2 / 2026-05-16] L2 Directive Registry dry-run
         # 不真切注入，只采 fired 信号 + bg_log 暴露"新机制本应注入哪些 directive"。
         # β.0.3 会切真注入并删除内联 directive；β.0.2 阶段只验证 trigger 命中率。

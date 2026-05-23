@@ -737,17 +737,46 @@ _MEMORY_CORRECTION_VOCAB_PATH = os.path.join(
 _MEMORY_CORRECTION_CACHE: Optional[tuple] = None
 _MEMORY_CORRECTION_MTIME: float = 0.0
 
+# 🆕 [P5-fix35-BUG#6 / 2026-05-23 11:15] BASE vocab — 共享 correction/dismiss 词.
+# 之前 correction_dispatcher_vocab + memory_correction_vocab 重叠 11 词,
+# correction_dispatcher_vocab + concern_dismiss_vocab 重叠 11 词. Sir 加新词需
+# 同步多个文件. 现抽 base 文件, 各 specific vocab 自动 union.
+# 准则 6 持久化 — memory_pool/_base_*_vocab.json + 通过 _load_base_vocab() 加载.
+_BASE_CORRECTION_VOCAB_PATH = os.path.join(
+    'memory_pool', '_base_correction_vocab.json')
+_BASE_DISMISS_VOCAB_PATH = os.path.join(
+    'memory_pool', '_base_dismiss_vocab.json')
+
+
+def _load_base_vocab(path: str) -> List[str]:
+    """加载 _base_*_vocab.json 的 patterns. 失败返 []."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        patterns = data.get('patterns', []) if isinstance(data, dict) else []
+        if not isinstance(patterns, list):
+            return []
+        return [str(p).lower().strip() for p in patterns if str(p).strip()]
+    except Exception:
+        return []
+
 
 def _load_memory_correction_from_json() -> Optional[tuple]:
-    """从 json 加载 active pattern keyword 扁平 tuple. 失败返 None."""
+    """从 json 加载 active pattern keyword 扁平 tuple. 失败返 None.
+
+    🆕 [P5-fix35-BUG#6] 自动 union _base_correction_vocab.json.
+    """
+    base = _load_base_vocab(_BASE_CORRECTION_VOCAB_PATH)
     if not os.path.exists(_MEMORY_CORRECTION_VOCAB_PATH):
-        return None
+        return tuple(base) if base else None
     try:
         with open(_MEMORY_CORRECTION_VOCAB_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            return None
-        out: List[str] = []
+            return tuple(base) if base else None
+        out: List[str] = list(base)
         for p in data.get('patterns', []):
             if not isinstance(p, dict):
                 continue
@@ -755,10 +784,12 @@ def _load_memory_correction_from_json() -> Optional[tuple]:
                 continue
             for kw in (p.get('keywords') or []):
                 if isinstance(kw, str) and kw.strip():
-                    out.append(kw.lower().strip())
+                    kw_l = kw.lower().strip()
+                    if kw_l not in out:
+                        out.append(kw_l)
         return tuple(out) if out else None
     except Exception:
-        return None
+        return tuple(base) if base else None
 
 
 def get_memory_correction_patterns() -> tuple:
@@ -971,18 +1002,27 @@ _CONCERN_DISMISS_MTIME = 0.0
 
 
 def _load_concern_dismiss_vocab():
-    """读 memory_pool/concern_dismiss_vocab.json (准则 6.5: vocab 持久化, CLI 可改)."""
+    """读 memory_pool/concern_dismiss_vocab.json + 自动 union _base_dismiss_vocab.json.
+
+    🆕 [P5-fix35-BUG#6] concern_dismiss 公共 dismiss 词 → _base_dismiss_vocab.json.
+    """
+    base = _load_base_vocab(_BASE_DISMISS_VOCAB_PATH)
     if not os.path.exists(_CONCERN_DISMISS_VOCAB_PATH):
-        return None
+        return base if base else None
     try:
         with open(_CONCERN_DISMISS_VOCAB_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         patterns = data.get('patterns', []) or []
         if not isinstance(patterns, list):
-            return None
-        return [str(p).lower() for p in patterns if str(p).strip()]
+            return base if base else None
+        out = list(base)
+        for p in patterns:
+            kw = str(p).lower().strip()
+            if kw and kw not in out:
+                out.append(kw)
+        return out if out else None
     except Exception:
-        return None
+        return base if base else None
 
 
 def get_concern_dismiss_patterns():
@@ -1218,8 +1258,18 @@ _CORRECTION_DISPATCHER_MTIME = 0.0
 
 
 def _load_correction_dispatcher_vocab():
+    """🆕 [P5-fix35-BUG#6] union _base_correction + _base_dismiss (correction_dispatcher
+       同时覆盖教正 + dismiss 两类信号 → 取两个 base 的并集).
+    """
+    base_corr = _load_base_vocab(_BASE_CORRECTION_VOCAB_PATH)
+    base_dism = _load_base_vocab(_BASE_DISMISS_VOCAB_PATH)
+    base = list(base_corr)
+    for kw in base_dism:
+        if kw not in base:
+            base.append(kw)
+
     if not os.path.exists(_CORRECTION_DISPATCHER_VOCAB_PATH):
-        return None
+        return base if base else None
     try:
         with open(_CORRECTION_DISPATCHER_VOCAB_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -1227,11 +1277,15 @@ def _load_correction_dispatcher_vocab():
         if isinstance(data, dict):
             data = data.get('patterns', [])
         if not isinstance(data, list):
-            return None
-        out = [str(p).lower().strip() for p in data if str(p).strip()]
+            return base if base else None
+        out = list(base)
+        for p in data:
+            kw = str(p).lower().strip()
+            if kw and kw not in out:
+                out.append(kw)
         return out if out else None
     except Exception:
-        return None
+        return base if base else None
 
 
 def get_correction_dispatcher_patterns():
