@@ -457,35 +457,54 @@ class SubtitleOverlay(QWidget):
         bg_h = total_h + pad_y * 2 - 4
         bg_rect = QRectF(4, 2, w - 8, bg_h)
 
-        p.setBrush(QColor(6, 8, 16, int(200 * self._opacity)))
-        p.setPen(QPen(QColor(0, 180, 220, int(60 * self._opacity)), 1))
+        # 🆕 [P5-fix79 BUG-U / 2026-05-23 21:46] Sir 21:43 真测痛点:
+        # 字幕在白色背景 (Windsurf 白文档) 完全看不清字 — user 绿/zh 浅灰白/en 青色
+        # 都是浅色 + 背景 alpha 200/255 (78% 不够暗) → 白底透出 → 失对比.
+        # 修法 (3 处): 背景 alpha 200→245 加深, 字色加饱和度, 所有字加 1px 黑色描边.
+        p.setBrush(QColor(6, 8, 16, int(245 * self._opacity)))
+        p.setPen(QPen(QColor(0, 180, 220, int(120 * self._opacity)), 1))
         p.drawRoundedRect(bg_rect, 8, 8)
 
-        p.setPen(QPen(QColor(0, 180, 220, int(30 * self._opacity)), 1))
+        p.setPen(QPen(QColor(0, 180, 220, int(40 * self._opacity)), 1))
         p.drawLine(QPointF(pad_x, 2), QPointF(w - pad_x, 2))
+
+        def _draw_text_outlined(painter, rect, flags, text_str, fill_color, outline_alpha=220):
+            """画文字带 1px 黑色描边 (poor-man stroke)."""
+            outline_qc = QColor(0, 0, 0, int(outline_alpha * self._opacity))
+            painter.save()
+            painter.setPen(outline_qc)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
+                            (-1, -1), (1, -1), (-1, 1), (1, 1)):
+                shifted = QRectF(rect.x() + dx, rect.y() + dy,
+                                  rect.width(), rect.height())
+                painter.drawText(shifted, flags, text_str)
+            painter.restore()
+            painter.setPen(fill_color)
+            painter.drawText(rect, flags, text_str)
 
         for i, (kind, text, alpha, scroll_offset) in enumerate(lines):
             if kind == "user":
                 p.setFont(self._user_font)
-                p.setPen(QColor(120, 200, 140, int(200 * self._opacity * alpha)))
+                _fill = QColor(160, 240, 180, int(255 * self._opacity * alpha))
             elif kind == "zh":
                 p.setFont(self._zh_font)
-                p.setPen(QColor(220, 220, 230, int(240 * self._opacity)))
+                _fill = QColor(245, 245, 250, int(255 * self._opacity))
             else:
                 p.setFont(self._en_font)
-                p.setPen(QColor(0, 210, 240, int(250 * self._opacity)))
+                _fill = QColor(80, 230, 255, int(255 * self._opacity))
 
             display_h = line_heights[i]
             if kind == "zh" and self._zh_scroll_max > 0:
                 p.save()
                 clip_rect = QRectF(pad_x, y, w - pad_x * 2, display_h)
                 p.setClipRect(clip_rect)
-                text_rect = QRectF(pad_x, y - scroll_offset, w - pad_x * 2, display_h + self._zh_scroll_max + 20)
-                p.drawText(text_rect, Qt.AlignLeft | Qt.TextWordWrap, text)
+                text_rect = QRectF(pad_x, y - scroll_offset, w - pad_x * 2,
+                                    display_h + self._zh_scroll_max + 20)
+                _draw_text_outlined(p, text_rect, Qt.AlignLeft | Qt.TextWordWrap, text, _fill)
                 p.restore()
             else:
                 text_rect = QRectF(pad_x, y, w - pad_x * 2, display_h + 4)
-                p.drawText(text_rect, Qt.AlignLeft | Qt.TextWordWrap, text)
+                _draw_text_outlined(p, text_rect, Qt.AlignLeft | Qt.TextWordWrap, text, _fill)
             y += display_h + 4
 
         p.end()
