@@ -64,6 +64,9 @@ class WriteReceipt:
     ok: bool
     error: str = ''
     turn_id: str = ''
+    # 🆕 [P5-fix34 / 2026-05-23] 主脑 model 标签 — A/B 跑模型时按 model 分组 audit.
+    # 空字符串 = 不知道 / 调用方没传. fast_call_mutation 路径会传当前 chat_bypass.main_brain_model.
+    model: str = ''
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -158,7 +161,8 @@ class MemoryMutationGateway:
                           old_value: Any = '',
                           confidence: float = 0.7,
                           turn_id: str = '',
-                          nerve=None) -> WriteReceipt:
+                          nerve=None,
+                          model: str = '') -> WriteReceipt:
         """统一 mutation 入口. 路由到正确 layer + receipt + SWM publish.
 
         Args:
@@ -469,6 +473,7 @@ class MemoryMutationGateway:
             ok=ok,
             error=err[:200],
             turn_id=turn_id,
+            model=model or '',
         )
         self._write_receipt(receipt)
         self._publish_swm(receipt)

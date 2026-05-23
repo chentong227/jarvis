@@ -206,7 +206,13 @@ def _find_sentence_split_idx(buffer: str, soft_split: bool = True, is_first_sent
 class ChatBypass:
     def __init__(self, key_router, vocal_cord, state_callback):
         self.key_router = key_router
-        self.model_name = 'gemini-3-flash-preview'
+        self.model_name = 'gemini-3-flash-preview'  # legacy meta (test guard)
+        # 🆕 [P5-fix34 / 2026-05-23] env override — A/B 测试 V4 Pro vs G3F.
+        # Sir 设 JARVIS_MAIN_BRAIN=deepseek/deepseek-v4-pro 切主脑.
+        # 默认保持 G3F (向后兼容). 仅作用 _create_stream + OR fallback path,
+        # translation / gatekeeper / soul evaluator 等独立任务保持 G3F.
+        self.main_brain_model = os.getenv(
+            'JARVIS_MAIN_BRAIN', 'google/gemini-3-flash-preview')
         self.vocal = vocal_cord
         self.state_callback = state_callback
         
@@ -717,7 +723,7 @@ class ChatBypass:
                         })
                 messages.append({"role": role, "content": msg_parts})
 
-            or_model = 'google/gemini-3-flash-preview'
+            or_model = self.main_brain_model  # 🆕 P5-fix34 env override
 
             # 🩹 [P0+20-β.5.12 / 2026-05-19] BUG-B: chunk inter-arrival timeout 12s
             # Sir 21:37 实测: cloud stream 半路 server close TCP, client 干等 18.8s 才
@@ -1735,6 +1741,8 @@ Spoken English:"""
                     confidence=confidence,
                     turn_id=turn_id,
                     nerve=getattr(self, 'jarvis', None),
+                    # 🆕 [P5-fix34] 标记当前主脑 model — A/B audit 按 model 分组
+                    model=getattr(self, 'main_brain_model', '') or '',
                 )
             except Exception as _ue:
                 return f"❌ mutation.{command} fail: {_ue}"
@@ -2544,7 +2552,7 @@ Spoken English:"""
                                 timeout=60.0
                             )
                             or_response = or_client.chat.completions.create(
-                                model="google/gemini-3-flash-preview",
+                                model=self.main_brain_model,  # 🆕 P5-fix34 env override
                                 messages=messages,
                                 temperature=0.7,
                                 stream=True
