@@ -930,15 +930,30 @@ class CareSubjectSelector:
         return ''
 
     def _snapshot_current_activity(self) -> str:
-        """从 PhysicalEnvironmentProbe 拿当下 1 行活动描述."""
+        """从 PhysicalEnvironmentProbe 拿当下 1 行活动描述.
+
+        🆕 [P5-fix76 / 2026-05-23 18:55] BUG-P: 时长歧义修.
+        Sir 18:41 真痛点: ProactiveCare nudge "您在 interview training 看了很久"
+        — 实际 Sir 才 6 分钟. 老 evidence 把 work_duration_minutes (整 category
+        累计) 和 current_window_title 拼一起 → 主脑误读为"在此窗口看 X 分钟".
+        修法 (准则 6 evidence 不歧义): 拆 2 个时间字段, 让主脑分清.
+        """
         try:
             from jarvis_env_probe import PhysicalEnvironmentProbe as P
             cat = getattr(P, 'current_work_category', 'Unknown')
             dur = getattr(P, 'work_duration_minutes', 0)
+            window_stay_s = getattr(P, 'current_window_stay_seconds', 0) or 0
             title = getattr(P, 'current_window_title', '') or ''
+            # 区分 2 个时间:
+            #   session_total_min: 整 category 内累计 (Coding 总时长)
+            #   current_window_stay_s: 当前 active window 停留秒数
+            window_stay_min = window_stay_s / 60.0
             if title:
-                return f"{cat} for {dur:.0f}min: '{title[:60]}'"
-            return f"{cat} for {dur:.0f}min"
+                return (
+                    f"{cat} session total {dur:.0f}min; "
+                    f"current window '{title[:50]}' for {window_stay_min:.1f}min only"
+                )
+            return f"{cat} session total {dur:.0f}min (no current window)"
         except Exception:
             return ''
 
@@ -1109,8 +1124,17 @@ class CareSpeechSynth:
             "- Reference YOUR watching ('I've been watching...' / 'I notice...'), not\n"
             "  Sir's behavior judgment ('you always...' / 'you should...').\n"
             "- If irony arises naturally, mild wit; else direct.\n"
-            "- If [CURRENT ACTIVITY] is concrete (e.g. 'Coding for 45min: cursor.exe'),\n"
-            "  weave that into the remark to give it 'right now' feel.\n"
+            "- [CURRENT ACTIVITY] has 2 time fields — distinguish them:\n"
+            "  * 'session total Xmin' = whole category accumulated since Jarvis start\n"
+            "  * 'current window for Ymin only' = stay in **this specific window**\n"
+            "  → NEVER conflate them. e.g. 'session total 580min; current window\n"
+            "    \"interview training\" for 5min only' means Sir just switched to that\n"
+            "    window 5 min ago — do NOT say 'you've been on interview training for\n"
+            "    580 minutes' or 'for some time'. Be precise.\n"
+            "  → If session_total is high but current_window is fresh (< 10 min), prefer\n"
+            "    referring to the long session ('been at this for a while') without\n"
+            "    naming the freshly-switched window.\n"
+            "  → Weave it naturally if it gives 'right now' feel; skip if unclear.\n"
         )
         return directive
 
