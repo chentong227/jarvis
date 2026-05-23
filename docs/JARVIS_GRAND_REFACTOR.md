@@ -308,7 +308,7 @@
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
 | Phase A.1 | 模块审计 (115 + 25) | **140/140 ✅ 100%** | **🎉 Phase A.1 全部完成! 115 jarvis py + 25 hands 全审完** |
 | Phase A.2 | 数据流全审 | ✅ done | `JARVIS_DATAFLOW_MAP.md` (~600 行, 含 30+ render block / 50+ SWM etype / 30+ Reflector / 4 关键 case 序列图 / 7 耦合点) |
-| Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
+| Phase A.3 | storage map | ✅ done | `JARVIS_STORAGE_MAP.md` (~500 行, 93 file 6 类详 + 4 死文件 + 5 audit log 合并 + sqlite 4 表) |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
 | Phase A.5 | 历史 audit | ⬜ pending | 可与 A.1 并行 |
 | Phase B | 设计 | ⬜ pending | A 完成后 |
@@ -320,10 +320,10 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: 🎉 Phase A.1 + A.2 完成! 准备进 Phase A.3 (87 storage file 全审)
-进度: A.1 ✅ (140/140) + A.2 ✅ (dataflow map)
-下一动作: 进 Phase A.3 — 写 docs/JARVIS_STORAGE_MAP.md (87 file schema / read-write 者)
-最后 commit: ae0dd06 (Phase A.1 100%)
+当前阶段: 🎉 Phase A.1+A.2+A.3 ✅ 完成! 准备进 Phase A.4 (耦合矩阵)
+进度: A.1 (140/140) + A.2 (dataflow) + A.3 (storage 93 file)
+下一动作: 进 Phase A.4 — 写 docs/JARVIS_COUPLING_MATRIX.md (90×90 模块调用表 + 隐藏硅耦合点)
+最后 commit: 48fd2c2 (A.2 dataflow)
 ```
 
 ### 6.3 已完成 audit cards
