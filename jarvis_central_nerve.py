@@ -3899,6 +3899,28 @@ User: {user_input}
                 self._asm_stage_t = {}
         except Exception:
             pass
+
+        # 🆕 [P5-fix61 / 2026-05-23 16:18] Phase 3d.1 (最小增量, 字面零变化):
+        # standard/full mode 集成 PromptBuilder 路径 (整 result 作 1 mega block).
+        # 主脑看到的 prompt 字面**完全一致**, 仅执行路径走 builder.
+        # Sir 实测验证 builder 不破 → Phase 3d.2 再真拆 block 增量.
+        # fallback: builder 异常 → 直接 return result (准则 8 不破现有).
+        try:
+            from jarvis_prompt_builder import PromptBuilder
+            _sb = PromptBuilder(tier='STANDARD')
+            _via_builder = _sb.compose(
+                persona=result.strip(),
+                user_input='',
+                footer='',
+                system_alert='',
+                include_meta_hint=False,
+            )
+            # 安全闸: builder 输出含 user_input → 接受
+            if _via_builder and user_input and user_input in _via_builder:
+                result = _via_builder
+        except Exception:
+            pass  # fallback 老 result
+
         return result
 
     def _build_time_persona(self, current_hour: int) -> str:
