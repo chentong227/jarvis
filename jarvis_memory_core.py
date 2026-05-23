@@ -513,117 +513,53 @@ class MemoryFragment:
 
 
 class UnifiedMemoryGateway:
+    """[DEPRECATED — Reshape M2.C / 2026-05-24] 已并入 MemoryHub (jarvis_memory_gateway).
+
+    保留为 stub 让 20+ noqa F401 转发 import 不破 (兼容老 `from jarvis_memory_core
+    import UnifiedMemoryGateway` 形式). 真实功能全在 `MemoryHub.query` +
+    `MemoryHub.to_prompt_block` (M2.A 搬运).
+
+    本 stub 是 delegate: 任何方法调用都转给 default hub. 真使用会发 warning.
+    M2 完整完成后 (M5+) 可直接 `del` 此 class + 删 noqa import.
+
+    Sir 准则 8 (优雅 > 简单): 删比改危险, stub delegate 是 0 破坏的 cleanup 第一步.
+    """
+
+    _warned = False
+
     def __init__(self, central_nerve):
         self.nerve = central_nerve
-        self.source_weights = {
-            'stm': 0.30,
-            'ltm': 0.25,
-            'profile': 0.15,
-            'ledger': 0.15,
-            'causal': 0.15,
-        }
+        if not type(self)._warned:
+            type(self)._warned = True
+            try:
+                import warnings
+                warnings.warn(
+                    'UnifiedMemoryGateway is deprecated. '
+                    'Use jarvis_memory_gateway.get_default_hub() instead '
+                    '(MemoryHub.query / MemoryHub.to_prompt_block).',
+                    DeprecationWarning, stacklevel=2,
+                )
+            except Exception:
+                pass
+
+    def _hub(self):
+        try:
+            from jarvis_memory_gateway import get_default_hub
+            return get_default_hub()
+        except Exception:
+            return None
 
     def query(self, query_text: str, top_k: int = 5) -> list:
-        fragments = []
-        now = time.time()
-
-        stm = getattr(self.nerve, 'short_term_memory', [])
-        if stm:
-            for m in stm[-20:]:
-                content = f"[{m.get('time', '')}] User: {m.get('user', '')} | Jarvis: {m.get('jarvis', '')}"
-                fragments.append(MemoryFragment(
-                    source='stm', content=content,
-                    relevance_score=self._fuzzy_match(query_text, content),
-                    freshness_hours=0.01, source_weight=self.source_weights['stm']
-                ))
-
-        try:
-            ltm_results = self.nerve.hippocampus.search_memory(
-                self.nerve.gemini_key, query_text, top_k=5
-            )
-            for r in ltm_results:
-                age_hours = (now - r['timestamp']) / 3600
-                fragments.append(MemoryFragment(
-                    source='ltm',
-                    content=f"[{time.strftime('%Y-%m-%d %H:%M', time.localtime(r['timestamp']))}] {r['intent']} -> {r['summary']}",
-                    timestamp=r['timestamp'],
-                    relevance_score=r.get('similarity', 0.5),
-                    freshness_hours=age_hours,
-                    source_weight=self.source_weights['ltm']
-                ))
-        except Exception:
-            pass
-
-        profile = self.nerve.profile_card.snapshot() if hasattr(self.nerve, 'profile_card') else {}
-        if profile:
-            profile_text = json.dumps(profile, ensure_ascii=False)[:500]
-            fragments.append(MemoryFragment(
-                source='profile', content=profile_text,
-                relevance_score=self._fuzzy_match(query_text, profile_text),
-                freshness_hours=0.5, source_weight=self.source_weights['profile']
-            ))
-
-        if hasattr(self.nerve, 'status_ledger'):
-            try:
-                ledger_text = self.nerve.status_ledger.get_recent_daily_summaries(days=2)
-                if ledger_text:
-                    fragments.append(MemoryFragment(
-                        source='ledger', content=ledger_text[:500],
-                        relevance_score=self._fuzzy_match(query_text, ledger_text),
-                        freshness_hours=12, source_weight=self.source_weights['ledger']
-                    ))
-            except Exception:
-                pass
-
-        cc = getattr(self.nerve, 'causal_chain', None)
-        if cc:
-            try:
-                causal_text = cc.get_llm_enhanced_summary()
-                if causal_text:
-                    fragments.append(MemoryFragment(
-                        source='causal', content=causal_text[:300],
-                        relevance_score=self._fuzzy_match(query_text, causal_text),
-                        freshness_hours=1, source_weight=self.source_weights['causal']
-                    ))
-            except Exception:
-                pass
-
-        for f in fragments:
-            freshness_bonus = max(0, 1.0 - f.freshness_hours / 168)
-            f.relevance_score = f.relevance_score * 0.6 + freshness_bonus * 0.4
-
-        fragments.sort(key=lambda x: x.relevance_score * x.source_weight, reverse=True)
-
-        seen = set()
-        deduped = []
-        for f in fragments:
-            key = f.content[:80]
-            if key not in seen:
-                seen.add(key)
-                deduped.append(f)
-
-        return deduped[:top_k]
-
-    def _fuzzy_match(self, query: str, text: str) -> float:
-        if not query or not text:
-            return 0.3
-        query_lower = query.lower()
-        text_lower = text.lower()
-        query_words = set(query_lower.split())
-        text_words = set(text_lower.split())
-        if not query_words:
-            return 0.3
-        overlap = len(query_words & text_words)
-        return min(1.0, overlap / len(query_words) * 1.5)
+        h = self._hub()
+        if h is None:
+            return []
+        return h.query(query_text, top_k=top_k, nerve=self.nerve)
 
     def to_prompt_block(self, query_text: str, top_k: int = 5) -> str:
-        results = self.query(query_text, top_k)
-        if not results:
+        h = self._hub()
+        if h is None:
             return ""
-        lines = ["\n[UNIFIED MEMORY - Cross-source recall]:"]
-        for r in results:
-            lines.append(f"[{r.source.upper()}] {r.content[:200]}")
-        return '\n'.join(lines)
+        return h.to_prompt_block(query_text, top_k=top_k, nerve=self.nerve)
 
 
 # [P0+13 / 2026-05-15] FeedbackSignal 双定义合并 —— 复用 jarvis_blood.FeedbackSignal
