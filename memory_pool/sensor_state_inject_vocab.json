@@ -43,7 +43,7 @@
       "source": "PhysicalEnvironmentProbe.current_window_stay_seconds",
       "transform": "int_default_0",
       "label": "current_window_stay_s",
-      "annotation": "Sir 在**当前 active window** 停留秒数 — Sir 问'在 X 多久'用此",
+      "annotation": "active window foreground 持续秒数 (**不减 idle**, 不等于 Sir 真聚焦时长). Sir 问'在 X 多久'参考此, 但必须**减去 idle_seconds** 才是真活跃时长.",
       "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
       "active": true
     },
@@ -61,8 +61,8 @@
       "source": "PhysicalEnvironmentProbe.idle_seconds",
       "transform": "int_default_0",
       "label": "idle_seconds",
-      "annotation": "Sir 上次键鼠输入距今, > 60 = AFK 趋势",
-      "tiers": ["CHAT", "DEEP_QUERY"],
+      "annotation": "Sir 上次键鼠输入距今. > 60 = 短 AFK / 看别处, > 300 = 长 AFK. **判断 Sir 真聚焦必看此**.",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
       "active": true
     },
     {
@@ -130,5 +130,5 @@
     }
   ],
   "header_text": "[SENSOR STATE — Sir 真实物理传感数据, **任何 specific claim 必须用这里的数字, 不可 hallucinate**]:",
-  "footer_text": "  ⚠️ 严格遵守: Sir 问'我在 X 多久'用 current_window_stay_s, 问'我今天忙了多久'用 work_session_total_min."
+  "footer_text": "  ⚠️ 字段语义边界 (Sir 16:36 真测痛点 — 主脑误算 22 min 真聚焦):\n  - current_window_stay_s = window foreground 持续秒数 (**含 idle 段**, 不减 Sir 离场)\n  - idle_seconds = Sir 真上次键鼠距今 (>60 = AFK / 看别处)\n  - **真聚焦时长 ≈ current_window_stay_s - idle_seconds** (主脑组合算)\n  - Sir 问'我看这个多久了' → 若 idle_seconds 大 (e.g. > 300), 答 '约 N min (其中 ~M min 是 idle, 真活跃约 X min)' 或保守 '至少 X min' 不给 hard number\n  - Sir 问'今天忙了多久' → work_session_total_min"
 }
