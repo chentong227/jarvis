@@ -310,7 +310,7 @@
 | Phase A.2 | 数据流全审 | ✅ done | `JARVIS_DATAFLOW_MAP.md` (~600 行, 含 30+ render block / 50+ SWM etype / 30+ Reflector / 4 关键 case 序列图 / 7 耦合点) |
 | Phase A.3 | storage map | ✅ done | `JARVIS_STORAGE_MAP.md` (~500 行, 93 file 6 类详 + 4 死文件 + 5 audit log 合并 + sqlite 4 表) |
 | Phase A.4 | 耦合矩阵 | ✅ done | `JARVIS_COUPLING_MATRIX.md` (~400 行, 耦合 7 形态 + 6 同名 class 冲突 + 8 概念重叠 + god object 反模式) |
-| Phase A.5 | 历史 audit | ⬜ pending | 可与 A.1 并行 |
+| Phase A.5 | 历史 audit | ✅ done | `JARVIS_LEGACY_AUDIT.md` (死代码 4 / 半死代码 5+ / 35 design doc 状态 / 历史教训 / Sir 待拍板 4 项)
 | Phase B | 设计 | ⬜ pending | A 完成后 |
 | Phase C | 拍板 | ⬜ pending | B 完成后 |
 | Phase D | 重构 | ⬜ pending | C 拍板后 |
@@ -320,10 +320,19 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: 🎉 Phase A.1-A.4 全部✅! 准备进 Phase A.5 (历史 audit 最后一阶段)
-进度: A.1 (140/140) + A.2 (dataflow) + A.3 (storage) + A.4 (coupling)
-下一动作: 进 Phase A.5 — 写 docs/JARVIS_LEGACY_AUDIT.md (查 deprecated / 失败 attempt + 35 design doc 老设计)
-最后 commit: c9a87ff (A.3 storage)
+当前阶段: 🎉🎉🎉 **Phase A 全部完成!** 等 Sir 拍板进 Phase B (设计)
+进度: A.1 (140/140) + A.2 (dataflow) + A.3 (storage 93 file) + A.4 (coupling) + A.5 (legacy)
+总产出: ~6000 行 audit 文档 (7 doc)
+下一动作: 等 Sir 看完 Phase A 7 份产出 → 拍板进 Phase B 设计或调整
+Phase A 7 份核心 doc:
+  1. `docs/JARVIS_GRAND_REFACTOR.md` (本 doc, 立项)
+  2. `docs/JARVIS_AUDIT_CARDS.md` (140 模块 cards)
+  3. `docs/JARVIS_DATAFLOW_MAP.md` (数据流)
+  4. `docs/JARVIS_STORAGE_MAP.md` (storage)
+  5. `docs/JARVIS_COUPLING_MATRIX.md` (耦合)
+  6. `docs/JARVIS_LEGACY_AUDIT.md` (历史)
+  7. `docs/JARVIS_ARCHITECTURE_MAP.md` (架构总览)
+最后 commit: 539b94b (A.4 coupling)
 ```
 
 ### 6.3 已完成 audit cards
