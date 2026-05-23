@@ -204,6 +204,12 @@ class ConcernFeedbackJudge:
             "睡前还该提醒最后一杯\n"
             "- Sir 说 '今天还没做' / '没时间' → severity_delta 正 (升权)\n"
             "- 不要 hallucinate progress (Sir 没明说数字就 progress=null)\n"
+            "- 🆕 [P5-fix77-concern / 2026-05-23] 话题不重叠 → has_relevance=false.\n"
+            "  ⚠️ Sir 19:08 真测痛点: Sir 说'重构 1 小时' 被误关联到驾照 concern\n"
+            "  并 sev_d=-0.80. 错误推断'Sir 在做 A → Sir 没做 B'. 修正:\n"
+            "  - Sir 谈话题 X (e.g. 重构/coding) ≠ Sir 没做话题 Y (e.g. 驾照)\n"
+            "  - 仅 Sir 原话直接提到 concern 主题/关键词时 has_relevance=true\n"
+            "  - 不要因 'Sir 谈 A → 推断 B 没做' 降 B 的 severity. 严格 evidence.\n"
             "- 严格 JSON, 不要 markdown code fence, 不要解释\n\n"
             "[输出]\n"
         )

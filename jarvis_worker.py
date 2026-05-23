@@ -5376,9 +5376,16 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             pass
                 except Exception:
                     pass
+                # 🆕 [P5-fix77-integ / 2026-05-23 19:11] BUG: single_step_fast_path 误判
+                # Sir 19:04 真测痛点: progress.set 单步成功后 Fast Path 跳 LLM 二轮总结,
+                # _cb_reason='single_step_fast_path' → integrity check 误报"言行不一".
+                # 实际 progress.set 真的执行了 ✅. 修法: 排除 success 优化路径 (fast_path
+                # 不是 failure).
+                _is_success_fast_path = _cb_reason == 'single_step_fast_path'
                 _should_check_integrity = (
                     filtered_reply and len(filtered_reply.strip()) >= 15
-                    and ((not _has_tool_results) or _cb_reason)
+                    and ((not _has_tool_results) or
+                         (_cb_reason and not _is_success_fast_path))
                 )
                 if _should_check_integrity:
                     try:

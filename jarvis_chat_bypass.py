@@ -766,19 +766,24 @@ class ChatBypass:
             # Sir 21:37 实测: cloud stream 半路 server close TCP, client 干等 18.8s 才
             # 报 RemoteProtocolError. 老 float 60s 是 *total* request 超时, 不是 chunk
             # 间隔超时. httpx.Timeout(read=12.0) 含义: "server 12s 不发任何字节 → ReadTimeout".
-            # 这正是 chunk inter-arrival timeout — 12s 既能盖 reasoning (gemini ~5-10s 思考)
-            # 又能让网络僵局快速断离. connect/write/pool 仍各自 10s.
+            # 🆕 [P5-fix77-I / 2026-05-23 19:11] BUG-I 真因: read=12.0 太严, 主脑 reasoning
+            # 时偶尔 > 12s 思考间隔 → 半截截断. Sir 19:04 真测: "I" (5 char), "I've adjusted
+            # to 2300" 等截断. 调 read=25.0 给主脑足够 reasoning 时间, 但仍不死等.
             client = OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=key,
                 default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
-                timeout=_httpx_b512.Timeout(connect=10.0, read=12.0, write=10.0, pool=10.0)
+                timeout=_httpx_b512.Timeout(connect=10.0, read=25.0, write=10.0, pool=10.0)
             )
 
+            # 🆕 [P5-fix77-I / 2026-05-23 19:11] max_tokens 显式设 8192 防 SDK default
+            # 太短 (某些 OpenRouter model default 仅 1024-2048 → 长 reply 中途 stop).
+            # 主脑 reply 通常 ≤ 2000 tokens, 8192 留 4x 余量盖最长 case.
             response = client.chat.completions.create(
                 model=or_model,
                 messages=messages,
                 temperature=0.7,
+                max_tokens=8192,
                 stream=True
             )
 
@@ -2012,7 +2017,20 @@ Spoken English:"""
                 return (f"❌ progress: 未知指令 {command} "
                           f"(支持 register / update / set / status / cancel / list)")
 
+        # 🆕 [P5-fix77-Q / 2026-05-23 19:11] BUG-Q: fuzzy alias (同 Path B)
         hand_class = self.jarvis.hand_registry.get(organ_name)
+        if hand_class is None and not organ_name.endswith('_hands'):
+            _aliased = organ_name + '_hands'
+            hand_class = self.jarvis.hand_registry.get(_aliased)
+            if hand_class is not None:
+                try:
+                    from jarvis_utils import bg_log as _alias_bg_pa
+                    _alias_bg_pa(
+                        f"🔀 [Alias Resolve / Path A] '{organ_name}' → '{_aliased}'"
+                    )
+                except Exception:
+                    pass
+                organ_name = _aliased
         if hand_class:
             try:
                 hand_inst = hand_class(self.jarvis.gemini_key)
@@ -2849,10 +2867,12 @@ Spoken English:"""
                                 default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
                                 timeout=60.0
                             )
+                            # 🆕 [P5-fix77-I] 同主路径加 max_tokens 防截断
                             or_response = or_client.chat.completions.create(
                                 model=self.main_brain_model,  # 🆕 P5-fix34 env override
                                 messages=messages,
                                 temperature=0.7,
+                                max_tokens=8192,
                                 stream=True
                             )
 
@@ -3522,7 +3542,25 @@ Spoken English:"""
                             else:
                                 _tool_results.append(f"❌ ui_control: 未知指令 {ctrl_cmd}")
                         else:
+                            # 🆕 [P5-fix77-Q / 2026-05-23 19:11] BUG-Q: fuzzy alias resolution
+                            # Sir 19:05 真测痛点: 主脑 emit organ='memory' 但 manifest 全名是
+                            # 'memory_hands' → "❌ memory 未挂载". 根因: Phase 4a fix70 砍
+                            # _KEY_SUBCOMMAND_HINTS, 主脑凭印象用短名. 修法 (准则 8 优雅):
+                            # 路由前 fuzzy match — 找不到 organ_name 时 try organ_name+'_hands'.
                             hand_class = self.jarvis.hand_registry.get(organ_name)
+                            if hand_class is None and not organ_name.endswith('_hands'):
+                                _aliased = organ_name + '_hands'
+                                hand_class = self.jarvis.hand_registry.get(_aliased)
+                                if hand_class is not None:
+                                    try:
+                                        from jarvis_utils import bg_log as _alias_bg
+                                        _alias_bg(
+                                            f"🔀 [Alias Resolve] '{organ_name}' → "
+                                            f"'{_aliased}' (manifest 全名)"
+                                        )
+                                    except Exception:
+                                        pass
+                                    organ_name = _aliased  # 后续 log 用全名
                             if hand_class:
                                 try:
                                     hand_inst = hand_class(self.jarvis.gemini_key)

@@ -458,6 +458,13 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
     """🩹 [P1-Gap9 / 2026-05-20 23:25] 从全局 event_bus 拿最近 N 秒的 'tool_called' events,
     转 string 给 ClaimTracer 作 evidence.
 
+    🆕 [P5-fix77-R / 2026-05-23 19:11] BUG-R: 跨 module mutation evidence gap.
+    Sir 19:09 真测痛点: 主脑说 "I've updated your profile" → ClaimTracer 报 unverified.
+    但实际 Memory Correction 真做了 mutation (走 MemoryGateway, 不进 tool_results).
+    修法: 扩展 _fetch_swm_tool_results 也拿 mutation events (memory_corrected /
+    sir_field_updated / memory_update / profile_field_updated) 作 ✅ evidence,
+    让 ClaimTracer 不再 false-positive "I've updated profile" 类幻觉警告.
+
     覆盖 IntentResolver 异步调 tool 的 trace gap — 主脑下轮看 [INTENT RESOLVED] 知道
     tool 真生效, ClaimTracer 也应该看到 SWM tool_called events 作 evidence, 不再
     false-positive unverified 警告.
@@ -474,28 +481,39 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
         bus = get_event_bus()
         if bus is None:
             return []
+        # 🆕 [P5-fix77-R] 加 mutation events 类型, 覆盖 MemoryGateway 等跨模块路径
         events = bus.recent_events(
             within_seconds=within_seconds,
-            types={'tool_called'},
+            types={'tool_called', 'memory_corrected', 'sir_field_updated',
+                   'memory_update', 'profile_field_updated',
+                   'concern_modified', 'promise_fulfilled'},
         ) or []
         results = []
         for ev in events:
             meta = ev.get('metadata') or {}
-            name = meta.get('name', '?')
-            args = meta.get('args') or {}
-            ok = bool(meta.get('ok', False))
-            err = str(meta.get('error', ''))[:80]
-            result_summary = str(meta.get('result_summary', ''))[:120]
-            try:
-                import json as _json
-                args_snip = _json.dumps(args, ensure_ascii=False)[:80]
-            except Exception:
-                args_snip = str(args)[:80]
-            if ok:
-                # ✅ marker so past_action claim trace can verify
-                results.append(f"✅ {name}({args_snip}) — {result_summary}")
+            etype = ev.get('etype', '')
+            # tool_called 类: 老格式 (name + args + ok)
+            if etype == 'tool_called':
+                name = meta.get('name', '?')
+                args = meta.get('args') or {}
+                ok = bool(meta.get('ok', False))
+                err = str(meta.get('error', ''))[:80]
+                result_summary = str(meta.get('result_summary', ''))[:120]
+                try:
+                    import json as _json
+                    args_snip = _json.dumps(args, ensure_ascii=False)[:80]
+                except Exception:
+                    args_snip = str(args)[:80]
+                if ok:
+                    results.append(f"✅ {name}({args_snip}) — {result_summary}")
+                else:
+                    results.append(f"❌ {name}({args_snip}) — {err}")
             else:
-                results.append(f"❌ {name}({args_snip}) — {err}")
+                # 🆕 [P5-fix77-R] mutation 类 events: SWM 已 publish = mutation 成功
+                # 用 etype + description 作 ✅ evidence (主脑能 trace "updated profile"
+                # 类 claim 到 'sir_field_updated' event).
+                desc = str(ev.get('description', '') or '')[:120]
+                results.append(f"✅ {etype}({desc})")
         return results
     except Exception:
         return []
