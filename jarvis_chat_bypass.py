@@ -4737,6 +4737,44 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             }
         except Exception:
             pass
+
+        # [Reshape M1.4 / 2026-05-24] Lineage record_decision (反向追溯基础)
+        # 准则 5 言出必行的法理基础 - 任何 LLM claim 必须能反向链回 evidence.
+        # Async (queue.append < 0.01ms), 不阻塞 return, 失败静默.
+        # prompt_evidence_log 暂空 (M1.3 PromptBlock 装配 + M7 统一时填),
+        # actions_emitted 暂空 (后续 FAST_CALL trace 集成).
+        try:
+            from jarvis_lineage import get_default_tracer, make_brain_decision_id
+            _ln_turn_id = _turn_id_now if '_turn_id_now' in dir() else ''
+            if _ln_turn_id and final_reply:
+                _ln_decision_id = make_brain_decision_id(_ln_turn_id)
+                # 拼 claims_extracted from _claim_result (line 4374, 可能未定义)
+                _ln_claims = []
+                if '_claim_result' in dir():
+                    try:
+                        for _ex in (_claim_result.get('unverified_examples', []) or [])[:5]:
+                            _ln_claims.append({'text': str(_ex)[:100], 'verified': False})
+                        # verified count (no examples list, 仅 stats)
+                        _ln_n_ver = int(_claim_result.get('n_verified', 0))
+                        if _ln_n_ver > 0:
+                            _ln_claims.append({
+                                'text': f'<{_ln_n_ver} verified claims>',
+                                'verified': True,
+                                'is_aggregate': True,
+                            })
+                    except Exception:
+                        pass
+                get_default_tracer().record_decision(
+                    decision_id=_ln_decision_id,
+                    turn_id=_ln_turn_id,
+                    reply_text=final_reply or '',
+                    prompt_evidence_log={},   # TODO M1.3/M7: PromptBlock 装配时填
+                    actions_emitted=[],       # TODO 后续: FAST_CALL trace_ids
+                    claims_extracted=_ln_claims,
+                )
+        except Exception:
+            pass
+
         return False, final_reply
 
     def _build_public_layers(self, ledger_data=None):
