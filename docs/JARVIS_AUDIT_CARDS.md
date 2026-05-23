@@ -2938,3 +2938,280 @@ loop:
 
 ---
 
+## 批次 h: 剩余 17 模块
+
+### #74 `jarvis_reply_preflight.py` (406 行) — **PreFlight (Gap 2 reply 前 self-check)**
+
+**职责**: P5-PreFlight — chat_bypass.stream_chat 末尾, reply 出 TTS 前 self-check (LLM 评 reply 是否 OK / unsolicited callback / 过多空话). 决定 verdict=ok/edit/scrap.
+
+**核心 class**: `ReplyPreFlight`
+
+**数据**: 读 reply + STM, 写 `preflight_stats.jsonl`
+
+**上游**: chat_bypass.stream_chat 末尾
+
+**下游**: LLM (Gemini-flash)
+
+**关联 design doc**: `JARVIS_REPLY_PREFLIGHT.md`
+
+**重构含义**: ⭐ 保留 — INTEGRITY 防滥发的实时门
+
+**审计结论**: 406 行实用 preflight.
+
+---
+
+### #75 `jarvis_reply_feedback.py` (109 行) — **ReplyFeedback (β.5.43-D Sir 反馈追踪)**
+
+**职责**: 记 Sir 对 Jarvis 上 reply 的反馈 (好/差/中) — 写 `reply_feedback.jsonl` → 给 prompt 注入"上次 Sir 嫌啰嗦了" 等.
+
+**核心 functions** (无 class)
+
+**数据**: 写 `reply_feedback.jsonl`
+
+**重构含义**: 保留
+
+**审计结论**: 109 行薄.
+
+---
+
+### #76 `jarvis_safety.py` (723 行) — **Safety helpers (P0+19-1 反幻觉守卫 + 中文判 + 标签去除)**
+
+**职责**: 12+ helper — `_is_reference_only_hint` / `_strip_structural_tag_blocks` / `_sentence_is_chinese_lean` / `execute_memory_updates` / etc.
+
+**核心 functions** (无 class, 全函数式)
+
+**数据**: 通过 ProfileCard.apply_correction 写
+
+**跟记忆的耦合**: ⭐ `execute_memory_updates` 是老 `<MEMORY_UPDATE>` tag 的执行入口 (写 profile_corrections.jsonl)
+
+**已知问题**:
+- 723 行 helper 集合, 概念混 — 可拆 (`anti_halluc / structural_tag / chinese_lean / mem_update_old` 各独立)
+- `execute_memory_updates` 是老路径, β.2.9.9 已转新路径 — 部分死代码
+
+**重构含义**: ⭐ 拆 + 清理老路径
+
+**审计结论**: 723 行杂 helper, 待拆.
+
+---
+
+### #77 `jarvis_reject_learner.py` (421 行) — **L8 Reject Learner (Gap 5 退化学习)**
+
+**职责**: Gap 5 / β.5.46-fix10 — 主脑 reply 被 Sir 反讥 / refused 后, 周期 (cycle 3+ rejects) 抽 patterns propose 新 directive 防同类错.
+
+**核心 class**: `RejectLearner`
+
+**数据**: 读 STM + reject 历史, 写 directive review queue
+
+**关联 design doc**: `JARVIS_REJECT_LEARNER_L8.md`
+
+**重构含义**: 保留 — L8 退化学习
+
+**审计结论**: 421 行 daemon.
+
+---
+
+### #78 `jarvis_predicate.py` (577 行) — **Predicate (β.2.8.6 谓词驱动 commitment)**
+
+**职责**: Predicate-Driven Commitment. 14 个 Predicate sub-class (And/Or/Not + 时间 + 进程 + 窗口 + idle / active / after_afk / stm_contains).
+
+**核心 class** (14 个 dataclass + 操作符):
+- `Predicate` (基类) / `AndPredicate` / `OrPredicate` / `NotPredicate`
+- `WakeFirstActive` / `TimeAfter` / `TimeBefore`
+- `ProcessExited` / `ProcessRunning` / `WindowTitleContains`
+- `IdleFor` / `ActiveFor` / `AfterAfk` / `StmContains`
+
+**数据**: 读 PhysicalEnvProbe + STM + sir_status
+
+**上游**: WatchTask + CommitmentWatcher (predicate-driven 触发)
+
+**关联 design doc**: `JARVIS_PREDICATE_COMMITMENT.md`
+
+**重构含义**: ⭐ 保留 — 谓词抽象优雅
+
+**审计结论**: 577 行 14 dataclass, 设计良好.
+
+---
+
+### #79 `jarvis_predicate_parser.py` (205 行) — **PredicateParser (β.2.8.9 LLM Parser)**
+
+**职责**: Gatekeeper LLM 把 Sir utterance 抽成 Predicate AST.
+
+**核心 functions** (无 class)
+
+**数据**: LLM (Gemini-flash) call
+
+**上游**: Worker.Gatekeeper
+
+**重构含义**: 保留
+
+**审计结论**: 205 行薄 parser.
+
+---
+
+### #80 `jarvis_key_router.py` (993 行) — **KeyRouter (API Key 装甲路由)**
+
+**职责**: P0+19-2 — 5+ Google Key + OpenRouter fallback 装甲. 支持 caller / model 路由 + health 监控 + 启动 probe.
+
+**核心 class**: `KeyRouter`
+
+**核心 method**: `get_key(caller, model)` / `release(key_name)` / `mark_unhealthy(key, error)` / `get_stats` / `reset_request`
+
+**数据**:
+- 读: `.env` (load_keys)
+- 写: `key_router_state.json` / `key_router_health.json` / `key_router_reset_audit.jsonl`
+
+**上游**: 全 Jarvis LLM 调用 (safe_gemini_call / safe_openrouter_call 内部用)
+
+**下游**: Google API + OpenRouter API
+
+**跟记忆的耦合**: 无 — 是 LLM 装甲底座
+
+**重构含义**: ⭐ 保留 — 关键基础设施
+
+**审计结论**: 993 行核心 LLM 装甲.
+
+---
+
+### #81 `jarvis_llm_reflector.py` (338 行) — **LlmReflector (P0+19-2 共享 LLM 反思引擎)**
+
+**职责**: 通用 LLM reflection helper — 各 reflector 共享调度入口.
+
+**核心 class**: `LlmReflector`
+
+**数据**: 调 KeyRouter
+
+**上游**: SoulReflector / IntegrityReflector / ProfileReflector 等共享
+
+**重构含义**: 保留 — 跟 ReflectorBudget 联动
+
+**审计结论**: 338 行实用 helper.
+
+---
+
+### #82 `jarvis_reflector_budget.py` (201 行) — **ReflectorBudget (Gap-Z3 LLM cost 控制)**
+
+**职责**: Gap-Z3 / β.5.46-fix11 — 全局 reflector LLM call cost 控制. 防止多 daemon 并发 LLM 烧钱.
+
+**核心 class**: `ReflectorBudget`
+
+**数据**: `memory_pool/reflector_budget_config.json`
+
+**重构含义**: ⭐ 保留 — Phase B 应集中调度 (SoulEval / IntegrityRefl / ProfileRefl / SirMentalRefl 共用)
+
+**审计结论**: 201 行薄 budget.
+
+---
+
+### #83 `jarvis_jsonl_rotator.py` (158 行) — **JSONL Rotator (P3-BUG#7 utility)**
+
+**职责**: 各 jsonl 文件大于阈值时 rotate (e.g. `screen_history.jsonl` > 10MB → screen_history.1.jsonl).
+
+**核心 functions** (无 class)
+
+**重构含义**: 保留 — 实用工具
+
+**审计结论**: 158 行 utility.
+
+---
+
+### #84 `jarvis_error_bus.py` (254 行) — **ErrorBus (β.5.43-F Self-Healing)**
+
+**职责**: 全 Jarvis 模块错误暴露 publish 'system_error_visible' SWM → 主脑下轮看 evidence 自决怎么 ack.
+
+**核心 class**: `ErrorBus`
+
+**数据**: SWM publish + `system_errors.jsonl`
+
+**重构含义**: 保留 — Self-Healing 模式
+
+**审计结论**: 254 行薄 bus.
+
+---
+
+### #85 `jarvis_sensor_state_block.py` (171 行) — **SENSOR STATE block builder (P5-fix53)**
+
+**职责**: 构造 `[SENSOR STATE]` prompt block (键鼠 / window / idle / 时段 等 sensor 状态).
+
+**核心 functions** (无 class)
+
+**重构含义**: 保留 — prompt block
+
+**审计结论**: 171 行薄 builder.
+
+---
+
+### #86 `jarvis_progress_tracker.py` (474 行) — **ProgressTracker (P5-fix35-D 通用数值进度)**
+
+**职责**: 通用数值进度追踪 (e.g. hydration 1800/3000 ml / pomodoro 5/8 / etc.). 主脑 emit `<FAST_CALL>{"organ":"progress",...}}` 调.
+
+**核心 class**:
+- `ProgressEntry` (dataclass)
+- `ProgressTrack` (dataclass)
+- `ProgressTrackerStore`
+
+**数据**: 读/写 `memory_pool/progress_logs.json`
+
+**上游**: chat_bypass `_execute_fast_call` organ='progress'
+
+**跟记忆的耦合**: ⭐ Layer E 子 source (数值进度)
+
+**重构含义**: 保留
+
+**审计结论**: 474 行实用 tracker.
+
+---
+
+### #87 `jarvis_ui.py` (921 行) — **PyQt5 UI (Orb + 字幕)**
+
+**职责**: P0+19-9 — PyQt5 UI:
+- `SubtitleOverlay` — 字幕覆盖层 (透明窗口, 双语)
+- `BreathingLightUI` — Orb 呼吸灯 (OpenGL, 状态机)
+
+**数据**: 读 `subtitle_queue` + state PyQt5 signal
+
+**重构含义**: 保留 — UI 跟主流分离
+
+**审计结论**: 921 行 UI.
+
+---
+
+### #88 `jarvis_vocal_cord.py` (321 行) — **VocalCord (TTS / SAPI)**
+
+**职责**: TTS — Microsoft TTS + SAPI 调用. `say` (sync) / `render_only` (PCM 渲染) / `play_only` (PCM 播放).
+
+**核心 class**: `VocalCord`
+
+**重构含义**: 保留 — TTS 物理底座
+
+**审计结论**: 321 行 TTS.
+
+---
+
+### #89 `jarvis_blood.py` (96 行) — **JarvisBlood (协议 dataclass — Action / ExecutionResult / 等)**
+
+**职责**: 全 Jarvis 共享 dataclass — Action (command/params) / ExecutionResult (success/msg/data) / PerceptionData / FeedbackSignal / 等.
+
+**核心 class** (9 个 dataclass): `Action` / `ExecutionResult` / `PerceptionData` / `JarvisBlood` / `CorrectionEntry` / `FeedbackSignal` / `MemoryFragment` / `TaskSnapshot` / `PromptLayer`
+
+**已知问题**: 多个 dataclass 跟其他模块同名 (e.g. `CorrectionEntry` 也在 memory_core.py)
+
+**重构含义**: ⭐ 整合 — 同名 dataclass 应统一定义
+
+**审计结论**: 96 行协议 dataclass.
+
+---
+
+### #90 `jarvis_enhanced.py` (758 行) — **历史模块 (ProactiveShield / ProactiveCompanion / SkillTreeTracker / SoulRouter)**
+
+**职责**: 早期 ⭐ 历史代码. 4 个 class — ProactiveShield / ProactiveCompanion / SkillTreeTracker / SoulRouter. 部分跟现状重叠 (SoulRouter 也在 routing.py).
+
+**已知问题**:
+- ⚠️ **可能 deprecated** — Sir 5/16 拆分 P0+19 重构后, 这文件部分功能已迁
+- 4 class 跟现 module 重叠 (待 Phase A.5 历史 audit 确认)
+
+**重构含义**: ⭐⭐ Phase A.5 必查是否真用. 死代码 → 删
+
+**审计结论**: 758 行老代码, 待历史 audit.
+
+---
+
