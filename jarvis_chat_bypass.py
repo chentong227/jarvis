@@ -3389,9 +3389,44 @@ Spoken English:"""
                         user_input_clean = user_input.strip().lower().rstrip('.,!?')
                         is_acknowledgment = any(re.match(p, user_input_clean) for p in ACKNOWLEDGMENT_PATTERNS)
 
+                        # 🆕 [P5-fix36 / 2026-05-23 12:11] FAST_CALL-only organ 路由治本.
+                        # Sir 12:10 真测痛点: 主脑发 progress.update — Path B (slow 路径)
+                        # 没 progress 分支, fallback 到 hand_registry.get('progress')
+                        # → None → "❌ progress 未挂载". 同款 BUG 在 concerns / stand_down /
+                        # promises / mutation / cyclic_task 都有 (Path A 有, Path B 没).
+                        # 治本: 这些 organ 走 _execute_fast_call 同款实现 (DRY).
+                        _FAST_CALL_ONLY_ORGANS = (
+                            'concerns', 'stand_down', 'promises', 'mutation',
+                            'cyclic_task', 'progress',
+                        )
                         if is_acknowledgment and organ_name in SAFETY_GATE_ORGANS:
                             tool_result = "SAFETY_GATE_BLOCKED: Sir's input was a simple acknowledgment, not an explicit request for file operations. Do NOT propose or execute file modifications unless Sir explicitly asks."
                             _tool_results.append(f"🛡️ 安全闸拦截: {organ_name}.{command}")
+                        elif organ_name in _FAST_CALL_ONLY_ORGANS:
+                            # 复用 _execute_fast_call (Path A 同款 implementation)
+                            try:
+                                _result = self._execute_fast_call(
+                                    organ_name=organ_name,
+                                    command=command,
+                                    params=params,
+                                )
+                                _tool_results.append(_result)
+                                # 成功 → 重置熔断 + 单步 Fast Path 收尾
+                                if isinstance(_result, str) and _result.startswith('✅'):
+                                    _consecutive_tool_fail = 0
+                                    # 单步 organ 成功直接 break (避免主脑二轮空说"已记录")
+                                    _circuit_broken_reason = "single_step_fast_path"
+                                    if '_stream_key_name' in dir() and _stream_key_name:
+                                        self.key_router.release(_stream_key_name)
+                                        _stream_key_name = None
+                                    break
+                                else:
+                                    _consecutive_tool_fail += 1
+                            except Exception as _foe:
+                                _tool_results.append(
+                                    f"❌ {organ_name}.{command}: {_foe}"
+                                )
+                                _consecutive_tool_fail += 1
                         elif organ_name == "ui_control":
                             ctrl_cmd = command
                             if ctrl_cmd in ("subtitle_on", "subtitle_off", "orb_on", "orb_off"):
