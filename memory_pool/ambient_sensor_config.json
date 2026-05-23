@@ -1,0 +1,25 @@
+{
+  "_comment": "[P5-fix35-E / 2026-05-23 11:36] AmbientSensor 调参. 准则 6 持久化 — Sir CLI 改无需重启 (mtime cache reload).",
+  "_extended_after_real_test": "Sir 11:27 真测 'AmbientSensor 没体感'. 21MB log 0 publish. 修法: 阈值放宽 + 半 active 也分析. Sir CLI 改 config 即时生效.",
+  "_pattern_class": "ambient_sensor_runtime_config",
+  "config": {
+    "min_confidence": 0.50,
+    "consecutive_agree_threshold": 2,
+    "per_type_cooldown_s": 60.0,
+    "min_volume_for_analysis": 30,
+    "max_volume_for_analysis": 3000,
+    "analysis_window_samples": 8000,
+    "sample_rate": 16000,
+    "analyze_in_active_chat": false,
+    "stats_log_interval_s": 300.0
+  },
+  "_field_docs": {
+    "min_confidence": "≥ 此 conf 才算分类成功. 0.50 比 v1 的 0.60 宽 (Sir 11:27 0 publish 修法).",
+    "consecutive_agree_threshold": "≥ N 个连续同类才 publish. 2 比 v1 的 3 宽.",
+    "per_type_cooldown_s": "同类 publish 间最短间隔. 60s 防 spam.",
+    "min_volume_for_analysis": "音量低于此 → 太静不分析 (节能). int16 mean abs.",
+    "max_volume_for_analysis": "音量高于此 → Sir/jarvis 说话 不分析. 1500→3000 容键盘音 / BGM.",
+    "analyze_in_active_chat": "true=active 期也跑 ambient (Sir 跟 Jarvis 对话期间). 默认 false (设计原意, 但 Sir 11:27 痛点是这导致 0 publish — 后续可设 true 试).",
+    "stats_log_interval_s": "每 N 秒 bg_log 一次 stats (n_windows / n_published / top_types). 帮 Sir 看算法在跑."
+  }
+}

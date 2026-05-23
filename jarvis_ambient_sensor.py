@@ -36,27 +36,36 @@ from typing import Any, Deque, List, Optional
 
 
 # ----------------------------------------------------------------------------
-# Constants
+# Constants (config 持久化 — 准则 6, P5-fix35-E)
 # ----------------------------------------------------------------------------
-
-# 16kHz @ 500ms = 8000 samples per analysis window
+# Default values — 仅在 config 文件读取失败时 fallback. 实际运行时从
+# memory_pool/ambient_sensor_config.json 读 (mtime cache, Sir CLI 改即时生效).
 SAMPLE_RATE = 16000
-ANALYSIS_WINDOW_SAMPLES = 8000
+DEFAULT_ANALYSIS_WINDOW_SAMPLES = 8000
 
-# 单次 publish 后, 同类 cooldown
-PER_TYPE_COOLDOWN_S = 60.0
+# v1 (Sir 21:00) defaults — 太严, Sir 11:27 真测 0 publish:
+#   PER_TYPE_COOLDOWN_S=60, CONSECUTIVE_AGREE_THRESHOLD=3, MIN_CONFIDENCE=0.60
+#   MIN_VOL=30, MAX_VOL=1500
+# v2 (P5-fix35-E) defaults from config — 放宽:
+#   CONSECUTIVE_AGREE 3→2, MIN_CONFIDENCE 0.60→0.50, MAX_VOL 1500→3000
+DEFAULT_PER_TYPE_COOLDOWN_S = 60.0
+DEFAULT_CONSECUTIVE_AGREE_THRESHOLD = 2
+DEFAULT_MIN_CONFIDENCE = 0.50
+DEFAULT_MIN_VOLUME_FOR_ANALYSIS = 30
+DEFAULT_MAX_VOLUME_FOR_ANALYSIS = 3000
+DEFAULT_ANALYZE_IN_ACTIVE_CHAT = False
+DEFAULT_STATS_LOG_INTERVAL_S = 300.0
 
-# Sir 精准要求: ≥ N 个连续 sample 同意才 fire
-CONSECUTIVE_AGREE_THRESHOLD = 3
+# Backward-compat aliases (旧 import 仍能找到)
+ANALYSIS_WINDOW_SAMPLES = DEFAULT_ANALYSIS_WINDOW_SAMPLES
+PER_TYPE_COOLDOWN_S = DEFAULT_PER_TYPE_COOLDOWN_S
+CONSECUTIVE_AGREE_THRESHOLD = DEFAULT_CONSECUTIVE_AGREE_THRESHOLD
+MIN_CONFIDENCE = DEFAULT_MIN_CONFIDENCE
+MIN_VOLUME_FOR_ANALYSIS = DEFAULT_MIN_VOLUME_FOR_ANALYSIS
+MAX_VOLUME_FOR_ANALYSIS = DEFAULT_MAX_VOLUME_FOR_ANALYSIS
 
-# 最低置信度
-MIN_CONFIDENCE = 0.60
-
-# Volume 阈值: 静音背景不分析 (节能 + 防误判)
-MIN_VOLUME_FOR_ANALYSIS = 30  # int16 mean abs, 极静背景不算
-
-# Volume 太大 (Sir 自己说话或 Jarvis TTS 余音) 不分析
-MAX_VOLUME_FOR_ANALYSIS = 1500
+# config persistence path
+_CONFIG_PATH = os.path.join('memory_pool', 'ambient_sensor_config.json')
 
 
 # ----------------------------------------------------------------------------
@@ -269,15 +278,65 @@ class AmbientSensor:
         self._lock = threading.Lock()
         self._enabled = enabled
         self._event_bus = event_bus
+        # 🆕 [P5-fix35-E] config from JSON, mtime cache reload
+        self._config_mtime: float = 0.0
+        self._config: dict = self._default_config()
+        self._reload_config_if_changed()
         # 累积 buffer (int16 list)
         self._accum: List[int] = []
         # 最近 N 次 observation (用做 consecutive agree 检测)
-        self._recent_obs: Deque[AmbientObservation] = deque(maxlen=CONSECUTIVE_AGREE_THRESHOLD)
+        self._recent_obs: Deque[AmbientObservation] = deque(
+            maxlen=int(self._config['consecutive_agree_threshold']))
         # 每类 last publish ts
         self._last_publish_at: dict = {}
         # 总统计
         self._n_windows_analyzed = 0
         self._n_signals_published = 0
+        self._n_skipped_state_gate = 0
+        self._n_skipped_volume = 0
+        self._n_classified_no_match = 0
+        self._n_below_consensus = 0
+        self._n_below_cooldown = 0
+        self._stats_per_type: dict = {}
+        self._last_stats_log_at = time.time()
+
+    @staticmethod
+    def _default_config() -> dict:
+        return {
+            'min_confidence': DEFAULT_MIN_CONFIDENCE,
+            'consecutive_agree_threshold': DEFAULT_CONSECUTIVE_AGREE_THRESHOLD,
+            'per_type_cooldown_s': DEFAULT_PER_TYPE_COOLDOWN_S,
+            'min_volume_for_analysis': DEFAULT_MIN_VOLUME_FOR_ANALYSIS,
+            'max_volume_for_analysis': DEFAULT_MAX_VOLUME_FOR_ANALYSIS,
+            'analysis_window_samples': DEFAULT_ANALYSIS_WINDOW_SAMPLES,
+            'sample_rate': SAMPLE_RATE,
+            'analyze_in_active_chat': DEFAULT_ANALYZE_IN_ACTIVE_CHAT,
+            'stats_log_interval_s': DEFAULT_STATS_LOG_INTERVAL_S,
+        }
+
+    def _reload_config_if_changed(self) -> None:
+        """看 config file mtime, 改了重 load. Sir CLI 改 JSON 即时生效."""
+        try:
+            import json
+            if not os.path.exists(_CONFIG_PATH):
+                return
+            mt = os.path.getmtime(_CONFIG_PATH)
+            if mt <= self._config_mtime:
+                return
+            with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            cfg = data.get('config', data) if isinstance(data, dict) else {}
+            if not isinstance(cfg, dict):
+                return
+            # merge over defaults (preserves missing keys as default)
+            new_config = self._default_config()
+            for k, v in cfg.items():
+                if k in new_config:
+                    new_config[k] = v
+            self._config = new_config
+            self._config_mtime = mt
+        except Exception:
+            pass
 
     def is_enabled(self) -> bool:
         return self._enabled and self._event_bus is not None
@@ -307,11 +366,24 @@ class AmbientSensor:
         if not self._enabled:
             return None
 
-        # state gate: 任何 "非纯 ambient" 状态 → reset accum 不分析
-        if is_jarvis_speaking or is_sir_speaking or sir_in_active:
+        # 🆕 [P5-fix35-E] mtime check — Sir CLI 改 config 即时生效 (不重启)
+        self._reload_config_if_changed()
+        cfg = self._config
+
+        # state gate:
+        # - is_jarvis_speaking / is_sir_speaking 期 → 永远 reset accum (避免污染)
+        # - sir_in_active 期 → 看 config.analyze_in_active_chat (默认 false)
+        if is_jarvis_speaking or is_sir_speaking:
             with self._lock:
                 self._accum = []
                 self._recent_obs.clear()
+                self._n_skipped_state_gate += 1
+            return None
+        if sir_in_active and not cfg.get('analyze_in_active_chat', False):
+            with self._lock:
+                self._accum = []
+                self._recent_obs.clear()
+                self._n_skipped_state_gate += 1
             return None
 
         try:
@@ -329,13 +401,14 @@ class AmbientSensor:
         except Exception:
             return None
 
+        window_samples = int(cfg['analysis_window_samples'])
         with self._lock:
             self._accum.extend(arr.tolist())
-            if len(self._accum) < ANALYSIS_WINDOW_SAMPLES:
+            if len(self._accum) < window_samples:
                 return None
             # 取一个 window 出来
-            window = self._accum[:ANALYSIS_WINDOW_SAMPLES]
-            self._accum = self._accum[ANALYSIS_WINDOW_SAMPLES:]
+            window = self._accum[:window_samples]
+            self._accum = self._accum[window_samples:]
 
         try:
             import numpy as np
@@ -348,30 +421,80 @@ class AmbientSensor:
             mean_abs = float(np.abs(window_arr).mean())
         except Exception:
             mean_abs = 0.0
-        if mean_abs < MIN_VOLUME_FOR_ANALYSIS or mean_abs > MAX_VOLUME_FOR_ANALYSIS:
+        min_vol = float(cfg['min_volume_for_analysis'])
+        max_vol = float(cfg['max_volume_for_analysis'])
+        if mean_abs < min_vol or mean_abs > max_vol:
+            with self._lock:
+                self._n_skipped_volume += 1
             return None
 
         # classify
-        obs = _classify_window(window_arr)
+        obs = _classify_window(window_arr,
+                                  sample_rate=int(cfg['sample_rate']))
         self._n_windows_analyzed += 1
+        if not obs.ambient_type:
+            with self._lock:
+                self._n_classified_no_match += 1
+
+        min_conf = float(cfg['min_confidence'])
+        consec_thresh = int(cfg['consecutive_agree_threshold'])
+        cooldown = float(cfg['per_type_cooldown_s'])
 
         with self._lock:
             self._recent_obs.append(obs)
             # Check consecutive agree
-            if obs.ambient_type and obs.confidence >= MIN_CONFIDENCE:
+            if obs.ambient_type and obs.confidence >= min_conf:
                 same_type_obs = [
                     o for o in self._recent_obs
-                    if o.ambient_type == obs.ambient_type and o.confidence >= MIN_CONFIDENCE
+                    if o.ambient_type == obs.ambient_type and o.confidence >= min_conf
                 ]
-                if len(same_type_obs) >= CONSECUTIVE_AGREE_THRESHOLD:
+                if len(same_type_obs) >= consec_thresh:
                     # cooldown 检查
                     last_pub = self._last_publish_at.get(obs.ambient_type, 0.0)
-                    if time.time() - last_pub >= PER_TYPE_COOLDOWN_S:
+                    if time.time() - last_pub >= cooldown:
                         self._publish_to_swm(obs, same_type_obs)
                         self._last_publish_at[obs.ambient_type] = time.time()
                         self._n_signals_published += 1
+                        # 累积 per-type stats
+                        self._stats_per_type[obs.ambient_type] = (
+                            self._stats_per_type.get(obs.ambient_type, 0) + 1)
+                    else:
+                        self._n_below_cooldown += 1
+                else:
+                    self._n_below_consensus += 1
+
+        # 🆕 [P5-fix35-E] 5min 统计 log — Sir 看算法在跑
+        self._maybe_log_stats(cfg)
 
         return obs
+
+    def _maybe_log_stats(self, cfg: dict) -> None:
+        """每 stats_log_interval_s 秒 bg_log 一次 stats — Sir 知道算法在跑."""
+        try:
+            interval = float(cfg.get('stats_log_interval_s', 300.0))
+            now = time.time()
+            if now - self._last_stats_log_at < interval:
+                return
+            self._last_stats_log_at = now
+            try:
+                from jarvis_utils import bg_log
+                top_types = sorted(
+                    self._stats_per_type.items(), key=lambda x: -x[1])[:3]
+                top_str = ', '.join(f"{k}={v}" for k, v in top_types) or 'none'
+                bg_log(
+                    f"🎵 [AmbientSensor/Stats] analyzed={self._n_windows_analyzed} "
+                    f"published={self._n_signals_published} "
+                    f"top=[{top_str}] | "
+                    f"skip(state)={self._n_skipped_state_gate} "
+                    f"skip(vol)={self._n_skipped_volume} "
+                    f"no_match={self._n_classified_no_match} "
+                    f"below_consensus={self._n_below_consensus} "
+                    f"below_cooldown={self._n_below_cooldown}"
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _publish_to_swm(self, obs: AmbientObservation, agree_obs: List[AmbientObservation]) -> None:
         """publish ambient_state signal."""
@@ -415,13 +538,23 @@ class AmbientSensor:
             self._recent_obs.clear()
 
     def get_stats(self) -> dict:
+        """🆕 [P5-fix35-E] detailed stats — Sir 通过 CLI 看算法跑得如何."""
         with self._lock:
             return {
                 'enabled_flag': self._enabled,
                 'bus_attached': self._event_bus is not None,
                 'effective_enabled': self._enabled and self._event_bus is not None,
-                'n_windows': self._n_windows_analyzed,
-                'n_published': self._n_signals_published,
+                'config': dict(self._config),
+                'config_mtime': self._config_mtime,
+                'config_path': _CONFIG_PATH,
+                'n_windows_analyzed': self._n_windows_analyzed,
+                'n_signals_published': self._n_signals_published,
+                'n_skipped_state_gate': self._n_skipped_state_gate,
+                'n_skipped_volume': self._n_skipped_volume,
+                'n_classified_no_match': self._n_classified_no_match,
+                'n_below_consensus': self._n_below_consensus,
+                'n_below_cooldown': self._n_below_cooldown,
+                'stats_per_type': dict(self._stats_per_type),
                 'last_publish_at': dict(self._last_publish_at),
                 'accum_samples': len(self._accum),
             }
