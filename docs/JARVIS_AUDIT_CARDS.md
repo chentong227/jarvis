@@ -3215,3 +3215,78 @@ loop:
 
 ---
 
+## 批次 i: 25 个 l4_*.py Hands (执行器)
+
+> **重要**: hands 全部**无 docstring + 无 md doc**. 是 Phase D 重点补全文档化目标.
+> 跟主流耦合: chat_bypass `_execute_fast_call` 通过 manifest 调; SkillRegistry 自动扫入册.
+> 跟记忆的耦合: **memory_hands** 是唯一直接读写记忆的 (search_memory / add_reminder / list_commitments / modify_record / delete_record).
+
+### Hands 群表 (25 个)
+
+| # | Hand | 行 | 主要 commands | 跟记忆耦合 |
+|---|---|---:|---|---|
+| **91** | `l4_audio_hands.py` | 217 | list_devices / get_default / set_default / get_volume / set_volume / mute / mute_app / list_app_volumes | 无 |
+| **92** | `l4_clipboard_hands.py` | 112 | set / clear / append / copy_from_file | 无 (跟 utils.ClipboardWatcher 配合) |
+| **93** | `l4_desktop_hands.py` | 110 | spawn_note / render_note / wait / close_note / os_click / os_type | 无 |
+| **94** | `l4_display_hands.py` | 127 | get_brightness / set_brightness / dim_display / sleep_display / wake_display | 无 |
+| **95** | `l4_everything_search_hands.py` | 46 | search_path | 无 (Everything app 调) |
+| **96** | `l4_file_operator_hands.py` | 63 | write_file / read_file / list_dir | 无 |
+| **97** | `l4_gui_atom.py` | 113 | render_text / append_text / move_window / SHUTDOWN | 无 |
+| **98** | `l4_input_hands.py` | 322 | click / double_click / right_click / middle_click / drag / scroll / scroll_up / scroll_down | 无 |
+| **99** | `l4_media_control_hands.py` | 137 | play_pause / next / prev / stop / volume_up/down / mute / set_volume | 无 |
+| **100** | **`l4_memory_hands.py`** | 181 | **search_memory / list_reminders / list_commitments / delete_record / modify_record / add_reminder** | ⭐⭐⭐ **唯一直接读写记忆 hand** (Hippocampus 接口) |
+| **101** | `l4_network_hands.py` | 123 | my_ip / public_ip / ping / wifi_status / dns_lookup / check_port | 无 |
+| **102** | `l4_notification_hands.py` | 96 | toast / msgbox / balloon / flash_taskbar / beep | 无 |
+| **103** | `l4_process_hands.py` | 319 | list_processes / find_process / kill_process / kill_by_name / focus_process / get_process_info / start_process / is_running | 无 (跟 fuzzy_resolver 配合) |
+| **104** | `l4_screenshot_hands.py` | 168 | fullscreen / window / foreground / region / to_clipboard / save_and_return | 无 |
+| **105** | `l4_system_hands.py` | 329 | wait / get_file_info / submit_batch_job / check_job_status / list_dir / mark_landmark / open_item / close_process | 无 |
+| **106** | `l4_system_info_hands.py` | 168 | cpu / memory / disk / all_disks / uptime / resolution / os_info / full_report | 无 |
+| **107** | `l4_terminal_hands.py` | 104 | forge_organ | 无 (动态创建新 hand) |
+| **108** | `l4_text_hands.py` | 249 | read / write / append / search_in_file / count_lines / tail / head / replace_in_file | 无 |
+| **109** | `l4_txt_writer_hands_generated.py` | 40 | write_text | 无 (auto-generated) |
+| **110** | `l4_url_launcher_hands.py` | 77 | open_url / open_file / open_app | 无 |
+| **111** | `l4_video_upload_hands.py` | 501 | upload_bilibili / upload_youtube / upload_both / check_uploaded / list_uploaded / mark_uploaded / find_new_videos | 无 |
+| **112** | `l4_watcher_hands.py` | 740 | start_watch / stop_watch / list_watches / stop_all_watches / screenshot / find_on_screen / find_template / find_color | 间接 (跟 watch_task 配合) |
+| **113** | `l4_web_hands.py` | 117 | navigate / click / fill_text / upload_file / wait / scroll | 无 |
+| **114** | `l4_window_hands.py` | 342 | minimize / maximize / restore / close / focus / hide / show / topmost | 无 |
+| **115** | `monitor_hands.py` | 58 | check_disk_space / check_ame_export | 无 |
+
+**总计**: 25 hands, ~5300 行, 全无 docstring, 全无 md doc.
+
+**所有 hands 共同 schema**:
+```python
+class Hand:
+    def __init__(self, gemini_key=None) -> None: ...
+    def execute(self, action: Action) -> ExecutionResult: ...
+
+# manifest (在 hand 同名 .json 文件): cmd → params spec + return spec
+```
+
+**跟记忆系统的耦合**:
+- ⭐⭐⭐ **#100 `l4_memory_hands.py` 是唯一直接调 Hippocampus 的 hand** — 主脑 emit `<FAST_CALL>{"organ":"memory_hands",...}}` 通过它读写记忆
+  - `search_memory` → `Hippocampus.search_memory_default`
+  - `list_reminders / list_commitments` → `Hippocampus.load_active_commitments`
+  - `add_reminder` → `Hippocampus.add_commitment_row` (含 trigger_time + intent)
+  - `modify_record / delete_record` → `Hippocampus.update_memory / delete_memory`
+- 其他 24 hands 跟记忆**无直接耦合** (是物理执行)
+
+**已知问题**:
+- ⚠️ **全 25 hands 0 docstring 0 md doc** — 文档化最差
+- `l4_terminal_hands.py:forge_organ` 是 meta hand (运行时生成新 hand) — 跟 SkillRegistry 配合, 但行为复杂
+- `l4_txt_writer_hands_generated.py` 是 auto-generated 示例 (forge_organ 产物?)
+- 部分 hand 跟其他 hand 重叠 (e.g. `l4_text_hands` vs `l4_file_operator_hands`)
+- `l4_video_upload_hands.py` 501 行 — 大, 可能含 ffmpeg 调用 + 凭证
+
+**关联 design doc**: 无 (需补 `JARVIS_HANDS_REFERENCE.md`)
+
+**重构含义**:
+- ⭐⭐ **必补 docstring + md doc** (Phase D 任务)
+- `l4_memory_hands` 应在 Memory Refactor 时**重新审视**:
+  - `add_reminder` 跟 `tool_commitment_register` (tool_registry) + Gatekeeper 都注册 commitment, **3 套路径**
+  - 是否应统一通过 MemoryHub.write
+- 其他 24 hands schema 一致, 可统一文档化模板
+
+**审计结论**: ⭐⭐ Hands 全 25 个一致 schema (Action → ExecutionResult). #100 memory_hands 是 refactor 关注点. 其他物理执行器保留 + 补 doc.
+
+---
+

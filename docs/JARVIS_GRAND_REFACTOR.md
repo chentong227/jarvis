@@ -306,7 +306,7 @@
 | Phase | Sub-phase | 进度 | 备注 |
 |---|---|---|---|
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
-| Phase A.1 | 模块审计 (115 + 25) | 90/140 (64.3%) | **批次 a-h ✅ 完成**! 90 jarvis_*.py 全完成! 剩 25 hands |
+| Phase A.1 | 模块审计 (115 + 25) | **140/140 ✅ 100%** | **🎉 Phase A.1 全部完成! 115 jarvis py + 25 hands 全审完** |
 | Phase A.2 | 数据流全审 | ⬜ pending | A.1 完成后 |
 | Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
@@ -320,10 +320,10 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: Phase A.1 批次 a-h ✅ 完成! 90 jarvis_*.py 全完成!
-进度: 90/140 (a 5 + b 7 + c 11 + d 9 + e 8 + f 10 + g 23 + h 17)
-下一动作: 进批次 i — 25 个 l4_*.py hands 审计
-最后 commit: b825cc3 (Sensor 23)
+当前阶段: 🎉 Phase A.1 全 140 模块完成! 准备进 Phase A.2 (数据流全审)
+进度: 140/140 (a 5 + b 7 + c 11 + d 9 + e 8 + f 10 + g 23 + h 17 + i 25 hands)
+下一动作: 进 Phase A.2 — 写 docs/JARVIS_DATAFLOW_MAP.md (调用链 + render block + Reflector + SWM events)
+最后 commit: 1d5f95d (90 jarvis py 全完成)
 ```
 
 ### 6.3 已完成 audit cards
@@ -347,7 +347,8 @@
 | 33-40 | Intent + Directive + Mutation 8 模块 (directives/directive_evaluator/intent_resolver/intent_router/tool_registry/skill_registry/fuzzy_resolver/prompt_builder) | `JARVIS_AUDIT_CARDS.md` §批次 e | f79e721 | 2026-05-24 00:08 |
 | 41-50 | Care + Nudge + Conductor 10 模块 | `JARVIS_AUDIT_CARDS.md` §批次 f | 323e73b | 2026-05-24 00:18 |
 | 51-73 | Sensor + Sentinel + Reflector 23 模块 | `JARVIS_AUDIT_CARDS.md` §批次 g | b825cc3 | 2026-05-24 00:30 |
-| 74-90 | 剩余 17 模块 (preflight/feedback/safety/reject_learner/predicate/predicate_parser/key_router/llm_reflector/reflector_budget/jsonl_rotator/error_bus/sensor_state_block/progress_tracker/ui/vocal_cord/blood/enhanced) | `JARVIS_AUDIT_CARDS.md` §批次 h | (即将) | 2026-05-24 00:38 |
+| 74-90 | 剩余 17 模块 | `JARVIS_AUDIT_CARDS.md` §批次 h | 1d5f95d | 2026-05-24 00:38 |
+| 91-115 | **25 hands 群表** (audio/clipboard/desktop/display/file/gui/input/media/memory/network/notification/process/screenshot/system/text/url/video/watcher/web/window/etc.) | `JARVIS_AUDIT_CARDS.md` §批次 i | (即将) | 2026-05-24 00:50 |
 
 ---
 
