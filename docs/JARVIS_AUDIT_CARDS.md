@@ -1905,3 +1905,303 @@ loop:
 
 ---
 
+## 批次 e: IntentResolver + Directive + Mutation 8 模块
+
+### #33 `jarvis_directives.py` (3959 行) — **L2 Conditional Directives Registry (130+ directive 教学)**
+
+**职责**: 中央 conditional directive 注册库. 130+ 条 directive 各自含 `id / trigger_fn / text / priority / ttl / purpose_short`. 装配 prompt 时按 trigger 匹配 inject 适用的 ~10 条.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 47 | `DirectiveContext` | dataclass — turn context (sir_input / jarvis_last / sir_status / etc.) |
+| 101 | `Directive` | dataclass — id / text / priority / ttl_days / trigger / source_marker |
+| 136 | **`DirectiveRegistry`** | 主类 — register / get / decay / inject |
+
+**核心 functions** (80+ top-level):
+- 80+ `_has_*` / `_user_input_*` / `_jarvis_reply_*` / `_trigger_*` (各 directive 的 trigger_fn 实现)
+
+**数据**:
+- 读: `memory_pool/directive_registry.json` (持久化注册 + counter)
+- 读: `memory_pool/directives_vocab.json` / `directive_inject_config.json`
+- 写: `directive_registry.json` (decay counter + last_fired_ts)
+
+**上游**:
+- `central_nerve.__init__` 启 decay daemon (β.0.1)
+- `_assemble_prompt` 调 `inject_for(context)` 装配 directive block
+- `DirectiveEvaluator` 评 directive 是否 helped
+
+**下游**: 内部 + STM/SWM read
+
+**跟记忆的耦合**:
+- ⭐ 130+ directive 是主脑教学的中心
+- 部分 trigger 读 mutation_receipts / SWM / Hippocampus
+
+**已知问题**:
+- 3959 行单文件 — 是历史累积巨型 (P0+20-β.0.1 起)
+- 80+ trigger_fn 散在 top-level — 难维护
+- 跟 `directive_evaluator` 是 2 半 (这里定义, evaluator 评)
+- vocab + 持久化 + L7 ✅ (准则 6 模范, 但文件本身太大)
+
+**关联 design doc**: `JARVIS_DIRECTIVE_SELF_AWARENESS.md`
+
+**重构含义**: ⭐⭐ 必拆 — 130 directive 按 family 分文件 (commitment/memory_correction/sleep/integrity/...)
+
+**审计结论**: ⭐ 3959 行最大单文件. 拆 + 分类是 Phase D 任务.
+
+---
+
+### #34 `jarvis_directive_evaluator.py` (398 行) — **DirectiveEvaluator (Gemini-flash 异步评 helped/fired)**
+
+**职责**: 每轮对话后异步用 Gemini-flash 评 inject 的 directive 是否真 helped (rated 0-1) → 写 directive 的 helped/fired 计数.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 86 | `EvalResult` | dataclass |
+| 98 | `DirectiveEvaluator` | 主类 |
+
+**数据**:
+- 写: `directive_registry.json` 的 helped/fired 计数 + `directive_review.json` (低分 directive 进 review)
+- LLM: Gemini-flash via OR
+
+**上游**: `chat_bypass.stream_chat` 末尾 fire-and-forget
+
+**下游**: LLM + DirectiveRegistry
+
+**跟记忆的耦合**: 间接
+
+**已知问题**: 跟 SoulEvaluator + IntegrityReflector 共享 LLM pool — Phase B 应统一调度
+
+**重构含义**: ⭐ 保留, 跟 evaluator pool 一起设计
+
+**审计结论**: 398 行 evaluator, 跟 directives 配套.
+
+---
+
+### #35 `jarvis_intent_resolver.py` (855 行) — **IntentResolver (β.5.44 — Sir 一句话集中 LLM judge)**
+
+**职责**: β.5.44 重构 — Sir 一句话, 7 module publish-only candidate event, IntentResolver 集中 LLM judge 决定调哪个 tool. 替代分散 sentinel 各自硬决策.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 92 | **`IntentResolver`** | 主类 (~750 行) |
+
+**核心 method**:
+- `resolve(user_input, candidates)` — 主入口
+- `_call_llm_judge` — Gemini judge
+- `_dispatch_tool(tool_name, params)` — 调 TOOL_REGISTRY
+- `_publish_intent_resolved` — publish 'intent_resolved' SWM (salience 0.90 必看)
+
+**数据**:
+- 读: SWM `sir_intent_*_candidate` events (7 类)
+- 读: `memory_pool/intent_to_tool_map.json` (vocab)
+- 写: `memory_pool/intent_resolver_telemetry.json` (audit)
+- SWM publish: 'tool_called' (0.85) / 'intent_resolved' (0.90)
+
+**上游**:
+- `worker.run` 调 (Sir 一句话后, 7 sentinel 各自 publish 完后)
+
+**下游**:
+- TOOL_REGISTRY 内 mutation tools
+- LLM (Gemini judge)
+
+**跟记忆的耦合**:
+- ⭐⭐⭐ **是 Sir 真意"7 module publish + 主脑集中决策" 的核心**
+- 调 mutation_correction_apply / profile_field_update / commitment_register / etc.
+
+**已知问题**:
+- 跟 chat_bypass `_execute_fast_call` mutation organ 路径 **2 套**:
+  - 主脑直 emit FAST_CALL → chat_bypass 派
+  - Sentinel publish candidate → IntentResolver judge → tool — Phase B 必整合
+
+**关联 design doc**: `JARVIS_INTENT_RESOLVER_REFACTOR.md`
+
+**重构含义**: ⭐⭐ 跟 chat_bypass FAST_CALL dispatch 联动整合
+
+**审计结论**: 855 行核心模块. 是 Sir 真意 publish-only 模式的代表. Phase B 整合.
+
+---
+
+### #36 `jarvis_intent_router.py` (326 行) — **IntentRouter (β.5.36-G intent → tool 路由)**
+
+**职责**: 把 intent 抽象 → tool 调用. 老路径 (β.5.36-G), 跟 IntentResolver 概念上**重叠**?
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 46 | `IntentCall` | dataclass |
+| 53 | `IntentParser` | 抽 intent |
+| 105 | `IntentRouter` | 主类 |
+
+**数据**: 读 `intent_to_tool_map.json`
+
+**上游**: 不清楚 (跟 IntentResolver 重叠?), 待 Phase A.4 耦合矩阵确认
+
+**下游**: TOOL_REGISTRY
+
+**跟记忆的耦合**: 间接
+
+**已知问题**:
+- ⚠️ 跟 IntentResolver 同一概念 — Phase B 必判: 留 1 个 / 合并
+
+**重构含义**: ⭐ 待 Phase B 决议: 跟 IntentResolver 必合并
+
+**审计结论**: 326 行老路径, 跟 IntentResolver 重叠待清.
+
+---
+
+### #37 `jarvis_tool_registry.py` (399 行) — **TOOL_REGISTRY (mutation tools 中央注册)**
+
+**职责**: β.5.44-D — 注册 IntentResolver 和 chat_bypass 调的 mutation tool. 含 `tool_concern_progress_update / tool_memory_correction_apply / tool_commitment_register / tool_self_promise_register / tool_profile_field_update / tool_milestone_register / ...`.
+
+**核心 functions** (无 class, 全函数式 7+ tools):
+
+| L | func | 功能 |
+|---|---|---|
+| 36 | `tool_concern_progress_update` | concern 进度更新 (Sir 反馈 progress 时) |
+| 98 | `tool_memory_correction_apply` | 记忆纠正 (Sir 教正时) |
+| 其他 | `tool_commitment_register` / `tool_self_promise_register` / `tool_profile_field_update` / `tool_milestone_register` / `tool_recall_memory` / `tool_search_memory` / `tool_concern_dismiss` |
+
+**数据**:
+- 写: 各 mutation 通过 MemoryGateway.update_sir_field
+- 读: 各 source 通过相应 list/search
+
+**上游**: IntentResolver._dispatch_tool / chat_bypass._execute_fast_call
+
+**下游**: MemoryGateway + 各 source
+
+**跟记忆的耦合**: ⭐⭐⭐ **是 mutation 工具中央**, IntentResolver 主脑都通过它
+
+**已知问题**: 跟 chat_bypass 内 organ dispatch 部分重叠 — Phase B 整合
+
+**关联 design doc**: `JARVIS_INTENT_RESOLVER_REFACTOR.md`
+
+**重构含义**: ⭐⭐ 是 MemoryHub.write 的 tool 接口
+
+**审计结论**: 399 行实用 tool 集合, 跟 MemoryGateway 配套.
+
+---
+
+### #38 `jarvis_skill_registry.py` (2560 行) — **SkillRegistry (130 skill 自我成长地图)**
+
+**职责**: 轴 3-L0 — Jarvis 的"我能做什么"地图. 130+ skill 从 l4_hands_pool / l2_eyes_pool 自动入册 + autosave + PromiseParser/Activator/Executor (执行计划).
+
+**核心 class** (9 个):
+
+| L | item | 功能 |
+|---|---|---|
+| 78 | `SkillManifest` | dataclass |
+| 218 | `SkillRegistry` | 主 store |
+| 808 | `OfferGuard` | 防主脑乱 offer 没 skill 的能力 |
+| 1006 | `PromiseParseError` | exception |
+| 1010 | `PromiseDraft` | dataclass |
+| 1060 | `PromiseParser` | 主脑 reply parse 成 plan |
+| 1256 | `PromiseActivator` | 激活 plan 跑步骤 |
+| 1422 | `SkillScanner` | 自动扫 hands_pool 入册 |
+| 1871 | `PromiseExecutor` | 真跑步骤 + 反推 + 重试 + dangerous 二次确认 |
+| 2392 | `CapabilityClaimValidator` | 验主脑 reply 含 capability claim 是否真有 skill |
+
+**数据**:
+- 读/写: `memory_pool/skill_registry.jsonl` (autosave 60s)
+- 读: 扫 `l4_hands_pool/*.py` + `l2_eyes_pool/*.py` 抽 manifest
+
+**上游**:
+- `central_nerve.__init__` bootstrap (轴 3-L0.3 / P0+18-a.1)
+- `OfferGuard` 在 chat_bypass / preflight 调
+- `PromiseExecutor` 在 plan 跑步骤时调
+
+**下游**:
+- 24 hands (l4_*.py) — 通过 manifest 调
+- LLM (PromiseParser 抽 plan)
+
+**跟记忆的耦合**:
+- ⭐⭐ **是 capability ground truth** — 主脑 claim "我能做 X" 必查 SkillRegistry 验
+- 跟 INTEGRITY 配合 (CapabilityClaimValidator)
+
+**已知问题**:
+- 2560 行 9 class — 极大. 应拆 (registry / scanner / executor / validator 各独立)
+- PromiseParser/Activator/Executor 跟 chat_bypass FAST_CALL dispatch 概念重叠
+- 跟 PlanLedger (utils.py) 关系待清
+
+**重构含义**: ⭐⭐ 必拆. 跟 plan 系统 (PlanLedger / PromiseExecutor) 整合
+
+**审计结论**: 2560 行第 2 大单文件. 拆 + 整合是 Phase D 任务.
+
+---
+
+### #39 `jarvis_fuzzy_resolver.py` (208 行) — **Fuzzy Entity Resolver (ASR 实体容错)**
+
+**职责**: P0+18-b.8 — ASR 转录的实体名 (e.g. "微信" 转成 "Vision") fuzzy 找最接近的真实进程/窗口名.
+
+**核心 functions** (无 class):
+
+| L | func | 功能 |
+|---|---|---|
+| 46 | `_normalize` | 字符串归一化 |
+| 69 | `fuzzy_resolve_entity(target, candidates)` | 主入口 (fuzz + 中英文混) |
+| 137 | `get_running_process_names` | 获取当前进程名 list |
+| 163 | `format_fuzzy_candidates_for_msg` | 格式化候选给主脑 |
+
+**数据**: 无持久化
+
+**上游**: chat_bypass / IntentResolver 调
+
+**下游**: psutil 进程列表 + win32api
+
+**跟记忆的耦合**: 无
+
+**已知问题**: 实用工具, 不大改
+
+**重构含义**: 保留
+
+**审计结论**: 208 行实用 helper.
+
+---
+
+### #40 `jarvis_prompt_builder.py` (246 行) — **PromptBuilder (P5-fix54 新统一 builder)**
+
+**职责**: P5-fix54 / 2026-05-23 立的 prompt builder 体系. `BlockSpec` (id / content / tiers / salience / hint) + `PromptBuilder` (注册 block + tier 路由 + salience 排序 + audit).
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 47 | `BlockSpec` | dataclass — 描述 1 个 prompt block |
+| 82 | **`PromptBuilder`** | 主类 — register + compose + audit |
+
+**核心 method**:
+- `register(block_spec)` — 注册 block
+- `compose(persona, user_input, footer, include_meta_hint)` — 拼装 prompt
+- `_select_blocks_for_tier(tier, max_chars)` — 按 tier 选
+- `audit` — 输出 prompt 装配 debug info
+- top-level `make_sensor_block_spec` / `make_swm_block_spec` — 标准 helper
+
+**数据**: 无持久化 (每轮临时构造)
+
+**上游**:
+- `central_nerve._assemble_prompt` 调 (Phase 3a 起 — REMINDER_FIRING / Wake / SHORT_CHAT 已迁)
+
+**下游**: 无
+
+**跟记忆的耦合**: 无直接 — 但是 _assemble_prompt 重构的方向 (从 30+ render block → builder 统一)
+
+**已知问题**:
+- 仅 3 个 tier 已迁 (REMINDER_FIRING / WAKE_ONLY / SHORT_CHAT) — STANDARD/CRITICAL 还在 _assemble_prompt 老路径
+- 应 Phase D 全迁
+
+**关联 design doc**: `PROMPT_REFACTOR_PLAN.md`
+
+**重构含义**:
+- ⭐⭐ **是 _assemble_prompt 重构的工具** — Phase D 应 STANDARD/CRITICAL tier 也迁过来
+- **跟 Memory Refactor 关系**: 是 MemoryHub.read_context() 的实施工具
+
+**审计结论**: 246 行薄但关键. Phase D 应充分用.
+
+---
+
