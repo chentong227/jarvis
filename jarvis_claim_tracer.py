@@ -78,11 +78,21 @@ _UNCERTAINTY_MARKERS = (
 # Trace 时需要 tool_results 至少有 ✅ 才算 verified, 否则 unverified action lie.
 _PAT_PAST_ACTION_ZH = re.compile(
     r'(已经?|帮?你?)\s*(打开|开启|启动|关闭|关掉|静音|发送|发了|设置|设好|'
-    r'调好|调成|调到|更新|记下|存了|存好|保存|删除|删了|取消)\s*([了好])?'
+    r'调好|调成|调到|更新|记下|存了|存好|保存|删除|删了|取消|'
+    # 🆕 [P5-fix40 / 2026-05-23 12:21] Sir 12:17 真痛点: 主脑说"已安排了 90 分钟
+    # 饮水提醒" 但**没真发 cyclic_task FAST_CALL**. ClaimTracer 漏抓因为词表
+    # 不含"安排". 补: 安排/计划/预定/创建/记录/记在/写入/排好/调度/订/订上/
+    # 添加/加入/写好/挂上 (主脑常用 commit-style verb).
+    r'安排|安排好|计划|计划好|预定|创建|记录|记在|写入|排好|调度|订上|订好|'
+    r'添加|加入|写好|挂上|挂好|登记|登记好|放好|放上)\s*([了好])?'
 )
 _PAT_PAST_ACTION_EN = re.compile(
     r"\b(?:i'?ve|i have|i)\s+(opened|launched|started|closed|muted|sent|"
-    r"set|updated|saved|deleted|cancelled)\b",
+    r"set|updated|saved|deleted|cancelled|"
+    # 🆕 [P5-fix40] commit-style verbs — Sir 12:17 真痛点同因.
+    r"scheduled|arranged|planned|created|registered|added|"
+    r"configured|noted|logged|recorded|booked|stored|"
+    r"installed|enabled|disabled|attached|configured)\b",
     re.IGNORECASE
 )
 
