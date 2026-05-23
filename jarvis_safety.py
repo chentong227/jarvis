@@ -572,14 +572,21 @@ _CHINESE_CHAR_RE = re.compile(r'[\u4e00-\u9fa5]')
 
 
 def _sentence_is_chinese_lean(sentence: str) -> bool:
-    """判定句子是否"以中文为主"：含 ≥3 个汉字 或 汉字占比 > 30%。
-    单个汉字（如人名"张三"被中文人名 token 化）不算泄漏。
+    """判定句子是否"以中文为主"：汉字占比 > 30%。
+    单个汉字（如人名"张三"）或英文 reply 引用少量中文 quote 不算中文为主。
+
+    🆕 [P5-fix58 / 2026-05-23 16:11] Sir 16:08 真测痛点:
+    主脑 reply 'It appears to be a text snippet on your clipboard, Sir.
+    It reads: "现在优先找外女".' (英文 67 char + 中文 7 char, 占比 9.3%)
+    被老逻辑 `len(cjk) >= 3` 误判中文为主 → 整句进 subtitle mode 不发声.
+    Sir: '复制的内容那句话不发声 = bug, 要发声'.
+
+    修法: 删 `len(cjk) >= 3` 单一条件, 只用占比 > 30%. 中英混排 reply
+    占比 ≤ 30% → TTS 正常发声 (CosyVoice 双语).
     """
     if not sentence:
         return False
     cjk = _CHINESE_CHAR_RE.findall(sentence)
-    if len(cjk) >= 3:
-        return True
     if len(sentence) > 0 and len(cjk) / max(len(sentence), 1) > 0.30:
         return True
     return False
