@@ -382,7 +382,14 @@ class CentralNerve:
 
         self.prompt_cache = PromptCache()
         self.correction_loop = CorrectionLoop(self)
-        self.memory_gateway = UnifiedMemoryGateway(self)
+        # [Reshape M2.B / 2026-05-24] central_nerve.memory_gateway 改用 MemoryHub (R+W 单入口)
+        # 老 UnifiedMemoryGateway(self) 给纯 READ + 跨 source 模糊查询;
+        # 新 MemoryHub 同时承担 WRITE (6 write_*) + READ (query/to_prompt_block, M2.A 搬运).
+        # Sir Q3 决议: M2 落实 memory_gateway → MemoryHub.
+        # 注: hub 是全局单例不绑 nerve, query/to_prompt_block 调用方 (本类 _assemble_prompt)
+        # 必须显式传 nerve=self.
+        from jarvis_memory_gateway import get_default_hub as _get_hub
+        self.memory_gateway = _get_hub()
         # [C1-3 / 2026-05-15] task_pool 死代码清扫：创建后全工程零调用 task_pool.xxx，
         # TaskWorkerPool 类本身仍保留（jarvis_enhanced.py 也有副本），但实例不再创建。
         # 如果后续真要用，由调用方按需 new 一个，避免无意义的 3 个守护线程常驻。
@@ -2848,7 +2855,14 @@ class CentralNerve:
         unified_memory = ""
         if hasattr(self, 'memory_gateway') and _allow_full and not _skip_heavy:
             _t_mem_start = time.time()
-            unified_memory = self.memory_gateway.to_prompt_block(user_input, top_k=3)
+            # [Reshape M2.B / 2026-05-24] hub.to_prompt_block 需显式 nerve (hub 是全局单例)
+            # 老 UnifiedMemoryGateway 是 instance-bound, hub 不绑. signature 兼容.
+            try:
+                unified_memory = self.memory_gateway.to_prompt_block(
+                    user_input, top_k=3, nerve=self)
+            except TypeError:
+                # 老 UnifiedMemoryGateway 没 nerve 参数, fallback (M2.C 阶段彻底删后可 remove)
+                unified_memory = self.memory_gateway.to_prompt_block(user_input, top_k=3)
             _t_mem_done = time.time()
             self._asm_stage_t['memory_gateway'] = (_t_mem_done - _t_mem_start) * 1000
 
