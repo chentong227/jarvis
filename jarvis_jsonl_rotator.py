@@ -42,6 +42,7 @@ KNOWN_JSONL_FILES = [
     'memory_pool/jarvis_health_history.jsonl',
     'memory_pool/skill_registry.jsonl',
     'memory_pool/pending_callbacks.jsonl',
+    'memory_pool/lineage.jsonl',          # [Reshape M1.6 / 2026-05-24] Lineage trace evidence + decision records
 ]
 
 

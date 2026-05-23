@@ -1,0 +1,14 @@
+{
+  "_comment": "Reshape M1.6 / 2026-05-24 - Lineage Trace config. CLI: scripts/lineage_dump.py",
+  "enabled": true,
+  "jsonl_path": "memory_pool/lineage.jsonl",
+  "flush_interval_s": 1.0,
+  "max_queue_size": 10000,
+  "max_snapshot_bytes": 1024,
+  "size_mb_cap": 20.0,
+  "reflector": {
+    "enabled": false,
+    "_comment": "M1.7 后置 - L7 LineageReflector LLM-propose broken chain repair"
+  },
+  "trace_back_default_depth": 5
+}
