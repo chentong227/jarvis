@@ -2504,3 +2504,437 @@ loop:
 
 ---
 
+## 批次 g: Sensor + Sentinel + Reflector 23 模块
+
+> 详 `JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md`. 三维耦合 sensor → SWM → 主脑.
+
+### #51 `jarvis_sensors.py` (1148 行) — **6 类感知工具 (FunnelLogger / SensorFilter / HabitClock / CausalChain / ProjectTimeline / SubconsciousMailbox)**
+
+**职责**: P0+19-3 拆分 — 感知/分类工具集合. 6 sub-class 各自管: 日志漏斗 / sensor 过滤 / 习惯时钟 / 因果链 / 项目时间线 / 潜意识邮箱.
+
+**核心 class** (6 个, 各 100-300 行):
+- `FunnelLogger` — 日志漏斗 (按 verbosity 级别筛选)
+- `SensorFilter` — sensor 信号过滤
+- `HabitClock` — 习惯时钟 (按时段建模 sleep/work/idle)
+- `CausalChain` — 因果链 (事件因果关系推断)
+- `ProjectTimeline` — 项目时间线 (sqlite ProjectTimeline 表 ORM)
+- `SubconsciousMailbox` — 潜意识邮箱 (异步 LLM 反思的邮箱模式)
+
+**数据**: 各类各自管 (sqlite ProjectTimeline / 内存 mailbox / vocab)
+
+**上游**: `central_nerve.__init__` 实例化多 ProjectTimeline / HabitClock / CausalChain
+
+**跟记忆的耦合**: ⭐ ProjectTimeline 是 Layer C 的子表 (Hippocampus 4 表之一)
+
+**重构含义**: ⭐ 拆 — 6 sub class 各独立 (e.g. `jarvis_funnel_logger.py` / `jarvis_habit_clock.py`)
+
+**审计结论**: 1148 行 6 杂类, 概念混合.
+
+---
+
+### #52 `jarvis_env_probe.py` (960 行) — **PhysicalEnvironmentProbe (键鼠/window/idle 物理感知)**
+
+**职责**: P0+19-2 — 物理环境感知 daemon. `last_real_input_ts` / `idle_seconds_real` / `cascade_active_pid` / `window_history` / 鼠标轨迹 / 键盘节奏.
+
+**核心 class**: 单 `PhysicalEnvironmentProbe`. 含 `_tick_callbacks` 列表, 各 sub module 注册 tick callback.
+
+**数据**:
+- 读: win32api / win32gui / pycaw (audio sessions)
+- 写: 类级 attr (mouse_distance_5min / window_history / 等)
+- SWM publish: `sensor_change` / `sir_afk_detected` / `ghost_activity_observed` / `active_window_hung`
+
+**上游**: `central_nerve.__init__` 注册 callback. tick 全 Jarvis 调.
+
+**下游**: SWM bus + win32 系统 API
+
+**跟记忆的耦合**: ⭐ 是 sensor 层数据源, 不直接写 memory
+
+**关联 design doc**: `JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md` Layer 1
+
+**重构含义**: ⭐ 保留 — 是 sensor 层底座. 跟 SWM 解耦良好.
+
+**审计结论**: 960 行实用 sensor.
+
+---
+
+### #53 `jarvis_sentinels.py` (2167 行) — **9 个普通 sentinel (Chronos / System / SoulArchivist / NudgeGate / UserStatus / Screenshot / Wellness / ReflectionScheduler)**
+
+**职责**: P0+19-6.a — 9 sub-class sentinel daemon. 各自定时跑 + 各自职责.
+
+**核心 class** (9 个):
+- `ChronosTick` — 全局时间 tick (1s)
+- `ChronosSentinel` — 时间 sentinel
+- `SystemSentinel` — 系统状态 sentinel
+- `SoulArchivistSentinel` — 灵魂归档 (跟 SoulArchivist 配套)
+- `NudgeGate` — nudge 90s 全局 cooldown
+- `UserStatusLedgerSentinel` — Sir 状态台账
+- `ScreenshotSentinel` — 截屏 sentinel (周期截屏给 ScreenVision)
+- `WellnessGuardian` — 健康守护 (久坐/喝水/睡眠 推断 → 写 concerns)
+- `ReflectionScheduler` — 反思调度器 (协调多个 reflector LLM call)
+
+**数据**: 各自管. ScreenshotSentinel 写 `screen_history.jsonl`. WellnessGuardian 调 ConcernsLedger.
+
+**上游**: `jarvis_nerve.__main__` 启动多个
+
+**跟记忆的耦合**: ⭐ WellnessGuardian 写 concerns, ScreenshotSentinel 写 screen_history
+
+**已知问题**:
+- 2167 行 9 class — 大. 应拆 (e.g. `jarvis_chronos.py` / `jarvis_screenshot_sentinel.py` / `jarvis_wellness.py`)
+- 跟 ProactiveCare / SmartNudge 部分功能重叠 (Wellness 也写 concerns, ProactiveCare 也读 concerns)
+
+**重构含义**: ⭐ 必拆 — 9 类各独立
+
+**审计结论**: 2167 行第 3 大杂文件.
+
+---
+
+### #54 `jarvis_screen_vision.py` (701 行) — **ScreenVisionEngine (Vision LLM 结构化感知)**
+
+**职责**: P5-Gap3 — 截屏 → Gemini Vision 多模态 → 结构化 ScreenSnapshot (active_app / file_or_url / cursor_line / errors_visible / etc.).
+
+**核心 class**:
+- `ScreenSnapshot` — dataclass
+- `ScreenVisionEngine` — 主类
+
+**核心 method**:
+- `async_describe(trigger='wake'/'backfill'/'sir_ref', jpeg_bytes)` — fire-and-forget Vision LLM
+- `_capture_screen_jpeg` — 截屏 + JPEG (fix81 加鼠标红圈)
+- `_call_vision_llm` — Gemini Vision 调
+
+**数据**:
+- 读: ImageGrab + Gemini Vision API
+- 写: `memory_pool/screen_snapshot.json` (latest 1 帧) + `screen_history.jsonl`
+- SWM publish: `screen_described`
+
+**上游**: `worker.run` 唤醒后并发调 / `chat_bypass` Sir 引用屏幕时 / `ScreenshotSentinel` (周期 backfill)
+
+**下游**: Gemini Vision via KeyRouter
+
+**跟记忆的耦合**: ⭐ `screen_history.jsonl` 是 Layer B 子 source (屏幕历史)
+
+**关联 design doc**: `JARVIS_VISION_INTEGRATION.md` (12KB)
+
+**重构含义**: ⭐ 保留 — Vision 是 Sir 关键 sensor
+
+**审计结论**: 701 行实用. fix81 加鼠标红圈 ✅.
+
+---
+
+### #55 `jarvis_ambient_sensor.py` (597 行) — **AmbientSensor (环境音 sensor publish 进 SWM)**
+
+**职责**: β.5.40 — 麦克风环境音 sensor (笑声 / 叹气 / 咳嗽 / 屏息 / 乐曲 / 噪音). 不调 ASR (避免歧义), 仅 publish 信号给主脑.
+
+**核心 class**:
+- `AmbientObservation` — dataclass
+- `AmbientSensor` — 主 sensor
+
+**数据**:
+- 读: mic (PyAudio + 信号处理)
+- 写: `ambient_sensor_config.json`
+- SWM publish: `ambient_state` (laughter / sigh / cough / etc.)
+
+**上游**: `jarvis_nerve.__main__` daemon
+
+**跟记忆的耦合**: 间接
+
+**重构含义**: 保留 — sensor 层
+
+**审计结论**: 597 行实用 sensor.
+
+---
+
+### #56 `jarvis_acoustic_wake.py` (632 行) — **AcousticWakeDetector (openWakeWord 唤醒装甲)**
+
+**职责**: P0+20-β.4.8 — openWakeWord 唤醒词检测器. 防 ASR 误唤. 跟 VoiceListenThread 配合.
+
+**核心 class**:
+- `WakeDetectionResult` — dataclass
+- `AcousticWakeDetector` — 主类
+
+**数据**: 读 mic + openWakeWord 模型
+
+**上游**: VoiceListenThread
+
+**跟记忆的耦合**: 无
+
+**重构含义**: 保留 — 物理唤醒底座
+
+**审计结论**: 632 行实用 wake.
+
+---
+
+### #57 `jarvis_state_tracker.py` (236 行) — **JarvisStateTracker (HUD 状态机 + SWM publish)**
+
+**职责**: β.5.43-A — HUD 状态机 (ready / listening / thinking / speaking / focused). 跟 utils.JarvisState 配合.
+
+**核心 class**: 单 `JarvisStateTracker`
+
+**数据**: SWM publish 'jarvis_state' (salience 0.30)
+
+**上游**: 状态变化时 publish
+
+**跟记忆的耦合**: 无
+
+**重构含义**: 保留
+
+**审计结论**: 236 行薄 tracker.
+
+---
+
+### #58 `jarvis_silence_intel.py` (199 行) — **Silence Intelligence (β.5.43-E thinking pause)**
+
+**职责**: 检测 Sir 短暂停顿 (e.g. 中间嗯/啊/哦) — publish 'sir_thinking_pause' SWM, 让主脑下轮 ack 不抢话.
+
+**核心 functions** (无 class)
+
+**数据**: SWM publish
+
+**重构含义**: 保留 — 物理感知
+
+**审计结论**: 199 行薄 helper.
+
+---
+
+### #59 `jarvis_health_probe.py` (241 行) — **HealthProbeDaemon (Jarvis 自检 daemon)**
+
+**职责**: β.2.8.6 — 周期 5min tick 看 Jarvis 自身健康 (memory / threads / handles / KeyRouter status). 写 `jarvis_health_history.jsonl`.
+
+**核心 class**: 单 `HealthProbeDaemon`
+
+**数据**: 读 psutil + KeyRouter / 写 `jarvis_health_history.jsonl`
+
+**跟记忆的耦合**: 无 — 是 Jarvis 自身健康 audit
+
+**重构含义**: 保留
+
+**审计结论**: 241 行实用 self-monitor.
+
+---
+
+### #60 `jarvis_physio_proxy.py` (304 行) — **PhysioProxy (β.5.40-A2 生理代理)**
+
+**职责**: 从键鼠节奏推断 energy / focus / stress 评分 (heuristic, 不调 LLM).
+
+**核心 class**:
+- `PhysioState` — dataclass
+- `PhysioProxy` — 主推断
+
+**数据**: 读 PhysicalEnvProbe + 写 SWM `physio_state`
+
+**重构含义**: 保留 — sensor 层
+
+**审计结论**: 304 行薄 proxy.
+
+---
+
+### #61 `jarvis_screen_tease_reflector.py` (425 行) — **ScreenTeaseReflector (β.5.35-B L7 vocab propose)**
+
+**职责**: L7 daemon — 看屏幕 history, propose 新 screen_tease_vocab (Sir 观察到的笑点 / 模式).
+
+**核心 class**: 单 `ScreenTeaseReflector`
+
+**数据**: 读 screen_history.jsonl, 写 vocab review queue
+
+**重构含义**: 保留 — L7 模式
+
+**审计结论**: 425 行 daemon.
+
+---
+
+### #62 `jarvis_struggle_reflector.py` (377 行) — **StruggleReflector (β.5.35-D Sir 困难 vocab propose)**
+
+**职责**: L7 daemon — 看 Sir 历史 utterance, propose 新 sir_struggle_vocab patterns.
+
+**核心 class**: 单 `StruggleReflector`
+
+**数据**: 读 STM, 写 `sir_struggle_vocab.json` review
+
+**重构含义**: 保留
+
+**审计结论**: 377 行 L7 daemon.
+
+---
+
+### #63 `jarvis_sleep_pattern_reflector.py` (250 行) — **SleepPatternReflector (β.5.39 Sir 睡眠 vocab propose)**
+
+**职责**: L7 — 看历史睡眠数据, 推 Sir 睡眠 pattern vocab.
+
+**核心 class**: `SleepPatternReflector`
+
+**数据**: 读 sleep history, 写 `sir_sleep_pattern_vocab.json`
+
+**重构含义**: 保留
+
+**审计结论**: 250 行 L7 daemon.
+
+---
+
+### #64 `jarvis_companion_rhythm_reflector.py` (408 行) — **CompanionRhythmReflector (β.5.40-E1 nudge timing 学习)**
+
+**职责**: L7 — 看 nudge feedback (helped/missed), 学习 timing pattern (哪个时段 nudge 最有效).
+
+**核心 class**: `CompanionRhythmReflector`
+
+**数据**: 读 ConcernFeedback audit, 写 `nudge_window_vocab.json`
+
+**重构含义**: 保留
+
+**审计结论**: 408 行 L7 daemon.
+
+---
+
+### #65 `jarvis_inside_joke_reflector.py` (391 行) — **InsideJokeReflector (β.5.40-B1 笑点 propose)**
+
+**职责**: L7 — 看 STM, propose inside_jokes 进 RelationalState review queue.
+
+**核心 class**: `InsideJokeReflector`
+
+**数据**: 读 STM, 写 RelationalState review
+
+**跟记忆的耦合**: ⭐ 写 RelationalState
+
+**重构含义**: 保留
+
+**审计结论**: 391 行 L7 daemon.
+
+---
+
+### #66 `jarvis_sir_request_reflector.py` (381 行) — **SirRequestReflector (β.5.43-fix3 主动 watch concern propose)**
+
+**职责**: L7 — 看 Sir utterance "你帮我盯下 X" 类显式委托, propose 新 watch concern.
+
+**核心 class**: `SirRequestReflector`
+
+**数据**: 读 STM, 写 concerns_review
+
+**跟记忆的耦合**: ⭐ 写 ConcernsLedger.review
+
+**重构含义**: 保留
+
+**审计结论**: 381 行 L7 daemon.
+
+---
+
+### #67 `jarvis_sir_status_tracker.py` (483 行) — **SirStatusTracker (P5-SirStatusTracker Sir 状态)**
+
+**职责**: P5-SirStatusTracker — Sir 当前状态 (sleeping / online / AFK / focus / etc.) 实时追踪. 写 `sir_status.json`.
+
+**核心 class**:
+- `SirStatus` (dataclass)
+- `SirStatusStore`
+
+**数据**: 读/写 `sir_status.json` + SWM publish
+
+**跟记忆的耦合**: ⭐⭐ Layer E 状态的核心 source
+
+**重构含义**: ⭐ 保留 — Layer E 主 source. Phase B 应跟 stand_down + sir_acked 整合
+
+**审计结论**: 483 行核心状态 tracker.
+
+---
+
+### #68 `jarvis_return_sentinel.py` (1187 行) — **ReturnSentinel (β.4.x 归来哨兵 + AFK + 验证)**
+
+**职责**: P0+19-6.c — Sir 离开后回归哨兵. afk 检测 + 5min 阈值 + 主动归来问候 (跟 SmartNudge 配合 fire return_greeting).
+
+**核心 class**: `ReturnSentinel` (~1100 行)
+
+**数据**: 读 PhysicalEnvProbe + sir_status, 写 SWM `afk_return`
+
+**已知问题**: 1187 行单 class — 大
+
+**重构含义**: ⭐ 拆 — afk 检测 / 归来 nudge / 验证 应分独立
+
+**审计结论**: 1187 行核心 sentinel.
+
+---
+
+### #69 `jarvis_stand_down.py` (693 行) — **StandDown (P5-fix25 暂停模式)**
+
+**职责**: P5-fix25 — Sir 玩游戏/接电话时按 Ctrl+Alt+J 全局 hotkey 切 stand_down (TTS off + nudge off + 字幕 on).
+
+**核心 class**: `StandDownState`
+
+**数据**: 读/写 `stand_down_state.json` + SWM publish
+
+**跟记忆的耦合**: Layer E 子状态
+
+**重构含义**: ⭐ 保留 — Sir 真测有效. Phase B 跟 sir_status 整合.
+
+**审计结论**: 693 行实用 mode.
+
+---
+
+### #70 `jarvis_project_hold_detector.py` (241 行) — **Project Hold Detector (β.5.46-fix18)**
+
+**职责**: 检测 Sir "不要管 X 项目" 意图 → 写 ProjectTimeline `held_until_ts`.
+
+**核心 functions** (无 class)
+
+**数据**: 写 ProjectTimeline.held_until_ts
+
+**跟记忆的耦合**: 写 ProjectTimeline
+
+**重构含义**: 保留
+
+**审计结论**: 241 行薄 detector.
+
+---
+
+### #71 `jarvis_watch_task.py` (938 行) — **WatchTask (β.5.46-fix13 主动等屏幕事件)**
+
+**职责**: Sir 委托等某事件 (e.g. "等导出完成提醒"). ScreenVision daemon judge 屏幕证据 → publish 'watch_task_fired' SWM.
+
+**核心 class**:
+- `WatchTask` (dataclass)
+- `WatchTaskRegistrar` — 注册
+- `WatchTaskJudge` — Vision LLM 判
+
+**数据**: 读/写 `watch_tasks.json`
+
+**跟记忆的耦合**: ⭐ Layer E 子 source (主动等的事件), 跟 Commitments / cyclic_task / promise 概念上 4 套
+
+**重构含义**: ⭐⭐ 跟 4 套时间承诺合并候选
+
+**审计结论**: 938 行核心 watch.
+
+---
+
+### #72 `jarvis_cross_session_callback.py` (245 行) — **CrossSessionCallback (跨 session 心结)**
+
+**职责**: 上 session 没解决的 emotional 心结, 在新 session wake 时 surface (e.g. "上次你说 X, 还在想吗").
+
+**核心 class**:
+- `Callback` (dataclass)
+- `CrossSessionCallbackStore`
+
+**数据**: 读/写 `cross_session_callback.json` (但实际持久化未启?)
+
+**已知问题**: `pending_callbacks.jsonl` 0 字节 — 似乎未真用
+
+**重构含义**: 待 Phase A.5 历史 audit 确认是否 deprecated
+
+**审计结论**: 245 行可能未真用.
+
+---
+
+### #73 `jarvis_actionable_items.py` (1168 行) — **ActionableItems (β.5.41 统一 Sir 可操作项)**
+
+**职责**: 统一 Sir 可操作 21 类 (concerns dismiss / promise cancel / commitment update / profile field update / etc.). 给 Dashboard / CLI 用.
+
+**核心 class**: `ActionableItem` (~1100 行)
+
+**数据**: 读全 Jarvis 各 source (concerns / promise / commitment / profile)
+
+**跟记忆的耦合**: ⭐ 是各 mutation source 的 read-side aggregator
+
+**已知问题**:
+- 1168 行 1 class — 大
+- 21 类 hardcoded — 可 vocab 化
+
+**重构含义**: ⭐ 拆 + vocab 化
+
+**审计结论**: 1168 行 actionable 聚合.
+
+---
+

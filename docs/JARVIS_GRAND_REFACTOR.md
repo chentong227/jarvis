@@ -306,7 +306,7 @@
 | Phase | Sub-phase | 进度 | 备注 |
 |---|---|---|---|
 | Phase A.0 | audit cards 集中 doc 模板 | ✅ done | `JARVIS_AUDIT_CARDS.md` 建好, 含模板示范 |
-| Phase A.1 | 模块审计 (115 + 25) | 50/140 (35.7%) | **批次 a-f ✅ 完成**! #1-50 (枢纽 5 + Soul 7 + 记忆 11 + INTEGRITY 9 + Intent 8 + Care 10) |
+| Phase A.1 | 模块审计 (115 + 25) | 73/140 (52.1%) | **批次 a-g ✅ 完成**! #1-73 (枢纽 5 + Soul 7 + 记忆 11 + INTEGRITY 9 + Intent 8 + Care 10 + Sensor 23) |
 | Phase A.2 | 数据流全审 | ⬜ pending | A.1 完成后 |
 | Phase A.3 | storage map | ⬜ pending | A.1 完成后 |
 | Phase A.4 | 耦合矩阵 | ⬜ pending | A.1 + A.2 完成后 |
@@ -320,10 +320,10 @@
 > 任何 agent 接手时, 看本 §就知"现在做到哪". 接手即可继续.
 
 ```
-当前阶段: Phase A.1 批次 a-f ✅ 完成! 准备进批次 g (Sensor + Sentinel + Reflector 23 模块)
-进度: 50/140 (a 5 + b 7 + c 11 + d 9 + e 8 + f 10)
-下一动作: 进批次 g — 审 jarvis_sensors.py (1147 行)
-最后 commit: f79e721 (Intent 8)
+当前阶段: Phase A.1 批次 a-g ✅ 完成! 准备进批次 h (剩余 ~17 模块)
+进度: 73/140 (a 5 + b 7 + c 11 + d 9 + e 8 + f 10 + g 23)
+下一动作: 进批次 h — 审 jarvis_reply_preflight.py (405 行)
+最后 commit: 323e73b (Care 10)
 ```
 
 ### 6.3 已完成 audit cards
@@ -345,7 +345,8 @@
 | 13-23 | 记忆 11 模块 (routing/hippocampus/memory_core/memory_gateway/milestones/stm_summarizer/profile_reflector/promise_log/commitment_watcher/self_promise/cyclic_task) | `JARVIS_AUDIT_CARDS.md` §批次 c | 0ac4f39 | 2026-05-23 23:42 |
 | 24-32 | INTEGRITY 9 模块 (claim_classifier/evidence_requirements/claim_tracer/claim_revision_log/integrity_watcher/integrity_reflector/inconsistency_watcher/callback_guard/meta_self_check) | `JARVIS_AUDIT_CARDS.md` §批次 d | 1df4d11 | 2026-05-23 23:55 |
 | 33-40 | Intent + Directive + Mutation 8 模块 (directives/directive_evaluator/intent_resolver/intent_router/tool_registry/skill_registry/fuzzy_resolver/prompt_builder) | `JARVIS_AUDIT_CARDS.md` §批次 e | f79e721 | 2026-05-24 00:08 |
-| 41-50 | Care + Nudge + Conductor 10 模块 (proactive_care/smart_nudge/recent_nudge_memory/nudge_coordination/concern_dampen/concern_feedback/concern_feedback_reflector/concern_summon/conductor/curiosity) | `JARVIS_AUDIT_CARDS.md` §批次 f | (即将) | 2026-05-24 00:18 |
+| 41-50 | Care + Nudge + Conductor 10 模块 | `JARVIS_AUDIT_CARDS.md` §批次 f | 323e73b | 2026-05-24 00:18 |
+| 51-73 | Sensor + Sentinel + Reflector 23 模块 (sensors/env_probe/sentinels/screen_vision/ambient/acoustic/state_tracker/silence/health/physio/screen_tease/struggle/sleep_pattern/companion_rhythm/inside_joke/sir_request/sir_status/return/stand_down/project_hold/watch_task/cross_session_callback/actionable_items) | `JARVIS_AUDIT_CARDS.md` §批次 g | (即将) | 2026-05-24 00:30 |
 
 ---
 
