@@ -442,12 +442,14 @@ def _box_newline(text: str) -> str:
 # 头话 "I've updated"). 见 jarvis_directives.py:memory_update_honesty.
 # MEMORY_UPDATE 是 self-closing tag (无 children) — block_re 也匹配单标签.
 _STRUCTURAL_TAGS = ('FAST_CALL', 'PROMISE', 'ACTIVATE_PLAN', 'CANCEL_PLAN',
-                     'RESUME_PLAN', 'MEMORY_UPDATE')
+                     'RESUME_PLAN', 'MEMORY_UPDATE', 'CONCERN_DAMPEN')
 # 🩹 [β.2.9.9] paired tags (必须闭合才剥, 半成态保留在 buffer 等下一 token)
+# 🆕 [P5-fix45 / 2026-05-23 14:55] 加 CONCERN_DAMPEN (主脑自决削 concern severity)
+# self-closing or paired 都允许.
 _STRUCTURAL_TAG_BLOCK_RE = re.compile(
-    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)\b[^>]*>'
+    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)\b[^>]*>'
     r'.*?'
-    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)>',
+    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)>',
     re.DOTALL,
 )
 # 🩹 [β.2.9.9] MEMORY_UPDATE 单独支持 self-closing 形式 (<MEMORY_UPDATE attrs/>)
@@ -455,8 +457,13 @@ _MEMORY_UPDATE_SELF_CLOSING_RE = re.compile(
     r'<MEMORY_UPDATE\b[^>]*/>',
     re.IGNORECASE,
 )
+# 🆕 [P5-fix45] CONCERN_DAMPEN self-closing form
+_CONCERN_DAMPEN_SELF_CLOSING_RE = re.compile(
+    r'<CONCERN_DAMPEN\b[^>]*/>',
+    re.IGNORECASE,
+)
 _STRUCTURAL_TAG_ANY_RE = re.compile(
-    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE)\b[^>]*/?>'
+    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)\b[^>]*/?>'
 )
 # 🩹 [β.2.9.9] MEMORY_UPDATE 单独 regex (self-closing 形式 + 含 attributes)
 _MEMORY_UPDATE_RE = re.compile(
@@ -526,11 +533,13 @@ def _strip_structural_tag_blocks(text: str) -> str:
     """整块剥离 <TAG>...</TAG> 内容（含中间 JSON / 任何 payload）。
     成对闭合的才剥；半成形态 `<PROMISE>...<EOF>` 不剥（保留在 buffer 里等下一片 token）。
 
+    🆕 [P5-fix45 / 2026-05-23] 加 CONCERN_DAMPEN self-closing form 剥离.
     🩹 [β.2.9.9] MEMORY_UPDATE 还可以是 self-closing 形式 (<MEMORY_UPDATE attrs/>),
     单独跑一次自闭合 regex 也剥掉.
     """
     text = _STRUCTURAL_TAG_BLOCK_RE.sub('', text)
     text = _MEMORY_UPDATE_SELF_CLOSING_RE.sub('', text)
+    text = _CONCERN_DAMPEN_SELF_CLOSING_RE.sub('', text)
     return text
 
 

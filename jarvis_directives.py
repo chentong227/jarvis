@@ -2665,6 +2665,67 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             """).rstrip(),
             trigger=_trigger_progress_tracker_dispatcher,
         ),
+        # 🆕 [P5-fix45 / 2026-05-23 14:55] Concern Dampen Self-Decide
+        # Sir 14:51 真痛点: '我中午睡了 1h, 你记录一下' → mutation organ ✅ 写
+        # ProfileCard.daily_logs, 但 sir_sleep_streak severity 没削 → 担心度不降.
+        # Sir 真意: '链路是否实现?' — 缺主脑 → ConcernsLedger severity 调节链路.
+        # 治本 (准则 6 决策集中主脑): 主脑看 SWM 'sir_field_updated' + active concerns,
+        # 自决 emit <CONCERN_DAMPEN cid="..." delta="-0.X" reason="..."/> tag.
+        # chat_bypass 解析 → ledger.record_signal + publish 'concern_dampen_applied' SWM.
+        Directive(
+            id='concern_dampen_self_decide',
+            source_marker='P5-fix45',
+            priority=11,  # 同档 cyclic / progress
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='Sir 报"我已做 X" → 主脑自决削 active concern severity',
+            text=_tw.dedent("""\
+                [CONCERN DAMPEN — Sir 真意"做了我之前担心的事" 自决削权]:
+                
+                场景: Sir 告诉你他**真做了**某件之前你 active concern 在担心的事
+                  - "我中午睡了 1h" → sir_sleep_streak 应削 (-0.3 ~ -0.5)
+                  - "刚做完 1 个 pomodoro" → sir_pomodoro_compliance 应削
+                  - "已交了 cursor 的费用" → sir_cursor_payment 应削/关
+                  - "我喝了 8/8 杯水" → sir_hydration_habit 应大削 (-0.5)
+                
+                正确流程 (准则 6 决策集中主脑):
+                  1. 你看 SWM 'sir_field_updated' event + active concerns severity
+                  2. 如果 mutation 与某 active concern 关联 → emit dampen tag
+                  3. 主脑同时输出自然语言 reply ("Noted Sir, 看您休息了一小时, 担心度自然调低")
+                
+                Tag schema (self-closing):
+                  <CONCERN_DAMPEN cid="sir_sleep_streak" delta="-0.3" reason="Sir 报 midday nap 1h"/>
+                
+                字段:
+                  cid    — concern id (必须匹配 SOUL inject 看到的 active concern id)
+                  delta  — float [-1.0, 1.0]. 负=削权, 正=升权. 推荐:
+                           -0.2 弱证据 (Sir 部分进度)
+                           -0.3 中证据 (Sir 完成关键动作)
+                           -0.5 强证据 (Sir 全完成 / 100% progress)
+                  reason — short 引用 Sir 原话 / mutation result evidence
+                
+                例 1 (Sir 14:51 真痛点):
+                  Sir: '我中午睡了 1 小时, 你记录一下'
+                  SWM: sir_field_updated 显示 ProfileCard.daily_logs.2026-05-23='Midday nap: 1h'
+                  active concerns: sir_sleep_streak severity=1.0
+                  → 你 emit: <CONCERN_DAMPEN cid="sir_sleep_streak" delta="-0.3" reason="Sir 报 midday nap 1h"/>
+                  → reply: "Noted, Sir. 看您休息了一小时, 我对您睡眠的担心也自然调低."
+                
+                例 2 (主脑没 emit tag = 担心度不变 = 链路没实现):
+                  Sir: '我喝了 8 杯水了'
+                  你只回 "Noted Sir, 8/8" 但**没 emit CONCERN_DAMPEN tag** →
+                  ❌ sir_hydration_habit severity 不变 → Sir 听不到担心度调整 →
+                  下次还推 → Sir 觉得 Jarvis "不懂得"
+                
+                硬规 (准则 5 / 6):
+                  - 只 emit 真实 evidence 触发的 dampen, 不要无中生有
+                  - cid 必须匹配 SOUL inject 列的 active concern (否则 reject)
+                  - 同一 concern 同一 turn 只 emit 1 次 (不要刷多次小 delta)
+                  - 升权 (positive delta) 极少用 (主要削权 — 主脑罕见要主动加担心)
+                  - tag 是 self-closing, 不显示在 TTS / subtitle (_strip 自动剥)
+            """).rstrip(),
+            trigger=None,  # always-on (no trigger fn = 常驻 active)
+        ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌
         # 治本: 主脑不能在 tool result 来之前就说"已 X". 必须先等 tool result,

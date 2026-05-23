@@ -2383,6 +2383,31 @@ Spoken English:"""
                 except Exception:
                     pass
 
+                # 🆕 [P5-fix45 / 2026-05-23 14:55] 解析 <CONCERN_DAMPEN> tag (主脑自决)
+                # Sir 14:51 真痛点: '我中午睡了 1h, 你记录一下' → mutation organ ✅ 写
+                # ProfileCard, 但 sir_sleep_streak severity 没削. 治: 主脑看 SWM
+                # 'sir_field_updated' + active concerns severity 自决 emit
+                # <CONCERN_DAMPEN cid="..." delta="-0.X" reason="..."/> tag.
+                # 此 parser 解析 → ledger.record_signal + publish 'concern_dampen_applied' SWM.
+                try:
+                    from jarvis_concern_dampen import process_reply as _dampen_process
+                    _ledger_dam = getattr(getattr(self, 'jarvis', None),
+                                            'concerns_ledger', None)
+                    if _ledger_dam is not None and full_text and '<CONCERN_DAMPEN' in full_text:
+                        _dampen_n = _dampen_process(
+                            full_text, _ledger_dam, turn_id=turn_id)
+                        if _dampen_n > 0:
+                            try:
+                                from jarvis_utils import bg_log as _dam_bg
+                                _dam_bg(
+                                    f"📉 [ConcernDampen/Applied] {_dampen_n} dampen "
+                                    f"tag(s) processed (主脑自决, 准则 6 决策集中主脑)"
+                                )
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
                 # [轴3-L3.1 / 2026-05-15] 解析主脑输出的 <PROMISE> 标签 → PlanLedger
                 # LLM 承诺 multi-step 动作时通过 PROMISE tag 落账本（awaiting_go），等 Sir 说 "go" 才执行
                 # 任何异常都被吞，绝不影响主流程
