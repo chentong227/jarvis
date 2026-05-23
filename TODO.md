@@ -1,17 +1,69 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 00:55 Sir 醒来第一眼看这里** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 07:20 Sir 醒来第一眼看这里 — M1 主体已完成 5/7** 🚨🚨🚨
 >
-> **JARVIS 大重构 Phase A+B+C 已全部完成**. Sir 委托 Cascade 4 项决议已拍板.
+> Sir 早上 7:06 "全 accept, 动工 M1" 后, Cascade 严格把关稳步推进, 完成 M1 Lineage Trace 基础设施主体 5 step (剩 2 step 后置).
 >
-> Sir 醒来 5 步进 Phase D 动工:
-> 1. 看 `docs/AGENT_KICKOFF_GRAND_RESHAPE.md` (~5 min)
-> 2. (可选) 看 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §1 §6.2 (~20 min)
-> 3. accept Q1-Q4 4 项决议 (Q1 拆 enhanced.py / Q2 3-brain → _legacy / Q3 MemoryHub / Q4 cross_session 保留)
-> 4. 跟 Cascade 说 "动工 M1"
-> 5. Cascade 按 Reshape doc §6.2 Step 1.1-1.7 执行 M1 (Lineage Trace 基础设施)
+> ## ✅ M1 已完成 (5 commit, ~1500 行 code+test, 0 破坏)
 >
-> 总产出: 11 份 doc, ~7300 行 audit + 设计. 11 commit (`b53b751` → `1861c9a`).
+> - **M1.1** (`180a2c5`): `jarvis_lineage.py` — EvidenceID + Evidence + LineageTracer + DecisionRecord + async daemon (22 testcase)
+> - **M1.2** (`5d8bd2f`): `ConversationEventBus.publish` 加 `evidence_chain` + 返 evidence_id (12 testcase + 113 regression)
+> - **M1.4** (`237a101`): `chat_bypass.stream_chat` 末尾 `record_decision` (7 testcase + 181 regression)
+> - **M1.5** (`e2517c5`): `scripts/lineage_dump.py` CLI — 6 命令 (list-decisions / list-evidence / reply-id / evidence-id / turn-id / stats)
+> - **M1.6** (`4cb417f`): `lineage_config.json` + `jsonl_rotator` 注册
+>
+> ## 📋 Sir 真测验证 M1 (5 min)
+>
+> ```powershell
+> # 1. 启 jarvis 跑 1-3 turn
+> # (主脑能正常回复, lineage 异步收集不影响 TTFT)
+>
+> # 2. 列最近 5 个 brain decision
+> python scripts/lineage_dump.py --list-decisions --limit 5
+>
+> # 3. 反向追溯一个 reply
+> python scripts/lineage_dump.py --reply-id=bd_<turn_id>_<digits>
+>
+> # 4. 看总 stats
+> python scripts/lineage_dump.py --stats
+> ```
+>
+> **预期看到**:
+> - decisions ≥ 1 (Sir 真聊后)
+> - evidence ≥ 几百 (SWM publish 已自动 collect)
+> - reply-id trace 能看到 turn_id / reply / claims_extracted
+>
+> ## ⏸ M1 后置 2 step (等 Sir 真测 OK 再做)
+>
+> - **M1.3**: PromptBlock dataclass + `_assemble_prompt` 30+ block 加 `source_evidence_ids` — **高风险** (改 chat 主路径), 跟 M7 一起做
+> - **M1.7**: `LineageReflector` L7 LLM propose broken chain repair — 后置, 不阻 M1
+>
+> ## 🐛 Pre-existing BUG (跟 M1 无关, 待修)
+>
+> `tests/_test_p0_plus_20_p5_integrity_watcher.py::TestL_Directive::test_directive_registered` + `tests/_test_p0_plus_20_p5_claim_revision.py::TestG_DirectiveRevised::test_directive_text_describes_two_apology_types` fail —
+> `jarvis_directives.py:158 ValueError: Directive concern_dampen_self_decide: trigger must be callable`.
+> Sir 拍板时机再修, 不阻 Reshape M2.
+>
+> ## 🎯 Sir 真测 M1 OK 后下一步
+>
+> ```
+> Cascade, M1 真测 OK, 动工 M2.
+> # (M2 = MemoryHub 演化, 1 周, 中风险)
+> ```
+>
+> 详 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §6.3.
+>
+> ---
+>
+> ## 历史: Phase A+B+C 已全部完成 (2026-05-24 00:55)
+>
+> 11 份 doc, ~7300 行 audit + 设计. Sir 委托 Cascade 4 项 Q1-Q4 决议已拍板:
+> - Q1 拆 jarvis_enhanced.py 4 file (M3 落实)
+> - Q2 3-brain → `_legacy/3_brain_attempt/` (M3 落实)
+> - Q3 `central_nerve.memory_gateway` → MemoryHub (M2 落实)
+> - Q4 `cross_session_callback` 保留 (Phase A 误判, 真用)
+>
+> 关键 doc: `docs/AGENT_KICKOFF_GRAND_RESHAPE.md` + `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md`.
 >
 > ---
 >

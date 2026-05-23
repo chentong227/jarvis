@@ -479,7 +479,7 @@ RelationalState = {
 
 | M# | 任务 | 周期 | 风险 | 依赖 | 优先 |
 |---|---|---|---|---|---|
-| **M1** | Lineage Trace 基础设施 | 1-2 周 | 低 | 无 | ⭐⭐⭐ 先做, 后面 milestone 都依赖它做反向追溯 debug |
+| **M1** | Lineage Trace 基础设施 — ✅ **主体 5/7 done 2026-05-24 07:20** | 1-2 周 | 低 | 无 | ⭐⭐⭐ 先做, 后面 milestone 都依赖它做反向追溯 debug |
 | **M2** | MemoryHub 演化 + central_nerve.memory_gateway 改用 | 1 周 | 中 | M1 | ⭐⭐ |
 | **M3** | 死代码 + 同名 class + 3-brain 移到 _legacy | 1 周 | 低 | M2 | ⭐⭐ |
 | **M4** | 5 套时间承诺合并 → PromiseLog 单源 | 2 周 | 高 (data migration) | M2 | ⭐ |
