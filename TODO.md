@@ -5,6 +5,51 @@
 
 ---
 
+## 🐛 待排查 BUG (2026-05-23 16:23 Sir 真测记录, 待后排查)
+
+Sir 16:22-23 真测 3 turn, 报 2 BUG:
+
+### BUG-A: TTS 发声卡顿 (cosyvoice 内存压力?)
+
+**症状**: Sir 听 reply 时 "发声变的卡了不少". turn 1 (16:22:00) 还 OK (full 7.8s), turn 2 (16:22:23) 渐卡 (full 8.1s), turn 3 (16:23:06) **严重卡** (full **16.4s** 远超 normal 5-8s).
+
+**关联**:
+- 历史已知 cosyvoice GPU 内存压力 (3267.5MB → 8818-9268MB ws), thread count 60+
+- Sir 16:00 turn 截断 "1,1" + cosyvoice 嘶哑 也是同款症状
+- HealthProbe Baseline: ws=3255.7MB private=8818.1MB threads=464 (py=57 native=407) handles=4017
+
+**根因猜测**:
+1. CosyVoice (300M 模型) GPU 内存碎片随对话累积
+2. TTS queue 串行处理慢 (每 sentence 调一次模型)
+3. 主脑 reply 长 → 多 sentence chunk → 多次 cosyvoice 调用
+
+**修法 (待后排查)**:
+- audit cosyvoice 调用频率 + GPU 内存 leak
+- TTS queue batch (合并连续 sentence 减少模型调用)
+- 或换轻量 TTS fallback (短句 < 5 word 走本地 TTS)
+
+### BUG-B: Turn 3 主脑 reply 截断 "According" 后中断
+
+**症状**: turn 3 (16:23:06) Sir 问 "你还记得我喝了多少水了吗".
+- 主脑调 `progress.status 'hydration_2026-05-23'` (✅ 成功)
+- 主脑 stream 继续生成又**重复调** progress.status 第 2 次 (参数完全相同) → Tool Chain 熔断
+- 熔断后主脑 stream 中段 stop, 只输出 "According" 就停了 (字幕也只显示这个)
+
+**根因猜测**:
+1. Gemini 流式生成幻觉 — 主脑没意识到刚调过 tool, 又调一次
+2. Tool Chain 熔断后 stream 没正常 wrap-up (主脑 LLM 还在生成中)
+3. 跟 Phase 3d.1 builder wrapper **无关** (wrapper 字面零变化, 主脑收到的 prompt 完全一致)
+
+**修法 (待后排查)**:
+- 检 stream 中熔断后是否应该 force generate completion (e.g. "I've already retrieved that, Sir. Total: 1,100 ml.")
+- 或主脑 prompt 加 directive 教 "如果 tool 已调过, 不要再调"
+- 当前 `Wrap-up Synthesis` (jarvis_chat_bypass) 在 fail 时有 fallback, 但熔断不是 fail 是 dedup
+
+### Sir 真测继续策略
+本次 BUG 不阻 Phase 3d 推进 (跟 builder refactor 无关). 等会专项排查 cosyvoice + tool dedup 后 wrap.
+
+---
+
 ## 🌆 P5 下午真治本 (2026-05-21 11:30-16:13, 8 commit) — Sir 11:23/12:06/13:49 反复痛点
 
 ### 已落地 commit timeline (下午)
