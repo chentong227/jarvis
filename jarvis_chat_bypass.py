@@ -1803,10 +1803,102 @@ Spoken English:"""
                     summary += " (sir_profile.json 已 atomic 覆写)"
                 return summary
             else:
-                return (
-                    f"❌ mutation.{command} fail: layer={receipt.layer_targeted} "
-                    f"field={field_path} err='{receipt.error[:120]}'"
+                return (f"❌ mutation.{command} fail: {receipt.error[:120]} "
+                          f"(layer={receipt.layer_targeted})")
+
+        # 🆕 [P5-fix35-C / 2026-05-23] Cyclic Task organ — 通用循环任务展开
+        # Sir 11:09 真意: 通用 clarify→confirm→cyclic_emit 链路, 不只 reminder.
+        # 主脑 emit register → store 展开 N 个 reminders + 持久化 protocol.
+        # cancel/list/status 都走这条.
+        if organ_name == "cyclic_task":
+            try:
+                from jarvis_cyclic_task import get_default_store
+                store = get_default_store(
+                    hippocampus=getattr(self.jarvis, 'hippocampus', None))
+            except Exception as _ce:
+                return f"❌ cyclic_task: store 不可用 ({_ce})"
+
+            if command == 'register':
+                task_id = (params.get('task_id') or '').strip()
+                kind = (params.get('kind') or 'reminder').strip()
+                description = (params.get('description') or '')[:200]
+                cycle_minutes = params.get('cycle_minutes', 0)
+                start_at = (params.get('start_at') or '').strip()
+                end_at = (params.get('end_at') or '').strip()
+                intent_template = (params.get('intent_template') or '')[:200]
+
+                # 兜底: task_id 没给 → 生成
+                if not task_id:
+                    task_id = f"{kind}_{int(time.time())}"
+                # 兜底: intent_template 没给 → 用 description
+                if not intent_template:
+                    intent_template = description or f"⏰ {kind} fire"
+
+                try:
+                    cycle_minutes = float(cycle_minutes)
+                except Exception:
+                    return "❌ cyclic_task.register: cycle_minutes 非法 (需数值)"
+
+                if not start_at or not end_at:
+                    return ("❌ cyclic_task.register: missing start_at/end_at "
+                              "(格式 'YYYY-MM-DD HH:MM' 或 'HH:MM')")
+
+                r = store.register(
+                    task_id=task_id, kind=kind, description=description,
+                    cycle_minutes=cycle_minutes,
+                    start_at=start_at, end_at=end_at,
+                    intent_template=intent_template,
+                    created_by='main_brain',
                 )
+                if not r.get('ok'):
+                    return f"❌ cyclic_task.register fail: {r.get('error')}"
+                return (
+                    f"✅ cyclic_task.register: task_id={r['task_id']} kind={kind} "
+                    f"展开 {r['n_fires']} 个 fires "
+                    f"({r['first_at']} → {r['last_at']}, every {cycle_minutes}min). "
+                    f"reminders 已入 hippocampus, ChronosSentinel 会自动 fire."
+                )
+
+            elif command == 'cancel':
+                task_id = (params.get('task_id') or '').strip()
+                reason = (params.get('reason') or '')[:200]
+                if not task_id:
+                    return "❌ cyclic_task.cancel: missing task_id"
+                r = store.cancel(task_id, reason=reason)
+                if not r.get('ok'):
+                    return f"❌ cyclic_task.cancel fail: {r.get('error')}"
+                return (f"✅ cyclic_task.cancel: '{task_id}' cancelled, "
+                          f"removed {r['n_removed']} pending fires.")
+
+            elif command == 'list':
+                tasks = store.list_active()
+                if not tasks:
+                    return "ℹ️ cyclic_task.list: 当前无 active 循环任务."
+                lines = [f"📋 Active cyclic_tasks ({len(tasks)}):"]
+                for t in tasks:
+                    lines.append(
+                        f"  - {t.task_id} ({t.kind}): every {t.cycle_minutes}min "
+                        f"{t.start_iso} → {t.end_iso} "
+                        f"[{len(t.fire_ids)} fires]"
+                    )
+                return '\n'.join(lines)
+
+            elif command == 'status':
+                task_id = (params.get('task_id') or '').strip()
+                if not task_id:
+                    return "❌ cyclic_task.status: missing task_id"
+                t = store.get(task_id)
+                if not t:
+                    return f"❌ cyclic_task.status: '{task_id}' not found"
+                return (
+                    f"📋 cyclic_task '{task_id}': kind={t.kind} state={t.state} "
+                    f"every {t.cycle_minutes}min {t.start_iso}→{t.end_iso}, "
+                    f"{len(t.fire_ids)} scheduled fires, "
+                    f"created by {t.created_by}."
+                )
+            else:
+                return (f"❌ cyclic_task: 未知指令 {command} "
+                          f"(支持 register / cancel / list / status)")
 
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:

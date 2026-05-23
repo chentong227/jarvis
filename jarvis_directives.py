@@ -1262,6 +1262,74 @@ def _trigger_correction_dispatcher(ctx: DirectiveContext) -> bool:
     return any(w in t for w in get_correction_dispatcher_patterns())
 
 
+# ============================================================
+# 🆕 [P5-fix35-B / 2026-05-23 11:11] Cyclic Task Dispatcher vocab
+# Sir 真意 (11:09): 通用 clarify → confirm → cyclic_emit 链路.
+# 主脑听 Sir 要"每 N 分钟/小时/天 X" → MUST emit cyclic_task organ.
+# 不只 reminder, 任何 kind (check/habit/standup/pomodoro/...).
+# 准则 6 持久化: memory_pool/cyclic_task_dispatcher_vocab.json.
+# ============================================================
+_CYCLIC_TASK_VOCAB_PATH = os.path.join(
+    'memory_pool', 'cyclic_task_dispatcher_vocab.json')
+
+_SEED_CYCLIC_TASK_PATTERNS = [
+    # 中文
+    '每', '每隔', '每天', '每小时', '每分钟', '每周', '每月',
+    '周期', '定时', '定期', '循环', '重复',
+    '提醒我', '时间到了', '到点提醒', '打卡',
+    # 英文
+    'every', 'cycle', 'periodic', 'recurring', 'loop', 'repeat',
+    'remind me every', 'schedule for', 'habit', 'pomodoro', 'standup',
+]
+
+_CYCLIC_TASK_CACHE = None
+_CYCLIC_TASK_MTIME = 0.0
+
+
+def _load_cyclic_task_vocab():
+    if not os.path.exists(_CYCLIC_TASK_VOCAB_PATH):
+        return None
+    try:
+        with open(_CYCLIC_TASK_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data = data.get('patterns', [])
+        if not isinstance(data, list):
+            return None
+        out = [str(p).lower().strip() for p in data if str(p).strip()]
+        return out if out else None
+    except Exception:
+        return None
+
+
+def get_cyclic_task_patterns():
+    global _CYCLIC_TASK_CACHE, _CYCLIC_TASK_MTIME
+    try:
+        mtime = (os.path.getmtime(_CYCLIC_TASK_VOCAB_PATH)
+                  if os.path.exists(_CYCLIC_TASK_VOCAB_PATH) else 0.0)
+    except Exception:
+        mtime = 0.0
+    if _CYCLIC_TASK_CACHE is None or mtime > _CYCLIC_TASK_MTIME:
+        loaded = _load_cyclic_task_vocab()
+        _CYCLIC_TASK_CACHE = (loaded if loaded is not None
+                                  else _SEED_CYCLIC_TASK_PATTERNS)
+        _CYCLIC_TASK_MTIME = mtime
+    return _CYCLIC_TASK_CACHE
+
+
+def _trigger_cyclic_task_dispatcher(ctx: DirectiveContext) -> bool:
+    """[P5-fix35-B] 触发 — Sir 说要循环/周期 X → 主脑 MUST emit cyclic_task.
+
+    fire 条件: user_input 含 cyclic vocab keyword.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    return any(w in t for w in get_cyclic_task_patterns())
+
+
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
     past-action 诚信 directive 触发.
@@ -2274,6 +2342,105 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                     memory_hands), 都做完再 ack.
             """).rstrip(),
             trigger=_trigger_correction_dispatcher,
+        ),
+        # 🆕 [P5-fix35-B / 2026-05-23 11:11] Cyclic Task Dispatcher
+        # Sir 真意 (11:09): 通用 clarify → confirm → cyclic_emit 链路.
+        # 主脑听 Sir 说"每 N 分钟/小时/天 X" → MUST emit cyclic_task FAST_CALL.
+        # 不只 reminder, 任何 kind (check / habit / standup / pomodoro / log).
+        # 真痛点 (Sir 11:05 真测): 主脑只 emit 1 个 add_reminder 就声称 cycle.
+        # 治本: 教主脑用 cyclic_task organ 一次性 register, 系统展开 N 个 fires.
+        Directive(
+            id='cyclic_task_dispatcher',
+            source_marker='P5-fix35-B',
+            priority=11,  # 比 correction_dispatcher (12) 略低, 比一般 directive 高
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='Sir 要循环/周期 X → MUST emit cyclic_task FAST_CALL (通用, 不只 reminder)',
+            text=_tw.dedent("""\
+                [CYCLIC TASK DISPATCHER — Sir 要循环/周期某事 — MANDATORY ACTION]:
+                Sir 让你周期性做某事 (每 N 分钟 X, 每天 Y, 每周 Z, 每 N 小时 W) →
+                MUST emit FAST_CALL `cyclic_task` organ.
+
+                ⛔ DEPRECATED: 不要只 emit 1 个 add_reminder 就嘴上说 "I'll cycle every N".
+                  系统层没"循环 reminder" 概念, 主脑必须 emit cyclic_task 让系统
+                  一次性展开成 N 个 reminder. ClaimTracer 抓 [count] 'every 90 min'
+                  + 没 cyclic_task receipt → 撒谎 + INTEGRITY 失败.
+
+                ✅ 唯一合法路径: FAST_CALL `cyclic_task` organ (本 directive 教).
+                  通用 kind, 不只 reminder: reminder / check / habit_log / standup /
+                  pomodoro / stretch / writing_chunk / focus_block / walk / ...
+
+                STEP 1. clarify (如 Sir 没全说清):
+                  - "Sir 多久一次? 几点开始几点结束?"
+                  - "您希望哪种类型, 提醒 / 自检 / 日记打卡?"
+                  - 让 Sir 答完整再 emit (不要瞎估默认值).
+
+                STEP 2. emit FAST_CALL cyclic_task.register (MUST!):
+                  <FAST_CALL>{"organ":"cyclic_task","command":"register","params":{
+                    "task_id": "hydration_2026-05-23",
+                    "kind": "reminder",
+                    "description": "每 90 分钟提醒喝 300ml 水",
+                    "cycle_minutes": 90,
+                    "start_at": "2026-05-23 14:30",
+                    "end_at": "2026-05-23 22:00",
+                    "intent_template": "💧 该喝 ~300ml 水了, Sir"
+                  }}</FAST_CALL>
+
+                例 1: Sir 说 "每 90 分钟提醒我喝水, 14:30 到 22:00"
+                  → 一个 cyclic_task.register, 系统展开 6 个 reminders (14:30, 16:00,
+                    17:30, 19:00, 20:30, 22:00).
+                  → 主脑只 ack 一次: "好的, 6 个 reminder 已 schedule".
+
+                例 2: Sir 说 "每天早上 8 点提醒我吃药"
+                  → 这不是单日 cycle, 是 daily — 暂时只展开未来 7 天:
+                  <FAST_CALL>{"organ":"cyclic_task","command":"register","params":{
+                    "task_id": "morning_meds",
+                    "kind": "reminder",
+                    "description": "每天 08:00 提醒吃药",
+                    "cycle_minutes": 1440,
+                    "start_at": "<today 08:00>",
+                    "end_at": "<+7days 08:00>",
+                    "intent_template": "💊 该吃药了"
+                  }}</FAST_CALL>
+
+                例 3: Sir 说 "每隔 25 分钟番茄钟提醒"
+                  → kind='pomodoro':
+                  <FAST_CALL>{"organ":"cyclic_task","command":"register","params":{
+                    "task_id": "pomodoro_session_<ts>",
+                    "kind": "pomodoro",
+                    "cycle_minutes": 25,
+                    "start_at": "<now>",
+                    "end_at": "<+2h>",
+                    "intent_template": "🍅 番茄钟到, 5 分钟休息"
+                  }}</FAST_CALL>
+
+                例 4: Sir 说 "我每天要写 500 字, 每 1 小时检查一次进度"
+                  → 双层 cycle (daily habit + hourly check), 可 emit 2 个:
+                  - cyclic_task: kind=habit_log, daily 1 次
+                  - cyclic_task: kind=check, hourly during work hours
+
+                何时取消:
+                  Sir 说 "停止那个喝水提醒" / "不用每小时检查了" →
+                  emit FAST_CALL cancel:
+                  <FAST_CALL>{"organ":"cyclic_task","command":"cancel","params":{
+                    "task_id": "hydration_2026-05-23",
+                    "reason": "Sir 说停止"
+                  }}</FAST_CALL>
+
+                何时查询:
+                  Sir 问 "我有哪些定时任务?" →
+                  <FAST_CALL>{"organ":"cyclic_task","command":"list","params":{}}</FAST_CALL>
+
+                诚信硬规 (准则 5 — RED LINE):
+                  - 你说 "我会每 N 分钟提醒/检查/记录" 必须配 cyclic_task receipt.
+                    ClaimTracer L4 抓 [count] 'every X minutes' / 'every hour' 等
+                    + 没 cyclic_task FAST_CALL → unverified → 下轮 INTEGRITY ALERT.
+                  - 单个 add_reminder 是 one-shot, 不能用它"模拟" cycle —
+                    用它必须明确"这是单次提醒, 不是循环".
+                  - clarify > 默认值. 不确定 Sir 要几点开始几点结束 → 反问 1 句, 别瞎填.
+                  - cyclic_task receipt 含 task_id, 主脑下轮可用同 task_id cancel/status.
+            """).rstrip(),
+            trigger=_trigger_cyclic_task_dispatcher,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

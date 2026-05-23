@@ -1,0 +1,17 @@
+{
+  "_comment": "[P5-fix35-B / 2026-05-23 11:11] cyclic_task_dispatcher 触发词. 主脑听 Sir 要循环/周期/定期 X (不只 reminder) → MUST emit cyclic_task FAST_CALL organ. 准则 6 持久化.",
+  "_extended_after_real_test": "2026-05-23 11:06 Sir 真测 hydration 90 min cycle, 主脑只 emit 1 个 add_reminder 没真 cycle. 修法: 加 vocab + directive priority 11 + organ + persist.",
+  "patterns": [
+    "每", "每隔", "每天", "每小时", "每分钟", "每周", "每月",
+    "周期", "定时", "定期", "循环", "重复",
+    "提醒我", "记得提醒",
+    "每 ", "每隔 ",
+    "min", "分钟", "小时",
+    "every", "every hour", "every minute", "every day", "every week",
+    "cycle", "periodic", "recurring", "loop", "repeat",
+    "remind me every", "remind me to", "schedule for",
+    "时间到了", "到点提醒", "习惯", "打卡",
+    "habit", "checkin", "check-in", "log",
+    "番茄钟", "pomodoro", "standup", "stretch", "walk"
+  ]
+}
