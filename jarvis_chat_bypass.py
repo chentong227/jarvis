@@ -3490,6 +3490,15 @@ Spoken English:"""
                             'concerns', 'stand_down', 'promises', 'mutation',
                             'cyclic_task', 'progress',
                         )
+                        # 🆕 [P5-fix79 BUG-W / 2026-05-23 21:48] Sir 21:43 真测痛点:
+                        # progress.set 成功 → fast-path break → 罐头 "Done, Sir." 替主脑.
+                        # Sir 想听"当前 2700/3000 ml, 还差 300" 复述数据 而非干瘪罐头.
+                        # 修法: progress 类 organ 不走 fast-path break, 让 tool result 喂回
+                        # 主脑续 stream 1 句 ack (复用 hand_class 同款 continuation_prompt
+                        # 路径). 准则 6 — 信任 LLM 自决话术. 这是"对话式 ack" 不是罐头.
+                        # mutation 仍 break (FAST_CALL refactor 必须立刻 close + 显 audit).
+                        # progress / cyclic_task 是 "数据更新" 类, ack 反馈给 Sir 才有价值.
+                        _SKIP_FAST_BREAK_ORGANS = ('progress', 'cyclic_task')
                         if is_acknowledgment and organ_name in SAFETY_GATE_ORGANS:
                             tool_result = "SAFETY_GATE_BLOCKED: Sir's input was a simple acknowledgment, not an explicit request for file operations. Do NOT propose or execute file modifications unless Sir explicitly asks."
                             _tool_results.append(f"🛡️ 安全闸拦截: {organ_name}.{command}")
@@ -3505,12 +3514,18 @@ Spoken English:"""
                                 # 成功 → 重置熔断 + 单步 Fast Path 收尾
                                 if isinstance(_result, str) and _result.startswith('✅'):
                                     _consecutive_tool_fail = 0
-                                    # 单步 organ 成功直接 break (避免主脑二轮空说"已记录")
-                                    _circuit_broken_reason = "single_step_fast_path"
-                                    if '_stream_key_name' in dir() and _stream_key_name:
-                                        self.key_router.release(_stream_key_name)
-                                        _stream_key_name = None
-                                    break
+                                    # 🆕 [P5-fix79 BUG-W] progress / cyclic_task 不走
+                                    # fast break — 让主脑续 stream 1 句 ack (复述真数据).
+                                    if organ_name in _SKIP_FAST_BREAK_ORGANS:
+                                        tool_result = _result  # 喂回 continuation_prompt
+                                        # 不 break, 落到下面 continuation_prompt 路径
+                                    else:
+                                        # 单步 organ 成功直接 break (避免主脑二轮空说"已记录")
+                                        _circuit_broken_reason = "single_step_fast_path"
+                                        if '_stream_key_name' in dir() and _stream_key_name:
+                                            self.key_router.release(_stream_key_name)
+                                            _stream_key_name = None
+                                        break
                                 else:
                                     _consecutive_tool_fail += 1
                             except Exception as _foe:
