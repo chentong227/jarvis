@@ -203,6 +203,38 @@ def _find_sentence_split_idx(buffer: str, soft_split: bool = True, is_first_sent
     return -1
 
 
+# 🆕 [P5-fix35 / 2026-05-23] vision capability detect for main brain model.
+# Sir 真测踩 BUG: 切 deepseek/v4-pro (text-only) → 强带截图 → 404 'No endpoints
+# found that support image input'. 治本: 白/黑名单 prefix check, text-only
+# model 跳过 ImageGrab. 列表保守, 新 model 默认 text-only (安全 fallback).
+# 准则 6 持久化暂不做 (这是 OpenRouter platform 事实, 不是 Sir 用户偏好).
+_VISION_CAPABLE_MODEL_PREFIXES = (
+    'google/gemini-',         # G3F / G2.5-pro / G2.5-flash 全 vision
+    'gpt-4',                  # GPT-4o / GPT-4-vision
+    'openai/gpt-4',
+    'anthropic/claude-3',     # Sonnet/Opus 都 vision
+    'anthropic/claude-4',
+    'xiaomi/mimo-v2.5',       # omnimodal (Sir 测过)
+    'xiaomi/mimo-vl',         # MiMo Vision Language
+    'qwen/qwen-vl',           # Qwen VL 系列
+    'qwen/qwen2-vl',
+    'qwen/qwen2.5-vl',
+    'meta/llama-3.2-vision',  # Llama vision
+)
+
+
+def _model_supports_vision(model_name: str) -> bool:
+    """Return True if model accepts image input (chat_history can include image_url parts).
+
+    保守判: 在白名单 prefix 列表内 → True, 否则 False (默认 text-only).
+    新 model Sir 试时若是 vision-capable, 加 prefix 进 _VISION_CAPABLE_MODEL_PREFIXES.
+    """
+    if not model_name:
+        return False
+    m = model_name.lower().strip()
+    return any(m.startswith(p) for p in _VISION_CAPABLE_MODEL_PREFIXES)
+
+
 class ChatBypass:
     def __init__(self, key_router, vocal_cord, state_callback):
         self.key_router = key_router
@@ -213,6 +245,11 @@ class ChatBypass:
         # translation / gatekeeper / soul evaluator 等独立任务保持 G3F.
         self.main_brain_model = os.getenv(
             'JARVIS_MAIN_BRAIN', 'google/gemini-3-flash-preview')
+        # 🆕 [P5-fix35 / 2026-05-23 10:50] vision capability detect
+        # Sir 真测踩 BUG: 切 deepseek/v4-pro (text-only) → 强带截图 → 404.
+        # 治本: 主对话 / nudge 路径前 check 当前 model 是否支持 image input.
+        # text-only model → 跳过 ImageGrab + 只发 text prompt (主脑无视觉但能跑).
+        self.main_brain_supports_vision = _model_supports_vision(self.main_brain_model)
         self.vocal = vocal_cord
         self.state_callback = state_callback
         
@@ -1833,17 +1870,25 @@ Spoken English:"""
         try:
             _t0 = time.time()
             _t_ss_start = time.time()
-            from PIL import ImageGrab
-            screen_img = ImageGrab.grab()
-            screen_img.thumbnail((1280, 720))
-            img_buf = io.BytesIO()
-            screen_img.save(img_buf, format="JPEG", quality=50)
-            img_bytes = img_buf.getvalue()
-            _t_ss_done = time.time()
-            chat_history = [types.Content(role="user", parts=[
-                types.Part(text=prompt),
-                types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-            ])]
+            # 🆕 [P5-fix35 / 2026-05-23] 云端补答路径 vision capability gate
+            _supports_vision_cf = getattr(self, 'main_brain_supports_vision', True)
+            if _supports_vision_cf:
+                from PIL import ImageGrab
+                screen_img = ImageGrab.grab()
+                screen_img.thumbnail((1280, 720))
+                img_buf = io.BytesIO()
+                screen_img.save(img_buf, format="JPEG", quality=50)
+                img_bytes = img_buf.getvalue()
+                _t_ss_done = time.time()
+                chat_history = [types.Content(role="user", parts=[
+                    types.Part(text=prompt),
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+                ])]
+            else:
+                _t_ss_done = time.time()
+                chat_history = [types.Content(role="user", parts=[
+                    types.Part(text=prompt),
+                ])]
 
             full_text = ""
             streamed_text = ""
@@ -2182,11 +2227,11 @@ Spoken English:"""
                     if PromiseActivator.has_any_tag(full_text) and plan_ledger_ref is not None:
                         PromiseActivator.activate_from_text(full_text, plan_ledger_ref)
 
-                    # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本路径:
-                    # 解析 <MEMORY_UPDATE field="X" old="A" new="B"> 标签 → 真写
-                    # memory_pool/profile_corrections.jsonl. 这是主脑说"已更新"
-                    # 的唯一合法路径 (准则 5). 没发标签 + 说"已更新" → 被
-                    # memory_update_honesty directive 拦.
+                    # 🩹 [β.2.9.9 → P5-fix35 / 2026-05-23] <MEMORY_UPDATE> tag 已废弃
+                    # 老路径: 写 profile_corrections.jsonl (audit) 但**不真改 sir_profile.json**.
+                    # 新路径: FAST_CALL `mutation` organ → gateway → overwrite_field 真改.
+                    # 保留 tag 兼容 + 写 audit (不破 ProfileReflector 累积逻辑) +
+                    # 但加 deprecation warning + publish SWM 提醒主脑改用 FAST_CALL.
                     try:
                         from jarvis_safety import (
                             parse_memory_update_tags, execute_memory_updates
@@ -2194,14 +2239,33 @@ Spoken English:"""
                         _mu_updates = parse_memory_update_tags(full_text)
                         if _mu_updates:
                             _n_written = execute_memory_updates(
-                                _mu_updates, source='llm_tag')
+                                _mu_updates, source='llm_tag_DEPRECATED')
                             if _n_written > 0:
                                 try:
                                     from jarvis_utils import bg_log as _mu_bg
                                     _mu_bg(
-                                        f"📝 [MemoryUpdate] LLM 标签触发, "
-                                        f"写入 {_n_written} 条 profile correction"
+                                        f"⚠️ [MemoryUpdate/DEPRECATED] LLM 用了 "
+                                        f"<MEMORY_UPDATE> 老标签 (写 {_n_written} 条 audit, "
+                                        f"但 sir_profile.json 未改). 主脑应改用 "
+                                        f"FAST_CALL mutation organ (correction_dispatcher)."
                                     )
+                                except Exception:
+                                    pass
+                                # 🆕 [P5-fix35] publish SWM event 让主脑下轮 prompt 看到自己用错了 syntax
+                                try:
+                                    from jarvis_utils import get_event_bus
+                                    _bus = get_event_bus()
+                                    if _bus is not None:
+                                        _bus.publish(
+                                            etype='deprecated_syntax_used',
+                                            description=(
+                                                f"主脑用了已废弃 <MEMORY_UPDATE> tag "
+                                                f"({_n_written} 条). 真改源未生效, sir_profile.json "
+                                                f"没动. 下次教正请用 FAST_CALL mutation organ."
+                                            ),
+                                            source='chat_bypass.memory_update_parser',
+                                            salience=0.60,
+                                        )
                                 except Exception:
                                     pass
                     except Exception as _mu_e:
@@ -2372,8 +2436,13 @@ Spoken English:"""
             # 用 60s 旧帧会让 Jarvis "看不到 Sir 此刻正在指的画面"，得不偿失。
             img_bytes = None
             _ss_strategy = 'fresh'
+            # 🆕 [P5-fix35 / 2026-05-23] 主对话路径 vision capability gate
+            # text-only model → 直接跳过 ImageGrab + 主脑无视觉, 但不挂.
+            _supports_vision_main = getattr(self, 'main_brain_supports_vision', True)
             if prompt_tier in ('WAKE_ONLY', 'FACTUAL_RECALL'):
                 _ss_strategy = 'skipped'
+            elif not _supports_vision_main:
+                _ss_strategy = 'skipped_text_only_model'
             else:
                 from PIL import ImageGrab
                 screen_img = ImageGrab.grab()
@@ -4876,30 +4945,44 @@ No ZH translation. No closing remark. Nothing else.
             full_text = ""
             streamed_text = ""
             chat_history = None
-            try:
-                from PIL import ImageGrab
-                screen_img = ImageGrab.grab()
-                screen_img.thumbnail((1280, 720))
-
-                img_buf = io.BytesIO()
-                screen_img.save(img_buf, format="JPEG", quality=50)
-                img_bytes = img_buf.getvalue()
-                chat_history = [types.Content(role="user", parts=[
-                    types.Part(text=prompt),
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                ])]
-            except Exception as _ss_err:
-                # 锁屏/屏保 / 多 monitor 切 / 用户切 RDP 都常见. 不阻塞 nudge.
+            # 🆕 [P5-fix35 / 2026-05-23] vision capability gate
+            # text-only model (e.g. deepseek/v4-pro) 直接跳 ImageGrab → text-only chat_history.
+            _supports_vision = getattr(self, 'main_brain_supports_vision', True)
+            if not _supports_vision:
                 try:
-                    from jarvis_utils import bg_log as _ss_bg
-                    _ss_bg(f"⚠️ [Nudge/NoScreenshot] {type(_ss_err).__name__}: "
-                            f"{_ss_err} → fallback text-only chat_history")
+                    from jarvis_utils import bg_log as _vis_bg
+                    _vis_bg(f"⚠️ [Nudge/NoVision] model={self.main_brain_model} "
+                              f"is text-only, skipping ImageGrab")
                 except Exception:
                     pass
-                # text-only fallback: 只发 prompt, 没 image
                 chat_history = [types.Content(role="user", parts=[
                     types.Part(text=prompt),
                 ])]
+            else:
+                try:
+                    from PIL import ImageGrab
+                    screen_img = ImageGrab.grab()
+                    screen_img.thumbnail((1280, 720))
+
+                    img_buf = io.BytesIO()
+                    screen_img.save(img_buf, format="JPEG", quality=50)
+                    img_bytes = img_buf.getvalue()
+                    chat_history = [types.Content(role="user", parts=[
+                        types.Part(text=prompt),
+                        types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+                    ])]
+                except Exception as _ss_err:
+                    # 锁屏/屏保 / 多 monitor 切 / 用户切 RDP 都常见. 不阻塞 nudge.
+                    try:
+                        from jarvis_utils import bg_log as _ss_bg
+                        _ss_bg(f"⚠️ [Nudge/NoScreenshot] {type(_ss_err).__name__}: "
+                                f"{_ss_err} → fallback text-only chat_history")
+                    except Exception:
+                        pass
+                    # text-only fallback: 只发 prompt, 没 image
+                    chat_history = [types.Content(role="user", parts=[
+                        types.Part(text=prompt),
+                    ])]
 
             _nudge_key_name = ''
             response = None

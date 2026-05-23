@@ -224,15 +224,17 @@ class TestCorrectionDispatcherTrigger(unittest.TestCase):
 
 class TestCorrectionDispatcherRegistration(unittest.TestCase):
 
-    def test_directive_registered_with_priority_10(self):
+    def test_directive_registered_with_priority_12(self):
+        # 🆕 [P5-fix35 / 2026-05-23] 升 priority 10→12 (= no_hallucinated_tool_use_judge 同档 red line)
         import jarvis_directives as jd
         reg = jd.get_default_registry()
         cd = reg.get('correction_dispatcher')
         self.assertIsNotNone(cd, "correction_dispatcher not registered")
-        self.assertEqual(cd.priority, 10,
-                          "correction_dispatcher should be priority=10 (critical-protected)")
+        self.assertEqual(cd.priority, 12,
+                          "correction_dispatcher should be priority=12 (red line — same as no_hallucinated_tool_use_judge)")
         self.assertEqual(cd.id, 'correction_dispatcher')
-        self.assertEqual(cd.source_marker, 'P5-fix32-D')
+        self.assertIn('P5-fix32-D', cd.source_marker,
+                          "should retain original P5-fix32-D marker after P5-fix35 upgrade")
 
     def test_directive_text_mentions_field_path_protocol(self):
         import jarvis_directives as jd

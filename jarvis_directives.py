@@ -2158,21 +2158,27 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
         # 详 docs/JARVIS_MEMORY_AND_MUTATION_REFACTOR.md Part 3+4.
         Directive(
             id='correction_dispatcher',
-            source_marker='P5-fix32-D',
-            priority=10,  # critical-protected (>= 10) — mutation refactor 基础, 不允许 auto-decay
+            source_marker='P5-fix32-D+P5-fix35',
+            priority=12,  # 🆕 [P5-fix35 / 2026-05-23] 升 10→12 与 no_hallucinated_tool_use_judge 同档红线 — 真诚言行一致
             ttl_days=180,
             tier_whitelist=[],
-            purpose_short='Sir 教正某事 → 主脑判 (intent, layer) → emit FAST_CALL mutation 修对应源',
+            purpose_short='Sir 教正某事 → 主脑判 (intent, layer) → MUST emit FAST_CALL mutation 修对应源',
             text=_tw.dedent("""\
-                [CORRECTION DISPATCHER — Sir 在教正某事]:
-                Sir 教正你时, 走 3 步推理 → emit FAST_CALL `mutation` organ.
-                统一修源, 不再 ad-hoc 多 organ 各干各的.
+                [CORRECTION DISPATCHER — Sir 在教正某事 — MANDATORY ACTION]:
+                Sir 教正你时, 你 **MUST** emit FAST_CALL — 嘴上说"已记下/已更新"
+                而**不 emit** FAST_CALL = INTEGRITY 失败 (准则 5 红线).
+
+                ⛔ DEPRECATED: 老 `<MEMORY_UPDATE field=X old=A new=B>` tag 已废弃.
+                   它只写 audit jsonl, **不真改** sir_profile.json. 不要用.
+                   主脑必须用 FAST_CALL `mutation` organ (本 directive 教).
+
+                ✅ 唯一合法路径: FAST_CALL `mutation` organ — 路由到 Gateway, 真改源.
 
                 STEP 1. 判性质 (intent):
                   - reinforce  (加强): Sir 再次确认已知事 → 通常不需要 emit, evidence 自动++
                   - refine     (修正): 文字/时态/数字调整 (e.g. "明天→今天", "8 杯→9 杯")
                   - revise     (改动): 本质语义改变 (e.g. "X 不是 Y, 是 Z")
-                  - dismiss    (撤): "别再提" / "别再 nudge"
+                  - dismiss    (撤): "别再提" / "别再 nudge" / "不需要再提" / "我知道这事了"
                   - complete   (完结): "X 做完了"
 
                 STEP 2. 判层级 (which source layer to mutate):
@@ -2183,19 +2189,27 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   E 承诺/委托 → field_path = "promise.fulfill.<k>" / "commitment.cancel.<k>"
                   F 教学/规则 → directive_registry (Sir CLI 改, 主脑暂不直接 emit)
 
-                STEP 3. emit FAST_CALL mutation:
+                STEP 3. emit FAST_CALL mutation (MUST! 不可只嘴上说):
                   <FAST_CALL>{"organ":"mutation","command":"update","params":{
                     "field_path": "profile.work_rhythms",
                     "new_value": "sleep at 23:00",
                     "intent": "revise",
+                    "confidence": 0.9,
                     "reason": "Sir 教正: 我以后默认晚 11 睡"
                   }}</FAST_CALL>
+
+                ⚠️ confidence 字段:
+                  - revise/refine 类教正 → confidence: 0.9 (Sir 明确说的)
+                  - reinforce 类 → confidence: 0.7 (旁证累积)
+                  - 没显示 confidence → 默认 0.9 (gateway 走 overwrite_field 真改 sir_profile)
+                  - confidence < 0.8 → gateway fallback apply_correction (只 audit 不真改) ← 不推荐
 
                 例 1: Sir 说 "Windsurf 自动编程不是我在动"  (intent=revise, layer=A+C)
                   <FAST_CALL>{"organ":"mutation","command":"update","params":{
                     "field_path": "profile.idiosyncrasies",
                     "new_value": "Windsurf focus duration ≠ Sir in action (Sir often uses auto-coding mode)",
                     "intent": "revise",
+                    "confidence": 0.9,
                     "reason": "Sir 教正: Windsurf 自动编程不是我在动"
                   }}</FAST_CALL>
 
@@ -2204,6 +2218,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                     "field_path": "profile.work_rhythms",
                     "new_value": "sleep target 23:00 / wake 7:00",
                     "intent": "revise",
+                    "confidence": 0.9,
                     "reason": "Sir 教正默认睡觉时间"
                   }}</FAST_CALL>
 
@@ -2219,6 +2234,13 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                     "keyword":"体检"
                   }}</FAST_CALL>
 
+                例 5: Sir 说 "你不用再提那个 95% 了" (intent=dismiss, layer=C, hippocampus 含 95% 幻觉)
+                  → 走 memory_hands.modify_record (改 hippocampus, 移除/标错该 memory):
+                  <FAST_CALL>{"organ":"memory_hands","command":"modify_record","params":{
+                    "memory_id": "<找最近含 95% 的 memory ID>",
+                    "new_text": "[REDACTED Sir 23:14 教正: 95% 是我幻觉, 实际无数据]"
+                  }}</FAST_CALL>
+
                 何时用 mutation organ vs 专用 organ:
                   - profile / milestones / relational / 复杂字段 → mutation organ
                   - concerns dismiss / promises fulfill / stand_down → 专用 organ (更短)
@@ -2226,7 +2248,7 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
 
                 可用 field_path 协议:
                   - profile.<field>            → ProfileCard.overwrite_field
-                  - concerns.<cid>.<attr>      → ConcernsLedger.record_signal
+                  - concerns.<cid>.<attr>      → ConcernsLedger.update_concern_field
                   - promise.fulfill.<k>        → PromiseLog.mark_fulfilled (但更推荐 promises organ)
                   - promise.cancel.<k>         → PromiseLog.mark_cancelled
                   - commitment.cancel.<k>      → CommitmentWatcher.cancel_by_keyword
@@ -2235,14 +2257,21 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - protocol.archive.<pid>          → archive_protocol
                   - unfinished.done.<uid>           → mark_unfinished_done
                   - thread.archive.<tid>            → archive_thread
+                  - inside_joke.update.<jid>.<field> → update_field (深度改 phrase/tone/...)
                   - milestone.<title>          → tool_milestone_register
 
-                诚信硬规 (准则 5):
-                  - 你说 "我已记下/记录了/更新了" 必须配 FAST_CALL mutation —
-                    ClaimTracer L4 会扫, 没真 emit FAST_CALL 就嘴硬 → unverified → 下轮 INTEGRITY ALERT
+                诚信硬规 (准则 5 — RED LINE):
+                  - 你说 "我已记下/记录了/更新了/strike X/将 X 从 logs 删除" **必须** 配
+                    FAST_CALL — ClaimTracer L4 + Integrity Check L6 都会扫.
+                    嘴硬不发 FAST_CALL → unverified → STM mark + 下轮 INTEGRITY ALERT
+                    + Sir 看 Integrity Check 警告 → 你这一轮 INTEGRITY 失败.
                   - 不要瞎冤枉. Sir 说 "我以为 X 是 Y" 不一定是教正 (可能只是想法)
-                    → 反问 1 句澄清, 再 emit
-                  - mutation 真做后再 ack: "好的 Sir, profile.work_rhythms 已更新为 X"
+                    → 反问 1 句澄清, 再 emit.
+                  - mutation 真做后 ack 用 receipt: "好的 Sir, profile.work_rhythms 已
+                    更新为 X" — gateway 返 mutation_id 你可引用.
+                  - 多个 layer 都该改 (e.g. Sir 教正既影响 profile 又有 hippocampus
+                    幻觉记忆) → emit 多个 FAST_CALL (一个 mutation organ + 一个
+                    memory_hands), 都做完再 ack.
             """).rstrip(),
             trigger=_trigger_correction_dispatcher,
         ),
