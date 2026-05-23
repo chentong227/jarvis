@@ -3149,7 +3149,89 @@ Do NOT re-confirm. Do NOT ask permission. Do NOT explain how you know.
                         pass
             except Exception:
                 pass
-            return f"""{core_persona}
+            # 🆕 [P5-fix57 / 2026-05-23 16:05] Phase 3b: FACTUAL_RECALL 迁 builder
+            try:
+                from jarvis_prompt_builder import PromptBuilder, BlockSpec
+                _how_to_respond_fr = (
+                    "=== HOW TO RESPOND (FACTUAL_RECALL — 近期事实查询) ===\n"
+                    "Sir is asking about something that JUST happened or is in your immediate context.\n"
+                    "DO NOT call any tool. The answer is already in the context blocks below — find it and answer directly.\n\n"
+                    "Priority order to find the answer:\n"
+                    "1. WORKING MEMORY (clipboard / terminal command / file saved / window switch history)\n"
+                    "2. WHAT JUST HAPPENED (STM)\n"
+                    "3. CONVERSATION STATE (event_bus — recent breakthroughs / callbacks / commitments)\n"
+                    "4. ATTENTION (current window / cursor)\n"
+                    "5. SENSOR STATE (current_window_stay_s for 'how long am I on X')\n\n"
+                    "Reply in ONE sentence. Quote the actual content if relevant (e.g. for clipboard contents,\n"
+                    "quote the first 60 chars). Append `---ZH---` and Chinese at the end.\n\n"
+                    "If none of the above sources have the answer, say so honestly:\n"
+                    "\"I don't have that in my immediate memory, Sir — could you give me a hint?\"\n"
+                    "Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user\n"
+                    "expects an instant reply from your recent memory, not a tool round-trip."
+                )
+                fb = PromptBuilder(tier='FACTUAL_RECALL')
+                if _fr_tone:
+                    fb.register(BlockSpec(
+                        id='tone', content=_fr_tone,
+                        tiers=['FACTUAL_RECALL'], salience=0.55))
+                fb.register(BlockSpec(
+                    id='how_to_respond', content=_how_to_respond_fr,
+                    tiers=['FACTUAL_RECALL'], salience=0.95))
+                if yesterday_block:
+                    fb.register(BlockSpec(
+                        id='yesterday', content=yesterday_block,
+                        tiers=['FACTUAL_RECALL'], salience=0.55))
+                if short_stm:
+                    fb.register(BlockSpec(
+                        id='stm', content=f"=== WHAT JUST HAPPENED ===\n{short_stm}",
+                        tiers=['FACTUAL_RECALL'], hint='stm:turn_<id>', salience=0.80))
+                if open_threads_block:
+                    fb.register(BlockSpec(
+                        id='open_threads', content=open_threads_block,
+                        tiers=['FACTUAL_RECALL'], salience=0.60))
+                if project_block:
+                    fb.register(BlockSpec(
+                        id='project', content=project_block,
+                        tiers=['FACTUAL_RECALL'], salience=0.55))
+                if available_skills_block:
+                    fb.register(BlockSpec(
+                        id='skills', content=available_skills_block,
+                        tiers=['FACTUAL_RECALL'], salience=0.50))
+                if _fr_bus:
+                    fb.register(BlockSpec(
+                        id='event_bus', content=_fr_bus,
+                        tiers=['FACTUAL_RECALL'], hint='swm:<etype>', salience=0.75))
+                if _fr_attention:
+                    fb.register(BlockSpec(
+                        id='attention', content=_fr_attention,
+                        tiers=['FACTUAL_RECALL'], salience=0.70))
+                if _fr_working:
+                    fb.register(BlockSpec(
+                        id='working_feed', content=_fr_working,
+                        tiers=['FACTUAL_RECALL'], salience=0.80))
+                fb.register(BlockSpec(
+                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                    tiers=['FACTUAL_RECALL'], salience=0.85))
+                if sensor_state_block:
+                    fb.register(BlockSpec(
+                        id='sensor', content=sensor_state_block,
+                        tiers=['FACTUAL_RECALL'], hint='sensor:<field>',
+                        salience=0.90))  # FACTUAL_RECALL 高优 — Sir 问 'X 多久' 必用
+                _l2 = getattr(self, '_l2_injected_block', '') or ''
+                if _l2:
+                    fb.register(BlockSpec(
+                        id='l2', content=_l2,
+                        tiers=['FACTUAL_RECALL'], hint='l2:<directive_id>',
+                        salience=0.65))
+                return fb.compose(
+                    persona=core_persona,
+                    user_input=user_input,
+                    system_alert=system_alert_text,
+                    include_meta_hint=True,  # FACTUAL_RECALL 允许 META 自检
+                )
+            except Exception:
+                # fallback 老 f-string
+                return f"""{core_persona}
 
 {_fr_tone}
 
