@@ -1,0 +1,23 @@
+﻿Total intents: 15
+
+=== dashboard ��� ===
+  id=dashboard_open tool=ui_control.dashboard_open state=active
+  id=dashboard_close tool=ui_control.dashboard_close state=active
+
+=== ���� active intents (ǰ 20) ===
+  check_top_cpu                       �� process_hands.get_top_cpu
+  list_processes                      �� process_hands.list_processes
+  kill_process                        �� process_hands.kill_process
+  mute_audio                          �� audio_hands.mute
+  unmute_audio                        �� audio_hands.unmute
+  set_volume                          �� audio_hands.set_volume
+  pause_media                         �� media_control_hands.pause
+  play_media                          �� media_control_hands.play
+  send_notification                   �� notification_hands.send
+  list_recent_files                   �� file_operator.list_recent
+  search_memory                       �� hippocampus.search_recent
+  dashboard_open                      �� ui_control.dashboard_open
+  dashboard_close                     �� ui_control.dashboard_close
+  focus_window                        �� window_hands.focus
+  system_info                         �� system_hands.get_info
+(active total: 15)

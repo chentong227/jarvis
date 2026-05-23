@@ -1,0 +1,83 @@
+{
+  "_comment": "[P5-fix35-D / 2026-05-23] 通用 progress 持久化. 主脑 emit FAST_CALL progress organ → store 累加 + 持久化. 准则 6.",
+  "tracks": {
+    "hydration_2026-05-23": {
+      "track_id": "hydration_2026-05-23",
+      "kind": "hydration",
+      "label": "Daily Hydration",
+      "target": 3000.0,
+      "unit": "ml",
+      "current": 1800.0,
+      "deadline_iso": "2026-05-23 23:59",
+      "linked_cyclic_task": "hydration_cycle_90m",
+      "state": "completed",
+      "started_at": 1779509821.2992494,
+      "completed_at": 1779530123.0561748,
+      "cancelled_at": 0.0,
+      "cancelled_reason": "",
+      "history": [
+        {
+          "ts": 1779509844.8752496,
+          "amount": 200.0,
+          "note": "manual_entry",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779523254.8600733,
+          "amount": 900.0,
+          "note": "3rd cup of the day",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779530075.9884675,
+          "amount": 1800.0,
+          "note": "6 cups confirmed at 300ml each",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779530123.0561748,
+          "amount": 2000.0,
+          "note": "Correction: 200ml initial + 6 cups at 300ml each (total 2000ml",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779532620.280736,
+          "amount": -4894.0,
+          "note": "[set] Sir 确认总计饮水量",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779534250.4091573,
+          "amount": 2094.0,
+          "note": "[set] Sir confirmed 7 cups at 300ml each",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779534291.3181164,
+          "amount": 200.0,
+          "note": "[set] Sir corrected: 7 cups (2100ml) plus an additional 200ml from lunch",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779543231.6584716,
+          "amount": -2292.0,
+          "note": "[set] Sir 确认今日已饮用八杯水",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779543819.0124693,
+          "amount": 2692.0,
+          "note": "[set] Sir corrected: 9 cups total (estimated at 300ml/cup",
+          "source": "main_brain"
+        },
+        {
+          "ts": 1779544768.1445553,
+          "amount": -900.0,
+          "note": "[set] Sir reported 9th cup (9 * 200ml",
+          "source": "main_brain"
+        }
+      ],
+      "created_by": "main_brain"
+    }
+  }
+}

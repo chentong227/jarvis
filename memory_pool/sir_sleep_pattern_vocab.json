@@ -28,6 +28,20 @@
       "sleep_hour": 23.5,
       "weekday": 1,
       "source": "test_unittest"
+    },
+    {
+      "date": "2026-05-21",
+      "sleep_ts": 1779377808.458268,
+      "sleep_hour": 23.6,
+      "weekday": 1,
+      "source": "nerve_trigger_sleep_mode"
+    },
+    {
+      "date": "2026-05-22",
+      "sleep_ts": 1779381023.577488,
+      "sleep_hour": 24.5,
+      "weekday": 1,
+      "source": "nerve_trigger_sleep_mode"
     }
   ],
   "review_queue": []

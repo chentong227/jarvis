@@ -1,0 +1,20 @@
+﻿python : 
+At line:1 char:1
++ python scripts\_hotfix_cancel_exam_promises.py 2>&1 | Out-File hotfix ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+📜 [Runtime Log] 本轮日志：D:\Jarvis\docs\runtime_logs\jarvis_20260522_204555.log
+     最新指针：D:\Jarvis\docs\runtime_logs\latest.txt
+
+
+🚫 [Jarvis Promise CANCELLED] p_b344410c '我喝点水就行了，不喝咖啡了，今晚也不会熬夜的，明天要去体检的。' reason=Sir 5/22 体检已完成 — 热修 cancel stale
+
+🚫 [Jarvis Promise CANCELLED] p_cdc96ad5 '我会继续关注您当前的目标' reason=Sir 5/22 体检已完成 — 热修 cancel stale
+🚫 [Jarvis Promise CANCELLED] p_b344410c '我喝点水就行了，不喝咖啡了，今晚也不会熬夜的，明天要去体检的。' reason=Sir 5/22 体检已完成 — 热修 cancel stale
+p_b344410c: cancelled=True
+🚫 [Jarvis Promise CANCELLED] p_cdc96ad5 '我会继续关注您当前的目标' reason=Sir 5/22 体检已完成 — 热修 cancel stale
+p_cdc96ad5: cancelled=True
+
+After cancel stats: {'total': 69, 'states': {'pending': 25, 'fulfilled': 5, 'overdue': 0, 'untracked': 37, 'cancelled': 2}, 'kinds': {'hard': 1, 'soft': 68}}

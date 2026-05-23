@@ -1,0 +1,30 @@
+﻿python : 
+At line:1 char:1
++ python scripts\_audit_stand_down_dashboard.py 2>&1 | Out-File audit_s ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+📜 [Runtime Log] 本轮日志：D:\Jarvis\docs\runtime_logs\jarvis_20260522_200707.log
+     最新指针：D:\Jarvis\docs\runtime_logs\latest.txt
+
+
+🌙 [StandDown] 进入沉默 reason=phone_call until=20:12 (~5min) source=dashboard grace_until=15s
+
+☀️ [StandDown] wake up source=dashboard (was phone_call, held 0s)
+GET /api/stand_down status: 200
+ok: True
+state.active: False
+history count: 2
+stats: {'clears_today': 1, 'held_min_today': 0.0, 'held_s_today': 0, 'sets_today': 1}
+
+POST set status: 200
+  ok: True | msg: 进入沉默 reason=phone_call until=20:12
+
+After set:
+  active: True
+  reason: phone_call
+  in_grace: True
+  remaining_s: 299
+
+POST clear ok: True msg: wake up

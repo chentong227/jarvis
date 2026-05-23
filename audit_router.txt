@@ -1,0 +1,17 @@
+﻿has_tool_call_tag: True
+parsed calls: 1
+  intent= dashboard_open args= {}
+router: <jarvis_intent_router.IntentRouter object at 0x000002551B3A79D0>
+  fast_call_executor: None
+  resolve dashboard_open: {'id': 'dashboard_open', 'state': 'active', 'tool': 'ui_control.dashboard_open', 'semantic_hint': '�� Jarvis dashboard ����', 'human_phrases_en': ['open dashboard', 'show dashboard'], 'human_phrases_zh': ['�����', '�� dashboard'], 'dangerous_flag': 'safe', 'source': '��.5.36-E seed'}
+
+python : Traceback (most recent call last):
+At line:1 char:1
++ python scripts\_audit_intent_router.py 2>&1 | Out-File audit_router.t ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\Jarvis\scripts\_audit_intent_router.py", line 26, in <module>
+    print('\u274c ROOT CAUSE: get_default_intent_router has NO fast_call_executor!')
+UnicodeEncodeError: 'gbk' codec can't encode character '\u274c' in position 0: illegal multibyte sequence

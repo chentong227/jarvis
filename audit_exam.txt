@@ -1,0 +1,6 @@
+﻿Found 2 pending exam/interview promises:
+   p_b344410c author=sir reg=05-21 21:04
+     desc= �Һȵ�ˮ�����ˣ����ȿ����ˣ�����Ҳ���᰾ҹ�ģ�����Ҫȥ���ġ�
+   p_cdc96ad5 author=jarvis reg=05-22 14:36
+     desc= �һ������ע����ǰ��Ŀ��
+     jarvis_reply= A prudent decision, Sir. Prioritizing your physical examination and interview re

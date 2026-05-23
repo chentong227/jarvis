@@ -1,0 +1,24 @@
+﻿---
+id           : sir_sleep_streak
+state        : active
+severity     : 0.9600000000000001
+triggers_pro : True
+what_i_watch : Sir �Ƿ�������ҹ��4+ �� deep night��
+why_i_care   : Sir 18 ���¾�׵��ʷ / profile �������ƣ�ͷ���
+last_triggered: 1779431921.0553198
+---
+id           : sir_cursor_payment
+state        : active
+severity     : 0.3
+triggers_pro : False
+what_i_watch : Sir �� Cursor ����״̬��log ���� Payment Failed��
+why_i_care   : Cursor �� Sir ��Ҫ�������ߣ�����ͣ = ��������
+last_triggered: 1779441992.4803278
+---
+id           : cursor_persistent_error
+state        : archived
+severity     : 0.55
+triggers_pro : True
+what_i_watch : The recurring error in Cursor logs that Sir is struggling to resolve.
+why_i_care   : Logs show Sir stayed up until 05:47 AM battling a persistent Cursor error.
+last_triggered: 0.0

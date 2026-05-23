@@ -1,0 +1,41 @@
+﻿
+=== docs/runtime_logs\jarvis_20260522_184621.log (size: 647) ===
+  (no matches)
+
+=== docs/runtime_logs\jarvis_20260522_184511.log (size: 3909) ===
+  (no matches)
+
+=== docs/runtime_logs\jarvis_20260522_183221.log (size: 38758) ===
+[L105] [CompanionCenter] ProactiveCareEngine 就绪 (mode=LIVE, threshold=0.55)
+[L118] ║  ProactiveCareEngine      : LIVE                            ║
+[L126] ║   JARVIS_PROACTIVE_CARE_DRY_RUN=1 → ProactiveCare 不发声      ║
+[L127] ║   JARVIS_PROACTIVE_CARE_LEVEL=silent/low/normal/high          ║
+[L154] [sess_20260522_183221_49784] 💡 [ProactiveCareEngine] started (threshold=0.55, tick=60.0s, dry_run=False, warmup=300s)
+[L219]   ProactiveCareEngine             1
+[L264] [sess_20260522_183221_49784] 📷 [ScreenVision/backfill] described: app='Cursor' summary='Sir is debugging the `jarvis_directives.py` file, specifical' conf=0.90
+[L271] [sess_20260522_183221_49784] 📊 [ProactiveCare/Health] tick=6 actives=6 top3=[sir_pomodoro_compliance=0.91, sir_cursor_payment=0.91, sir_sleep_streak=0.85] dry_run=False
+[L273] [sess_20260522_183221_49784] 🤝 [ProactiveCare/LIVE] pushed concern=sir_pomodoro_compliance urgency=0.91 channel=voice
+[L275] [sess_20260522_183221_49784] 🎯 [ReturnSentinel/SoftFocus] 开 60s focus window (reason=proactive_care) — Sir 短回应不用喊 Jarvis
+[L281] [sess_20260522_183221_49784] 🪞 [SOUL inject] L0=899c L1=0c L2=351c L3=438c total=1688c concern_reason=silent | jokes=['joke_tedious_data_entry_as_a_64c664', 'joke_daddy_is_home_d61831', 'joke_expensive_butler_7335bb'] concerns=['sir_pomodoro_compliance', 'sir_cursor_payment', 'jarvis_keyrouter_healt
+[L286] ║ 💬 [Smart Nudge] proactive_care [ProactiveCareEngine]
+[L300] 🎯 [Focus Lock] proactive_care 焦点模式已激活 (90s)，等待 Sir 回复...
+[L352] [sess_20260522_183221_49784] [turn_20260522_183815_25a6] 🪞 [SOUL inject] L0=900c L1=0c L2=351c L3=298c total=1549c concern_reason=silent | jokes=['joke_tedious_data_entry_as_a_64c664', 'joke_daddy_is_home_d61831', 'joke_expensive_butler_7335bb'] concerns=['sir_pomodoro_compliance', 'sir_cursor_payme
+[L379] [sess_20260522_183221_49784] [turn_20260522_183815_25a6] 🎯 [ProactiveCare/PostNudge] concern=sir_pomodoro_compliance verdict=neutral sir='没有，我刚才吃饭呢，刚回来'
+[L420] [sess_20260522_183221_49784] 🛑 [ProactiveCare] skip concern=sir_cursor_payment urgency=0.68 reason=active_conversation
+[L432] [sess_20260522_183221_49784] 🛑 [ProactiveCare] skip concern=sir_cursor_payment urgency=0.68 reason=global_nudge_cooldown (180s left)
+[L440] [sess_20260522_183221_49784] 📡 [ProactiveCare/Sensor] tick fed 1 signal(s)
+[L452] [sess_20260522_183221_49784] 🤝 [ProactiveCare/LIVE] pushed concern=sir_cursor_payment urgency=0.68 channel=voice
+[L454] [sess_20260522_183221_49784] 🎯 [ReturnSentinel/SoftFocus] 开 60s focus window (reason=proactive_care) — Sir 短回应不用喊 Jarvis
+[L458] [sess_20260522_183221_49784] 🪞 [SOUL inject] L0=900c L1=0c L2=351c L3=438c total=1689c concern_reason=silent | jokes=['joke_tedious_data_entry_as_a_64c664', 'joke_daddy_is_home_d61831', 'joke_expensive_butler_7335bb'] concerns=['sir_pomodoro_compliance', 'sir_cursor_payment', 'jarvis_keyrouter_healt
+[L465] ║ 💬 [Smart Nudge] proactive_care [ProactiveCareEngine]
+[L467] ║ ⏰ [18:42:54] Jarvis 开始响应
+[L468] ║ 🤖  [Jarvis] I've noticed your Cursor subscription payment failed earlier; perhaps worth a look before it disrupts your workflow.
+[L469] ║ 📺  [Subtitle] 我留意到您的 Cursor 订阅支付此前失败了；建议您在工作流中断前查看一下。
+[L479] 🎯 [Focus Lock] proactive_care 焦点模式已激活 (90s)，等待 Sir 回复...
+[L566] [sess_20260522_183221_49784] [turn_20260522_184344_ca8d] 🪞 [SOUL inject] L0=900c L1=0c L2=351c L3=298c total=1549c concern_reason=silent | jokes=['joke_tedious_data_entry_as_a_64c664', 'joke_daddy_is_home_d61831', 'joke_expensive_butler_7335bb'] concerns=['sir_pomodoro_compliance', 'sir_cursor_payme
+
+=== docs/runtime_logs\jarvis_20260522_175223.log (size: 817) ===
+  (no matches)
+
+=== docs/runtime_logs\jarvis_20260522_174951.log (size: 658) ===
+  (no matches)
