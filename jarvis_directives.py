@@ -1921,6 +1921,8 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   2. For each, do I have actual evidence in PROMPT BLOCKS (SENSOR STATE / SWM / STM / SOUL / L2_inject / profile / concerns / commitments)? List the source.
                   3. Should this reply be voiced, silent_text, or stay silent given Sir's current state?
                   4. Did any [INTEGRITY ALERT] in this prompt instruct me to apologize? If so, did the underlying claim actually happen in a real prior turn (turn_id non-empty)? If not, REFUSE to apologize and set skip_alert=yes.
+                  # 🆕 [P5-fix60 / 2026-05-23 16:15] Sir 16:13 真测痛点: 主脑说 "back at the terminal / refreshed" 但 Sir 一直在工作. 根因: work_session_total_min=0 (Jarvis 刚重启) 主脑误判 Sir 离开. 真实证据: STM 含 Sir 5 小时 23 turn 连续对话 + idle_seconds < 60.
+                  5. Am I implying Sir was AWAY / just RETURNED / has been RESTING / is REFRESHED? If so, do I have CONCRETE evidence? Required: SENSOR.idle_seconds > 600 (10 min) OR STM gap > 30 min OR Sir explicitly said "I'm back / 我回来了". If NO evidence → REWRITE to neutral (Sir likely never left; work_session_total_min=0 may just mean Jarvis restarted, not Sir away). Common hallucinated phrases to scan: "back at / 回来 / 您不在 / refreshed / rested / nice to see you again". Sir hates persona-template assumptions about his state.
 
                 Then, AFTER your normal Sir-facing reply (after `---ZH---` block, on a NEW LINE), emit ONE machine-readable trace line in this exact format:
                 [META] evidence=<comma-list> reaction=<voice|silent_text|silence> skip_alert=<yes|no> commitments=<semicolon-list or "none"> note=<<=60 chars optional>
