@@ -452,6 +452,7 @@ class CareConcernSensor:
         # 用 PhysicalEnvironmentProbe snap 已有 key/mouse fields 算 energy/focus/stress
         # publish 'physio_state' SWM 让主脑看 (stress 高时 tone 关切, focus 高时静默)
         # cooldown 60s 内不重复. 数据少 confidence < 0.1 不 publish.
+        # PhysioProxy 内部 bg_log 写 '💪 [PhysioProxy]' marker (Sir audit 可 grep).
         try:
             from jarvis_physio_proxy import get_physio_proxy
             if self.nerve is not None:
@@ -465,6 +466,7 @@ class CareConcernSensor:
         # 🩹 [β.5.40-E1 / 2026-05-20] Sir 方向 E.1 — nudge_window_advice publish.
         # 每 tick 读 nudge_window_vocab.json 当前 hour 的 receptive score,
         # publish 'nudge_window_advice' 到 SWM 让主脑看. score < 0.3 时主脑应更克制.
+        # 🆕 [P5-fix35-AUDIT] 加 bg_log audit marker (≤ 每 5min 1 次, 防 spam).
         try:
             from jarvis_companion_rhythm_reflector import get_current_hour_receptive_score
             score = get_current_hour_receptive_score()
@@ -494,6 +496,18 @@ class CareConcernSensor:
                         },
                         ttl=3600.0,
                     )
+                    # P5-fix35-AUDIT: 5min throttled audit log
+                    try:
+                        _last = getattr(self, '_last_nudge_window_log_at', 0)
+                        if time.time() - _last > 300:
+                            from jarvis_utils import bg_log as _nw_bg
+                            _nw_bg(
+                                f"🌃 [CompanionRhythm/publish] hour={now_local.tm_hour} "
+                                f"score={score:.2f}"
+                            )
+                            self._last_nudge_window_log_at = time.time()
+                    except Exception:
+                        pass
         except Exception:
             pass
 
