@@ -771,7 +771,8 @@ def read_recent_unverified(limit: int = 50,
 
 def build_integrity_alert(current_turn_id: str = '',
                             limit: int = 20,
-                            audit_path: Optional[str] = None) -> str:
+                            audit_path: Optional[str] = None,
+                            max_age_s: float = 600.0) -> str:
     """构造 [INTEGRITY ALERT] 提示串, 供 _assemble_prompt prepend 到 system_alert_text.
 
     仅访问 immediate previous turn 的 unverified entries (按 ts 分 turn-group 取最新).
@@ -787,6 +788,12 @@ def build_integrity_alert(current_turn_id: str = '',
     选 "上轮" 时把这条空 turn_id entry 算成上轮 → inject 95% 给 11:39 turn → 主脑
     被 prompt 强迫道歉一个 Sir 没要求道歉的事 ("他不算骗人, 为啥道歉?").
     修: 过滤 turn_id="" entry, 仅算真有 turn_id 的 audit (= 真主 turn 的 unverified).
+
+    🆕 [P5-fix39 / 2026-05-23 12:18] Sir audit 真发现: integrity_audit.jsonl 是
+    append-only 不清, 每 turn 都把**N 小时前**的 stale unverified turn 反复
+    inject. Sir 12:08 后每 turn 看到 'unverified=279c' 同长度 — 都是 11:05 的
+    stale claim 被反复 inject. 治本: max_age_s 默认 600s (10min), latest_turn
+    最旧 ts < now - max_age_s → 不 inject (太老 = stale, 主脑别被强迫 ack).
     """
     try:
         unv = read_recent_unverified(limit=limit,
@@ -798,6 +805,16 @@ def build_integrity_alert(current_turn_id: str = '',
         return ''
     # 🩹 [β.5.46-fix17] 过滤 turn_id="" — 不对应 main turn 的 claim 不该 inject ALERT
     unv = [e for e in unv if (e.get('turn_id') or '').strip()]
+    if not unv:
+        return ''
+    # 🆕 [P5-fix39] staleness filter — 过滤 max_age_s 之前的 stale entries
+    try:
+        import time as _time_pf39
+        now_ts = _time_pf39.time()
+        unv = [e for e in unv
+                 if (now_ts - float(e.get('ts', 0))) < float(max_age_s)]
+    except Exception:
+        pass
     if not unv:
         return ''
     # 按 turn_id group, 取 ts 最大的 turn (immediate prior turn)

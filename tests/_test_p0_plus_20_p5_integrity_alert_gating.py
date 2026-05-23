@@ -101,8 +101,10 @@ class TestB_BuildAlertBehaviorUnchanged(unittest.TestCase):
 
     def test_unverified_claim_builds_alert(self):
         from jarvis_claim_tracer import build_integrity_alert
+        # 🆕 [P5-fix39] use fresh ts so staleness filter (default 600s) doesn't drop it
+        import time as _t_pf39
         self._write_entry(turn_id='turn_test_1', kind='percent',
-                            claim='0.01%', found=False, ts=1000.0)
+                            claim='0.01%', found=False, ts=_t_pf39.time() - 60.0)
         alert = build_integrity_alert(audit_path=self.audit_path)
         self.assertIn('INTEGRITY ALERT', alert,
                       '有 unverified claim 应构造 alert')
@@ -111,8 +113,10 @@ class TestB_BuildAlertBehaviorUnchanged(unittest.TestCase):
     def test_exclude_current_turn(self):
         """defensively 排除当前轮 entry (重试场景)."""
         from jarvis_claim_tracer import build_integrity_alert
+        # 🆕 [P5-fix39] use fresh ts (staleness filter)
+        import time as _t_pf39
         self._write_entry(turn_id='turn_curr', kind='percent',
-                            claim='4%', found=False, ts=1000.0)
+                            claim='4%', found=False, ts=_t_pf39.time() - 60.0)
         alert = build_integrity_alert(current_turn_id='turn_curr',
                                        audit_path=self.audit_path)
         self.assertEqual(alert, '',
@@ -121,8 +125,10 @@ class TestB_BuildAlertBehaviorUnchanged(unittest.TestCase):
     def test_found_entries_excluded(self):
         """found=True (已 verify) 不应入 alert."""
         from jarvis_claim_tracer import build_integrity_alert
+        # 🆕 [P5-fix39] use fresh ts (staleness filter)
+        import time as _t_pf39
         self._write_entry(turn_id='turn_test_2', kind='percent',
-                            claim='50%', found=True, ts=1000.0)
+                            claim='50%', found=True, ts=_t_pf39.time() - 60.0)
         alert = build_integrity_alert(audit_path=self.audit_path)
         self.assertEqual(alert, '',
                           'found=True entry 不应入 alert')
