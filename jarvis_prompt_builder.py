@@ -52,6 +52,10 @@ class BlockSpec:
     hint: str = ''                           # META 引用提示 (e.g. 'sensor:<field_id>')
     salience: float = 0.5                    # 块重要性 (用于 budget 削减)
     max_chars: int = 0                       # 此块最大字符 (0 = 不限)
+    # 🆕 [P5-fix64 / 2026-05-23 16:28] Phase 3d.2: metadata 内省字段
+    # 让 Phase 3d.3 可以记录 mega block 内 logical sections (head/body/tail/...)
+    # debug / Phase 4 瘦身需要这个数据找冗余块.
+    metadata: Dict[str, object] = field(default_factory=dict)
 
     def is_active_for(self, tier: str) -> bool:
         """是否适用此 tier."""
@@ -64,6 +68,10 @@ class BlockSpec:
         if self.max_chars > 0 and len(self.content) > self.max_chars:
             return self.content[:self.max_chars - 15] + '\n...(truncated)'
         return self.content
+
+    def char_len(self) -> int:
+        """块字符长度 (内省 / Phase 4 瘦身 audit)."""
+        return len(self.content) if self.content else 0
 
 
 class PromptBuilder:
@@ -98,6 +106,32 @@ class PromptBuilder:
         """返回当前 tier 下所有 active block ID (META 引用用)."""
         return [bid for bid in self._order
                 if self._blocks[bid].is_active_for(self.tier)]
+
+    # 🆕 [P5-fix64 / 2026-05-23 16:28] Phase 3d.2: audit helpers
+    # 为 Phase 4 prompt 瘦身做基线, Sir 可看 prompt 体积分布找冗余.
+
+    def total_chars(self) -> int:
+        """所有 active block 字符总数 (audit)."""
+        return sum(self._blocks[bid].char_len()
+                    for bid in self.list_block_ids())
+
+    def size_breakdown(self, top_k: int = 5) -> List[tuple]:
+        """返回 top_k 大 block 的 (id, char_len) list, 降序. Phase 4 瘦身 audit 用."""
+        sizes = [(bid, self._blocks[bid].char_len())
+                  for bid in self.list_block_ids()]
+        sizes.sort(key=lambda x: x[1], reverse=True)
+        return sizes[:top_k]
+
+    def audit_summary(self) -> Dict[str, object]:
+        """audit 摘要 dict — debug / dashboard / Phase 4 用."""
+        active_ids = self.list_block_ids()
+        return {
+            'tier': self.tier,
+            'n_blocks': len(active_ids),
+            'total_chars': self.total_chars(),
+            'top5': self.size_breakdown(top_k=5),
+            'block_ids': active_ids,
+        }
 
     def render_blocks(self) -> str:
         """渲染所有 active block (按注册顺序)."""

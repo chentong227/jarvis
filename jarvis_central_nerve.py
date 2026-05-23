@@ -3905,9 +3905,39 @@ User: {user_input}
         # 主脑看到的 prompt 字面**完全一致**, 仅执行路径走 builder.
         # Sir 实测验证 builder 不破 → Phase 3d.2 再真拆 block 增量.
         # fallback: builder 异常 → 直接 return result (准则 8 不破现有).
+        #
+        # 🆕 [P5-fix64 / 2026-05-23 16:28] Phase 3d.2: 加 builder audit logging.
+        # mega block 内含 metadata (logical sections + size). bg_log 输出
+        # prompt 体积. Sir 可看 audit 找冗余 — Phase 4 瘦身基线.
         try:
-            from jarvis_prompt_builder import PromptBuilder
+            from jarvis_prompt_builder import PromptBuilder, BlockSpec
             _sb = PromptBuilder(tier='STANDARD')
+            _legacy_block = BlockSpec(
+                id='legacy_full',
+                content=result.strip(),
+                tiers=['STANDARD'],
+                salience=1.0,
+                metadata={
+                    # 内省: mega block 含的 logical sections (Phase 4 拆细用)
+                    'logical_sections': [
+                        'persona', 'yesterday', 'stm', 'continuity',
+                        'open_threads', 'project', 'active_reminders',
+                        'skills', 'tool_honesty', 'fuzzy_candidates',
+                        'promise_protocol', 'swm', 'event_bus', 'attention',
+                        'working_feed', 'active_plan', 'tone', 'avoid_phrases',
+                        'verbosity', 'soul_chapters', 'how_to_respond',
+                        'time_context', 'context', 'profile_card',
+                        'correction', 'style', 'content_pref',
+                        'unified_memory', 'skill_tree', 'anticipator',
+                        'real_time_state', 'life_log', 'system_env',
+                        'tier_routing', 'tool_library', 'ltm', 'commitment',
+                        'clock', 'sensor', 'l2', 'user_input', 'system_alert',
+                    ],
+                    'phase': '3d.2',
+                    'split_pending': True,  # Phase 3d.3 真拆细
+                },
+            )
+            _sb.register(_legacy_block)
             _via_builder = _sb.compose(
                 persona=result.strip(),
                 user_input='',
@@ -3918,6 +3948,17 @@ User: {user_input}
             # 安全闸: builder 输出含 user_input → 接受
             if _via_builder and user_input and user_input in _via_builder:
                 result = _via_builder
+            # 🆕 [Phase 3d.2] audit bg_log — Sir 可看 prompt 体积监控
+            try:
+                from jarvis_utils import bg_log as _bd_bg
+                _audit = _sb.audit_summary()
+                _bd_bg(
+                    f"📐 [PromptBuilder/STANDARD] mega_block={_audit['total_chars']} chars "
+                    f"| n_blocks={_audit['n_blocks']} "
+                    f"| split_pending=True (Phase 3d.3 待拆)"
+                )
+            except Exception:
+                pass
         except Exception:
             pass  # fallback 老 result
 

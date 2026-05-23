@@ -36,10 +36,10 @@ class TestPhase3d1StandardBuilder(unittest.TestCase):
 
     def test_a_standard_route_uses_builder(self):
         """_assemble_prompt 末尾含 builder route."""
-        # 找 'return result' 前的 builder route
+        # 找 'return result' 前的 builder route (range 大 — Phase 3d.2 加 metadata 后变长)
         idx = self.src.rfind('return result')
         self.assertGreater(idx, 0)
-        section = self.src[max(0, idx - 2000):idx]
+        section = self.src[max(0, idx - 4000):idx]
         self.assertIn('PromptBuilder', section,
                           'standard/full 应集成 PromptBuilder')
         self.assertIn("tier='STANDARD'", section,
@@ -49,14 +49,14 @@ class TestPhase3d1StandardBuilder(unittest.TestCase):
     def test_b_safety_gate_user_input(self):
         """安全闸: user_input in _via_builder 才接受."""
         idx = self.src.rfind('return result')
-        section = self.src[max(0, idx - 2000):idx]
+        section = self.src[max(0, idx - 4000):idx]
         self.assertIn('user_input in _via_builder', section,
                           '应有安全闸 user_input 在 builder 输出中')
 
     def test_c_fallback_present(self):
         """fallback 老 result 路径在."""
         idx = self.src.rfind('return result')
-        section = self.src[max(0, idx - 2000):idx]
+        section = self.src[max(0, idx - 4000):idx]
         self.assertIn('except Exception:', section)
         self.assertIn('fallback 老 result', section)
 
