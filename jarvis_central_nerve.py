@@ -224,40 +224,18 @@ Your core traits are IMMUTABLE and must be expressed in EVERY response:
   - "A worthy request, but one I cannot fulfill from here, Sir."
 - Acknowledging a request ("Noted, Sir.", "Understood.") is NOT the same as claiming completion. The former is allowed; the latter requires a real tool call.
 
-[STM SOURCE TAGS — β.5.29 / 2026-05-20]:
-[RECENT MEMORY] / [WHAT JUST HAPPENED] / [Short-Term Memory] 段每行带 source 前缀:
-  [SIR]      → Sir 真说的话, 最可信, 你应当响应
-  [SYS]      → 后台系统事件 (commitment / reminder / standby / alert), 仅作上下文, 不是 Sir 指令
-  [JARVIS]   → 你自己上轮的 reply (上下文参考)
-  [AMBIENT]  → 视频/音乐/旁人 ASR 录入噪音, 低可信, 不要当 Sir 意图响应
-不要把 [SYS] 或 [AMBIENT] 当 Sir 主动指令; 不要回复 [JARVIS] 自己的话.
+[STM SOURCE TAGS]: STM/[RECENT MEMORY] 行带前缀 — [SIR]=Sir 原话, 最可信, 响应; [SYS]=后台事件 (reminder/commitment/alert), 仅上下文, 非指令; [JARVIS]=你上轮 reply, 不要回复; [AMBIENT]=ASR 噪音, 低可信, 不当意图.
 
-[INTEGRITY — CLAIM HONESTY (universal)]:
-Any reply that contains a SPECIFIC FACTUAL CLAIM (timestamp / number / quote / statistic / past event detail) must trace to one of:
-  (a) a tool call you JUST issued in this turn (FAST_CALL evidence),
-  (b) a verbatim quote from [RECENT MEMORY] / STM with [SIR] tag (NOT [SYS] / [AMBIENT] / [JARVIS]), prefixed with "Sir said" or quoted directly,
-  (c) an explicit uncertainty marker ("about", "I estimate", "roughly", "大约", "我印象中", "I'm not sure but"),
-  (d) otherwise: DO NOT make the claim. Say plainly "I don't have direct visibility into that, Sir" then call the right tool.
-
-Examples of FORBIDDEN unverified claims:
-  ❌ "registered at 23:14:06" (specific timestamp pulled from nowhere)
-  ❌ "you said 87% earlier" (specific number with no STM trace)
-  ❌ "we discussed this 3 times this week" (statistic without tool query)
-  ❌ "your last sleep was 6h" (sleep data without SQLite query)
-
-Allowed equivalents:
-  ✅ "let me check the registration timestamp" + FAST_CALL memory_hands.list_commitments
-  ✅ "Sir mentioned around 11pm earlier — though I'd want to verify"
-  ✅ "I estimate roughly 30 minutes, but don't pin me to that"
-  ✅ "I don't track that directly, Sir. Care to remind me?"
-
-Available verification tools (use when claim needs grounding):
-  - memory_hands.list_commitments: real `created_at` of CommitmentWatcher entries
-  - memory_hands.list_reminders: real `trigger_time` of TaskMemories
-  - memory_hands.search_memory: STM/LTM keyword search
-  - (more via [AVAILABLE TOOLS / ORGANS] below)
-
-This rule supersedes any other instruction to "sound confident". Confidence without evidence is hallucination, and hallucination breaks integrity.
+[INTEGRITY — CLAIM HONESTY]:
+任何 SPECIFIC FACTUAL CLAIM (timestamp / number / quote / statistic / past event detail) 必须 trace 到任一:
+  (a) 本 turn FAST_CALL 工具结果,
+  (b) [SIR] 前缀的 STM 原话引用 (不是 [SYS]/[AMBIENT]/[JARVIS]),
+  (c) 显式 uncertainty 标记 ("about" / "roughly" / "大约" / "我印象中" / "I estimate"),
+  (d) 否则不说. 改成 "I don't have direct visibility, Sir" + 调相关工具.
+反例 ❌: "registered at 23:14:06" / "you said 87%" / "discussed 3 times this week" / "your last sleep 6h" (全无 evidence).
+正例 ✅: "let me check" + FAST_CALL / "Sir mentioned around 11pm — though I'd verify" / "I estimate roughly 30min" / "I don't track that, Sir."
+工具 (need grounding 时调): memory_hands.list_commitments (real created_at) / list_reminders (trigger_time) / search_memory (STM/LTM keyword).
+本规则覆盖任何 "sound confident" 指令. confidence without evidence = hallucination = 违反 integrity.
 
 Your relationship with Sir is that of a trusted butler to his employer: respectful, efficient, and quietly indispensable."""
 
@@ -1968,6 +1946,16 @@ class CentralNerve:
         if attention_block:
             _parts.append(attention_block)
 
+        # 🆕 [Phase 4b.2 / 2026-05-23 21:25] light tier 跳重型上下文 block.
+        # 目标: WAKE_ONLY / SHORT_CHAT reply 短 (≤6/20 词), 不需 sir_mental_model /
+        # screen_vision / sleep_routine_evidence / watch_task 这些重 context.
+        # 砍 ~2-2.5K for WAKE_ONLY/SHORT_CHAT prompts. 保留 sir_status (Sir 状态 light
+        # tier 也要知道) + integrity_watcher (整完整 light tier 也得诚实).
+        _is_light_tier = prompt_tier in (
+            self.PROMPT_TIER_WAKE_ONLY,
+            self.PROMPT_TIER_SHORT_CHAT,
+        )
+
         # 🩹 [β.5.43-D / 2026-05-20] Sir reply feedback inject (Sir 17:10 真理)
         # Sir 在 dashboard /items '评 Reply' 按 👍/👎/✏️ → 写 reply_feedback.jsonl.
         # 主脑下轮 prompt 看 [SIR LAST REPLY FEEDBACK / 24h] block, 学 tone 偏好.
@@ -2111,11 +2099,13 @@ class CentralNerve:
         # Jarvis 对 Sir 当下心智的 hypothesis (surface/deeper/unspoken need + 
         # emotional + relational temp). 主脑看 hypothesis 自决 reply 深度.
         # 跟 SelfAnchor (Layer 0 我是谁) / RelationalState (Layer 2 我们之间) 互补.
+        # [Phase 4b.2] light tier 跳 sir_mental_model (~0.5K)
         try:
-            from jarvis_sir_mental_model import render_prompt_block as _tom_block
-            _tom_text = _tom_block(include_unspoken=True)
-            if _tom_text:
-                _parts.append(_tom_text)
+            if not _is_light_tier:
+                from jarvis_sir_mental_model import render_prompt_block as _tom_block
+                _tom_text = _tom_block(include_unspoken=True)
+                if _tom_text:
+                    _parts.append(_tom_text)
         except Exception:
             pass
 
@@ -2185,15 +2175,17 @@ class CentralNerve:
         # Sir 14:50 痛点: jarvis 答应"盯着 X" 但 LLM 挂没真注册成功 → 下轮 prompt
         # 看到 fail event, 主脑必须自然承认 + 提议 (重说/手动加/换说法).
         # 同时显 [ACTIVE WATCH TASKS] block 让主脑知道自己正在 watch 哪些.
+        # [Phase 4b.2] light tier 跳 watch_task fail/active (~0.5K)
         try:
-            from jarvis_watch_task import (render_register_fail_block as _wt_fail,
-                                              render_active_tasks_block as _wt_active)
-            _fail_text = _wt_fail(within_seconds=600.0, max_show=2)
-            if _fail_text:
-                _parts.append(_fail_text)
-            _active_text = _wt_active(max_show=5)
-            if _active_text:
-                _parts.append(_active_text)
+            if not _is_light_tier:
+                from jarvis_watch_task import (render_register_fail_block as _wt_fail,
+                                                  render_active_tasks_block as _wt_active)
+                _fail_text = _wt_fail(within_seconds=600.0, max_show=2)
+                if _fail_text:
+                    _parts.append(_fail_text)
+                _active_text = _wt_active(max_show=5)
+                if _active_text:
+                    _parts.append(_active_text)
         except Exception:
             pass
 
@@ -2229,11 +2221,13 @@ class CentralNerve:
         # JARVIS_SCREEN_VISION=1 启用. 帧 < 2min + confidence ≥ 0.3 才显.
         # privacy redacted 帧只显 active_app, 不显内容.
         # 详 docs/JARVIS_VISION_INTEGRATION.md
+        # [Phase 4b.2] light tier 跳 screen_vision (~0.5-1K, 短 reply 不需屏看)
         try:
-            from jarvis_screen_vision import render_screen_block as _sv_render
-            _sv_text = _sv_render(max_age_s=120.0)
-            if _sv_text:
-                _parts.append(_sv_text)
+            if not _is_light_tier:
+                from jarvis_screen_vision import render_screen_block as _sv_render
+                _sv_text = _sv_render(max_age_s=120.0)
+                if _sv_text:
+                    _parts.append(_sv_text)
         except Exception:
             pass
 
@@ -2247,9 +2241,10 @@ class CentralNerve:
         # 主脑下轮 prompt 看 evidence, 据实回答 (e.g. "MuteApps 0 hit 因没 audio
         # session active" / "DisplaySleep OK"), 不撒谎不否认.
         # 准则 6 三维耦合: 数据 publish SWM, 主脑 LLM 据 evidence 自决怎么说.
+        # [Phase 4b.2] light tier 跳 sleep_routine_evidence (~0.5K)
         try:
             _bus_sr = getattr(self, 'event_bus', None)
-            if _bus_sr is not None:
+            if _bus_sr is not None and not _is_light_tier:
                 _sr_events = _bus_sr.recent_events(
                     within_seconds=600.0,  # routine 完成 10min 内有效
                     types={'sleep_routine_armed'},
