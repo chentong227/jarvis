@@ -31,12 +31,14 @@ class TestFix82XCompletionCascade(unittest.TestCase):
     """fix82-X: cascade_completion in MemoryGateway."""
 
     def test_marker_present(self):
-        src = _read('jarvis_memory_gateway.py')
+        # [Reshape M2.C.3 / 2026-05-24] file 已 git mv → jarvis_memory_hub.py,
+        # jarvis_memory_gateway.py 是 backward-compat 转发垫层.
+        src = _read('jarvis_memory_hub.py')
         self.assertIn('P5-fix82-X', src,
-                      'fix82-X: marker 在 jarvis_memory_gateway.py')
+                      'fix82-X: marker 在 jarvis_memory_hub.py (M2.C.3 后)')
 
     def test_cascade_method_exists(self):
-        src = _read('jarvis_memory_gateway.py')
+        src = _read('jarvis_memory_hub.py')
         self.assertIn('_maybe_cascade_completion', src,
                       'fix82-X: _maybe_cascade_completion 方法应存在')
         self.assertIn('_load_completion_vocab', src,
@@ -59,19 +61,19 @@ class TestFix82XCompletionCascade(unittest.TestCase):
                         f'fix82-X: vocab 应持久化 {vocab_path}')
 
     def test_cw_cancel_called_in_cascade(self):
-        src = _read('jarvis_memory_gateway.py')
+        src = _read('jarvis_memory_hub.py')
         self.assertIn('cancel_by_keyword', src,
                       'fix82-X: cascade 应调 cancel_by_keyword')
         self.assertIn('max_age_seconds=86400', src,
                       'fix82-X: cancel 应给 24h 窗口')
 
     def test_publish_completion_cascaded(self):
-        src = _read('jarvis_memory_gateway.py')
+        src = _read('jarvis_memory_hub.py')
         self.assertIn("'completion_cascaded'", src,
                       'fix82-X: publish completion_cascaded SWM event')
 
     def test_add_completed_event_call(self):
-        src = _read('jarvis_memory_gateway.py')
+        src = _read('jarvis_memory_hub.py')
         self.assertIn('add_completed_event', src,
                       'fix82-X: cascade 应调 hippocampus.add_completed_event')
 
