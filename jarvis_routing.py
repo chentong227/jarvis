@@ -524,6 +524,8 @@ class ProfileCard:
             "likes_and_boundaries": self._build_likes_boundaries(),
             "active_projects": self._build_active_projects(),
             "recent_narrative": self._build_recent_narrative(),
+            # 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: 单位换算持久化 (Sir 教过的)
+            "unit_preferences": self._load_profile().get('unit_preferences', {}),
             "_corrections": self._get_corrections_log(),
         }
         
@@ -585,6 +587,15 @@ class ProfileCard:
             boundaries = (lb.get('boundaries', '') or '')[:160]
             if boundaries:
                 lines.append(f"[Boundaries] {boundaries}")
+
+        # 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: Sir 17:02 hydration 痛点 — 主脑
+        # 不会单位换算 + 不主动问. unit_preferences 持久化 (Sir 教过的换算).
+        # 主脑看到 → 自己算 (e.g. cup_ml=300 → 5 cups = 1500 ml).
+        # 没此字段 → 主脑应**主动问** Sir (directive ambiguous_unit_handling 教).
+        units = card.get("unit_preferences", {}) or {}
+        if units:
+            units_str = ', '.join(f"{k}={v}" for k, v in list(units.items())[:8])
+            lines.append(f"[Units] {units_str[:200]}")
 
         out = '\n'.join(lines)
         if max_chars and len(out) > max_chars:
@@ -853,6 +864,11 @@ class ProfileCard:
         'health_concerns', 'life_anchors', 'relationship_status',
         'professional_role', 'location_general', 'languages',
         'communication_preferences', 'nudge_frequency_default',
+        # 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: Sir 17:02 hydration 痛点 — 主脑
+        # 不会单位换算 + 不主动问. 加 unit_preferences 字段 (Sir 教过的换算持久化).
+        # e.g. {"cup_ml": 300, "lunch_cup_ml": 200}. 主脑看 prompt block → 自己算.
+        # Sir 没说过 → 主脑应主动问 (directive ambiguous_unit_handling 教).
+        'unit_preferences',
     })
 
     def overwrite_field(self, field: str, new_value, source: str = 'fast_call_mutation',

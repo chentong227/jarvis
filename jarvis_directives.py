@@ -709,6 +709,33 @@ def _trigger_smart_routing_working_feed(ctx: DirectiveContext) -> bool:
     return bool(ctx.working_feed_nonempty) and _user_input_refs_recent(ctx.user_input)
 
 
+# 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: ambiguous_unit_handling trigger
+# Sir 17:02 痛点: '我喝了 5 杯水' 主脑直接调 progress.update 失败 + 不主动问.
+# Trigger: user_input 含模糊单位 (杯/cup/勺/spoonful/碗/份/把/勺/匙/...) + 数字.
+_AMBIGUOUS_UNIT_PATTERNS = [
+    r'\d+\s*(?:杯|碗|份|把|勺|匙|片|颗|个|只|盘|盒|包)',
+    r'\d+\s*(?:cup|cups|bowl|bowls|spoon|spoonful|portion|slice|piece|pack)',
+    r'(?:几|多少|how many)\s*(?:杯|碗|份|勺|cup)',
+    r'(?:再|又|又一)\s*(?:杯|碗|份|勺)',
+]
+
+
+def _trigger_ambiguous_unit_handling(ctx: DirectiveContext) -> bool:
+    """Sir 用模糊单位 (杯/碗/份/...) + 数字 → 注 directive."""
+    ui = ctx.user_input or ''
+    if not ui:
+        return False
+    import re as _re_au
+    for pat in _AMBIGUOUS_UNIT_PATTERNS:
+        try:
+            if _re_au.search(pat, ui, _re_au.IGNORECASE):
+                return True
+        except Exception:
+            if pat in ui:
+                return True
+    return False
+
+
 def _trigger_correction_writepath(ctx: DirectiveContext) -> bool:
     return _user_input_is_memory_write(ctx.user_input)
 
@@ -2041,6 +2068,51 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   see that in my memory, Sir." If unsure, say so — do not guess command names.
             """).rstrip(),
             trigger=_trigger_smart_routing_working_feed,
+        ),
+        # 🆕 [P5-fix71 / 2026-05-23 17:10] BUG-E: ambiguous unit handling
+        # Sir 17:02 真痛点: Sir 说 '我喝了 5 杯水', 主脑直接调 progress.update 失败
+        # + 不主动问. Sir 真意 (17:08): "如果换算不来, 完全可以问我" + "需要显式提
+        # 高主脑的主动性" + "如果说过的肯定还是你的方案好, 要记住".
+        #
+        # 双层策略 (准则 6 主脑端 evidence + 准则 8 优雅):
+        #   Layer 1 持久化: SIR PROFILE CARD [Units] 行显示 Sir 教过的换算
+        #     (e.g. cup_ml=300). 主脑看到 → 自己算 (5 cups = 1500 ml).
+        #   Layer 2 主动性: 没看到换算 → 主脑必须主动问 "一杯多少 ml?"
+        #     而不是傻傻 progress.update 失败. Sir 答了 → emit FAST_CALL
+        #     profile.update_field unit_preferences.cup_ml=N 持久化下次用.
+        Directive(
+            id='ambiguous_unit_handling',
+            source_marker='P5-fix71',
+            priority=8,
+            ttl_days=60,
+            tier_whitelist=[],  # 全 tier 都注 (Sir 任何 tier 都可能说杯/碗)
+            text=_tw.dedent("""\
+                [AMBIGUOUS UNIT HANDLING — Sir 用模糊单位需要换算]:
+                Sir 用了不精确的量化单位 (e.g. '5 杯水', '一勺糖', 'a cup of...').
+                如果要量化数据 (progress.update / 记录 / 算总量) 必须**先确认单位**.
+
+                **优先级 1 — 看 SIR PROFILE CARD [Units] 字段**:
+                  如果显示 `cup_ml=300` 或类似 → **直接用此值算**.
+                  例: Sir 说 "我喝了 5 杯水", profile 显示 cup_ml=300:
+                      → 5 × 300 = 1500 ml. 直接 FAST_CALL progress.update(amount=1500).
+                      不要再问 Sir.
+
+                **优先级 2 — [Units] 缺该字段 → 主动问 Sir** (准则 5 主动性):
+                  ❌ 不要 fabricate 默认值 (1 杯 ≠ 必然 250ml).
+                  ❌ 不要直接 progress.update 用 raw '5' (单位不明 → fail).
+                  ✅ 1 句问 Sir + 等回答, 不调 tool:
+                     "请问一杯大约多少 ml, Sir? 我会记下来下次直接用."
+                     "How many ml in a cup, Sir? I'll save it for future reference."
+                  ✅ Sir 答了 → 同 turn emit FAST_CALL 持久化 + 算量:
+                     <FAST_CALL>{"organ":"profile","command":"update_field",
+                       "params":{"field":"unit_preferences","value":{"cup_ml":300}}}</FAST_CALL>
+                     然后用此值算 + 调 progress.update.
+
+                **重要**: 这是 Sir 主动性原则一个 case (类似但不限):
+                  - Sir 说模糊数据 + 系统需精确 → 主动澄清, 不瞎猜
+                  - Sir 教过的 → 持久化 + 下次记住 (不再问)
+            """).rstrip(),
+            trigger=_trigger_ambiguous_unit_handling,
         ),
         # 12. CORRECTION WRITE PATH — P0+18-d.3
         Directive(
