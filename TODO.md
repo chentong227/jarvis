@@ -1,53 +1,58 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 07:20 Sir 醒来第一眼看这里 — M1 主体已完成 5/7** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 07:35 Sir 醒来第一眼看这里 — M1 全部 7/7 step 完成** 🚨🚨🚨
 >
-> Sir 早上 7:06 "全 accept, 动工 M1" 后, Cascade 严格把关稳步推进, 完成 M1 Lineage Trace 基础设施主体 5 step (剩 2 step 后置).
+> Sir 早上 7:06 "全 accept 动工 M1" + 7:28 真测 "修复 bug 加推进" 后, Cascade 完成 M1 Lineage Trace 全部 step + Sir 3 真测 bug fix + M1.3-min 反向追溯增强.
 >
-> ## ✅ M1 已完成 (5 commit, ~1500 行 code+test, 0 破坏)
+> ## ✅ M1 全部 done (8 commit, ~2000 行 code+test, 0 破坏)
 >
-> - **M1.1** (`180a2c5`): `jarvis_lineage.py` — EvidenceID + Evidence + LineageTracer + DecisionRecord + async daemon (22 testcase)
-> - **M1.2** (`5d8bd2f`): `ConversationEventBus.publish` 加 `evidence_chain` + 返 evidence_id (12 testcase + 113 regression)
-> - **M1.4** (`237a101`): `chat_bypass.stream_chat` 末尾 `record_decision` (7 testcase + 181 regression)
-> - **M1.5** (`e2517c5`): `scripts/lineage_dump.py` CLI — 6 命令 (list-decisions / list-evidence / reply-id / evidence-id / turn-id / stats)
-> - **M1.6** (`4cb417f`): `lineage_config.json` + `jsonl_rotator` 注册
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `180a2c5` | **M1.1** | `jarvis_lineage.py` 核心 — EvidenceID + Evidence + LineageTracer + async daemon (22 test) |
+> | `5d8bd2f` | **M1.2** | SWM `publish` 加 `evidence_chain` + 返 evidence_id, 老 caller 兼容 (12 test + 113 regression) |
+> | `4cb417f` | **M1.6** | `lineage_config.json` + `jsonl_rotator` 注册 |
+> | `e2517c5` | **M1.5** | `scripts/lineage_dump.py` CLI 6 命令 |
+> | `237a101` | **M1.4** | `chat_bypass.stream_chat` 末尾 `record_decision` (7 test + 181 regression) |
+> | `0144949` | **M1-fix** | Sir 真测 3 bug — CLI 复制即用 hint + conftest 隔离 lineage 不污染生产 + claims_extracted 总记 ClaimTracer summary |
+> | `ce2dc82` | **M1.3-min** | `collect_evidence_ids` + `_assemble_prompt` 装 `_last_prompt_evidence_log` + chat_bypass 用之 — **`blocks=0` 变 `blocks=1-2`** 反向追溯真起来 (5 test + 130 regression) |
 >
-> ## 📋 Sir 真测验证 M1 (5 min)
+> ## 📋 Sir 第二轮真测验证 (~3 min)
 >
 > ```powershell
-> # 1. 启 jarvis 跑 1-3 turn
-> # (主脑能正常回复, lineage 异步收集不影响 TTFT)
+> # 1. 重启 jarvis 跑 1-3 轮 (lineage.jsonl 已 truncate 干净)
 >
-> # 2. 列最近 5 个 brain decision
+> # 2. 列最近 5 个 brain decision (新输出: 每条带可复制 trace 命令)
 > python scripts/lineage_dump.py --list-decisions --limit 5
 >
-> # 3. 反向追溯一个 reply
-> python scripts/lineage_dump.py --reply-id=bd_<turn_id>_<digits>
+> # 3. 复制上面输出的 → trace: ... 整行运行
+> python scripts/lineage_dump.py --reply-id=bd_turn_xxx_xxxx
 >
-> # 4. 看总 stats
+> # 4. 看总 stats (应该 0 unknown, 100% 有 source)
 > python scripts/lineage_dump.py --stats
 > ```
 >
-> **预期看到**:
-> - decisions ≥ 1 (Sir 真聊后)
-> - evidence ≥ 几百 (SWM publish 已自动 collect)
-> - reply-id trace 能看到 turn_id / reply / claims_extracted
+> **预期看到 (这次有 M1.3-min)**:
+> - `blocks=1 或 2` (而不是上次的 `blocks=0`) ← M1.3-min 新增
+> - reply-id trace 输出含 `swm_conversation_360s` block 真 evidence 列表
+> - stats 0 unknown evidence (conftest 隔离 + 重新 truncate 后)
+> - claims_extracted 含 `<ClaimTracer ran: X claims, Y verified, Z unverified>` 1 行 summary
 >
-> ## ⏸ M1 后置 2 step (等 Sir 真测 OK 再做)
+> ## ⏸ 真后置 (M1+ 跟 M7 一起做)
 >
-> - **M1.3**: PromptBlock dataclass + `_assemble_prompt` 30+ block 加 `source_evidence_ids` — **高风险** (改 chat 主路径), 跟 M7 一起做
-> - **M1.7**: `LineageReflector` L7 LLM propose broken chain repair — 后置, 不阻 M1
+> - **M1.7** `LineageReflector` L7 LLM-propose broken chain repair — 现 0 broken chain, 不急
+> - **M1.3-full** PromptBlock dataclass 改 30+ render block 加 source_evidence_ids — 跟 M7 PromptBuilder polymorphic 一起做更优雅
 >
 > ## 🐛 Pre-existing BUG (跟 M1 无关, 待修)
 >
-> `tests/_test_p0_plus_20_p5_integrity_watcher.py::TestL_Directive::test_directive_registered` + `tests/_test_p0_plus_20_p5_claim_revision.py::TestG_DirectiveRevised::test_directive_text_describes_two_apology_types` fail —
+> `tests/_test_p0_plus_20_p5_integrity_watcher.py::TestL_Directive::test_directive_registered` +
+> `tests/_test_p0_plus_20_p5_claim_revision.py::TestG_DirectiveRevised::test_directive_text_describes_two_apology_types` fail —
 > `jarvis_directives.py:158 ValueError: Directive concern_dampen_self_decide: trigger must be callable`.
 > Sir 拍板时机再修, 不阻 Reshape M2.
 >
-> ## 🎯 Sir 真测 M1 OK 后下一步
+> ## 🎯 Sir 第二轮真测 OK 后下一步
 >
 > ```
-> Cascade, M1 真测 OK, 动工 M2.
+> Cascade, M1 真测全 OK, 动工 M2.
 > # (M2 = MemoryHub 演化, 1 周, 中风险)
 > ```
 >
