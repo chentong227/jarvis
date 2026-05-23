@@ -75,7 +75,9 @@ def _summarize_by_model(rows: list) -> dict:
     """按 model 分组. 返回 {model: stats}."""
     groups = defaultdict(list)
     for r in rows:
-        groups[r.get('model', '<unknown>')].append(r)
+        # normalize: missing key, None, '' 都归一到 <unknown>
+        m = r.get('model') or '<unknown>'
+        groups[m].append(r)
 
     summaries = {}
     for model, items in groups.items():
