@@ -2593,15 +2593,24 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   (d) 取消跟踪 ('不用追了') → command='cancel'
 
                 STEP 2 (case a — register):
+                  ⚠️ linked_cyclic_task 仅当 Sir **明确要循环提醒**时才填, 默认留空.
+                  Sir 12:17 真痛点: Sir 只说 '每天 3000ml' (没说提醒), 主脑自动加
+                  linked_cyclic → PreFlight 抓 unsolicited Q3 → draft edit截断 →
+                  cyclic_task 第二个 FAST_CALL JSON 不完整 → spoken text 没出.
+                  治法: register 不带 linked_cyclic. 用单 FAST_CALL.
+                  
                   <FAST_CALL>{"organ":"progress","command":"register","params":{
                     "track_id": "hydration_2026-05-23",
                     "kind": "hydration",
                     "label": "今日饮水",
                     "target": 3000,
                     "unit": "ml",
-                    "deadline": "2026-05-23 23:59",
-                    "linked_cyclic_task": "hydration_2026_05_23"
+                    "deadline": "2026-05-23 23:59"
                   }}</FAST_CALL>
+                  
+                  → 收 ✅ result → 你 say spoken: "Noted, Sir. 3000ml 目标已记下." 
+                    (短确认, 让 TTS 给 Sir 听到. 不要 emit 第二个 FAST_CALL 除非
+                    Sir 明确要"提醒我每隔 X 分钟喝水". 那时再 emit cyclic_task.)
 
                 STEP 2 (case b — update):
                   <FAST_CALL>{"organ":"progress","command":"update","params":{

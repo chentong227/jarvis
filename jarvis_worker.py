@@ -294,6 +294,17 @@ class VoiceListenThread(QThread):
     # - STRICT_STOP_WORDS: 即便句子稍长（如"你给我闭嘴"）也立刻触发
     # - SOFT_STOP_WORDS:  容易和正常陈述歧义（如"安静"），必须在首位且短句才触发
     # 注意"安静"从硬档移除 —— "外面很安静" 不应误炸为强制停止。
+    # 🆕 [P5-fix37 / 2026-05-23 12:15] PAUSE_ONLY_WORDS — 暂停语气词
+    # Sir 12:13 真痛点: Sir 说 "嗯, 那稍等一下, 我去把这部分能力修复一下,
+    # 待会再帮我寄" — STRICT_STOP_WORDS 含 "稍等一下" + head=8 命中 → 触发 dismiss
+    # mute 30s + standby. Sir 反应 "欸欸欸? 错了! 错了!". Sir 真意是**承前对话**,
+    # 不是真离场. 治本: 暂停语气词 (稍等/等一下/wait a moment/hold on) 移到
+    # PAUSE_ONLY_WORDS, 仅整句**完全等于**才触发 (即 Sir 单独说 "稍等一下"). 句子
+    # 含更多内容 → Sir 在继续上下文, 不算 dismiss.
+    PAUSE_ONLY_WORDS = [
+        "稍等一下", "等一下", "稍等", "等等",
+        "wait a moment", "hold on", "wait a sec", "wait a second",
+    ]
     STRICT_STOP_WORDS = [
         "停止", "终止", "别弄了", "退下", "闭嘴", "shut up", "stand down",
         # 🩹 [β.2.7.10 / 2026-05-17] Sir 焦点退出痛点: 显式 dismiss 立刻 mute
@@ -303,11 +314,12 @@ class VoiceListenThread(QThread):
         "我在打电话", "on a call", "im taking a call", "taking a call",
         "我跟别人说话", "我和别人说话", "我和我妈说话", "我跟我妈说话",
         "我和我爸说话", "我跟我爸说话", "和别人说话呢",
-        "稍等一下", "等一下", "wait a moment", "hold on",
+        # 注意: "稍等一下" / "等一下" / "wait a moment" / "hold on" 已移到
+        # PAUSE_ONLY_WORDS (P5-fix37) — 这 4 个词容易在承前对话中误触发.
     ]
     SOFT_STOP_WORDS = ["安静", "shut"]
     # 兼容字段：保持外部访问 STOP_WORDS 的旧调用不挂（合并所有词）
-    STOP_WORDS = STRICT_STOP_WORDS + SOFT_STOP_WORDS
+    STOP_WORDS = STRICT_STOP_WORDS + SOFT_STOP_WORDS + PAUSE_ONLY_WORDS
 
     # DISMISS_WORDS 拆成两档：
     # - EXCLUSIVE: 专属告别词，整句出现一次基本就是再见（晚安/再见/goodbye/bye 等）
@@ -501,11 +513,12 @@ class VoiceListenThread(QThread):
         s_clean = re.sub(r'[，。,.!?？！\s]+', '', s)
         if not s_clean:
             return False
-        # 1. 整句完全等于硬/软停止词
-        for sw in self.STRICT_STOP_WORDS + self.SOFT_STOP_WORDS:
+        # 1. 整句完全等于硬/软停止词 / PAUSE_ONLY 词 → 触发
+        # 🆕 [P5-fix37] PAUSE_ONLY_WORDS 仅在整句完全等于时触发 (Sir 12:13 真痛点修).
+        for sw in self.STRICT_STOP_WORDS + self.SOFT_STOP_WORDS + self.PAUSE_ONLY_WORDS:
             if s_clean == sw.lower().replace(' ', ''):
                 return True
-        # 2. 硬停止词出现在首部（6 字符内）→ 触发
+        # 2. 硬停止词出现在首部（6 字符内）→ 触发. PAUSE_ONLY 不走此路径.
         for sw in self.STRICT_STOP_WORDS:
             if self._phrase_at_head(sw.lower(), s, head_chars=8):
                 return True
@@ -517,6 +530,7 @@ class VoiceListenThread(QThread):
         # 字符内）→ 也触发。修 Sir 23:58 实测 BUG："不是不是我说错了，是 stand down" 这种
         # 纠正模式：句首是否定词「不是」，真正意图在句末。短句 (≤ 26 字符) 强制句末检测；
         # 长句仍跳过避免误炸"I want to talk about stand down protocols"这类话题讨论。
+        # 🆕 [P5-fix37] PAUSE_ONLY 也不走此路径 (避免承前对话误判).
         if len(s_clean) <= 26:
             for sw in self.STRICT_STOP_WORDS:
                 if self._phrase_at_tail(sw.lower(), s, tail_chars=max(len(sw) + 6, 14)):
