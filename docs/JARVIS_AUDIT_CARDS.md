@@ -2205,3 +2205,302 @@ loop:
 
 ---
 
+## 批次 f: Proactive Care + Nudge + Conductor 10 模块
+
+> 详 `JARVIS_PROACTIVE_CARE_ENGINE.md`. 主动关怀引擎是 Sir 真意"懂我" 的体现.
+
+### #41 `jarvis_proactive_care.py` (1874 行) — **ProactiveCareEngine 主动关怀引擎**
+
+**职责**: 周期 tick 看 ConcernsLedger top concern + 时段 + Sir state, 决定要不要主动 nudge. 含 7 个 sub-class.
+
+**核心 class** (8 个):
+
+| L | item | 功能 |
+|---|---|---|
+| 215 | `CareSignal` / 225 `CareEvidence` | dataclass |
+| 248 | `CareConcernSensor` | sensor — 评 concern timing |
+| 597 | `CareSignalCollector` | 集合各 evidence |
+| 743 | `CareWindowGuard` | 时段 guard (e.g. 不要凌晨 nudge) |
+| 861 | `CareSubjectSelector` | 选哪个 concern surface |
+| 1038 | `CareSpeechSynth` | nudge 文案 (但已 publish-only, 不再 hard 生成) |
+| 1413 | **`ProactiveCareEngine`** | 主类 |
+
+**核心 functions** (top-level helpers):
+- `_compute_concern_timing_evidence` / `_load_sir_sleep_pattern` / `_load_cooldown_vocab` / etc. (~10 个)
+
+**数据**:
+- 读: `concerns.json` / `proactive_care_cooldown_vocab.json` / `sir_sleep_pattern_vocab.json` / SWM
+- SWM publish: `concern_active` / `proactive_nudge` / `nudge_window_advice`
+
+**上游**: `central_nerve.__init__` 启 daemon (β.2.8)
+
+**下游**:
+- ConcernsLedger / SWM / `chat_bypass.stream_nudge`
+
+**跟记忆的耦合**: ⭐⭐ 是 ConcernsLedger 的主消费者 (top concern surface)
+
+**已知问题**:
+- 1874 行 8 class — 可拆 (各 sub class 独立)
+- `CareSpeechSynth` 已 publish-only (β.5.0 三维耦合) 但 1038 行还有 — 待清
+
+**关联 design doc**: `JARVIS_PROACTIVE_CARE_ENGINE.md` (12KB)
+
+**重构含义**:
+- ⭐ 必拆 — 8 sub class 各独立
+- `CareSpeechSynth` 已退化, 应删
+
+**审计结论**: 1874 行核心 nudge 引擎. 拆 + 清理是任务.
+
+---
+
+### #42 `jarvis_smart_nudge.py` (1011 行) — **SmartNudge 哨兵 (11 类 nudge + type-mute + humor_memory)**
+
+**职责**: P0+19-6.e — 全 Jarvis 唯一允许"主动开口"的 sentinel. 11 类 nudge (commitment_check / sleep_due / morning_greet / return_greet / posture / hydrate / pomodoro / focus_check / break_remind / schedule_check / random_companion).
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 117 | `SmartNudgeSentinel` | 主类 (~900 行) |
+
+**数据**:
+- 读: `recent_nudges.jsonl` / SWM / ConcernsLedger / sir_status / habit_clock
+- 写: `recent_nudges.jsonl` (anti-repeat 历史)
+- SWM publish: `proactive_nudge`
+
+**上游**:
+- `central_nerve.__init__` 启 sentinel
+- `companion_center.start_all`
+
+**下游**: `chat_bypass.stream_nudge`
+
+**跟记忆的耦合**: ⭐ 跟 RecentNudgeMemory 配套, 跟 ConcernsLedger 同步
+
+**已知问题**:
+- 1011 行 1 class — 大
+- 11 类 nudge 各分支 hardcoded — 可 vocab 化
+
+**重构含义**: ⭐ 拆 11 类各 sub-method. 跟 ProactiveCare 是 2 种主动机制 (PC = 智能 / SN = 节奏)
+
+**审计结论**: 1011 行核心 nudge 模块.
+
+---
+
+### #43 `jarvis_recent_nudge_memory.py` (271 行) — **RecentNudgeMemory (P2-Gap12 通过去 nudge 记忆)**
+
+**职责**: P2-Gap12 — 防 30min 内同类 nudge 重复. 持久化 jsonl + decay daemon.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 42 | `NudgeRecord` | dataclass |
+| 85 | `RecentNudgeMemoryStore` | 主 store |
+
+**数据**: 读/写 `memory_pool/recent_nudges.jsonl`
+
+**上游**: SmartNudge / ProactiveCare / chat_bypass.stream_nudge
+
+**下游**: 无
+
+**跟记忆的耦合**: 间接
+
+**重构含义**: ⭐ 保留 — 防重复机制
+
+**审计结论**: 271 行实用 store.
+
+---
+
+### #44 `jarvis_nudge_coordination.py` (143 行) — **NudgeCoordination (β.5.0 三维耦合 sentinel 协调)**
+
+**职责**: P5-fixC — sentinel proactive nudge 协调. `should_yield_to_recent_proactive_nudge` 检测 30s 内已 nudge 过 → skip. publish/skip helper.
+
+**核心 functions** (无 class):
+
+| L | func | 功能 |
+|---|---|---|
+| 26 | `should_yield_to_recent_proactive_nudge` | 检测最近 nudge → skip |
+| 80 | `publish_proactive_nudge_fired` | publish 'proactive_nudge_fired' SWM |
+| 112 | `publish_proactive_nudge_skipped` | publish 'proactive_nudge_skipped' SWM |
+
+**数据**: SWM read/publish
+
+**上游**: SmartNudge / ProactiveCare 调
+
+**下游**: SWM bus
+
+**跟记忆的耦合**: 无
+
+**重构含义**: ⭐ 保留 — β.5.0 协调 helper
+
+**审计结论**: 143 行薄 helper.
+
+---
+
+### #45 `jarvis_concern_dampen.py` (170 行) — **CONCERN_DAMPEN tag parser**
+
+**职责**: P5-fix45 — 主脑 reply 主动 emit `<CONCERN_DAMPEN>{...}</CONCERN_DAMPEN>` tag 反讽降 concern severity. 比硬 dismiss 软.
+
+**核心 functions**:
+
+| L | func | 功能 |
+|---|---|---|
+| 61 | `ParsedDampen` (dataclass) | parse 结果 |
+| 77 | `parse_dampen_tags(reply)` | 抽 tag |
+| 99 | `apply_dampen(parsed, ledger)` | 改 concern severity |
+| 160 | `process_reply(reply, ledger)` | 主入口 |
+
+**数据**: 通过 ConcernsLedger.record_signal 写
+
+**上游**: chat_bypass.stream_chat 末尾
+
+**下游**: ConcernsLedger
+
+**跟记忆的耦合**: ⭐ 写 concerns severity
+
+**重构含义**: ⭐ 保留 — 主脑反讽机制
+
+**审计结论**: 170 行实用 parser.
+
+---
+
+### #46 `jarvis_concern_feedback.py` (251 行) — **ConcernFeedbackJudge (LLM 评 Sir 反馈 → severity_delta)**
+
+**职责**: P0+20-β.5.22-C — Sir 反馈 nudge 效果时 (e.g. "好的, 我去喝水了" / "别再提了"), LLM 评 severity_delta + optimal_timing → 写回 ConcernsLedger.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 38 | `ConcernFeedbackJudge` | 主类 |
+
+**核心 method**:
+- `judge_async(user_input, last_nudge_concern, callback)` — fire-and-forget
+- `_call_llm_judge` — Gemini-flash via OR
+- `record_user_feedback` — 写 ConcernsLedger.record_signal + publish 'sir_intent_progress_candidate'
+
+**数据**: 读 STM, 写 concerns.json, SWM publish
+
+**上游**: `worker.run` 在 nudge 后 Sir 反馈时调
+
+**下游**: ConcernsLedger + LLM + SWM
+
+**跟记忆的耦合**: ⭐ 写 concerns.severity (LLM 决策)
+
+**已知问题**:
+- LLM 决 severity_delta — 应 publish 给主脑自决 (但实际 LLM 已是 publish 候选)
+
+**重构含义**: ⭐ 保留 — 反馈学习机制
+
+**审计结论**: 251 行实用 judge.
+
+---
+
+### #47 `jarvis_concern_feedback_reflector.py` (282 行) — **ConcernFeedbackReflector (L7 LLM-propose)**
+
+**职责**: P0+20-β.5.23-B — daemon 看 ConcernFeedback 历史, propose 新 concern 关联 / vocab.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 45 | `ConcernFeedbackReflector` | 主 daemon |
+
+**数据**: 读 audit, 写 review queue
+
+**上游**: central_nerve daemon
+
+**下游**: LLM
+
+**跟记忆的耦合**: 间接
+
+**重构含义**: 保留 — L7 模式
+
+**审计结论**: 282 行 daemon.
+
+---
+
+### #48 `jarvis_concern_summon.py` (109 行) — **Concern Summon Detector (vocab loader)**
+
+**职责**: P5-Gap4-followup-vocab — 检测 Sir 主动召唤 concern (e.g. "你有没有 X concern" → top up that concern severity).
+
+**核心 functions**:
+
+| L | func | 功能 |
+|---|---|---|
+| 54 | `_load_from_disk` | vocab 加载 |
+| 78 | `load_active_keywords` | 获取激活 keywords |
+| 92 | `is_summoned(user_input, concern_id)` | 检测 |
+
+**数据**: 读 `concern_summon_vocab.json`
+
+**上游**: chat_bypass / preflight 调
+
+**下游**: ConcernsLedger (间接 — main caller 看 result top up severity)
+
+**跟记忆的耦合**: 间接
+
+**重构含义**: 保留
+
+**审计结论**: 109 行薄 detector.
+
+---
+
+### #49 `jarvis_conductor.py` (1256 行) — **Conductor (指挥官 — 多源融合 + LLM/规则决策)**
+
+**职责**: P0+19-6.b — Jarvis "指挥官" 大脑层. 融合 directive + 关键词 + LLM 决策, 决定每条 utterance 的 reaction 路径.
+
+**核心 class**:
+
+| L | item | 功能 |
+|---|---|---|
+| 104 | `Conductor` | 主类 (~1150 行) |
+
+**核心 method** (估计):
+- `decide_reaction(user_input, context)` — 主入口
+- `_apply_directives` / `_apply_keywords` / `_apply_llm`
+- `_dispatch` — 派发到 chat_bypass / SmartNudge / etc.
+
+**数据**: 读 directives + STM + concerns + sir_status, 写 SWM
+
+**上游**: `central_nerve.__init__` 实例化, worker 调
+
+**下游**: chat_bypass / SmartNudge / 各 sentinel
+
+**跟记忆的耦合**: ⭐ 读全 Jarvis 状态决策 reaction
+
+**已知问题**:
+- ⚠️ 1256 行 — 大
+- ⚠️ **跟 IntentResolver 概念重叠** — Conductor 是早期 (P0+19-6.b), IntentResolver 是新 (β.5.44). Phase B 必决议合并
+
+**重构含义**: ⭐⭐ 跟 IntentResolver 关系待清, 可能整合
+
+**审计结论**: 1256 行老指挥官. 跟 IntentResolver 关系是 refactor 重点.
+
+---
+
+### #50 `jarvis_curiosity.py` (148 行) — **Curiosity Ping (β.2.9.4 daemon D)**
+
+**职责**: β.2.9.4 — daemon 5min tick, 看 Sir 静默时间长 + 没新事件 → 偶尔主动问"忙啥呢" 类好奇心 ping.
+
+**核心 class + helpers**:
+
+| L | item | 功能 |
+|---|---|---|
+| 35 | `CuriosityDaemon` | 主类 |
+| 142 | `ensure_curiosity_daemon_started` | 单例启动 |
+
+**数据**: 读 sir_status + STM
+
+**上游**: central_nerve daemon
+
+**下游**: chat_bypass.stream_nudge
+
+**跟记忆的耦合**: 间接
+
+**重构含义**: ⭐ 保留 — 老友感真实需求
+
+**审计结论**: 148 行薄 daemon.
+
+---
+
