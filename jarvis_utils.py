@@ -1388,8 +1388,22 @@ class ConversationEventBus:
 
     def publish(self, etype: str, description: str,
                 ttl: float = None, source: str = 'unknown',
-                metadata: dict = None, salience: float = None) -> bool:
-        """投递一条事件。返回 True 表示已写入；False 表示被去重抑制。
+                metadata: dict = None, salience: float = None,
+                evidence_chain: list = None,
+                evidence_id: str = None):
+        """投递一条事件。
+
+        Returns:
+            [Reshape M1.2 / 2026-05-24] 返回 evidence_id (str) 表已写入,
+            None 表被去重抑制 / 参数无效.
+            Backward compat: 老 caller `if bus.publish(...)` 仍 work
+            ('evt_xxx' truthy / None falsy). 现有 caller 不破.
+
+        Args:
+            etype, description, ttl, source, metadata, salience: 老参数不变
+            evidence_chain: [M1] DAG 上游 evidence_id 列表 (可选)
+            evidence_id: [M1] 自定义 evidence_id (默认自动 gen)
+
         - description 自动裁到 300 字
         - 同 (etype, description[:60]) 8 秒内重复发布会被去重抑制
         - salience [0.0, 1.0]: 此事件的显著性 (越高越优先进 top_n).
@@ -1397,10 +1411,10 @@ class ConversationEventBus:
           准则 6.5: salience 是数据耦合维度, 给主脑判该事件多重要的 signal.
         """
         if not etype or not description:
-            return False
+            return None
         desc = str(description).strip()[:300]
         if not desc:
-            return False
+            return None
         if ttl is None:
             ttl = self.DEFAULT_TTL.get(etype, 180)
         if salience is None:
@@ -1410,12 +1424,21 @@ class ConversationEventBus:
         except (TypeError, ValueError):
             salience = 0.5
 
+        # [M1.2] gen evidence_id (lazy import 防 circular)
+        if evidence_id is None:
+            try:
+                from jarvis_lineage import EvidenceID
+                evidence_id = EvidenceID.new()
+            except Exception:
+                # lineage 模块不可用时也不破 publish (degrade gracefully)
+                evidence_id = None
+
         now = time.time()
         fp = (etype, desc[:60])
         with self._lock:
             last_ts = self._dedupe.get(fp, 0.0)
             if now - last_ts < self._dedupe_window:
-                return False
+                return None
             self._dedupe[fp] = now
             # 顺手清掉过期 dedupe（避免 dict 长大）
             if len(self._dedupe) > 200:
@@ -1430,8 +1453,31 @@ class ConversationEventBus:
                 'source': source or 'unknown',
                 'metadata': dict(metadata) if metadata else {},
                 'salience': salience,
+                'evidence_id': evidence_id,                           # [M1.2]
+                'evidence_chain': list(evidence_chain or []),         # [M1.2]
             })
-        return True
+
+        # [M1.2] 异步 record Evidence 到 LineageTracer (不阻塞主流)
+        if evidence_id is not None:
+            try:
+                from jarvis_lineage import get_default_tracer, Evidence
+                get_default_tracer().record_evidence(Evidence(
+                    evidence_id=evidence_id,
+                    timestamp=now,
+                    source_module=source or 'unknown',
+                    source_method='event_bus.publish',
+                    source_data_id=f'swm:{etype}',
+                    parent_evidence_ids=list(evidence_chain or []),
+                    raw_snapshot={
+                        'etype': etype,
+                        'description': desc[:200],  # 防巨大
+                        'salience': salience,
+                    },
+                ))
+            except Exception:
+                pass
+
+        return evidence_id
 
     def recent_events(self, within_seconds: float = None,
                       types: set = None) -> list:
