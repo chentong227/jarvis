@@ -210,11 +210,21 @@ class MemoryMutationGateway:
                          source.startswith('intent_resolver_revise'))
                     )
                     if _is_high_conf_fast_call and hasattr(profile, 'overwrite_field'):
-                        # 抽 top-level field (允许 'profile.X' / 'biographic.X' / 'sir.X' 前缀)
-                        _top_field = field_path.split('.')[-1] if '.' in field_path else field_path
+                        # 🆕 [P5-fix81 / 2026-05-23 22:05] BUG-X: 嵌套 path 不丢中间层
+                        # 老 split('.')[-1] 把 'profile.preferences.cup_ml' → 'cup_ml'
+                        # 丢了 'preferences' 中间层 → 不在 allowed → fallback audit only
+                        # → sir_profile.json 不真改. Sir 21:59 真测痛点根因.
+                        # 修法: 剥前缀 'profile.' / 'biographic.' / 'sir.' 后保留剩下 dot
+                        # path. e.g. 'profile.unit_preferences.cup_ml' → 'unit_preferences.cup_ml'.
+                        # overwrite_field 现支持嵌套写 (fix81).
+                        _path = field_path
+                        for _pfx in ('profile.', 'biographic.', 'sir.'):
+                            if _path.startswith(_pfx):
+                                _path = _path[len(_pfx):]
+                                break
                         try:
                             ow_ok, ow_msg, ow_old = profile.overwrite_field(
-                                field=_top_field,
+                                field=_path,
                                 new_value=new_value,
                                 source=source,
                                 turn_id=turn_id,
@@ -477,7 +487,170 @@ class MemoryMutationGateway:
         )
         self._write_receipt(receipt)
         self._publish_swm(receipt)
+
+        # 🆕 [P5-fix82-X / 2026-05-23 22:22] Sir 真意 "教一次, 多处同步"
+        # 治本 Sir 22:06 真测痛点: Sir 教 "今天血压咨询完成" → MemoryGateway 写
+        # ProfileCard.preferences.user_correction (audit), 但**Commitments table
+        # 老 id=20 description '明天血压咨询' deadline=今天 22:00 没改** → 22:00
+        # commitment_check fire → 主脑读老 description 又重复. 链路断在: 改 1 处
+        # source 没联动其他.
+        # 修法: ok 且 new_value 含完成语义 (vocab persisted) → 抽 keyword(s) →
+        # CommitmentWatcher.cancel_by_keyword (max_age 24h). 多处同步真治本.
+        if ok:
+            try:
+                self._maybe_cascade_completion(
+                    field_path, new_value, source, turn_id, nerve)
+            except Exception:
+                pass
+
         return receipt
+
+    def _maybe_cascade_completion(self, field_path, new_value, source, turn_id, nerve):
+        """🆕 [fix82-X] Sir 教 "X 完成" → 联动 Commitments cancel.
+
+        判定: new_value 含完成语义 (load vocab from completion_event_vocab.json,
+        seed defaults if missing). 抽 noun keyword → cw.cancel_by_keyword.
+
+        准则 6 三维耦合:
+        - 数据 publish SWM: publish 'completion_cascaded' event (主脑下轮 prompt 看)
+        - 决策让 LLM 做: 仅 cancel active commitments (不删 Hippocampus, 那是 LLM 抽)
+        - 配置持久化 + CLI: vocab 在 memory_pool/completion_event_vocab.json (准则 6)
+        """
+        nv_str = str(new_value or '').strip()
+        if not nv_str or len(nv_str) < 4:
+            return
+
+        # Load completion vocab (准则 6 持久化)
+        vocab = self._load_completion_vocab()
+        completion_kws = vocab.get('completion_keywords') or []
+        noun_extract_kws = vocab.get('noun_extract_keywords') or []
+
+        # 判定 new_value 含完成语义
+        nv_low = nv_str.lower()
+        has_completion = False
+        for ck in completion_kws:
+            if ck.lower() in nv_low:
+                has_completion = True
+                break
+        if not has_completion:
+            return
+
+        # 抽 noun keywords (从 vocab 找 noun + 邻近字符)
+        kws_found = set()
+        for nk in noun_extract_kws:
+            if nk.lower() in nv_low:
+                kws_found.add(nk)
+        if not kws_found:
+            return
+
+        # 调 CommitmentWatcher.cancel_by_keyword
+        cw = getattr(nerve, 'commitment_watcher', None) if nerve else None
+        if cw is None or not hasattr(cw, 'cancel_by_keyword'):
+            return
+        cancelled_total = 0
+        cancelled_details = []
+        for kw in list(kws_found)[:5]:  # cap 5 keywords
+            try:
+                n = cw.cancel_by_keyword(kw, max_age_seconds=86400.0)  # 24h
+                if n > 0:
+                    cancelled_total += n
+                    cancelled_details.append(f"'{kw}'×{n}")
+            except Exception:
+                continue
+
+        # 🆕 [fix82-X cascade step 2] 写 TaskMemories 'Completed: X' (Hippocampus)
+        # 让 list_recent_completed_events 能 hit → 主脑下轮 prompt [RECENT COMPLETED]
+        # 看到 evidence. 即便没 cancel commitment 也写 (Sir 可能没用具体 cmd 注册).
+        try:
+            hippo_ce = getattr(nerve, 'hippocampus', None) if nerve else None
+            if hippo_ce is not None and hasattr(hippo_ce, 'add_completed_event'):
+                hippo_ce.add_completed_event(
+                    summary=nv_str[:200],
+                    keywords=list(kws_found),
+                    source=f'cascade_completion:{source}',
+                    turn_id=turn_id,
+                )
+        except Exception:
+            pass
+
+        if cancelled_total > 0:
+            # bg_log + publish SWM 'completion_cascaded'
+            try:
+                from jarvis_utils import bg_log as _x_bg
+                _x_bg(
+                    f"🔗 [fix82-X Completion Cascade] "
+                    f"'{nv_str[:60]}' → cancelled {cancelled_total} commitment(s): "
+                    f"{', '.join(cancelled_details)}"
+                )
+            except Exception:
+                pass
+            try:
+                from jarvis_utils import get_event_bus as _x_geb
+                _bus = _x_geb()
+                if _bus is not None:
+                    _bus.publish(
+                        etype='completion_cascaded',
+                        description=(
+                            f"Sir 教完成 '{nv_str[:50]}' → 联动 cancel "
+                            f"{cancelled_total} commitment(s)"
+                        ),
+                        source='MemoryGateway.cascade_completion',
+                        salience=0.75,
+                        metadata={
+                            'new_value': nv_str[:200],
+                            'keywords': list(kws_found),
+                            'cancelled_n': cancelled_total,
+                            'turn_id': turn_id,
+                            'mutation_source': source,
+                        },
+                    )
+            except Exception:
+                pass
+
+    def _load_completion_vocab(self):
+        """🆕 [fix82-X] Load completion vocab. Seed defaults if missing.
+
+        准则 6: 持久化到 memory_pool/completion_event_vocab.json, CLI 可改.
+        """
+        vocab_path = os.path.join('memory_pool', 'completion_event_vocab.json')
+        if os.path.exists(vocab_path):
+            try:
+                with open(vocab_path, 'r', encoding='utf-8') as f:
+                    return json.load(f) or {}
+            except Exception:
+                pass
+        # Seed defaults
+        seed = {
+            '_meta': {
+                'description': 'fix82-X completion event vocab — Sir 教 "X 已完成 / 今天去过了 / done" 触发 Commitments cancel',
+                'created_at': time.time(),
+                'created_by': 'fix82-X seed',
+            },
+            'completion_keywords': [
+                # 中文
+                '已完成', '完成了', '去过了', '已去', '做完了', '搞定',
+                '弄完', '已经做', '已经去', '已经完成', '今天去过',
+                'completed', 'done', 'finished', 'taken care of',
+                'already did', 'already done', 'already went',
+            ],
+            'noun_extract_keywords': [
+                # 常见 noun (Sir 实测 / Hippocampus user_intent 抽过的)
+                '血压', '血压咨询', '咨询', '体检', '吃药', '复诊', '挂号',
+                '面试', 'KTV', '聚会', '理发', '驾照', '科目一', '科目二',
+                '快递', '取件', '健身', '游泳', '跑步', '锻炼',
+                'blood pressure', 'consultation', 'appointment', 'checkup',
+                'medication', 'interview', 'haircut',
+            ],
+        }
+        try:
+            os.makedirs(os.path.dirname(vocab_path), exist_ok=True)
+            tmp = vocab_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(seed, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, vocab_path)
+        except Exception:
+            pass
+        return seed
 
     def recent_receipts(self, max_n: int = 20,
                          within_seconds: Optional[float] = None) -> list:

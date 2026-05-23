@@ -2310,6 +2310,35 @@ class CentralNerve:
         except Exception:
             pass
 
+        # 🆕 [P5-fix82-X step 2 / 2026-05-23 22:25] [RECENT COMPLETED] block
+        # Sir 真意 "教一次, 多处同步". Hippocampus TaskMemories.user_intent 已抽
+        # 'Completed:%' 事件, 但主脑 prompt 不直接看 (只在 search_memory keyword
+        # 命中时 retrieve). 主脑 22:05 commitment_check 时看不到 → 重复说"明天血压
+        # 咨询" (而实际今天已完成).
+        # 修法: 加 RECENT COMPLETED prompt block 近 7 天 Completed: 事件给主脑.
+        # 主脑下轮看到证据不再误报已完成的事.
+        try:
+            hippo_rce = getattr(self, 'hippocampus', None)
+            if hippo_rce is not None and hasattr(hippo_rce, 'list_recent_completed_events'):
+                _rce_events = hippo_rce.list_recent_completed_events(
+                    days_back=7, max_n=15
+                ) or []
+                if _rce_events:
+                    _rce_lines = [
+                        '[RECENT COMPLETED — Sir 近 7 天已完成的事 (Hippocampus 抽)]',
+                        '  ⚠️ 这些事 Sir 已经做完了. 主脑**不要**再说 "明天 X" / '
+                        '"准备 X" / "我帮你提醒 X" (X 在这里). 直接 ack 已完成或转新话题.',
+                        '',
+                    ]
+                    for e in _rce_events[:10]:
+                        _rce_lines.append(
+                            f"  ✅ {e.get('intent', '?')[:60]} "
+                            f"({e.get('age', '?')} / {e.get('iso', '?')})"
+                        )
+                    _parts.append('\n'.join(_rce_lines))
+        except Exception:
+            pass
+
         # 🆕 [β.5.46-fix13 Fix-3 / 2026-05-22] [WATCH TASK FIRED] block
         # Sir 22:18 真测痛点: Sir 说"等导出完成提醒" 但没机制兑现. 治本: WatchTask
         # 抽象 + ScreenVision daemon judge. judge fired 后 publish 'watch_task_fired'

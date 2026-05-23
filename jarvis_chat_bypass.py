@@ -3604,14 +3604,69 @@ Spoken English:"""
                                     hand_inst = hand_class(self.jarvis.gemini_key)
                                 except TypeError:
                                     hand_inst = hand_class()
-                                    
-                                from jarvis_blood import Action
-                                import contextlib
-                                hand_capture = io.StringIO()
-                                with contextlib.redirect_stdout(hand_capture):
-                                    exec_res = hand_inst.execute(Action(command=command, params=params))
-                                tool_result = exec_res.msg
-                                
+
+                                # 🆕 [P5-fix82-Z / 2026-05-23 22:21] Sir 22:11 真测痛点:
+                                # 主脑 emit memory_hands.add_reminder 时, Gatekeeper 并发已
+                                # 注册 commitment (deadline + description). 主脑 emit 重复 +
+                                # 缺 intent 参数 → "❌ 缺少 intent 参数" → 熔断 → 罐头
+                                # "I couldn't" → Sir 误以为没注册 (实际真注册了).
+                                # 修法: 检测同 turn 内 Gatekeeper 已 publish
+                                # 'sir_intent_deadline_candidate' SWM event → skip 主脑
+                                # FAST_CALL, 改 tool_result 为 Gatekeeper 已注册. 主脑
+                                # continuation 看 result 自然 ack 真注册了, 不再撒谎.
+                                _gk_skip_msg = None
+                                if (organ_name in ('memory_hands', 'memory')
+                                        and command == 'add_reminder'):
+                                    try:
+                                        _bus_gk = getattr(getattr(self, 'jarvis', None),
+                                                          'event_bus', None)
+                                        if _bus_gk is not None and hasattr(_bus_gk, 'recent_events'):
+                                            _gk_evts = _bus_gk.recent_events(
+                                                within_seconds=10.0,
+                                                types={'sir_intent_deadline_candidate'},
+                                            ) or []
+                                            _gk_hit = None
+                                            for _e in reversed(_gk_evts):
+                                                _src = (_e.get('source') or '').lower()
+                                                if 'commitmentwatcher' in _src:
+                                                    _gk_hit = _e
+                                                    break
+                                            if _gk_hit is not None:
+                                                _gk_meta = _gk_hit.get('metadata') or {}
+                                                _gk_judg = _gk_meta.get('judgement') or {}
+                                                _gk_desc = (_gk_judg.get('description') or '')[:60]
+                                                _gk_dl = _gk_judg.get('deadline_str') or '?'
+                                                _gk_db = _gk_judg.get('db_id') or '?'
+                                                _gk_skip_msg = (
+                                                    f"Gatekeeper 已并发注册 commitment "
+                                                    f"'{_gk_desc}' @ {_gk_dl} (DB#{_gk_db}). "
+                                                    f"系统层 Commitments table 已存, deadline 到时自动 fire. "
+                                                    f"无需重复 add_reminder."
+                                                )
+                                                try:
+                                                    from jarvis_utils import bg_log as _z_bg
+                                                    _z_bg(
+                                                        f"🔀 [fix82-Z] skip dup add_reminder, "
+                                                        f"Gatekeeper 已注册 (DB#{_gk_db})"
+                                                    )
+                                                except Exception:
+                                                    pass
+                                    except Exception:
+                                        _gk_skip_msg = None
+
+                                if _gk_skip_msg is not None:
+                                    # Fake success exec_res — 不走真 hand
+                                    from jarvis_blood import ExecutionResult
+                                    exec_res = ExecutionResult(success=True, msg=_gk_skip_msg)
+                                    tool_result = _gk_skip_msg
+                                else:
+                                    from jarvis_blood import Action
+                                    import contextlib
+                                    hand_capture = io.StringIO()
+                                    with contextlib.redirect_stdout(hand_capture):
+                                        exec_res = hand_inst.execute(Action(command=command, params=params))
+                                    tool_result = exec_res.msg
+
                                 if exec_res.success:
                                     _tool_results.append(f"✅ {organ_name}.{command}: {tool_result[:80]}")
                                     _consecutive_tool_fail = 0  # 成功重置熔断计数

@@ -38,8 +38,13 @@ from typing import Any, Dict, List, Optional
 _DEFAULT_REVIEW_PATH = os.path.join('memory_pool', 'profile_review.json')
 _DEFAULT_CORRECTIONS_PATH = os.path.join('memory_pool', 'profile_corrections.jsonl')
 _DEFAULT_PROFILE_PATH = os.path.join('jarvis_config', 'sir_profile.json')
-_DEFAULT_TICK_INTERVAL_S = 86400.0  # 24h
-_DEFAULT_MIN_CORRECTIONS = 5  # 累积 5 条 corrections 才 propose
+# 🆕 [P5-fix81 / 2026-05-23 22:05] BUG-X Plan B — ProfileReflector 实时化
+# Sir 真意 "我教过的东西除非重新修正不然不用改" — 24h tick 太慢, 5 阈值
+# 太高. Sir 当晚教 cup_ml 24h 后才 propose 已经丢窗口. 修法: 5min + 1 阈值,
+# 高置信 (≥0.85, fast_call_mutation/sir_cli) 直接 overwrite_field 跳 review.
+_DEFAULT_TICK_INTERVAL_S = 300.0  # 5min (was 24h)
+_DEFAULT_MIN_CORRECTIONS = 1  # 累积 1 条就 propose (was 5)
+_DEFAULT_AUTO_APPLY_CONF = 0.85  # 高置信跳 review 直接写
 
 
 @dataclass

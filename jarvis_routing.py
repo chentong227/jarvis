@@ -873,14 +873,21 @@ class ProfileCard:
 
     def overwrite_field(self, field: str, new_value, source: str = 'fast_call_mutation',
                           turn_id: str = '', reason: str = '') -> tuple:
-        """真覆写 sir_profile.json 的 top-level field.
+        """真覆写 sir_profile.json 的 field. 支持 top-level + 嵌套 dot path.
 
         Args:
-          field: top-level field name (must be in _OVERWRITE_ALLOWED_FIELDS)
+          field: 'top_field' 或 'top_field.sub' 嵌套 (e.g. 'unit_preferences.cup_ml')
           new_value: 新值 (任意 JSON-serializable)
           source: caller 标识 ('fast_call_mutation' / 'sir_cli' / 'intent_resolver_revise')
           turn_id: trace id
           reason: Sir 原话 / 主脑解读
+
+        🆕 [P5-fix81 / 2026-05-23 22:05] BUG-X: schema fragmentation 修
+          Sir 21:59 真测痛点: 主脑 emit field_path='profile.preferences.cup_ml'
+          → gateway split('.')[-1] = 'cup_ml' → cup_ml 不在 allowed → fallback
+          audit only → sir_profile.json 没真改. 长期 cup_ml 不持久化.
+          修法: 支持嵌套 path 'unit_preferences.cup_ml', 顶层 + sub-key 都 update.
+          'preferences.X' alias 自动映射到 'unit_preferences.X' (主脑现状不可靠).
 
         Returns:
           (ok: bool, message: str, old_value: any)
@@ -889,9 +896,24 @@ class ProfileCard:
         # Schema 保护
         if not field:
             return False, 'empty field', None
-        if field not in self._OVERWRITE_ALLOWED_FIELDS:
+
+        # 🆕 [fix81] preferences.X / preferences/X → unit_preferences.X alias
+        # Sir 21:59 真测主脑用 preferences 不是 unit_preferences. 自动 normalize.
+        if field.startswith('preferences.'):
+            field = 'unit_preferences.' + field[len('preferences.'):]
+
+        # 拆嵌套
+        if '.' in field:
+            parts = field.split('.', 1)
+            top_field = parts[0]
+            sub_path = parts[1]  # 可能是 'cup_ml' 或更深 'a.b'
+        else:
+            top_field = field
+            sub_path = None
+
+        if top_field not in self._OVERWRITE_ALLOWED_FIELDS:
             return (False,
-                      f"field '{field}' not in allowed list "
+                      f"top field '{top_field}' not in allowed list "
                       f"(allowed: {sorted(self._OVERWRITE_ALLOWED_FIELDS)[:5]}...)",
                       None)
         profile_path = os.path.join('jarvis_config', 'sir_profile.json')
@@ -907,13 +929,38 @@ class ProfileCard:
         if not isinstance(profile, dict):
             return False, 'profile not a dict', None
 
-        old_value = profile.get(field)
-        # No-op check (老值跟新值相同)
-        if old_value == new_value:
-            return True, f'no-op (field {field} already {str(new_value)[:40]})', old_value
-
-        # Atomic write: tmp + rename
-        profile[field] = new_value
+        # 🆕 [fix81] 嵌套写
+        if sub_path:
+            # 取/初始化 top_field 为 dict
+            top_val = profile.get(top_field)
+            if top_val is None or not isinstance(top_val, dict):
+                top_val = {}
+                profile[top_field] = top_val
+            # 多级 sub_path 支持 (e.g. 'a.b.c')
+            sp_parts = sub_path.split('.')
+            cursor = top_val
+            for sp in sp_parts[:-1]:
+                if sp not in cursor or not isinstance(cursor[sp], dict):
+                    cursor[sp] = {}
+                cursor = cursor[sp]
+            old_value = cursor.get(sp_parts[-1])
+            # No-op
+            if old_value == new_value:
+                return True, f'no-op ({field} already {str(new_value)[:40]})', old_value
+            # Type coerce: cup_ml=300 主脑可能 emit "300" str → 自动转 int
+            try:
+                if isinstance(old_value, (int, float)) and isinstance(new_value, str):
+                    new_value = type(old_value)(new_value) if new_value.replace('.', '', 1).isdigit() else new_value
+                elif old_value is None and isinstance(new_value, str) and new_value.isdigit():
+                    new_value = int(new_value)
+            except Exception:
+                pass
+            cursor[sp_parts[-1]] = new_value
+        else:
+            old_value = profile.get(top_field)
+            if old_value == new_value:
+                return True, f'no-op (field {top_field} already {str(new_value)[:40]})', old_value
+            profile[top_field] = new_value
         try:
             tmp_path = profile_path + '.tmp'
             with open(tmp_path, 'w', encoding='utf-8') as f:

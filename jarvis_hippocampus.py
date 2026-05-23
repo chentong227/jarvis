@@ -352,6 +352,109 @@ class Hippocampus:
         except Exception:
             return False
 
+    def add_completed_event(self, summary: str, keywords: list = None,
+                              source: str = 'cascade_completion',
+                              turn_id: str = '') -> int:
+        """🆕 [P5-fix82-X / 2026-05-23 22:27] Sir 教 "X 完成" → 写 TaskMemories.
+
+        让 list_recent_completed_events 能 hit. 不调 embed (避免 quota), 仅 schema 写.
+        user_intent 字段 = 'Completed: <summary>' (统一前缀 list 函数能 LIKE 抓).
+        """
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            import json as _json
+            entities = {
+                'keywords': keywords or [],
+                'source': source,
+                'turn_id': turn_id,
+            }
+            cursor.execute(
+                'INSERT INTO TaskMemories '
+                '(timestamp, environment, user_intent, macro_goal, '
+                ' execution_summary, raw_actions, semantic_embedding, '
+                ' is_deleted, memory_type, entities_json, is_future_task, trigger_time) '
+                'VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, 0, 0)',
+                (time.time(), source, f'Completed: {summary[:120]}',
+                 'sir-taught completion', summary[:300], '[]',
+                 'completed_event', _json.dumps(entities, ensure_ascii=False)),
+            )
+            rowid = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            try:
+                from jarvis_utils import bg_log as _ce_bg
+                _ce_bg(
+                    f"📝 [fix82-X CompletedEvent] TaskMemories#{rowid} "
+                    f"'Completed: {summary[:50]}'"
+                )
+            except Exception:
+                pass
+            return rowid
+        except Exception as _e:
+            try:
+                from jarvis_utils import bg_log as _ce_bg
+                _ce_bg(f"⚠️ [fix82-X CompletedEvent] insert fail: {_e}")
+            except Exception:
+                pass
+            return 0
+
+    def list_recent_completed_events(self, days_back: int = 7, max_n: int = 20) -> list:
+        """🆕 [P5-fix82-X / 2026-05-23 22:25] Sir 真意 "教一次, 多处同步".
+
+        抽 TaskMemories.user_intent LIKE 'Completed:%' 近 N 天 → 给主脑 prompt
+        block. 主脑下轮看到 "今天血压咨询 ✓" 不再误报 "明天血压咨询".
+
+        Returns: list of dict {id, intent, timestamp_iso, time_ago_str}
+                sorted by timestamp DESC.
+        """
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            min_ts = time.time() - days_back * 86400.0
+            cursor.execute(
+                "SELECT id, user_intent, timestamp FROM TaskMemories "
+                "WHERE is_deleted = 0 "
+                "AND (user_intent LIKE 'Completed:%' OR user_intent LIKE 'completed:%') "
+                "AND timestamp > ? "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (min_ts, max_n),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            out = []
+            now_ts = time.time()
+            for rid, intent, ts in rows:
+                # 时间差
+                try:
+                    ts_f = float(ts)
+                    age_s = now_ts - ts_f
+                    if age_s < 3600:
+                        age = f"{int(age_s / 60)}分钟前"
+                    elif age_s < 86400:
+                        age = f"{int(age_s / 3600)}小时前"
+                    else:
+                        age = f"{int(age_s / 86400)}天前"
+                    iso = time.strftime('%Y-%m-%d %H:%M', time.localtime(ts_f))
+                except Exception:
+                    age = '?'
+                    iso = '?'
+                # 去掉 'Completed:' 前缀
+                clean = (intent or '').strip()
+                for p in ('Completed:', 'completed:'):
+                    if clean.startswith(p):
+                        clean = clean[len(p):].strip()
+                        break
+                out.append({
+                    'id': rid,
+                    'intent': clean,
+                    'iso': iso,
+                    'age': age,
+                })
+            return out
+        except Exception:
+            return []
+
     def load_active_commitments(self, max_age_hours: float = 48.0) -> list:
         """加载所有未删除/未 nudged 的 commitment（用于 CW 启动时反查）。
         过滤过老的（>48h 老的 deadline）避免拉回过期数据。"""

@@ -325,11 +325,48 @@ class ScreenVisionEngine:
     # ---- Capture (复用 chat_bypass 现有 pattern) ----
 
     def _capture_screen_jpeg(self) -> Optional[bytes]:
-        """截图 + JPEG 压缩 (复用 chat_bypass line 1534-1538 pattern)."""
+        """截图 + JPEG 压缩 + 鼠标位置标记.
+
+        🆕 [P5-fix81 BUG-Y / 2026-05-23 22:05] Sir 22:04 真测痛点:
+          Sir "看一下我鼠标的这个位置" → 主脑没鼠标位置 evidence → 瞎猜.
+          修法: 截图时拍 cursor_pos (win32api), 在 thumbnail 上画红圈标记,
+          + Vision LLM prompt 注入坐标 → LLM 一眼看到 Sir 指啥.
+        """
         try:
-            from PIL import ImageGrab
+            from PIL import ImageGrab, ImageDraw
             img = ImageGrab.grab()
+            full_w, full_h = img.size
+            # 拍鼠标位置 (绝对坐标)
+            cursor_xy = None
+            try:
+                import win32api
+                cursor_xy = win32api.GetCursorPos()
+            except Exception:
+                pass
             img.thumbnail((JPEG_THUMB_W, JPEG_THUMB_H))
+            thumb_w, thumb_h = img.size
+            # 等比缩放 cursor 到 thumb 坐标
+            self._last_cursor_thumb_xy = None
+            if cursor_xy is not None and full_w > 0 and full_h > 0:
+                scale_x = thumb_w / full_w
+                scale_y = thumb_h / full_h
+                tx = int(cursor_xy[0] * scale_x)
+                ty = int(cursor_xy[1] * scale_y)
+                # 画红圈标记 (半径 20px, 2 圈 outer+inner 对比)
+                try:
+                    draw = ImageDraw.Draw(img)
+                    r = 22
+                    draw.ellipse((tx - r, ty - r, tx + r, ty + r),
+                                  outline=(255, 50, 50), width=3)
+                    r2 = 10
+                    draw.ellipse((tx - r2, ty - r2, tx + r2, ty + r2),
+                                  outline=(255, 255, 50), width=2)
+                    # 加 "MOUSE" 标
+                    draw.text((tx + r + 2, ty - 8), 'MOUSE',
+                                fill=(255, 50, 50))
+                except Exception:
+                    pass
+                self._last_cursor_thumb_xy = (tx, ty, thumb_w, thumb_h)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=JPEG_QUALITY)
             return buf.getvalue()
