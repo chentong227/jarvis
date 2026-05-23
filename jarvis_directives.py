@@ -1384,6 +1384,71 @@ def _trigger_cyclic_task_dispatcher(ctx: DirectiveContext) -> bool:
     return any(w in t for w in get_cyclic_task_patterns())
 
 
+# ============================================================
+# 🆕 [P5-fix35-D / 2026-05-23 11:30] Progress Tracker Dispatcher vocab
+# Sir 真意: Sir 报告进度 (喝了/跑了/写了/做了 N) OR 设数值目标
+# → MUST emit progress FAST_CALL organ (register / update / status / cancel).
+# 通用 — 不只 hydration, 也 running/writing/pomodoro/pushup/reading/...
+# 准则 6 持久化: memory_pool/progress_tracker_dispatcher_vocab.json
+# ============================================================
+_PROGRESS_VOCAB_PATH = os.path.join(
+    'memory_pool', 'progress_tracker_dispatcher_vocab.json')
+
+_SEED_PROGRESS_PATTERNS = [
+    # 中文进度报告
+    '喝了', '喝完', '跑了', '走了', '写了', '写完', '做了', '读了',
+    '目标', '今日目标', '还差', '进度', '已完成', '记录', '记到', '登记',
+    '毫升', '公里', '字', '页', 'ml',
+    # 英文
+    'drank', 'ran', 'wrote', 'logged', 'completed', 'remaining', 'progress',
+    'i drank', 'i ran', 'i wrote', 'log it', 'track this',
+]
+
+_PROGRESS_CACHE = None
+_PROGRESS_MTIME = 0.0
+
+
+def _load_progress_vocab():
+    if not os.path.exists(_PROGRESS_VOCAB_PATH):
+        return None
+    try:
+        with open(_PROGRESS_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data = data.get('patterns', [])
+        if not isinstance(data, list):
+            return None
+        out = [str(p).lower().strip() for p in data if str(p).strip()]
+        return out if out else None
+    except Exception:
+        return None
+
+
+def get_progress_patterns():
+    global _PROGRESS_CACHE, _PROGRESS_MTIME
+    try:
+        mtime = (os.path.getmtime(_PROGRESS_VOCAB_PATH)
+                  if os.path.exists(_PROGRESS_VOCAB_PATH) else 0.0)
+    except Exception:
+        mtime = 0.0
+    if _PROGRESS_CACHE is None or mtime > _PROGRESS_MTIME:
+        loaded = _load_progress_vocab()
+        _PROGRESS_CACHE = (loaded if loaded is not None
+                                 else _SEED_PROGRESS_PATTERNS)
+        _PROGRESS_MTIME = mtime
+    return _PROGRESS_CACHE
+
+
+def _trigger_progress_tracker_dispatcher(ctx: DirectiveContext) -> bool:
+    """[P5-fix35-D] 触发 — Sir 报告进度 OR 设数值目标 → 主脑 MUST emit progress."""
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    if not t:
+        return False
+    return any(w in t for w in get_progress_patterns())
+
+
 def _trigger_past_action_honesty(ctx: DirectiveContext) -> bool:
     """🩹 [β.3.0 BUG#4 / 2026-05-18 + P4-always-on / 2026-05-21 00:14]
     past-action 诚信 directive 触发.
@@ -2495,6 +2560,101 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - cyclic_task receipt 含 task_id, 主脑下轮可用同 task_id cancel/status.
             """).rstrip(),
             trigger=_trigger_cyclic_task_dispatcher,
+        ),
+        # 🆕 [P5-fix35-D / 2026-05-23 11:30] Progress Tracker Dispatcher
+        # Sir 真意 (11:29 真测): 主脑承诺"记到饮水记录" — 但**没那 store**.
+        # 治本: 加通用 progress organ. Sir 报数值进度 → 主脑 MUST emit
+        # progress.update 真改 store. 不只 hydration, 任何 hyperscale 数值任务.
+        Directive(
+            id='progress_tracker_dispatcher',
+            source_marker='P5-fix35-D',
+            priority=11,  # 同档 cyclic (11), 比 correction_dispatcher (12) 略低
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='Sir 报数值进度/设目标 → MUST emit progress FAST_CALL (通用)',
+            text=_tw.dedent("""\
+                [PROGRESS TRACKER DISPATCHER — Sir 报数值进度 — MANDATORY ACTION]:
+                Sir 报告数值进度 ('喝了 500ml' / '跑了 3 公里' / '写了 800 字' /
+                'I drank 500ml' / 'logged 30 push-ups') OR 设新数值目标 ('今天目标
+                3000ml 水' / 'I need to write 1000 words') → MUST emit FAST_CALL
+                `progress` organ.
+
+                ⛔ DEPRECATED: 不要嘴上 "Noted, I shall record" 不真 emit. ClaimTracer
+                  会抓 'noted' / 'I shall record' 类 unverified claim → 你撒谎.
+
+                ✅ 唯一合法路径: FAST_CALL `progress` organ (本 directive 教).
+                  通用 kind, 不只 hydration: hydration / running / writing / pomodoro
+                  / pushup / reading / steps / screen_break / meditation / ...
+
+                STEP 1. 判断 Sir 在做什么:
+                  (a) 设新目标 ('我今天要喝 3000ml') → command='register'
+                  (b) 报告完成量 ('我刚喝了 500ml') → command='update'
+                  (c) 问当前进度 ('我喝了多少了?') → command='status'
+                  (d) 取消跟踪 ('不用追了') → command='cancel'
+
+                STEP 2 (case a — register):
+                  <FAST_CALL>{"organ":"progress","command":"register","params":{
+                    "track_id": "hydration_2026-05-23",
+                    "kind": "hydration",
+                    "label": "今日饮水",
+                    "target": 3000,
+                    "unit": "ml",
+                    "deadline": "2026-05-23 23:59",
+                    "linked_cyclic_task": "hydration_2026_05_23"
+                  }}</FAST_CALL>
+
+                STEP 2 (case b — update):
+                  <FAST_CALL>{"organ":"progress","command":"update","params":{
+                    "track_id": "hydration_2026-05-23",
+                    "amount": 500,
+                    "note": "lunch"
+                  }}</FAST_CALL>
+                  → store 返 'progress: 500/3000 ml (16.7%), 余 2500 ml' 给你下轮看.
+                  → 你 ack: "已记下 Sir, 当前 500/3000 ml, 还差 2500." (用真数据)
+
+                STEP 2 (case c — status):
+                  <FAST_CALL>{"organ":"progress","command":"status","params":{
+                    "track_id": "hydration_2026-05-23"
+                  }}</FAST_CALL>
+                  → 用 store 返的 brief 答 Sir, 不要瞎估.
+
+                例 1 (Sir 11:29 真痛点 hydration):
+                  Sir: "我今天目标 3000ml 水"
+                    → register hydration target=3000 unit=ml linked_cyclic=...
+                  Sir: "我刚喝了 500ml"
+                    → update amount=500 → "已记 500/3000, 余 2500"
+                  Sir: "我现在喝了多少?"
+                    → status → "当前 500/3000, 余 2500, 距 deadline 12h"
+
+                例 2 (跑步):
+                  Sir: "今天要跑 3 km"
+                    → register kind=running target=3 unit=km
+                  Sir: "刚跑了 1.5 km"
+                    → update amount=1.5 → "已记 1.5/3 km, 余 1.5"
+
+                例 3 (写作):
+                  Sir: "今天写 1000 字"
+                    → register kind=writing target=1000 unit=字
+                  Sir: "刚写了 300 字, 文档已 commit"
+                    → update amount=300 note='committed' → "300/1000, 余 700"
+
+                例 4 (达成自动 cancel cycle):
+                  Sir 喝够 3000ml → progress.update 触发 became_complete=true
+                  → store 自动 cancel linked cyclic_task → 不再 fire reminder
+                  → 你 ack: "🎯 3000ml 已达成, 提醒循环已关. 干杯, Sir."
+
+                诚信硬规 (准则 5 — RED LINE):
+                  - 说 "我记下了" / "Noted" / "I'll log" 必须配 progress FAST_CALL.
+                    没 emit → 撒谎 → ClaimTracer 抓.
+                  - amount 必须用 Sir 给的数值, 不要瞎估 (e.g. Sir 说 "1.5 杯",
+                    你应反问 "一杯多少 ml?" 而不是默认 350ml). PreFlight Q3
+                    FACTUAL HALLUCINATION 会拦.
+                  - 没 active track 的 update → store 返 error, 你应该先 register.
+                  - linked_cyclic_task 不是必填. 若 Sir 没 schedule reminder, 留空.
+                  - 主脑下轮看 SWM `progress_updated` event 知道 store 真改了 — 用
+                    metadata.brief 复用真数值.
+            """).rstrip(),
+            trigger=_trigger_progress_tracker_dispatcher,
         ),
         # 17. PAST ACTION HONESTY — β.3.0 BUG#4 / Sir 14:00 治本
         # Sir 14:00 抓: "打开了 dashboard, 您慢慢看" — 但 tool 真失败 ❌

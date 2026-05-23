@@ -1900,6 +1900,95 @@ Spoken English:"""
                 return (f"❌ cyclic_task: 未知指令 {command} "
                           f"(支持 register / cancel / list / status)")
 
+        # 🆕 [P5-fix35-D / 2026-05-23] Progress Tracker organ — 通用数值进度跟踪
+        # Sir 11:29 真测痛点: 主脑承诺"记到饮水记录" — 系统没真 store. 治本: 加这个.
+        # 通用 (hydration/running/writing/pomodoro/...), 联动 cyclic_task (满自动 cancel cycle).
+        if organ_name == "progress":
+            try:
+                from jarvis_progress_tracker import get_default_store as _get_pt_store
+                store = _get_pt_store()
+            except Exception as _pe:
+                return f"❌ progress: store 不可用 ({_pe})"
+
+            if command == 'register':
+                track_id = (params.get('track_id') or '').strip()
+                kind = (params.get('kind') or '').strip()
+                label = (params.get('label') or '')[:200]
+                target = params.get('target', 0)
+                unit = (params.get('unit') or '')[:30]
+                deadline = (params.get('deadline') or '')[:30]
+                linked = (params.get('linked_cyclic_task') or '')[:80]
+                if not track_id:
+                    track_id = f"{kind or 'track'}_{int(time.time())}"
+                r = store.register(
+                    track_id=track_id, kind=kind, label=label,
+                    target=target, unit=unit, deadline=deadline,
+                    linked_cyclic_task=linked, created_by='main_brain',
+                )
+                if not r.get('ok'):
+                    return f"❌ progress.register fail: {r.get('error')}"
+                return (f"✅ progress.register: track_id={r['track_id']} kind={kind} "
+                          f"target={r['target']}{unit}"
+                          + (f" linked_cyclic={linked}" if linked else ""))
+
+            elif command == 'update':
+                track_id = (params.get('track_id') or '').strip()
+                amount = params.get('amount', 0)
+                note = (params.get('note') or '')[:200]
+                if not track_id:
+                    return "❌ progress.update: missing track_id"
+                r = store.update(track_id=track_id, amount=amount,
+                                   note=note, source='main_brain')
+                if not r.get('ok'):
+                    return f"❌ progress.update fail: {r.get('error')}"
+                msg = f"✅ progress.update: {r['brief']}"
+                if r.get('became_complete'):
+                    msg += f" 🎯 已达成!"
+                    if r.get('cancelled_linked_cycle'):
+                        msg += f" (linked cycle '{r['cancelled_linked_cycle']}' 已自动 cancel)"
+                return msg
+
+            elif command == 'status':
+                track_id = (params.get('track_id') or '').strip()
+                if not track_id:
+                    return "❌ progress.status: missing track_id"
+                r = store.status(track_id)
+                if not r.get('ok'):
+                    return f"❌ progress.status: {r.get('error')}"
+                lines = [
+                    f"📊 progress.status '{track_id}':",
+                    f"  kind: {r['kind']}  label: {r['label'] or '(no label)'}",
+                    f"  state: {r['state']}",
+                    f"  brief: {r['brief']}",
+                    f"  deadline: {r['deadline_iso'] or '(none)'}",
+                    f"  linked_cyclic: {r['linked_cyclic_task'] or '(none)'}",
+                    f"  history: {r['history_n']} entries",
+                ]
+                return '\n'.join(lines)
+
+            elif command == 'cancel':
+                track_id = (params.get('track_id') or '').strip()
+                reason = (params.get('reason') or '')[:200]
+                if not track_id:
+                    return "❌ progress.cancel: missing track_id"
+                r = store.cancel(track_id, reason=reason)
+                if not r.get('ok'):
+                    return f"❌ progress.cancel fail: {r.get('error')}"
+                return f"✅ progress.cancel: '{track_id}' cancelled."
+
+            elif command == 'list':
+                tracks = store.list_active()
+                if not tracks:
+                    return "ℹ️ progress.list: 当前无 active progress."
+                lines = [f"📊 Active progress tracks ({len(tracks)}):"]
+                for t in tracks:
+                    lines.append(f"  - {t.track_id} ({t.kind}): {t.render_brief()}")
+                return '\n'.join(lines)
+
+            else:
+                return (f"❌ progress: 未知指令 {command} "
+                          f"(支持 register / update / status / cancel / list)")
+
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class:
             try:

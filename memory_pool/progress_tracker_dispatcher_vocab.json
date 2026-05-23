@@ -1,0 +1,20 @@
+{
+  "_comment": "[P5-fix35-D / 2026-05-23 11:30] progress_tracker_dispatcher 触发词. Sir 报告进度 (喝了/跑了/写了 N 单位) OR Sir 设数值目标 → MUST emit progress FAST_CALL. 准则 6 持久化.",
+  "_consumers": ["progress_tracker_dispatcher (P5-fix35-D)"],
+  "patterns": [
+    "喝了", "喝完了", "喝光了", "刚喝",
+    "跑了", "跑完了", "走了", "走完",
+    "写了", "写完", "写够",
+    "做了", "做完", "做够",
+    "读了", "读完",
+    "目标", "今日目标", "总目标",
+    "一共要", "总共要", "需要 ",
+    "还差", "差多少", "还有多少",
+    "进度", "目前", "已完成",
+    "记录", "记到", "登记", "log",
+    "ml", "毫升", "克", "公里", "米", "字", "页", "个",
+    "drank", "ran", "walked", "wrote", "logged",
+    "completed", "finished today", "remaining",
+    "i drank", "i ran", "i wrote", "log it", "track this"
+  ]
+}
