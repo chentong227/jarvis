@@ -371,285 +371,38 @@ class CentralNerve:
         # [Reshape M6.3 second wave / 2026-05-24] SkillRegistry bootstrap init helper. 行为不变.
         self._init_skill_registry_bootstrap()
 
-        # [P0+20-β.0.1 / 2026-05-16] DirectiveRegistry —— L2 条件 directive 注册 + 衰减 daemon
-        # 启动后自动 bootstrap 12 条 directive + load 持久化计数 + start_decay_worker（60s tick）
-        try:
-            from jarvis_directives import get_default_registry as _get_dr
-            _dr = _get_dr()
-            _dr.start_decay_worker(interval_s=60.0)
-        except Exception as _dr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[DirectiveRegistry] 初始化失败：{_dr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] DirectiveRegistry init helper. 行为不变.
+        self._init_directive_registry()
 
-        # 🩹 [P0+20-β.2.0 / 2026-05-16] SelfAnchor —— Jarvis 灵魂工程 Layer 0
-        # Sir 实测发现 Jarvis 不理解"这个终端就是你"的指代关系 → 缺持续的"我"
-        # 注入到 core_persona 末尾让 LLM 每次都看到"我是 J.A.R.V.I.S. 的连续主体"
-        # 详 docs/JARVIS_SOUL_DRIVE.md §2.3
-        self.self_anchor = None
-        try:
-            from jarvis_self_anchor import get_default_self_anchor as _get_anchor
-            self.self_anchor = _get_anchor(central_nerve=self)
-            try:
-                from jarvis_utils import bg_log as _sa_bg
-                _sa_bg(f"🪞 [SelfAnchor] Layer 0 ready (灵魂工程 Layer 0 已激活 — 给主脑'我'的认知锚点)")
-            except Exception:
-                pass
-        except Exception as _sa_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[SelfAnchor] 初始化失败（非致命）：{_sa_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] SelfAnchor init helper. 行为不变.
+        self._init_self_anchor()
 
-        # 🩹 [P0+20-β.2.1 / 2026-05-16] ConcernsLedger —— Jarvis 灵魂工程 Layer 1
-        # 跨对话持续的"我"。注入到每一次 prompt 装配（不只是 nudge 路径），让主脑无论
-        # 回答什么问题都能"考虑 Sir 的全貌"。
-        # 详 docs/JARVIS_SOUL_DRIVE.md
-        self.concerns_ledger = None
-        try:
-            from jarvis_concerns import get_default_ledger as _get_concerns
-            self.concerns_ledger = _get_concerns()
-            self.concerns_ledger.start_decay_worker(interval_s=86400.0)
-            try:
-                from jarvis_utils import bg_log as _cl_bg
-                _cl_bg(
-                    f"🌱 [ConcernsLedger] active={len(self.concerns_ledger.list_active())} "
-                    f"review={len(self.concerns_ledger.list_review())} "
-                    f"(灵魂工程 Layer 1 已激活)"
-                )
-            except Exception:
-                pass
-        except Exception as _cl_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ConcernsLedger] 初始化失败（非致命）：{_cl_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] ConcernsLedger init helper. 行为不变.
+        self._init_concerns_ledger()
 
-        # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 — 全局 hotkey daemon
-        # Sir 痛点: 玩游戏/接电话/和爸妈说话 jarvis 一直回复尴尬.
-        # Ctrl+Alt+J toggle stand_down (TTS off + 字幕 on + nudge off).
-        try:
-            import jarvis_stand_down as _sd
-            _sd.start_hotkey_daemon()
-            _initial_state = _sd.get_state()
-            try:
-                from jarvis_utils import bg_log as _sd_bg
-                if _initial_state.is_active_now():
-                    _eta_min = int(_initial_state.remaining_s() / 60)
-                    _sd_bg(f"🌙 [StandDown] 启动时仍 active reason={_initial_state.reason} "
-                              f"(remain {_eta_min}min) — 上次未 wake. Hotkey Ctrl+Alt+J 切换.")
-                else:
-                    _sd_bg("🌙 [StandDown] hotkey daemon 已启动 (Ctrl+Alt+J 切换)")
-            except Exception:
-                pass
-        except Exception as _sd_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[StandDown] hotkey daemon 启动失败 (非致命): {_sd_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] StandDown init helper. 行为不变.
+        self._init_stand_down()
 
-        # 🩹 [P0+20-β.2.2 / 2026-05-16] RelationalState —— Jarvis 灵魂工程 Layer 2
-        # "我们之间"——inside_jokes / unspoken_protocols / unfinished_business
-        # 由 Sir 用 CLI（scripts/relational_dump.py）录入，注入 prompt 让主脑在自然
-        # 对话里调用，而不是模板硬塞。
-        # 详 docs/JARVIS_SOUL_DRIVE.md §2.2 + §3.3
-        self.relational_state = None
-        try:
-            from jarvis_relational import get_default_store as _get_rel
-            self.relational_state = _get_rel()
-            try:
-                from jarvis_utils import bg_log as _rs_bg
-                _rs_bg(
-                    f"💞 [RelationalState] jokes={len(self.relational_state.list_inside_jokes())} "
-                    f"protocols={len(self.relational_state.list_protocols())} "
-                    f"unfinished={len(self.relational_state.list_unfinished())} "
-                    f"threads={len(self.relational_state.list_threads())} "
-                    f"(灵魂工程 Layer 2 已激活)"
-                )
-            except Exception:
-                pass
-        except Exception as _rs_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[RelationalState] 初始化失败（非致命）：{_rs_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] RelationalState init helper. 行为不变.
+        self._init_relational_state()
 
-        # 🩹 [P0+20-β.2.3 / 2026-05-16] Attention Allocation —— Jarvis 灵魂工程 Layer 3
-        # 不是单例 / 没有 store —— 是 helper 函数 build_attention_block()，每次
-        # _assemble_prompt 调用时基于 (concerns_ledger + user_input) 动态构造
-        # [ATTENTION RIGHT NOW] 块（current_focus + long_term_watch）。
-        # PENDING FOLLOWUPS 段已删（Layer 2 BETWEEN US.UNFINISHED BUSINESS 单源接管）。
-        # 详 docs/JARVIS_SOUL_DRIVE.md §2.2（Layer 3）+ §3.4
-        try:
-            from jarvis_attention import build_attention_block  # noqa: F401
-            try:
-                from jarvis_utils import bg_log as _at_bg
-                _at_bg(
-                    "🎯 [Attention] Layer 3 ready "
-                    "(每轮 _assemble_prompt 动态构造 [ATTENTION RIGHT NOW] 块 / "
-                    "灵魂工程 Layer 3 已激活)"
-                )
-            except Exception:
-                pass
-        except Exception as _at_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[Attention] 初始化失败（非致命）：{_at_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] Attention Layer 3 init helper. 行为不变.
+        self._init_attention_layer3()
 
-        # 🩹 [P0+20-β.2.6 / 2026-05-17] 灵魂工程 Layer 5 — SoulAlignmentEvaluator
-        # 异步评 "Jarvis 本轮回复是否对齐 self_model + relational_state"，把
-        # aligned/missed 信号写回 concerns_ledger 累计。与 DirectiveEvaluator 并行（一个
-        # 评 compliance，一个评 alignment），共享 OpenRouter pool。
-        # 详 docs/JARVIS_SOUL_DRIVE.md §5.3 + §6 (Layer 5)
-        self.soul_evaluator = None
-        try:
-            from jarvis_soul_evaluator import get_default_soul_evaluator
-            self.soul_evaluator = get_default_soul_evaluator(
-                key_router=self.key_router,
-                concerns_ledger=self.concerns_ledger,
-                relational_state=self.relational_state,
-            )
-            try:
-                from jarvis_utils import bg_log as _se_bg
-                _se_bg(
-                    "🪞 [SoulEvaluator] Layer 5 ready "
-                    "(每轮对话末尾异步评 alignment with self_model / "
-                    "灵魂工程 Layer 5 已激活)"
-                )
-            except Exception:
-                pass
-        except Exception as _se_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[SoulEvaluator] 初始化失败（非致命）：{_se_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] SoulEvaluator Layer 5 init helper. 行为不变.
+        self._init_soul_evaluator()
 
-        # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 — Reflector daemons
-        # (1) ConcernsReflector：每轮对话末尾启发式 keyword → record_signal
-        # (2) WeeklyReflector：daemon 7d LLM 反思 → propose 新 concerns 进 review
-        # 详 docs/JARVIS_SOUL_DRIVE.md §6
-        self.concerns_reflector = None
-        self.weekly_reflector = None
-        try:
-            from jarvis_soul_reflector import (
-                get_default_concerns_reflector,
-                get_default_weekly_reflector,
-            )
-            if self.concerns_ledger is not None:
-                self.concerns_reflector = get_default_concerns_reflector(
-                    concerns_ledger=self.concerns_ledger,
-                )
-                # WeeklyReflector daemon
-                def _stm_provider():
-                    return list(getattr(self, 'short_term_memory', []) or [])
+        # [Reshape M6.3 third wave / 2026-05-24] Reflectors Layer 4 init helper. 行为不变.
+        self._init_reflectors()
 
-                def _profile_provider():
-                    try:
-                        import json as _j
-                        _path = os.path.join('jarvis_config', 'sir_profile.json')
-                        if os.path.exists(_path):
-                            with open(_path, 'r', encoding='utf-8') as f:
-                                return _j.load(f) or {}
-                    except Exception:
-                        pass
-                    return {}
+        # [Reshape M6.3 third wave / 2026-05-24] ClaimStatsDumper init helper. 行为不变.
+        self._init_claim_stats_dumper()
 
-                self.weekly_reflector = get_default_weekly_reflector(
-                    concerns_ledger=self.concerns_ledger,
-                    key_router=self.key_router,
-                    stm_provider=_stm_provider,
-                    profile_provider=_profile_provider,
-                )
-                if self.weekly_reflector is not None and not self.weekly_reflector.is_alive():
-                    self.weekly_reflector.start()
-                try:
-                    from jarvis_utils import bg_log as _r_bg
-                    _r_bg(
-                        "🌙 [Reflectors] ConcernsReflector + WeeklyReflector ready "
-                        "(灵魂工程 Layer 4 已激活)"
-                    )
-                except Exception:
-                    pass
-        except Exception as _r_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[Reflectors] 初始化失败（非致命）：{_r_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] IntegrityReflector L7 init helper. 行为不变.
+        self._init_integrity_reflector()
 
-        # 🩹 [β.4.5.1 / 2026-05-18] Sir Session 4: ClaimStatsDumper daemon
-        # 60s tick dump _CLAIM_STATS → memory_pool/claim_stats.json,
-        # 让 dashboard L6 (β.4.4) 跨进程读到 verify_rate
-        # 模块: jarvis_integrity_reflector (Session 4 主文件,
-        #       claim_tracer 保持职责单一只做 trace, 反思/持久化分到本文件)
-        self.claim_stats_dumper = None
-        try:
-            from jarvis_integrity_reflector import get_default_claim_stats_dumper
-            self.claim_stats_dumper = get_default_claim_stats_dumper(
-                tick_seconds=60.0,
-            )
-            if self.claim_stats_dumper is not None and not self.claim_stats_dumper.is_alive():
-                self.claim_stats_dumper.start()
-        except Exception as _csd_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ClaimStatsDumper] 初始化失败（非致命）：{_csd_e}")
-            except Exception:
-                pass
-
-        # 🩹 [β.4.5.2 / 2026-05-18] Sir Session 4: IntegrityReflector L7 LLM-propose daemon
-        # 7d audit 反思 → propose 进 review queue (Sir 用 CLI --activate/--reject 仲裁)
-        # 触发: weekly (3d 兜底) 或 audit ≥ 50 + Sir idle > 4h
-        # 准则 7 Sir 元否决: propose 默认 state=review, 不自动激活
-        self.integrity_reflector = None
-        try:
-            from jarvis_integrity_reflector import get_default_integrity_reflector
-            self.integrity_reflector = get_default_integrity_reflector(
-                key_router=self.key_router,
-            )
-            if self.integrity_reflector is not None and not self.integrity_reflector.is_alive():
-                self.integrity_reflector.start()
-        except Exception as _ir_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[IntegrityReflector] 初始化失败（非致命）：{_ir_e}")
-            except Exception:
-                pass
-
-        # 🩹 [β.5.35-B / 2026-05-20] ScreenTeaseReflector L7 vocab daemon
-        # Sir BUG 2: SmartNudge screen_tease 一周静音根因 = vocab 跟不上.
-        # β.5.35-A 持久化 vocab + CLI, β.5.35-B 加 L7 daemon: 24h 1 跑 LLM
-        # propose 新 category 进 review_queue, Sir CLI --review-list / --activate.
-        # 准则 7 Sir 元否决: 默认 state=review 不自动激活.
-        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
-        self.screen_tease_reflector = None
-        try:
-            from jarvis_screen_tease_reflector import ScreenTeaseReflector
-            self.screen_tease_reflector = ScreenTeaseReflector(
-                key_router=self.key_router,
-            )
-            if self.screen_tease_reflector is not None and not self.screen_tease_reflector.is_alive():
-                self.screen_tease_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _str_bg
-                _str_bg("🪞 [ScreenTeaseReflector] L7 vocab daemon ready (β.5.35-B)")
-            except Exception:
-                pass
-        except Exception as _str_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ScreenTeaseReflector] 初始化失败（非致命）：{_str_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 third wave / 2026-05-24] ScreenTeaseReflector L7 init helper. 行为不变.
+        self._init_screen_tease_reflector()
 
         # 🩹 [β.5.35-D / 2026-05-20] StruggleReflector L7 vocab daemon
         # Sir BUG 2 续: offer_help 触发源重设 (β.5.35-C 加 sir_struggle_vocab + worker detector).
@@ -2136,6 +1889,276 @@ User: {user_input}
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[SkillRegistry/bootstrap] 初始化失败：{_e}")
                 _bg(_tb.format_exc())
+            except Exception:
+                pass
+
+    def _init_directive_registry(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] DirectiveRegistry decay daemon."""
+        try:
+            from jarvis_directives import get_default_registry as _get_dr
+            _dr = _get_dr()
+            _dr.start_decay_worker(interval_s=60.0)
+        except Exception as _dr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[DirectiveRegistry] 初始化失败：{_dr_e}")
+            except Exception:
+                pass
+
+    def _init_self_anchor(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] SelfAnchor — 灵魂工程 Layer 0."""
+        self.self_anchor = None
+        try:
+            from jarvis_self_anchor import get_default_self_anchor as _get_anchor
+            self.self_anchor = _get_anchor(central_nerve=self)
+            try:
+                from jarvis_utils import bg_log as _sa_bg
+                _sa_bg(f"🪞 [SelfAnchor] Layer 0 ready (灵魂工程 Layer 0 已激活 — 给主脑'我'的认知锚点)")
+            except Exception:
+                pass
+        except Exception as _sa_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SelfAnchor] 初始化失败（非致命）：{_sa_e}")
+            except Exception:
+                pass
+
+    def _init_concerns_ledger(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] ConcernsLedger — 灵魂工程 Layer 1."""
+        self.concerns_ledger = None
+        try:
+            from jarvis_concerns import get_default_ledger as _get_concerns
+            self.concerns_ledger = _get_concerns()
+            self.concerns_ledger.start_decay_worker(interval_s=86400.0)
+            try:
+                from jarvis_utils import bg_log as _cl_bg
+                _cl_bg(
+                    f"🌱 [ConcernsLedger] active={len(self.concerns_ledger.list_active())} "
+                    f"review={len(self.concerns_ledger.list_review())} "
+                    f"(灵魂工程 Layer 1 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _cl_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ConcernsLedger] 初始化失败（非致命）：{_cl_e}")
+            except Exception:
+                pass
+
+    def _init_stand_down(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] Stand Down hotkey daemon (Ctrl+Alt+J)."""
+        try:
+            import jarvis_stand_down as _sd
+            _sd.start_hotkey_daemon()
+            _initial_state = _sd.get_state()
+            try:
+                from jarvis_utils import bg_log as _sd_bg
+                if _initial_state.is_active_now():
+                    _eta_min = int(_initial_state.remaining_s() / 60)
+                    _sd_bg(f"🌙 [StandDown] 启动时仍 active reason={_initial_state.reason} "
+                              f"(remain {_eta_min}min) — 上次未 wake. Hotkey Ctrl+Alt+J 切换.")
+                else:
+                    _sd_bg("🌙 [StandDown] hotkey daemon 已启动 (Ctrl+Alt+J 切换)")
+            except Exception:
+                pass
+        except Exception as _sd_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[StandDown] hotkey daemon 启动失败 (非致命): {_sd_e}")
+            except Exception:
+                pass
+
+    def _init_relational_state(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] RelationalState — 灵魂工程 Layer 2."""
+        self.relational_state = None
+        try:
+            from jarvis_relational import get_default_store as _get_rel
+            self.relational_state = _get_rel()
+            try:
+                from jarvis_utils import bg_log as _rs_bg
+                _rs_bg(
+                    f"💞 [RelationalState] jokes={len(self.relational_state.list_inside_jokes())} "
+                    f"protocols={len(self.relational_state.list_protocols())} "
+                    f"unfinished={len(self.relational_state.list_unfinished())} "
+                    f"threads={len(self.relational_state.list_threads())} "
+                    f"(灵魂工程 Layer 2 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _rs_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[RelationalState] 初始化失败（非致命）：{_rs_e}")
+            except Exception:
+                pass
+
+    def _init_attention_layer3(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] Attention Allocation — 灵魂工程 Layer 3.
+
+        不是单例 / 没有 store — helper 函数 build_attention_block(), 每次
+        _assemble_prompt 调用时基于 (concerns_ledger + user_input) 动态构造.
+        """
+        try:
+            from jarvis_attention import build_attention_block  # noqa: F401
+            try:
+                from jarvis_utils import bg_log as _at_bg
+                _at_bg(
+                    "🎯 [Attention] Layer 3 ready "
+                    "(每轮 _assemble_prompt 动态构造 [ATTENTION RIGHT NOW] 块 / "
+                    "灵魂工程 Layer 3 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _at_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[Attention] 初始化失败（非致命）：{_at_e}")
+            except Exception:
+                pass
+
+    def _init_soul_evaluator(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] SoulEvaluator — 灵魂工程 Layer 5."""
+        self.soul_evaluator = None
+        try:
+            from jarvis_soul_evaluator import get_default_soul_evaluator
+            self.soul_evaluator = get_default_soul_evaluator(
+                key_router=self.key_router,
+                concerns_ledger=self.concerns_ledger,
+                relational_state=self.relational_state,
+            )
+            try:
+                from jarvis_utils import bg_log as _se_bg
+                _se_bg(
+                    "🪞 [SoulEvaluator] Layer 5 ready "
+                    "(每轮对话末尾异步评 alignment with self_model / "
+                    "灵魂工程 Layer 5 已激活)"
+                )
+            except Exception:
+                pass
+        except Exception as _se_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SoulEvaluator] 初始化失败（非致命）：{_se_e}")
+            except Exception:
+                pass
+
+    def _init_reflectors(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] Reflectors — 灵魂工程 Layer 4.
+
+        ConcernsReflector (每轮对话末尾启发式 keyword) + WeeklyReflector
+        (daemon 7d LLM 反思 propose 新 concerns 进 review).
+        """
+        self.concerns_reflector = None
+        self.weekly_reflector = None
+        try:
+            from jarvis_soul_reflector import (
+                get_default_concerns_reflector,
+                get_default_weekly_reflector,
+            )
+            if self.concerns_ledger is not None:
+                self.concerns_reflector = get_default_concerns_reflector(
+                    concerns_ledger=self.concerns_ledger,
+                )
+                # WeeklyReflector daemon
+
+                def _stm_provider():
+                    return list(getattr(self, 'short_term_memory', []) or [])
+
+                def _profile_provider():
+                    try:
+                        import json as _j
+                        _path = os.path.join('jarvis_config', 'sir_profile.json')
+                        if os.path.exists(_path):
+                            with open(_path, 'r', encoding='utf-8') as f:
+                                return _j.load(f) or {}
+                    except Exception:
+                        pass
+                    return {}
+
+                self.weekly_reflector = get_default_weekly_reflector(
+                    concerns_ledger=self.concerns_ledger,
+                    key_router=self.key_router,
+                    stm_provider=_stm_provider,
+                    profile_provider=_profile_provider,
+                )
+                if self.weekly_reflector is not None and not self.weekly_reflector.is_alive():
+                    self.weekly_reflector.start()
+                try:
+                    from jarvis_utils import bg_log as _r_bg
+                    _r_bg(
+                        "🌙 [Reflectors] ConcernsReflector + WeeklyReflector ready "
+                        "(灵魂工程 Layer 4 已激活)"
+                    )
+                except Exception:
+                    pass
+        except Exception as _r_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[Reflectors] 初始化失败（非致命）：{_r_e}")
+            except Exception:
+                pass
+
+    def _init_claim_stats_dumper(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] ClaimStatsDumper — 60s tick dump claim_stats.json."""
+        self.claim_stats_dumper = None
+        try:
+            from jarvis_integrity_reflector import get_default_claim_stats_dumper
+            self.claim_stats_dumper = get_default_claim_stats_dumper(
+                tick_seconds=60.0,
+            )
+            if self.claim_stats_dumper is not None and not self.claim_stats_dumper.is_alive():
+                self.claim_stats_dumper.start()
+        except Exception as _csd_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ClaimStatsDumper] 初始化失败（非致命）：{_csd_e}")
+            except Exception:
+                pass
+
+    def _init_integrity_reflector(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] IntegrityReflector L7 LLM-propose daemon.
+
+        7d audit 反思 → propose 进 review queue. 触发: weekly (3d 兜底) 或
+        audit ≥ 50 + Sir idle > 4h. 准则 7 Sir 元否决: 默认 state=review.
+        """
+        self.integrity_reflector = None
+        try:
+            from jarvis_integrity_reflector import get_default_integrity_reflector
+            self.integrity_reflector = get_default_integrity_reflector(
+                key_router=self.key_router,
+            )
+            if self.integrity_reflector is not None and not self.integrity_reflector.is_alive():
+                self.integrity_reflector.start()
+        except Exception as _ir_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntegrityReflector] 初始化失败（非致命）：{_ir_e}")
+            except Exception:
+                pass
+
+    def _init_screen_tease_reflector(self) -> None:
+        """[Reshape M6.3 third wave / 2026-05-24] ScreenTeaseReflector L7 vocab daemon.
+
+        24h 1 跑 LLM propose 新 category 进 review_queue. 准则 7 Sir 元否决.
+        """
+        self.screen_tease_reflector = None
+        try:
+            from jarvis_screen_tease_reflector import ScreenTeaseReflector
+            self.screen_tease_reflector = ScreenTeaseReflector(
+                key_router=self.key_router,
+            )
+            if self.screen_tease_reflector is not None and not self.screen_tease_reflector.is_alive():
+                self.screen_tease_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _str_bg
+                _str_bg("🪞 [ScreenTeaseReflector] L7 vocab daemon ready (β.5.35-B)")
+            except Exception:
+                pass
+        except Exception as _str_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ScreenTeaseReflector] 初始化失败（非致命）：{_str_e}")
             except Exception:
                 pass
 
