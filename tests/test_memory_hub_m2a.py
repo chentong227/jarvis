@@ -124,12 +124,13 @@ class TestWriteMethods(unittest.TestCase):
         self.assertTrue(os.path.exists(self.receipt_path))
 
     def test_write_commitment_writes_receipt(self):
+        # [Reshape M4.3 / 2026-05-24] write_commitment 改路由到 PromiseLog 单源
+        # (老 CommitmentWatcher routing 不再用, layer_targeted='PromiseLog').
         nerve = MagicMock()
-        nerve.commitment_watcher = None
         receipt = self.hub.write_commitment('remind in 1h', kind='commitment',
                                              source='test_sir', nerve=nerve)
-        self.assertEqual(receipt.layer_targeted, 'CommitmentWatcher')
-        self.assertEqual(receipt.field_path, 'commitment.commitment')
+        self.assertEqual(receipt.layer_targeted, 'PromiseLog')
+        self.assertEqual(receipt.field_path, 'promise.commitment')
 
 
 class TestQueryAndPromptBlock(unittest.TestCase):

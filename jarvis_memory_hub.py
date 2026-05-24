@@ -761,39 +761,64 @@ def _add_write_methods(_cls):
     def write_commitment(self, description: str, kind: str = 'commitment',
                           who_promised: str = 'jarvis', deadline=None,
                           source: str = 'unknown', turn_id: str = '',
+                          jarvis_reply: str = '', lang: str = '',
+                          trigger_pattern=None, bound_to_concern_id: str = '',
                           nerve=None, **kwargs) -> WriteReceipt:
-        """写 CommitmentWatcher. 直接调 commitment_watcher.register_commitment."""
+        """[Reshape M4.3 / 2026-05-24] 4 kind 路由到 PromiseLog 单源.
+
+        kind 4 类:
+          - 'commitment': Sir/Jarvis 时间承诺 (有 deadline) - 老 'hard'
+          - 'cyclic'    : 周期任务 (cycle_minutes) - 老 cyclic_task.json
+          - 'watch'     : 屏幕事件等待 (screen vision evidence) - 老 watch_tasks.json
+          - 'self_promise': Jarvis 自己承诺 (无 deadline) - 老 'soft'
+
+        所有 4 kind 都写 PromiseLog (jarvis_promise_log.json) 单源,
+        新 caller 应该用这个 API 而不是直接调老 commitment_watcher.add_commitment /
+        cyclic_task 等. 老 caller 不动 (backward compat).
+
+        deadline 现仅作为 string (PromiseLog.register 接受 deadline_str). 真 timestamp
+        的 deadline handling 在 M4.5 CommitmentWatcher 退化时一并处理.
+        """
         mutation_id = f"mut_{uuid.uuid4().hex[:10]}"
-        if nerve is None:
-            try:
-                import jarvis_central_nerve as _cn
-                nerve = getattr(_cn, '_GLOBAL_NERVE', None)
-            except Exception:
-                nerve = None
         ok, err, new_excerpt = False, '', description[:100]
+        promise_id = ''
         try:
-            cw = getattr(nerve, 'commitment_watcher', None) if nerve else None
-            if cw is None:
-                err = 'CommitmentWatcher not available'
-            elif hasattr(cw, 'register_commitment'):
-                cid = cw.register_commitment(
-                    description=description, kind=kind,
-                    who_promised=who_promised, deadline=deadline,
-                    source=source, turn_id=turn_id, **kwargs)
-                ok = bool(cid)
-                if cid:
-                    new_excerpt = f'cid={cid}: {description[:80]}'
-            else:
-                err = 'commitment_watcher.register_commitment not available'
+            from jarvis_promise_log import get_default_log
+            plog = get_default_log()
+            # kind 映射到老 register 兼容 (PromiseLog 仍接受新 kind str, register API 不限制 kind 值)
+            promise_id = plog.register(
+                description=description,
+                kind=kind,
+                deadline_str=str(deadline) if deadline else '',
+                jarvis_reply=jarvis_reply,
+                turn_id=turn_id,
+                lang=lang,
+                author=who_promised if who_promised in ('jarvis', 'sir') else 'jarvis',
+            )
+            if promise_id:
+                # 设新 field
+                p = plog.promises.get(promise_id)
+                if p is not None:
+                    p.who_promised = who_promised
+                    if trigger_pattern:
+                        p.trigger_pattern = dict(trigger_pattern)
+                    if bound_to_concern_id:
+                        p.bound_to_concern_id = bound_to_concern_id
+                    try:
+                        plog._persist()
+                    except Exception:
+                        pass
+                ok = True
+                new_excerpt = f'pid={promise_id} kind={kind}: {description[:60]}'
         except Exception as e:
             err = f'write_commitment exception: {e}'
         _now = time.time()
         receipt = WriteReceipt(
             mutation_id=mutation_id, ts=_now,
             iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(_now)),
-            field_path=f'commitment.{kind}', new_value_excerpt=new_excerpt,
+            field_path=f'promise.{kind}', new_value_excerpt=new_excerpt,
             old_value_excerpt='', source=source, confidence=1.0,
-            layer_targeted='CommitmentWatcher', ok=ok, error=err, turn_id=turn_id,
+            layer_targeted='PromiseLog', ok=ok, error=err, turn_id=turn_id,
         )
         self._write_receipt(receipt)
         self._publish_swm(receipt)
