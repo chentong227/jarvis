@@ -66,6 +66,24 @@
 > Cascade, M4 暂停, 真用一段稳定后做 M4.5.3+ + cleanup checklist 兑现.
 > ```
 >
+> ## 🐛 已知 BUG (Sir 8:36 "重构完再修", post-reshape 统一处理)
+>
+> 3 个 fast_call 幻觉 bug, 不影响最终功能 (Time Hook 兜底 schedule reminder 08:36 真触发 ✅), 但污染 prompt + 浪费 token:
+>
+> 1. **主脑幻觉 organ 名 `reminder_hands`** (实际叫 `memory_hands`) → "❌ reminder_hands 未挂载"
+>    - 根因: prompt organ_whitepaper 没明列子命令 (主脑凭印象拼名)
+>    - 修法 (M5+ 后): 从 `hand_manifests` 自动构建 `command → organ` 反向 vocab + prompt 列子命令
+>
+> 2. **`add_reminder` 缺 `intent` 参数** → "❌ memory_hands.add_reminder: 缺少 intent 参数"
+>    - 根因: 主脑同时问 Sir "提醒啥内容" + 抢发 fast_call (用户没回答怎么有 intent)
+>    - 修法: prompt 加 "缺参数时先问 Sir, 不发 fast_call" 规则
+>
+> 3. **Malformed `FAST_CALL[None/None]`** (organ=None command=None)
+>    - 根因: 主脑输出格式错的 FAST_CALL block (可能上下文 truncate / 模板错)
+>    - 修法: 加 PreFlight 拦 None FAST_CALL + 主脑 prompt 加 "格式不全宁可不发"
+>
+> 这 3 个属于**主脑 prompt 工程**, 不是 reshape 范畴. 推 M5+ 主脑决策路径整合时一起修.
+>
 > ---
 >
 > ## 历史: M4.1+2+3+4 完成 (08:27)
