@@ -64,6 +64,112 @@
           "fast_call": "FAST_CALL[memory_hands/search_memory]{query='昨天对话', time_range_hours=24}"
         }
       ]
+    },
+    {
+      "organ": "system_hands",
+      "command": "open_item",
+      "required_params": ["path"],
+      "param_formats": {
+        "path": "absolute_path (Windows 用 D:\\\\... 或 D:/...)"
+      },
+      "common_mistakes": [
+        "用相对路径 'foo.txt' 而非绝对路径",
+        "Sir 说 '打开 X', X 没明确路径 — 应先问 Sir 哪个文件 / 用 search_file 找"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '打开 d:/project/main.py'",
+          "fast_call": "FAST_CALL[system_hands/open_item]{path='d:/project/main.py'}"
+        }
+      ]
+    },
+    {
+      "organ": "system_hands",
+      "command": "delete_file",
+      "required_params": ["path"],
+      "common_mistakes": [
+        "试图删数据库记忆记录 — 应用 memory_hands.delete_record",
+        "用相对路径 (高危, 必须绝对路径)"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '删掉那个 trash.txt' (已确认绝对路径)",
+          "fast_call": "FAST_CALL[system_hands/delete_file]{path='d:/trash.txt'}"
+        }
+      ]
+    },
+    {
+      "organ": "system_hands",
+      "command": "search_file",
+      "required_params": ["keyword"],
+      "common_mistakes": [
+        "搜索数据库记忆 — 应用 memory_hands.search_memory"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 问 '我那个 main.py 在哪'",
+          "fast_call": "FAST_CALL[system_hands/search_file]{keyword='main.py', search_dir='d:/'}"
+        }
+      ]
+    },
+    {
+      "organ": "system_hands",
+      "command": "close_process",
+      "required_params": ["process_name"],
+      "examples": [
+        {
+          "scenario": "Sir 说 '关掉 chrome'",
+          "fast_call": "FAST_CALL[system_hands/close_process]{process_name='chrome.exe'}"
+        }
+      ]
+    },
+    {
+      "organ": "progress",
+      "command": "register",
+      "required_params": ["track_id", "kind"],
+      "common_mistakes": [
+        "直接 progress.set 但 track_id 未注册 (Sir BUG-4 真测 / 2026-05-24)",
+        "track_id 用日期 'hydration_2026-05-24' 而 ConcernsLedger 已记录, 应走 concerns.progress_update"
+      ],
+      "examples": [
+        {
+          "scenario": "首次开始追踪喝水进度",
+          "fast_call": "FAST_CALL[progress/register]{track_id='hydration', kind='count', target=8}"
+        }
+      ]
+    },
+    {
+      "organ": "progress",
+      "command": "set",
+      "required_params": ["track_id"],
+      "common_mistakes": [
+        "track_id 未先 register — 必须先 progress.register 再 set",
+        "hydration / sleep / pomodoro 应走 concerns.progress_update (priority 13 directive)"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '已经做完 3 个 pomodoro' (已 register)",
+          "fast_call": "FAST_CALL[progress/set]{track_id='pomodoro', current=3}"
+        }
+      ]
+    },
+    {
+      "organ": "mutation",
+      "command": "update",
+      "required_params": ["field_path", "new_value"],
+      "param_formats": {
+        "field_path": "<source>.<field> (e.g. profile.work_rhythms / concerns.<cid> / relationships.archive.<jid>)"
+      },
+      "common_mistakes": [
+        "field_path 用了底层 organ 名 (e.g. profile_card.work_rhythms) — 应用 source 名 (profile.work_rhythms)",
+        "mutation organ 是统一 mutation 入口, 不是某个具体 hand"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 教正: 我的工作节奏改成 '23 点睡'",
+          "fast_call": "FAST_CALL[mutation/update]{field_path='profile.work_rhythms', new_value='sleep at 23:00', intent='revise', reason='Sir 教正'}"
+        }
+      ]
     }
   ]
 }

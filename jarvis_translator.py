@@ -426,6 +426,42 @@ class Translator:
         except Exception:
             pass
 
+    # ========== 主脑 prompt 注入 helper (Phase 2) ==========
+    def render_prompt_block(self, max_chars: int = 1200) -> str:
+        """🆕 [Translator Phase 2 / 2026-05-24 20:50] 主脑 prompt 注入.
+
+        从 schema_vocab.json 读 examples + common_mistakes, 渲染成 prompt block.
+        返回 < max_chars. 让主脑 emit FAST_CALL 时少犯 BUG (减翻译层 BUG).
+        """
+        vocab = self._load_schema_vocab()
+        hints = vocab.get('schema_hints', []) or []
+        if not hints:
+            return ''
+
+        lines = ['[HAND SCHEMA EXAMPLES - emit FAST_CALL 参考]']
+        for hint in hints:
+            organ = hint.get('organ', '')
+            cmd = hint.get('command', '')
+            req = hint.get('required_params', []) or []
+            examples = hint.get('examples', []) or []
+            mistakes = hint.get('common_mistakes', []) or []
+
+            req_str = ' + '.join(req) if req else '无必填'
+            line = f"- {organ}.{cmd}: 必填 {req_str}."
+            if examples:
+                ex = examples[0].get('fast_call', '')
+                if ex:
+                    line += f" 例: {ex}"
+            lines.append(line)
+            # 仅 priority hand 加 mistake (省 chars)
+            if mistakes and organ in ('memory_hands', 'progress'):
+                lines.append(f"  ⚠️ {mistakes[0]}")
+
+        block = '\n'.join(lines)
+        if len(block) > max_chars:
+            block = block[:max_chars - 4] + '...'
+        return block
+
     # ========== 调试 / stats API ==========
     def get_stats(self) -> Dict[str, Any]:
         """返当前 Translator 状态 (供 dashboard / CLI 用)."""

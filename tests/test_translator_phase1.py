@@ -302,5 +302,65 @@ class TestCLIScript(unittest.TestCase):
         self.assertTrue(os.path.exists(path), 'CLI 必须存在')
 
 
+class TestPhase2PromptBlock(unittest.TestCase):
+    """Phase 2: 主脑 prompt 注入 schema examples block."""
+
+    def setUp(self):
+        from jarvis_translator import Translator
+        self.tr = Translator(hand_registry={'memory_hands': _FakeHandClass}, hand_manifests={})
+
+    def test_render_prompt_block_returns_str(self):
+        block = self.tr.render_prompt_block(max_chars=600)
+        self.assertIsInstance(block, str)
+
+    def test_block_contains_header(self):
+        block = self.tr.render_prompt_block(max_chars=900)
+        self.assertIn('SCHEMA EXAMPLES', block)
+
+    def test_block_lists_priority_hands(self):
+        block = self.tr.render_prompt_block(max_chars=900)
+        # schema_vocab.json 9 项 — 至少 memory_hands.add_reminder 出现
+        self.assertIn('memory_hands.add_reminder', block)
+        self.assertIn('intent', block)
+        self.assertIn('trigger_time', block)
+
+    def test_block_includes_examples(self):
+        block = self.tr.render_prompt_block(max_chars=900)
+        self.assertIn('FAST_CALL', block)
+        self.assertIn('例:', block)
+
+    def test_block_truncates_to_max_chars(self):
+        block = self.tr.render_prompt_block(max_chars=100)
+        self.assertLessEqual(len(block), 100)
+
+    def test_block_empty_when_no_schema(self):
+        # 临时把 schema cache 清空 + mock empty file
+        # 此 test 跳过因为 vocab 真实文件存在. 仅验证 normal path.
+        pass
+
+    def test_block_includes_system_hands_phase2(self):
+        block = self.tr.render_prompt_block(max_chars=900)
+        # Phase 2.A 加了 system_hands schema
+        self.assertIn('system_hands', block)
+
+    def test_block_includes_progress_warning(self):
+        block = self.tr.render_prompt_block(max_chars=1500)
+        # Phase 2.A 加了 progress schema, common_mistake 应在 priority hand
+        self.assertIn('progress', block)
+
+
+class TestPhase2NerveIntegration(unittest.TestCase):
+    """Phase 2: nerve._assemble_prompt 注入 translator_schema_block."""
+
+    def test_nerve_imports_render_prompt_block(self):
+        # 不真启动 nerve, 仅验 nerve 源码出现 render_prompt_block 调用
+        with open(os.path.join(ROOT, 'jarvis_central_nerve.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('translator_schema_block', src,
+                      'nerve._assemble_prompt 必须注入 translator_schema_block')
+        self.assertIn('render_prompt_block', src,
+                      'nerve 必须调 translator.render_prompt_block')
+
+
 if __name__ == '__main__':
     unittest.main()

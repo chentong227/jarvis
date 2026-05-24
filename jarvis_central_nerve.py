@@ -4089,6 +4089,17 @@ User: {user_input}
         except Exception:
             verbosity_block = ""
 
+        # 🆕 [Translator Phase 2 / 2026-05-24 21:00] L4.6 schema examples 注入主脑 prompt
+        # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md
+        # 让主脑 emit FAST_CALL 时知道每个 hand 必填 params + example, 减翻译层 BUG.
+        translator_schema_block = ""
+        try:
+            _tr = getattr(self, 'translator', None)
+            if _tr is not None:
+                translator_schema_block = _tr.render_prompt_block(max_chars=1500)
+        except Exception:
+            translator_schema_block = ""
+
         result = f"""{core_persona}
 
 {yesterday_block}
@@ -4161,6 +4172,8 @@ Path landmarks:
 [Tier 2 Tool Library]:
 {chat_organs}
 
+{translator_schema_block}
+
 [YOUR KNOWLEDGE BASE]:
 --- Long-Term Memory ---
 {ltm_context}
@@ -4192,6 +4205,7 @@ User: {user_input}
             'landmarks': len(landmarks_str),
             'tier_routing': len(tier_routing),
             'chat_organs': len(chat_organs),
+            'translator_schema': len(translator_schema_block),  # Translator Phase 2
             'ltm_context': len(ltm_context),
             'commitment': len(commitment_context),
             'user_input': len(user_input),
