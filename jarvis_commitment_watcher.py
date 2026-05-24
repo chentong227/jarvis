@@ -1016,6 +1016,27 @@ class CommitmentWatcher(threading.Thread):
                 _cw_bg_log(f"📝 [CommitmentWatcher{_src_tag}] 已注册: {description} @ {dl_str} (DB#{_new_db_id})")
             except Exception:
                 pass
+
+            # 🆕 [Reshape M4.5.1 / 2026-05-24] DUAL-WRITE to PromiseLog (单源准备)
+            # 老 SQLite 仍写 (CW daemon 老路径不破), 新 PromiseLog 也写一份, 让 M4.5.2
+            # daemon 切到 PromiseLog 时 0 数据丢失. 失败静默不破老路径 (准则 1 高效).
+            try:
+                from jarvis_memory_hub import get_default_hub
+                _hub = get_default_hub()
+                _iso_dl = time.strftime('%Y-%m-%d %H:%M:%S',
+                                          time.localtime(deadline_ts))
+                _who = 'jarvis' if source == 'self_promise' else 'sir'
+                _hub.write_commitment(
+                    description=description,
+                    kind='commitment',
+                    who_promised=_who,
+                    deadline=_iso_dl,
+                    source=f'cw.add_commitment.dual_write/{source}',
+                    jarvis_reply='',
+                    bound_to_concern_id=(concern_link or ''),
+                )
+            except Exception:
+                pass
             # 🩹 [β.5.44-B / 2026-05-20 19:07] publish_intent (β.5.0 三维耦合)
             # 让 IntentResolver 看 deadline candidate, 主脑下轮知道有承诺已注册.
             try:
