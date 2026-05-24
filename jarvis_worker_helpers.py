@@ -311,6 +311,42 @@ CN_DIGIT_MAP = {
 # 历史: 模糊脊髓反射词典 (巨量扩充版) — 处理英文 ASR 空耳 (jarvis ↔ garbage / charles / java...)
 # + 中文发音容错 (贾维斯 ↔ 假装是 / 夹尾巴) + 唤醒/告退/物理静音 prefix.
 
+# 🆕 [Reshape M6.W8 / 2026-05-24 19:20] BUG-2 noise floor compute 抽 helper fn
+# logic 真 reside 在 VoiceListenThread.run() 内, 抽 module-level fn 让 unit test 能验.
+# 输入 idle frame buffer (deque/list) → 算 percentile-30 = noise_floor → threshold.
+
+def compute_adaptive_noise_threshold(
+    idle_buffer,                            # iterable of idle volume samples
+    gaming_threshold: int,                  # = VOLUME_THRESHOLD_BASE * gaming_mult
+    percentile_index: float = 0.30,         # 取低 30% 当 floor (排 Sir 说话)
+    threshold_mult: float = 2.5,            # threshold = floor * mult
+    min_threshold: int = 80,                # floor 极低硬下限
+    min_frames_before_use: int = 30,        # 起步 warmup 最少 30 帧
+):
+    """计算自适应 VAD threshold based on noise floor.
+
+    Returns: (noise_floor: float, adaptive_threshold: int).
+    noise_floor=0.0 表示 buffer 不够 (warmup) — 此时 threshold 退化到 max(gaming, min).
+
+    设计 (BUG-2 中期治本):
+      - 安静办公室: floor=50 → threshold=125, Sir 说话仍触发
+      - 游戏背景音: floor=300 → threshold=750, 持续游戏不触发, Sir 大声说话仍触发
+      - cheap: sorted on small buffer (~78 elements) < 1ms each frame
+    """
+    buf = list(idle_buffer)
+    noise_floor = 0.0
+    if len(buf) >= min_frames_before_use:
+        sorted_buf = sorted(buf)
+        floor_idx = int(len(sorted_buf) * percentile_index)
+        noise_floor = float(sorted_buf[floor_idx])
+    adaptive_threshold = max(
+        int(gaming_threshold),
+        int(noise_floor * threshold_mult),
+        int(min_threshold),
+    )
+    return noise_floor, adaptive_threshold
+
+
 # 🆕 [Reshape M6.W7 / 2026-05-24 19:10] 3 个 method-local pattern list 抽 const
 # - PRACTICE_PATTERNS: _compute_wake_weight 用, "say/读/发音/string" 类英语练习
 # - DISMISSIVE_PATTERNS: _detect_joke_feedback 用, 用户对 nudge 的负面反馈

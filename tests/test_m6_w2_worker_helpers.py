@@ -197,6 +197,58 @@ class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
         self.assertIn('闭嘴', joined)
 
 
+class TestM6W8NoiseFloorCompute(unittest.TestCase):
+    """W8 抽出: compute_adaptive_noise_threshold (BUG-2 中期治本 logic 抽 helper).
+    
+    设计验证:
+      - warmup (buffer < 30): floor=0, threshold=gaming (Sir 起步说话仍触发)
+      - 安静 (low floor 50): threshold = max(gaming, 125, 80) = gaming (默认 180)
+      - 游戏背景音 (high floor 300): threshold = max(gaming, 750, 80) = 750 (挡背景, Sir 大声仍触发)
+    """
+
+    def test_warmup_returns_gaming_threshold(self):
+        """buffer 不足 30 帧 → floor=0, threshold 退化到 gaming."""
+        from jarvis_worker_helpers import compute_adaptive_noise_threshold
+        nf, th = compute_adaptive_noise_threshold([100, 200, 50], gaming_threshold=180)
+        self.assertEqual(nf, 0.0)
+        self.assertEqual(th, 180)
+
+    def test_quiet_office_keeps_gaming_threshold(self):
+        """30 帧低音 (floor=50) → threshold=max(180, 125, 80)=180."""
+        from jarvis_worker_helpers import compute_adaptive_noise_threshold
+        nf, th = compute_adaptive_noise_threshold([50] * 30, gaming_threshold=180)
+        self.assertEqual(nf, 50.0)
+        self.assertEqual(th, 180)  # gaming 优先
+
+    def test_gaming_bg_lifts_threshold(self):
+        """30 帧 300 dB 游戏背景音 → floor=300, threshold=750 (挡背景音)."""
+        from jarvis_worker_helpers import compute_adaptive_noise_threshold
+        nf, th = compute_adaptive_noise_threshold([300] * 30, gaming_threshold=180)
+        self.assertEqual(nf, 300.0)
+        self.assertEqual(th, 750)
+
+    def test_min_threshold_floor_zero_safety(self):
+        """floor=0 + 极低 gaming → 至少 MIN_THRESHOLD."""
+        from jarvis_worker_helpers import compute_adaptive_noise_threshold
+        nf, th = compute_adaptive_noise_threshold([], gaming_threshold=10, min_threshold=80)
+        self.assertEqual(th, 80)  # min_threshold 兜底
+
+    def test_percentile_index_excludes_high_speech(self):
+        """30 帧低 + 偶发高峰: percentile-30 排掉 Sir 突峰, floor 仍低."""
+        from jarvis_worker_helpers import compute_adaptive_noise_threshold
+        # 25 个 50 + 5 个 1500 (Sir 说话突峰)
+        buffer = [50] * 25 + [1500] * 5
+        nf, th = compute_adaptive_noise_threshold(buffer, gaming_threshold=180)
+        # percentile-30 of 30-element sorted list = index 9, 仍是 50
+        self.assertEqual(nf, 50.0)
+        self.assertEqual(th, 180)
+
+    def test_voice_listen_thread_imports_helper(self):
+        """voice_listen_thread.py 真用 compute_adaptive_noise_threshold helper."""
+        import jarvis_voice_listen_thread as vlt
+        self.assertTrue(hasattr(vlt, 'compute_adaptive_noise_threshold'))
+
+
 class TestM6W7PatternLists(unittest.TestCase):
     """W7 抽出: PRACTICE / DISMISSIVE / SELF_INTERRUPTION 3 个 method-local list 抽 const."""
 

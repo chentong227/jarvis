@@ -36,6 +36,8 @@ from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume, IAudioMeterInformati
 from jarvis_safety import *
 from jarvis_env_probe import PhysicalEnvironmentProbe
 from jarvis_utils import bg_log, set_conversation_active, is_conversation_active
+# 🆕 [Reshape M6.W8 / 2026-05-24 19:20] noise floor helper
+from jarvis_worker_helpers import compute_adaptive_noise_threshold
 
 _WAKE_FILLER_CACHE: list = []
 _WAKE_FILLER_MTIME: float = 0.0
@@ -1004,17 +1006,16 @@ class VoiceListenThread(QThread):
                 # [BUG-2 mid-term fix / 2026-05-24 18:50] adaptive noise floor.
                 # idle frame buffer 5s, percentile-30 = floor, threshold = max(gaming, floor*2.5, MIN).
                 # cheap: sorted 78 elements < 1ms each frame.
+                # [W8 / 2026-05-24 19:20] noise floor compute extracted to helpers
                 if not is_speaking and volume < VOLUME_THRESHOLD_GAMING:
                     noise_floor_buffer.append(float(volume))
-                noise_floor = 0.0
-                if len(noise_floor_buffer) >= NOISE_FLOOR_MIN_FRAMES_BEFORE_USE:
-                    sorted_buf = sorted(noise_floor_buffer)
-                    floor_idx = int(len(sorted_buf) * NOISE_FLOOR_PERCENTILE_INDEX)
-                    noise_floor = sorted_buf[floor_idx]
-                adaptive_threshold = max(
-                    VOLUME_THRESHOLD_GAMING,
-                    int(noise_floor * NOISE_FLOOR_THRESHOLD_MULT),
-                    NOISE_FLOOR_MIN_THRESHOLD,
+                noise_floor, adaptive_threshold = compute_adaptive_noise_threshold(
+                    noise_floor_buffer,
+                    gaming_threshold=VOLUME_THRESHOLD_GAMING,
+                    percentile_index=NOISE_FLOOR_PERCENTILE_INDEX,
+                    threshold_mult=NOISE_FLOOR_THRESHOLD_MULT,
+                    min_threshold=NOISE_FLOOR_MIN_THRESHOLD,
+                    min_frames_before_use=NOISE_FLOOR_MIN_FRAMES_BEFORE_USE,
                 )
                 VOLUME_THRESHOLD = adaptive_threshold
                 # SWM publish rate-limited (30s + 50dB delta) - main brain sees evidence
