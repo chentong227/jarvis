@@ -304,6 +304,103 @@ class CommitmentWatcher(threading.Thread):
             except Exception:
                 pass
 
+        # 🆕 [Reshape M4.5.2 / 2026-05-24] 启动也从 PromiseLog 拉 active commitment.
+        # M4.5.1 dual-write 让 add_commitment 同时进 PromiseLog. 这里 daemon 启动
+        # 时也从 PromiseLog 拉 pending kind=commitment 进 self.commitments, 让
+        # M4.5.3 安全停 SQLite 写后 daemon 仍能从 PromiseLog 单源工作.
+        # dedup: 已在 self.commitments (来自 SQLite) 的 desc 不重加.
+        try:
+            self._load_from_promise_log_locked(max_age_hours=48.0)
+        except Exception as _e:
+            try:
+                from jarvis_utils import bg_log as _cw_load_bg
+                _cw_load_bg(f"⚠️ [CommitmentWatcher/PromiseLog] load 失败: {str(_e)[:80]}")
+            except Exception:
+                pass
+
+    def _load_from_promise_log_locked(self, max_age_hours: float = 48.0) -> int:
+        """[M4.5.2] 从 PromiseLog 拉 pending kind=commitment 进 self.commitments.
+
+        dedup: 同 description (lowercase strip) 已在 list 中 → 跳过.
+        年龄过滤: deadline_ts 比 now - max_age_hours 老 → 跳过 (过期不补 nudge).
+        返回真新加的条数.
+        """
+        try:
+            from jarvis_promise_log import get_default_log
+            plog = get_default_log()
+        except Exception:
+            return 0
+        if not hasattr(plog, 'list_pending'):
+            return 0
+        existing_descs = set()
+        for c in self.commitments:
+            d = (c.get('description') or '').strip().lower()
+            if d:
+                existing_descs.add(d)
+        added = 0
+        cutoff_ts = time.time() - max_age_hours * 3600
+        for p in plog.list_pending():
+            if getattr(p, 'kind', '') not in ('commitment', 'cyclic'):
+                continue
+            desc_l = (p.description or '').strip().lower()
+            if not desc_l or desc_l in existing_descs:
+                continue
+            # 尝试 parse deadline_str → ts. 失败 fallback registered_at + 1h
+            dl_ts = self._try_parse_deadline_str(p.deadline_str)
+            if dl_ts <= 0:
+                # 没法 parse 就 skip (避免错 nudge)
+                continue
+            if dl_ts < cutoff_ts:
+                continue
+            self.commitments.append({
+                'db_id': 0,  # PromiseLog 来源, 没 SQLite db_id
+                'promise_id': p.id,  # 反向引用 (M4.5.3+ daemon 直接走 PromiseLog 标 fulfilled 用)
+                'deadline_ts': dl_ts,
+                'description': p.description,
+                'grace_minutes': 2,
+                'nudged': False,
+                'source_text': (p.jarvis_reply or '')[:240],
+                'created_at': p.registered_at,
+                'source': 'promise_log',  # 区别 SQLite 来源
+            })
+            existing_descs.add(desc_l)
+            added += 1
+        if added > 0:
+            try:
+                from jarvis_utils import bg_log as _pl_bg
+                _pl_bg(f"📥 [CommitmentWatcher/PromiseLog] 从 PromiseLog 恢复 {added} 条 pending commitment")
+            except Exception:
+                pass
+        return added
+
+    def _try_parse_deadline_str(self, deadline_str: str) -> float:
+        """parse 'HH:MM' / 'YYYY-MM-DD HH:MM:SS' → epoch ts. 失败返 0.0."""
+        if not deadline_str:
+            return 0.0
+        s = deadline_str.strip()
+        # try 'YYYY-MM-DD HH:MM:SS' 长格式
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+            try:
+                return time.mktime(time.strptime(s, fmt))
+            except Exception:
+                pass
+        # try 'HH:MM' 短格式 — 今天该时间, 已过则推明天
+        try:
+            hh, mm = s.split(':')[:2]
+            hh, mm = int(hh), int(mm)
+            # 严格范围 hh 0-23 mm 0-59 (避免 '25:99' 这种无效输入 time.mktime
+            # auto-normalize 后被当成有效 ts)
+            if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                return 0.0
+            now = time.localtime()
+            cand = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
+                                  hh, mm, 0, 0, 0, -1))
+            if cand < time.time() - 60:
+                cand += 86400
+            return cand
+        except Exception:
+            return 0.0
+
     def _get_hippo(self):
         """安全获取 hippocampus 引用，便于持久化 CRUD。
 
