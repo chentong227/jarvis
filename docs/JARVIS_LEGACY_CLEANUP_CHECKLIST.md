@@ -58,19 +58,19 @@
 
 按 Sir 准则 7+8 (元否决权 + 优雅可持续), 以下 sub-steps 真做风险高 + 跟 M6.4 真 class split 一并做更优雅. 不重复改 import.
 
-| Sub-step | 真做内容 | Defer 到 |
-|---|---|---|
-| **M3.E** | `jarvis_enhanced.py` 拆 3 file (ProactiveShield + ProactiveCompanion + SkillTreeTracker) | M6.4 |
-| **M3.B.Claim rename** | 真 rename `Claim → FactClaim` (251 处 grep) | M6.4 后 (alias 已加 backward compat) |
-| **M3.C/D/G/F** | 真 `git mv l1/l3/l5 → _legacy/` + `central_nerve.run()` 364 行移走 + worker.trigger_routing 删 | **M6.5** (需先观察 1 周 `deprecated_3_brain_invoked` SWM event 数 = 0) |
-| **M4.6** | grep 替换 18+ caller `add_commitment` → `hub.write_commitment` (M4.5.1 dual-write 已让数据进 PromiseLog, caller 改是 stylistic) | M6.4 |
-| **M4.7** | `dashboard pending_callbacks.jsonl` 消费时读 PromiseLog | M6.4 后 |
-| **M5.3** | 停 `__NUDGE__` push, Conductor 100% publish-only (需主脑被 SWM 主动触发机制) | M6.4 后 |
-| **M6.1** | `_assemble_prompt` 拆 12 个 `_build_xxx_block` (~10 stage 已有 `_asm_stage_t` boundary) | **M6.4** (真 class split 时一起设计 PromptAssembler class) |
-| **M6.2** | 5 tier 抽离 5 个 `_assemble_*_prompt` | M6.4 |
-| **M6.3** | `__init__` 957 行拆 `_init_xxx` 6 个方法 | M6.4 |
+| Sub-step | 真做内容 | Defer 到 | 状态 (2026-05-24) |
+|---|---|---|---|
+| **M3.E** ✅ | `jarvis_enhanced.py` 拆 3 file (ProactiveShield + ProactiveCompanion + SkillTreeTracker) | — | **DONE** (commit `1d23014`) facade re-export 兼容 |
+| **M3.B.Claim rename** | 真 rename `Claim → FactClaim` (251 处 grep) | M6.4 后 (alias 已加 backward compat) | DEFER (alias 已加 + ClaimSchemaV2/Authored alias) |
+| **M3.C/D/G/F** ✅ | 真 `git mv l1/l3/l5 → _legacy/` + `central_nerve.run()` 364 行 stub + worker.trigger_routing dual-emit | — | **DONE** M6.5.1+M6.5.2+M6.5.3 (3-brain mv to `_legacy/3_brain_attempt/`, run() stub raise + chat_bypass fallback, archive doc) |
+| **M4.6** | grep 替换 18+ caller `add_commitment` → `hub.write_commitment` (M4.5.1 dual-write 已让数据进 PromiseLog, caller 改是 stylistic) | DEFER | 不做 — M4.5.1 dual-write 已透明, 改 caller 真 0 收益, 反破现有 test |
+| **M4.7** ✅ | `dashboard pending_callbacks.jsonl` 消费时读 PromiseLog | — | **DONE** (commit `7ce9ed6`) dashboard dual-write to PromiseLog kind='cross_session_callback' |
+| **M5.3** | 停 `__NUDGE__` push, Conductor 100% publish-only (需主脑被 SWM 主动触发机制) | M7+ | DEFER — 需配套 nerve_voice_event_loop SWM-trigger main brain 机制. M5.1 dual-emit + M5.2 swm_block 注入主脑已 OK, 真停 __NUDGE__ 需 trigger mechanism |
+| **M6.1** ✅ first+second wave | `_assemble_prompt` 拆 12 个 `_build_xxx_block` | partial done | **6/12 helpers DONE** (memory_gateway/skill_tree/anticipator/profile_block/habit_clock/context_router). 剩 soul_block (~1200 行 大) 留 M6.4 真 class split 时一并 design |
+| **M6.2** ✅ first wave | 5 tier 抽离 5 个 `_assemble_*_prompt` | partial done | **WAKE_ONLY done** (commit `a4277cc`). FACTUAL_RECALL/SHORT_CHAT/TOOL_REQUEST/DEEP_QUERY 留 M6.4 (参数 ≥10 — 真适合 PromptAssembler class) |
+| **M6.3** ✅ first wave | `__init__` 957 行拆 `_init_xxx` 6 个方法 | partial done | **audio_recovery done** (commit `1f2b624`). 剩 ~25 个 init section 大, 留 M6.4 真 class split 时一并 design |
 
-**理由**: 这些 sub-step 真做都涉及 `central_nerve.py` / `jarvis_enhanced.py` import 调整. 如果 M6.4 真 class split, 这些会自然解决 (新 class 边界帮 design). 现在分多个 commit 做, 等 M6.4 时还要 cleanup, 反而**重复改两次**. Sir 准则 8: 不重复.
+**理由**: 大部分 sub-step 第一波已做 (3-brain 真 mv / enhanced split / dashboard dual-write / 6 prompt helper / 1 init helper / WAKE_ONLY tier). 剩余 deferred 部分跟 M6.4 真 class split 一并做更优雅, 不重复 refactor 两次.
 
 **M6.4 触发条件**: Sir 真用 1-2 周稳定 + cleanup checklist deferred 项数 < 3 → 启动 M6.4 真 class split.
 
