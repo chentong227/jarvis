@@ -1,6 +1,74 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:27 Sir — M4.1+2+3+4 done 4 commit, 等 Sir 真跑 --apply** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:31 Sir — M4 主体全 done + cleanup checklist 立, 等真测** 🚨🚨🚨
+>
+> Sir 8:28 跑了 M4.4 `--apply` 真把 1 条 Commitment 迁进 PromiseLog (kind=commitment, pid=p_c69c8325, backup `_legacy/data_migration_backup/20260524_082755/`).
+>
+> Sir 8:29 明确指示: **"保证我们重构结束并且稳定以后把老版本逐步褪去, 保证架构的 neat"** → Cascade 立 `docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md` 跟踪 7 类临时 layer + cleanup trigger.
+>
+> ## ✅ M4 主体 done (6 commit, audit fix + M4.5.1 dual-write + cleanup doc)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `b39196d` | **M4.1** | PromiseLog schema 扩 (3 新 field + backfill) |
+> | `3a48e71` | **M4.3** | `Hub.write_commitment` 4 kind → PromiseLog |
+> | `209a081` | **M4.2** | audit script (dry-run, 修 is_deleted bug `5afea9c`) |
+> | `fe4e9b2` | **M4.4** | migration script + 11 test (Sir 真跑 apply OK) |
+> | `5afea9c` | M4.4-fix | audit `is_deleted=0` 过滤 (跟 migration 对齐) |
+> | `0d39e1e` | **M4.5.1 + checklist** | CW.add_commitment dual-write to PromiseLog + 4 test + `docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md` (7 类临时 layer + cleanup trigger) |
+>
+> ## 📊 当前 PromiseLog 单源 (Sir 真测后)
+>
+> ```
+> PromiseLog: 90 (16 pending 7 fulfilled 63 untracked 2 cancelled + 2 commitment[+1 from migration])
+> Commitments SQLite active: 0 (全 nudged)
+> CyclicTask / WatchTask / Concerns active: 0
+> ```
+>
+> ## 🧹 7 类临时 backward-compat layer (`docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md`)
+>
+> | # | 类型 | 数量 | Cleanup trigger |
+> |---|---|---|---|
+> | 1 | Deprecated stub (UnifiedMemoryGateway / TaskWorkerPool) | 2 | M5+ 0 真 instantiate |
+> | 2 | File shim (jarvis_memory_gateway.py) | 1 | 18 caller 改 import |
+> | 3 | Dual-write (CW.add_commitment → PromiseLog) | 1 | **M4.5.3** (daemon 切 PromiseLog 后) |
+> | 4 | noqa F401 转发 import | 20+ | stub 删后 |
+> | 5 | `__unknown__` author backfill 标 | 1 | 1 个月后 |
+> | 6 | TypeError fallback (老 signature) | 1 | UnifiedMemoryGateway 删后 |
+> | 7 | Hardcoded fallback (proxy_url) | 1 | **永久保留** (defense in depth) |
+>
+> Sir 准则 8 强制: **加新 layer 必须在此 doc 加 row**, 不允许 commit.
+>
+> ## 📋 Sir M4.5.1 真测 (~3 min)
+>
+> ```powershell
+> # 1. 重启 jarvis 跑 1-3 轮 (触发主脑 fast_call set commitment)
+> # 2. 看 PromiseLog 多出新 commitment kind 条 (dual-write 真生效)
+> python scripts/audit_promise_sources.py
+> # 3. mutation_receipts 含 source='cw.add_commitment.dual_write/*'
+> Get-Content memory_pool/mutation_receipts.jsonl -Tail 5 | Select-String "dual_write"
+> ```
+>
+> ## 🎯 M4.5.2 + 3 (Sir 真测 OK 后)
+>
+> | 子项 | risk | scope |
+> |---|---|---|
+> | **M4.5.2** | 中 | daemon 改优先读 PromiseLog (fallback SQLite, 不破老) |
+> | **M4.5.3** | 中 | 停 SQLite 写, dual-write block 删 (cleanup checklist #3 兑现) |
+> | **M4.6** | 中 | 全文 grep `add_commitment` → `hub.write_commitment` |
+> | **M4.7** | 低 | dashboard `pending_callbacks.jsonl` 读 PromiseLog |
+>
+> ## Sir M4.5.1 真测 OK 后 menu
+>
+> ```
+> Cascade, M4.5.1 真测 OK, 推 M4.5.2 daemon 切.
+> # 或
+> Cascade, M4 暂停, 真用一段稳定后做 M4.5.3+ + cleanup checklist 兑现.
+> ```
+>
+> ---
+>
+> ## 历史: M4.1+2+3+4 完成 (08:27)
 >
 > Sir 8:23 M4.1+2+3 真测 OK + 指示"按顺序往下推进, 除非合后面更优雅", Cascade 继续推 M4.4 — 写完 migration script + 11 test, 但**没擅自动 prod 数据** (准则 8). Sir 自己跑 `--apply` 真执行.
 >
