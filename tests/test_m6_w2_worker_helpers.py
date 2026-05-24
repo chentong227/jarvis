@@ -197,6 +197,60 @@ class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
         self.assertIn('闭嘴', joined)
 
 
+class TestM6W7PatternLists(unittest.TestCase):
+    """W7 抽出: PRACTICE / DISMISSIVE / SELF_INTERRUPTION 3 个 method-local list 抽 const."""
+
+    def test_const_export(self):
+        """3 const 都从 helpers 可 import."""
+        from jarvis_worker_helpers import (
+            PRACTICE_PATTERNS, DISMISSIVE_PATTERNS, SELF_INTERRUPTION_PATTERNS,
+        )
+        self.assertIsInstance(PRACTICE_PATTERNS, list)
+        self.assertGreaterEqual(len(PRACTICE_PATTERNS), 5)
+        self.assertIsInstance(DISMISSIVE_PATTERNS, list)
+        self.assertGreaterEqual(len(DISMISSIVE_PATTERNS), 30)
+        self.assertIsInstance(SELF_INTERRUPTION_PATTERNS, list)
+        self.assertGreaterEqual(len(SELF_INTERRUPTION_PATTERNS), 8)
+
+    def test_worker_reexport(self):
+        """worker re-export 与 helpers 同对象."""
+        from jarvis_worker import (
+            PRACTICE_PATTERNS as W_PR, DISMISSIVE_PATTERNS as W_DI,
+            SELF_INTERRUPTION_PATTERNS as W_SI,
+        )
+        from jarvis_worker_helpers import (
+            PRACTICE_PATTERNS as H_PR, DISMISSIVE_PATTERNS as H_DI,
+            SELF_INTERRUPTION_PATTERNS as H_SI,
+        )
+        self.assertIs(W_PR, H_PR)
+        self.assertIs(W_DI, H_DI)
+        self.assertIs(W_SI, H_SI)
+
+    def test_practice_pattern_match(self):
+        """PRACTICE pattern 真能 match 已知 sample."""
+        import re
+        from jarvis_worker_helpers import PRACTICE_PATTERNS
+        sample = 'how to say hello'
+        hits = [p for p in PRACTICE_PATTERNS if re.search(p, sample)]
+        self.assertGreater(len(hits), 0)
+
+    def test_dismissive_contains_keys(self):
+        """DISMISSIVE 含 'not funny' / '不好笑' / 'stop joking'."""
+        from jarvis_worker_helpers import DISMISSIVE_PATTERNS
+        joined = ' '.join(DISMISSIVE_PATTERNS).lower()
+        self.assertIn('not funny', joined)
+        self.assertIn('不好笑', joined)
+        self.assertIn('stop joking', joined)
+
+    def test_self_interruption_match(self):
+        """SELF_INTERRUPTION 真能 match '不对不对' / 'wait on'."""
+        import re
+        from jarvis_worker_helpers import SELF_INTERRUPTION_PATTERNS
+        for sample in ('不对不对', 'wait on', 'let me say'):
+            hits = [p for p in SELF_INTERRUPTION_PATTERNS if re.search(p, sample)]
+            self.assertGreater(len(hits), 0, f'no SELF_INTERRUPTION matched: {sample}')
+
+
 class TestM6W6VocabLoaders(unittest.TestCase):
     """W6 抽出: load_sleep_cancel_vocab + load_audio_ducking_targets 抽到 helpers."""
 

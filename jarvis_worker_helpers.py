@@ -311,6 +311,46 @@ CN_DIGIT_MAP = {
 # 历史: 模糊脊髓反射词典 (巨量扩充版) — 处理英文 ASR 空耳 (jarvis ↔ garbage / charles / java...)
 # + 中文发音容错 (贾维斯 ↔ 假装是 / 夹尾巴) + 唤醒/告退/物理静音 prefix.
 
+# 🆕 [Reshape M6.W7 / 2026-05-24 19:10] 3 个 method-local pattern list 抽 const
+# - PRACTICE_PATTERNS: _compute_wake_weight 用, "say/读/发音/string" 类英语练习
+# - DISMISSIVE_PATTERNS: _detect_joke_feedback 用, 用户对 nudge 的负面反馈
+# - SELF_INTERRUPTION_PATTERNS: _detect_help_refusal 用, 自我打断口吃 ("不对不对" / "wait" / "let me say")
+
+PRACTICE_PATTERNS = [
+    r'^(say|speak|read|pronounce|repeat|how.*say|how.*pronounce)\s',
+    r'^(说|读|念|发音|怎么读|怎么说)',
+    r'^(is|are|am|do|does|did|can|could|will|would|should|may|might)\s',
+    r'^(what|who|where|when|why|how)\s',
+    r'^(i\s|you\s|he\s|she\s|it\s|we\s|they\s)',
+    r'^(string|integer|float|boolean|array|object|function|class|method|variable)',
+]
+
+DISMISSIVE_PATTERNS = [
+    "not funny", "not that funny", "not a joke", "not joking",
+    "this is normal", "it's normal", "that's normal", "its normal",
+    "很正常", "不好笑", "没意思", "无聊", "这很正常",
+    "没什么好笑", "不好笑啊", "这有什么好笑", "有什么好笑",
+    "别开玩笑了", "不要开玩笑", "别闹", "行了",
+    "stop joking", "stop it", "enough", "that's enough",
+    "i'm serious", "im serious", "seriously",
+    "not really", "not at all", "whatever",
+    "so what", "big deal", "what's funny",
+]
+
+SELF_INTERRUPTION_PATTERNS = [
+    r'不对不对',
+    r'不是不是',
+    r'不不不',
+    r'(?:no\s+){2,}',
+    r'我我[^\s,,。.]',
+    r'(我要|我想|我得|我会|我得).{0,12}(跟你|和你|给你|对你|跟我自己).{0,3}说',
+    r'(?:wait|hold|hang)\s+on',
+    r'let\s+me\s+(say|tell|explain|finish)',
+    r'(等[一下下]|等等|等我说)',
+    r'(?:um|uh|er|呃|嗯).{0,6}我',
+]
+
+
 # 🆕 [Reshape M6.W6 / 2026-05-24 19:00] vocab loader fn 抽到 helpers
 # `_load_sleep_cancel_vocab` / `_load_audio_ducking_targets` 不依赖 self,
 # 抽 module-level pure fn. worker class method 改 1-line alias 兼容老 caller.

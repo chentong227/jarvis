@@ -151,6 +151,9 @@ from jarvis_worker_helpers import (  # noqa: F401
     REFLEX_DICT,
     load_sleep_cancel_vocab,
     load_audio_ducking_targets,
+    PRACTICE_PATTERNS,
+    DISMISSIVE_PATTERNS,
+    SELF_INTERRUPTION_PATTERNS,
 )
 
 
@@ -426,15 +429,8 @@ class JarvisWorkerThread(QThread):
 
         looks_like_practice = False
         if is_short and not is_exact_wake:
-            practice_patterns = [
-                r'^(say|speak|read|pronounce|repeat|how.*say|how.*pronounce)\s',
-                r'^(说|读|念|发音|怎么读|怎么说)',
-                r'^(is|are|am|do|does|did|can|could|will|would|should|may|might)\s',
-                r'^(what|who|where|when|why|how)\s',
-                r'^(i\s|you\s|he\s|she\s|it\s|we\s|they\s)',
-                r'^(string|integer|float|boolean|array|object|function|class|method|variable)',
-            ]
-            for pat in practice_patterns:
+            # 🆕 [Reshape M6.W7 / 2026-05-24 19:10] 抽到 jarvis_worker_helpers.PRACTICE_PATTERNS
+            for pat in PRACTICE_PATTERNS:
                 if re.search(pat, cmd_clean):
                     looks_like_practice = True
                     break
@@ -701,18 +697,8 @@ class JarvisWorkerThread(QThread):
                 return
 
             cmd_lower = cmd.lower()
-            dismissive_patterns = [
-                "not funny", "not that funny", "not a joke", "not joking",
-                "this is normal", "it's normal", "that's normal", "its normal",
-                "很正常", "不好笑", "没意思", "无聊", "这很正常",
-                "没什么好笑", "不好笑啊", "这有什么好笑", "有什么好笑",
-                "别开玩笑了", "不要开玩笑", "别闹", "行了",
-                "stop joking", "stop it", "enough", "that's enough",
-                "i'm serious", "im serious", "seriously",
-                "not really", "not at all", "whatever",
-                "so what", "big deal", "what's funny",
-            ]
-            is_dismissive = any(p in cmd_lower for p in dismissive_patterns)
+            # 🆕 [Reshape M6.W7 / 2026-05-24 19:10] 抽到 jarvis_worker_helpers.DISMISSIVE_PATTERNS
+            is_dismissive = any(p in cmd_lower for p in DISMISSIVE_PATTERNS)
 
             if not is_dismissive:
                 return
@@ -835,20 +821,9 @@ class JarvisWorkerThread(QThread):
             # 🩹 [P0+20-β.1.4 / 2026-05-16] 自我打断 pre-filter：仅对非强拒绝生效。
             # 强拒绝（"shut up" / "leave me alone" / "不要再提"）即便有口吃修正也按拒绝处理。
             if not is_strong_refusal:
-                self_interruption_patterns = [
-                    r'不对不对',
-                    r'不是不是',
-                    r'不不不',
-                    r'(?:no\s+){2,}',
-                    r'我我[^\s,，。.]',
-                    r'(我要|我想|我得|我会|我得).{0,12}(跟你|和你|给你|对你|跟我自己).{0,3}说',
-                    r'(?:wait|hold|hang)\s+on',
-                    r'let\s+me\s+(say|tell|explain|finish)',
-                    r'(等[一下下]|等等|等我说)',
-                    r'(?:um|uh|er|呃|嗯).{0,6}我',
-                ]
+                # 🆕 [Reshape M6.W7 / 2026-05-24 19:10] 抽到 jarvis_worker_helpers.SELF_INTERRUPTION_PATTERNS
                 import re as _re_si
-                for pat in self_interruption_patterns:
+                for pat in SELF_INTERRUPTION_PATTERNS:
                     if _re_si.search(pat, cmd_lower):
                         try:
                             from jarvis_utils import bg_log as _si_bg
