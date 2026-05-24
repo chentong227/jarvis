@@ -732,27 +732,8 @@ class SkillTreeTracker:
 
 
 # =========================================================================
-# 11. SoulRouter — 灵魂路由器 (轻量级)
+# [Reshape M3.B / 2026-05-24] SoulRouter (轻量级) — 已删除 (死代码 + 同名冲突).
+# 唯一定义在 jarvis_routing.SoulRouter (advanced version with BILINGUAL_BRIDGE).
+# 老 enhanced.SoulRouter 0 真 caller (grep 验过, central_nerve / tests / scripts 全走
+# jarvis_routing import), 是 P0+19 拆分时的历史残留 + lightweight 占位版.
 # =========================================================================
-class SoulRouter:
-    def __init__(self, profile: dict = None):
-        self.profile = profile or {}
-        self._tag_index = {}
-
-    def route(self, user_input: str) -> list:
-        tags = []
-        input_lower = (user_input or '').lower()
-
-        if any(kw in input_lower for kw in ['project', '项目', 'working on', 'code', '编程']):
-            tags.append('projects')
-
-        if any(kw in input_lower for kw in ['joke', 'funny', 'remember', '笑话', '记得', '上次']):
-            tags.append('inside_jokes')
-
-        if any(kw in input_lower for kw in ['achievement', 'milestone', '里程碑', '完成', 'built']):
-            tags.append('milestones')
-
-        if any(kw in input_lower for kw in ['skill', 'learning', 'progress', '技能', '学习', '进步']):
-            tags.append('progression')
-
-        return tags if tags else ['general']

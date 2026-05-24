@@ -52,6 +52,22 @@ class TestMemoryCoreStillHasClasses(unittest.TestCase):
         self.assertIsNotNone(PromptLayer)
 
 
+class TestSoulRouterUnique(unittest.TestCase):
+    """SoulRouter 唯一 source of truth = jarvis_routing.SoulRouter (M3.B)."""
+
+    def test_enhanced_soul_router_gone(self):
+        import jarvis_enhanced
+        self.assertFalse(hasattr(jarvis_enhanced, 'SoulRouter'),
+                          'M3.B: jarvis_enhanced.SoulRouter 应已删 (唯一在 routing)')
+
+    def test_routing_soul_router_intact(self):
+        from jarvis_routing import SoulRouter
+        self.assertIsNotNone(SoulRouter)
+        # 验证 advanced version (含 BILINGUAL_BRIDGE)
+        self.assertTrue(hasattr(SoulRouter, 'BILINGUAL_BRIDGE'),
+                         'M3.B: routing.SoulRouter 应是 advanced version 含 BILINGUAL_BRIDGE')
+
+
 class TestBloodCoreClassesIntact(unittest.TestCase):
     """blood.py 的核心 dataclass (Action / ExecutionResult / JarvisBlood / FeedbackSignal / TaskSnapshot) 不受影响."""
 
