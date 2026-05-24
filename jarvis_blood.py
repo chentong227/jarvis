@@ -38,16 +38,11 @@ class JarvisBlood:
     def add_history(self, result: ExecutionResult):
         self.history.append(result)
 
-@dataclass
-class CorrectionEntry:
-    trigger_context: str
-    wrong_response: str
-    correction: str
-    timestamp: float = field(default_factory=time.time)
-    context_embedding: Optional[bytes] = None
-    source_module: str = "chat"
-    confidence: float = 1.0
-    times_recalled: int = 0
+# [Reshape M3.B / 2026-05-24] CorrectionEntry / MemoryFragment / PromptLayer 死代码删除.
+# 这 3 个 dataclass 是 P0+19-5 拆分时的历史残留 placeholder. 0 真 caller import from
+# jarvis_blood (全部走 jarvis_memory_core 那份, grep 验过). 删除消除同名 class 冲突.
+# 老的: jarvis_blood.CorrectionEntry / .MemoryFragment / .PromptLayer
+# 新的: jarvis_memory_core.CorrectionEntry / .MemoryFragment / .PromptLayer (唯一)
 
 @dataclass
 class FeedbackSignal:
@@ -64,16 +59,6 @@ class FeedbackSignal:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
-class MemoryFragment:
-    source: str
-    content: str
-    timestamp: float = field(default_factory=time.time)
-    relevance_score: float = 0.0
-    freshness_hours: float = 0.0
-    source_weight: float = 0.2
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
 class TaskSnapshot:
     task_id: str = ""
     macro_goal: str = ""
@@ -84,13 +69,5 @@ class TaskSnapshot:
     timestamp: float = field(default_factory=time.time)
     environment: str = "DESKTOP"
 
-@dataclass
-class PromptLayer:
-    layer_id: str
-    content: str
-    ttl_seconds: float = 3600.0
-    generated_at: float = field(default_factory=time.time)
-    dependencies: List[str] = field(default_factory=list)
-
-    def is_expired(self) -> bool:
-        return time.time() - self.generated_at > self.ttl_seconds
+# [Reshape M3.B / 2026-05-24] PromptLayer 也是死代码 (历史残留), 删除. 唯一定义在
+# jarvis_memory_core.PromptLayer (P0+19-5 拆分后的真 owner).
