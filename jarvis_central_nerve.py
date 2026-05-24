@@ -4402,13 +4402,62 @@ User: {new_cmd}
         scan_dir("l4_hands_pool", "Hands", self.hand_registry, self.hand_manifests)
 
     def run(self, voice_input: str, max_loops: int = 8, memory_protocol=None):
+        """🆕 [Reshape M6.5.3 / 2026-05-24] 3-brain task flow deprecated.
+
+        Sir Q2 决议: 3-brain (RightBrain/LeftBrain/L5Brain) 彻底放弃, 主对话 100%
+        走 jarvis_chat_bypass.stream_chat 单脑路径. 此 method 改为 stub:
+          1. publish SWM event `deprecated_3_brain_invoked` (audit 用)
+          2. raise RuntimeError → 让 existing except block 接管
+          3. except 调 chat_bypass.stream_chat → 主脑 fallback 道歉 + 安抚 Sir
+
+        老 364 行 task flow archive: `_legacy/3_brain_attempt/central_nerve_run_v1.py`
+        老 3 brain 文件: `_legacy/3_brain_attempt/{l1,l3,l5}_*.py`
+
+        worker.trigger_routing() (line 5073) 仍调此 method (老路径不动), 但
+        deprecation warn 已加 (M3.C-trace). 看 SWM event = 0 1 周后, M7 真删此 method
+        + worker.trigger_routing 简化.
+        """
         self.is_interrupted = False
         # [R7-α/B1] reason='task_started'：深度物理任务开始
         if self.state is not None:
-            self.state.set_active_task(True, reason='task_started', source='CentralNerve.run')
-        
+            self.state.set_active_task(True, reason='task_started_deprecated', source='CentralNerve.run')
+
         try:
-            # 👇 极简处理：去掉原来的 ═ 边框和 🎙️[人类发声] 打印
+            # 🆕 publish SWM event 让 audit/lineage 看见 3-brain invoked
+            try:
+                from jarvis_utils import get_event_bus, bg_log as _3b_bg
+                _3b_bg(
+                    f"⚠️ [3-brain DEPRECATED M6.5.3] CentralNerve.run() invoked with: "
+                    f"'{voice_input[:80]}' — main-brain chat_bypass fallback engaged."
+                )
+                _bus = get_event_bus()
+                if _bus is not None:
+                    _bus.publish(
+                        etype='deprecated_3_brain_invoked',
+                        description=(
+                            f'CentralNerve.run() called for voice_input={voice_input[:80]} '
+                            f'— 3-brain stub raises, chat_bypass fallback engages'
+                        ),
+                        source='CentralNerve.run',
+                        salience=0.7,
+                        metadata={
+                            'milestone': 'M6.5.3',
+                            'voice_input': voice_input[:200],
+                            'archive': '_legacy/3_brain_attempt/central_nerve_run_v1.py',
+                        },
+                    )
+            except Exception:
+                pass
+
+            # 🆕 raise → existing except block 接管 chat_bypass.stream_chat fallback
+            raise RuntimeError(
+                "3-brain (RightBrain/LeftBrain/L5Brain) deprecated since M6.5.3 — "
+                "main-brain via chat_bypass.stream_chat handles everything. "
+                "Old 364-line task flow archived in "
+                "_legacy/3_brain_attempt/central_nerve_run_v1.py."
+            )
+
+            # 🚫 unreachable code below (M6.5.3 deprecation)
             self._hot_reload_organs()
             full_task_history = []
             stm_text = "\n".join([f"[{m['time']}] 历史轨迹: {m['jarvis']}" for m in self.short_term_memory])
