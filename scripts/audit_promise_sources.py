@@ -81,15 +81,20 @@ def audit_commitments_sqlite() -> Dict:
             return {'count': 0, 'active': 0, 'nudged': 0}
         cur.execute("SELECT COUNT(*) FROM Commitments")
         total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM Commitments WHERE nudged=0")
+        # 🩹 [M4.4-fix / 2026-05-24] active = nudged=0 AND is_deleted=0 (跟 migration script 对齐).
+        # 老版本只用 nudged=0 漏过滤 is_deleted, 导致 migrate 后 audit 仍显示 active>0 不符现实.
+        cur.execute("SELECT COUNT(*) FROM Commitments WHERE nudged=0 AND is_deleted=0")
         active = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM Commitments WHERE nudged=1")
         nudged = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM Commitments WHERE is_deleted=1")
+        deleted = cur.fetchone()[0]
         _kv('total', total)
-        _kv('active (nudged=0)', active)
+        _kv('active (nudged=0 AND is_deleted=0)', active)
         _kv('nudged (nudged=1)', nudged)
-        # sample
-        cur.execute("SELECT description, deadline_ts, created_at FROM Commitments ORDER BY created_at DESC LIMIT 3")
+        _kv('deleted (is_deleted=1)', deleted)
+        # sample of 真 active only
+        cur.execute("SELECT description, deadline_ts, created_at FROM Commitments WHERE nudged=0 AND is_deleted=0 ORDER BY created_at DESC LIMIT 3")
         rows = cur.fetchall()
         if rows:
             _kv('latest 3 sample', '')
