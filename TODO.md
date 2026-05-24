@@ -1,6 +1,67 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:05 Sir — M3.A + M3.B (partial) done 3 commit, 等真测** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:20 Sir — M4.1+2+3 done 3 commit, 等真测 + 决定 M4.4** 🚨🚨🚨
+>
+> Sir 8:12 M3.A+B 真测 OK, Cascade 按 Sir 准则 7+8 跳 M3 剩余子项 (Claim/E/CDGF 合 M6 一起做), 直接推 M4 PromiseLog 合并主体.
+>
+> ## ✅ M4.1+2+3 done (3 commit, audit 显示**真要 migrate 仅 4 条**)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `b39196d` | **M4.1** | PromiseLog schema 扩 — Promise dataclass +3 field (`who_promised`/`trigger_pattern`/`bound_to_concern_id`) + `_backfill_who_promised()` 老数据迁移 + kind 扩到 4 类 (commitment/cyclic/watch/self_promise, 老 hard/soft 兼容并存) (9 test) |
+> | `3a48e71` | **M4.3** | `Hub.write_commitment` 4 kind 路由 → PromiseLog 单源 (修 M2.A stub bug, 真接 `PromiseLog.register`) (7 test) |
+> | `209a081` | **M4.2** | `scripts/audit_promise_sources.py` audit (dry-run 只读) — 看 5 source 数据现状 |
+>
+> ## � audit 结果 (`python scripts/audit_promise_sources.py`)
+>
+> | Source | 总数 | active | 待迁 |
+> |---|---|---|---|
+> | **PromiseLog** (目标) | 88 (16 pending / 7 fulfilled / 63 untracked / 2 cancelled, 全老 kind soft/hard) | - | - |
+> | **Commitments SQLite** | 29 | **4** | **4** |
+> | **CyclicTask** | NOT EXISTS | 0 | 0 |
+> | **WatchTask** | 4 | 0 | 0 |
+> | **Concerns notes_for_self** | 0 | 0 | 0 |
+> | **总计待迁** | - | - | **4 条** |
+>
+> ## � Sir 真测 (~3 min)
+>
+> ```powershell
+> # 1. 重启 jarvis 跑 1-3 轮
+> # 2. 跑 audit script 看现状 (重启 jarvis 数据应该跟前一样)
+> python scripts/audit_promise_sources.py
+> # 3. 验 hub.write_commitment 真写 PromiseLog (chat 触发主脑 fast_call set commitment 时)
+> Get-Content memory_pool/jarvis_promise_log.json | Select-Object -First 100
+> # 4. lineage + mutation_receipts 仍正常
+> python scripts/lineage_dump.py --list-decisions --limit 2
+> Get-Content memory_pool/mutation_receipts.jsonl -Tail 3
+> ```
+>
+> ## 🎯 M4.4+ 决策 (4 条数据 risk 已极低)
+>
+> | 子项 | risk | scope | 建议 |
+> |---|---|---|---|
+> | **M4.4 apply migration** | 低 (4 条) | 真把 4 条 Commitments → PromiseLog + backup SQLite | Sir 决定 |
+> | **M4.5 CommitmentWatcher 退化** | 高 | daemon 改 read-only PromiseLog (老 add_commitment 退化为 hub shim) | M4.4 验证后做 |
+> | **M4.6 caller grep 替换** | 中 | 全文 `add_commitment` / `mark_fulfilled` → hub.write_commitment | M4.5 配套 |
+> | **M4.7 dashboard 兼容** | 低 | `pending_callbacks.jsonl` 消费时读 PromiseLog | M4.5+6 之后 |
+>
+> 按 Sir 准则 8: **M4.4 真 migration 是一次性, 跑后可立刻回滚 (老 SQLite backup 保留)**. 我建议 Sir 真测 M4.1+2+3 OK 后, 直接做 M4.4. M4.5+6+7 是真"5 套统一"核心改 daemon + caller, 风险高建议**分多 commit + 每 commit 真测**.
+>
+> ## Sir 真测 OK 后 menu
+>
+> ```
+> Cascade, M4.1+2+3 真测 OK, 推 M4.4 apply migration (4 条).
+> # 或
+> Cascade, 4 条数据没必要 migrate, 直接推 M4.5+6 (daemon + caller 真换).
+> # 或
+> Cascade, M4 主体够了, 暂停 reshape 真用一段.
+> ```
+>
+> 详 `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md` §6.5.
+>
+> ---
+>
+> ## 历史: M3.A + M3.B (partial) 完成 (08:05)
 >
 > Sir 8:01 M2 全部真测 OK (14 decision / 224 evidence / 0 broken / blocks=2,0 = prompt tier 正常分布), Cascade 立刻按顺序推 M3.
 >
