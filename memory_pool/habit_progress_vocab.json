@@ -1,0 +1,57 @@
+{
+  "_doc": "Habit progress vocab (Reshape 准则 8 / 2026-05-24)",
+  "_purpose": "Sir 报 habit 进度 (喝水/番茄钟/睡眠) 触发 habit_progress_routing directive 教主脑用 concerns.progress_update.",
+  "_grant": "准则 6 (拒绝硬编码): vocab 持久化, CLI 可改, L7 reflector 看 STM propose 新 vocab.",
+  "_schema": {
+    "zh_keywords": "中文触发词 list. 命中即 fire directive.",
+    "en_keywords": "英文触发词 list (lowercased).",
+    "concern_id_hints": "habit verb → concern_id 提示 (主脑参考)."
+  },
+  "zh_keywords": [
+    "喝了",
+    "喝水",
+    "杯水",
+    "杯了",
+    "毫升",
+    "ml了",
+    "番茄钟",
+    "番茄时间",
+    "番茄做了",
+    "睡了",
+    "睡眠",
+    "休息了",
+    "学了",
+    "运动了",
+    "走了",
+    "锻炼了"
+  ],
+  "en_keywords": [
+    "drank ",
+    "cups of water",
+    "glass of water",
+    "glasses of water",
+    "ml of water",
+    "hydration",
+    "hydrated",
+    "pomodoro",
+    "pomodoros",
+    "slept ",
+    "hours of sleep",
+    "worked out",
+    "exercised",
+    "studied for"
+  ],
+  "concern_id_hints": {
+    "喝水/hydration/water/cups/ml": "sir_hydration_habit",
+    "番茄/pomodoro": "sir_pomodoro_compliance",
+    "睡眠/sleep/slept": "sir_sleep_streak",
+    "学习/studied": "sir_jiazhao_progress (若上下文是驾照)"
+  },
+  "_history": [
+    {
+      "ts": "2026-05-24T12:55:00",
+      "marker": "Reshape-准则8-初立",
+      "reason": "Sir 12:14 真测痛点: 主脑用 progress.set / mutation.update 误调 hydration. 立 habit_progress_routing directive + 本 vocab 持久化."
+    }
+  ]
+}
