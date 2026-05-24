@@ -108,9 +108,19 @@ from jarvis_vocal_cord import VocalCord  # noqa: F401
 from jarvis_blood import JarvisBlood, ExecutionResult, FeedbackSignal  # noqa: F401
 from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401
-from l1_right_brain import RightBrain  # noqa: F401
-from l3_left_brain import LeftBrain  # noqa: F401
-from l5_reflection_brain import ReflectionBrain  # noqa: F401
+# 🆕 [Reshape M6.5.2 / 2026-05-24] 3-brain 即将 git mv 到 _legacy/. try/except 防破.
+try:
+    from l1_right_brain import RightBrain  # noqa: F401
+except Exception:
+    RightBrain = None
+try:
+    from l3_left_brain import LeftBrain  # noqa: F401
+except Exception:
+    LeftBrain = None
+try:
+    from l5_reflection_brain import ReflectionBrain  # noqa: F401
+except Exception:
+    ReflectionBrain = None
 
 from jarvis_utils import (  # noqa: F401
     safe_gemini_call, get_local_fallback, safe_openrouter_call,

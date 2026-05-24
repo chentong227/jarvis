@@ -55,9 +55,19 @@ import multiprocessing
 from dataclasses import dataclass, field
 from jarvis_blood import JarvisBlood, ExecutionResult
 from jarvis_blood import FeedbackSignal  # P0+13 双定义合并 + P0+19-5 拆分后保留顶部 import 兼容（测试源码扫描要求独立成行）
-from l1_right_brain import RightBrain
-from l3_left_brain import LeftBrain
-from l5_reflection_brain import ReflectionBrain
+# 🆕 [Reshape M6.5.2 / 2026-05-24] 3-brain 即将 git mv 到 _legacy/. try/except 防破.
+try:
+    from l1_right_brain import RightBrain
+except Exception:
+    RightBrain = None
+try:
+    from l3_left_brain import LeftBrain
+except Exception:
+    LeftBrain = None
+try:
+    from l5_reflection_brain import ReflectionBrain
+except Exception:
+    ReflectionBrain = None
 from jarvis_hippocampus import Hippocampus
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion
 from google import genai

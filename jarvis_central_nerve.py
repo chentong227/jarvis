@@ -97,9 +97,21 @@ from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401
 
 # [P0+19-final fix / 2026-05-16] 主脑用到的 l1/l3/l5 / utils / skill_registry 类
-from l1_right_brain import RightBrain  # noqa: F401
-from l3_left_brain import LeftBrain  # noqa: F401
-from l5_reflection_brain import ReflectionBrain  # noqa: F401
+# 🆕 [Reshape M6.5.2 / 2026-05-24] 3-brain 即将 git mv 到 _legacy/3_brain_attempt/.
+# Sir Q2 决议放弃 3-brain. 包 try/except 让 file mv 后 import 失败也不破主链路.
+# CentralNerve.__init__ 也已加 try/except (M6.5.1) 实例化 fallback None.
+try:
+    from l1_right_brain import RightBrain  # noqa: F401
+except Exception:
+    RightBrain = None
+try:
+    from l3_left_brain import LeftBrain  # noqa: F401
+except Exception:
+    LeftBrain = None
+try:
+    from l5_reflection_brain import ReflectionBrain  # noqa: F401
+except Exception:
+    ReflectionBrain = None
 from jarvis_utils import (  # noqa: F401
     ConversationEventBus, JarvisState, PlanLedger, WorkingMemoryFeed,
     SessionDigest, ToneSelector, AntiCommonPhraseTracker,
@@ -275,9 +287,40 @@ class CentralNerve:
         self.key_router = key_router
         self.vocal = VocalCord()  
         self.blood = JarvisBlood()
-        self.right_brain = RightBrain(api_key)
-        self.left_brain = LeftBrain()
-        self.l5_brain = ReflectionBrain(api_key) 
+        # 🆕 [Reshape M6.5.1 / 2026-05-24] 3-brain 实例化 try/except 保护 (mv 准备).
+        # Sir Q2 决议: 3-brain (l1_right_brain / l3_left_brain / l5_reflection_brain)
+        # 彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑路径. M6.5.2 真 git mv
+        # 这 3 file 到 _legacy/3_brain_attempt/ 时, 此处 try/except 让 init 仍能完成
+        # (fallback None). 老路径 central_nerve.run() 仍兜底, 但 worker.trigger_routing
+        # 已加 deprecation warn (M3.C-trace). 看 SWM `deprecated_3_brain_invoked` event = 0
+        # 1 周后, M6.5.3 真删 run() + 3 self.X_brain 引用.
+        self.right_brain = None
+        self.left_brain = None
+        self.l5_brain = None
+        try:
+            self.right_brain = RightBrain(api_key)
+        except Exception as _rb_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg
+                _3b_bg(f"⚠️ [3-brain/Init] RightBrain 实例化失败 (legacy mv?): {type(_rb_e).__name__}: {str(_rb_e)[:80]}")
+            except Exception:
+                pass
+        try:
+            self.left_brain = LeftBrain()
+        except Exception as _lb_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg2
+                _3b_bg2(f"⚠️ [3-brain/Init] LeftBrain 实例化失败 (legacy mv?): {type(_lb_e).__name__}: {str(_lb_e)[:80]}")
+            except Exception:
+                pass
+        try:
+            self.l5_brain = ReflectionBrain(api_key)
+        except Exception as _l5_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg3
+                _3b_bg3(f"⚠️ [3-brain/Init] ReflectionBrain 实例化失败 (legacy mv?): {type(_l5_e).__name__}: {str(_l5_e)[:80]}")
+            except Exception:
+                pass
         self.hippocampus = Hippocampus(key_router=key_router)
         self.habit_clock = HabitClock()
         self.causal_chain = CausalChain()
