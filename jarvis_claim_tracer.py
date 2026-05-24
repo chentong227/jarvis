@@ -102,7 +102,11 @@ _PAT_PAST_ACTION_EN = re.compile(
 # ============================================================
 
 class Claim:
-    """一个 specific factual claim."""
+    """一个 specific factual claim.
+
+    🆕 [Reshape M3.B.Claim / 2026-05-24] 推荐新代码用 `FactClaim` 别名 (更准确,
+    跟 `jarvis_integrity_watcher.IntegrityClaim` 区分). 老 `Claim` 名保留 0 改动.
+    """
 
     def __init__(self, kind: str, text: str, span: Tuple[int, int] = (0, 0)):
         self.kind = kind          # 'time' / 'percent' / 'count' / 'quote'
@@ -114,6 +118,11 @@ class Claim:
 
     def __repr__(self):
         return f"Claim({self.kind} '{self.text}' trace={self.trace_to})"
+
+
+# [Reshape M3.B.Claim / 2026-05-24] 新名 alias — 推荐新代码用 FactClaim 更准确
+# (vs jarvis_integrity_watcher.IntegrityClaim). 老 Claim 名保留兼容 0 caller 改.
+FactClaim = Claim
 
 
 # ============================================================

@@ -104,7 +104,11 @@ DEFAULT_HANDOFF_AFTER_AGE_S = 1800.0     # claim 30min 仍没 recovered → hand
 
 @dataclass
 class Claim:
-    """主脑 reply 中含的 mutation claim, IntegrityWatcher 监督."""
+    """主脑 reply 中含的 mutation claim, IntegrityWatcher 监督.
+
+    🆕 [Reshape M3.B.Claim / 2026-05-24] 推荐新代码用 `IntegrityClaim` 别名
+    (更准确, 跟 `jarvis_claim_tracer.FactClaim` 区分). 老 `Claim` 名保留 0 改动.
+    """
     id: str
     claim_type: str            # reminder / commitment / promise / memory / milestone / profile / concern / relational
     extracted_action: str      # 主脑原话片段 "I've set the reminder"
@@ -505,6 +509,11 @@ def extract_intent_excerpt(reply_text: str, action_pos: int, max_chars: int = 60
             tail = rest.split(sep, 1)[1][:max_chars]
             return tail.strip().rstrip('.,;。；')
     return rest[:max_chars].strip()
+
+
+# [Reshape M3.B.Claim / 2026-05-24] 新名 alias — 推荐新代码用 IntegrityClaim 更准确
+# (vs jarvis_claim_tracer.FactClaim). 老 Claim 名保留兼容 0 caller 改.
+IntegrityClaim = Claim
 
 
 # ============================================================
