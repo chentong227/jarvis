@@ -54,22 +54,29 @@
 
 ---
 
-### 2.5 — `jarvis_enhanced.py` 拆 3 file (M3.E deferred to M6.4)
+### 2.4 — M3 / M4 / M6 deferred sub-steps (合 M6.4 真 class split 一起做)
 
-**当前**: `jarvis_enhanced.py` 739 行 / 3 class (ProactiveShield 294 行 + ProactiveCompanion 119 行 + SkillTreeTracker 263 行).
+按 Sir 准则 7+8 (元否决权 + 优雅可持续), 以下 sub-steps 真做风险高 + 跟 M6.4 真 class split 一并做更优雅. 不重复改 import.
 
-**audit doc Q1 决议**: 拆 4 file (含 SoulRouter, M3.B 已删).
+| Sub-step | 真做内容 | Defer 到 |
+|---|---|---|
+| **M3.E** | `jarvis_enhanced.py` 拆 3 file (ProactiveShield + ProactiveCompanion + SkillTreeTracker) | M6.4 |
+| **M3.B.Claim rename** | 真 rename `Claim → FactClaim` (251 处 grep) | M6.4 后 (alias 已加 backward compat) |
+| **M3.C/D/G/F** | 真 `git mv l1/l3/l5 → _legacy/` + `central_nerve.run()` 364 行移走 + worker.trigger_routing 删 | **M6.5** (需先观察 1 周 `deprecated_3_brain_invoked` SWM event 数 = 0) |
+| **M4.6** | grep 替换 18+ caller `add_commitment` → `hub.write_commitment` (M4.5.1 dual-write 已让数据进 PromiseLog, caller 改是 stylistic) | M6.4 |
+| **M4.7** | `dashboard pending_callbacks.jsonl` 消费时读 PromiseLog | M6.4 后 |
+| **M5.3** | 停 `__NUDGE__` push, Conductor 100% publish-only (需主脑被 SWM 主动触发机制) | M6.4 后 |
+| **M6.1** | `_assemble_prompt` 拆 12 个 `_build_xxx_block` (~10 stage 已有 `_asm_stage_t` boundary) | **M6.4** (真 class split 时一起设计 PromptAssembler class) |
+| **M6.2** | 5 tier 抽离 5 个 `_assemble_*_prompt` | M6.4 |
+| **M6.3** | `__init__` 957 行拆 `_init_xxx` 6 个方法 | M6.4 |
 
-**Cleanup decision (M3.E / 2026-05-24)**: 跳过单独拆, 合 **M6.4 真 class split** 一起做.
-- 理由: M6.4 是 `central_nerve.py` 真 class split (PromptAssembler / StateRestorer / Lifecycle), 顺手把 enhanced.py 3 class 一起 design 进新架构, 不重复改 import.
-- enhanced.py 739 行 ≪ central_nerve.py 4790, 优先级偏后.
+**理由**: 这些 sub-step 真做都涉及 `central_nerve.py` / `jarvis_enhanced.py` import 调整. 如果 M6.4 真 class split, 这些会自然解决 (新 class 边界帮 design). 现在分多个 commit 做, 等 M6.4 时还要 cleanup, 反而**重复改两次**. Sir 准则 8: 不重复.
 
-**Cleanup trigger**: M6.4 真 class split 时一起拆.
-
+**M6.4 触发条件**: Sir 真用 1-2 周稳定 + cleanup checklist deferred 项数 < 3 → 启动 M6.4 真 class split.
 
 ---
 
-### 3. Dual-write / Dual-emit (老路径 + 新 SWM publish) — 2 项
+### 3. Dual-write / Dual-emit (老路径 + 新 SWM publish) — 3 项
 
 | Dual-write | 文件 | 行 | Cleanup trigger | 预计 milestone |
 |---|---|---|---|---|

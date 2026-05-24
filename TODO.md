@@ -1,6 +1,76 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:50 Sir — Phase D 阶段性收尾 (M1-M5 全 done, M6 audit 完), 等 Sir 拍 M6 子步** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 09:10 Sir — Phase D 全部主体 done (32 commit), 等 Sir 1-2 周真测验稳定** 🚨🚨🚨
+>
+> Sir 8:52 "继续按顺序做完, 包括前面留着的子项" → Cascade catch-up 推 M3.B.Claim alias + M3.C-trace deprecation + M4.5.3 dual-mark, 然后用 Sir 准则 7 元否决权把 9 个 sub-step (M3.E / Claim rename / M3.C/D/G/F / M4.6 / M4.7 / M5.3 / M6.1 / M6.2 / M6.3) 合 **M6.4 真 class split 一起做**. 不重复改两次 import.
+>
+> ## ✅ Phase D 收尾 (32 commit, ~3000 行 code+test+doc, 0 主链路 break)
+>
+> | Milestone | sub-step | commit |
+> |---|---|---|
+> | **M1** | 8 step (Lineage Trace) | 8 |
+> | **M2** | 5 step (MemoryHub R+W facade) | 5 |
+> | **M3** | 4 done (A 死代码 / B blood/SoulRouter / B.Claim alias / C-trace deprecation) | 5 |
+> | **M4** | 6 done (1 schema / 2 audit / 3 hub / 4 migration apply / 5.1+5.2+5.3 dual-write+restore+mark) | 7 |
+> | **M5** | 1 done (5.1 Conductor dual-emit, 5.2 自动 work via SWM) | 1 |
+> | **M6** | audit done | 1 |
+> | docs | cleanup checklist + audit doc + TODO | 5 |
+> | **共** | | **32** |
+>
+> ## 🧹 Cleanup checklist 兑现路径 — `docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md`
+>
+> 9 个 deferred sub-step 全归 M6.4 真 class split (1 表 audit 完):
+>
+> ```
+> M6.4 触发条件: Sir 真用 1-2 周稳定 + cleanup checklist deferred 项数 < 3
+>   → M6.4 真 class split (PromptAssembler/StateRestorer/Lifecycle)
+>   → 顺手解决 M3.E + M4.6 + M4.7 + M5.3 + M6.1+2+3 (9 sub-step)
+>   → M6.5: 3-brain mv + run() 移 _legacy/ (`deprecated_3_brain_invoked` event = 0 后)
+> ```
+>
+> **真做 trigger**: Sir 真测 1-2 周, dual-write/dual-emit/deprecation warn 都稳定 → M6.4 启动.
+>
+> ## � Sir 真测期 (~1-2 周, 期间 reshape 暂停)
+>
+> ```powershell
+> # 每天看一下 SWM lineage 是否真 record (M1)
+> python scripts/lineage_dump.py --stats
+>
+> # 看 PromiseLog 真单源 (M4)
+> python scripts/audit_promise_sources.py
+>
+> # 看 deprecated_3_brain_invoked 触发数 (期望 0)
+> # → 0 触发 1 周 → M6.5 安全删除 3-brain
+>
+> # 看 conductor_intent SWM event (M5.1 dual-emit)
+> # → 主脑应能从 SWM block 看到 → 验证 M5.2 自动 work
+> ```
+>
+> ## � 已知 BUG (post-reshape 一起修)
+>
+> 主脑 prompt 工程问题 (跟 reshape 无关):
+> 1. `reminder_hands` 幻觉 organ 名 (实际 `memory_hands`)
+> 2. `add_reminder` 缺 `intent` 参数 (主脑同时问+发, 矛盾)
+> 3. Malformed `FAST_CALL[None/None]`
+>
+> ## 🎯 Sir 真测期间下一步 menu
+>
+> ```
+> # A: 真测 OK 后启动 M6.4 (真 class split, 解决 9 sub-step)
+> Cascade, M6.4.
+>
+> # B: 修上面 3 个 fast_call 幻觉 bug
+> Cascade, 修 fast_call bug.
+>
+> # C: 真测期间 audit/dashboard tooling 改进
+> Cascade, 加 audit dashboard.
+> ```
+>
+> 详 `docs/JARVIS_M6_NERVE_SPLIT_AUDIT.md` + `docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md` + `docs/JARVIS_GRAND_ARCHITECTURE_RESHAPE.md`.
+>
+> ---
+>
+> ## 历史: M5 close + M6 audit (08:50)
 >
 > Sir 8:43 "我觉得还是全部重构完再慢慢测找 bug 比较合适" + 8:44 "继续往下推进, 不需要测试什么" → Cascade 一口气推 M5 + M6 audit.
 >
