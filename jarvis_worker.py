@@ -131,10 +131,15 @@ from jarvis_voice_listen_thread import (  # noqa: F401
 
 # 🆕 [Reshape M6.W2 / 2026-05-24 18:00] worker pure helpers 抽到独立 module.
 # health_check.py / 多个 test / JarvisWorkerThread.run 内部 caller 仍用 `from jarvis_worker import ...`.
+# 🆕 [Reshape M6.W3 / 2026-05-24 18:15] tier keyword lists 也抽到 helpers.
 from jarvis_worker_helpers import (  # noqa: F401
     sanitize_trigger_time,
     detect_semantic_category,
     _SEMANTIC_CATEGORIES,
+    TIER_CRITICAL_KEYWORDS,
+    TIER_FACTUAL_RECALL_KEYWORDS,
+    TIER_TOOL_KEYWORDS,
+    TIER_DEEP_KEYWORDS,
 )
 
 
@@ -282,65 +287,13 @@ class JarvisWorkerThread(QThread):
     PROMPT_TIER_DEEP_QUERY = CentralNerve.PROMPT_TIER_DEEP_QUERY
     PROMPT_TIER_CRITICAL = CentralNerve.PROMPT_TIER_CRITICAL
 
-    _TIER_CRITICAL_KEYWORDS = [
-        r'remind\s+me', r'set\s+(an?\s+)?alarm', r'schedule\b', r'wake\s+me\s+up',
-        r'cancel.*remind', r'cancel.*alarm',
-        r'提醒我', r'闹钟', r'叫醒我', r'定个', r'设个', r'排期', r'取消.*提醒',
-        r'at\s+\d', r"\d+\s*o'?clock", r'\d+点',
-        r'remember\s+(this|that)', r'记下', r'记住', r'note\s+this',
-    ]
-    # [R7-β1] FACTUAL_RECALL —— 近期事实查询，答案大概率已在 working_feed / event_bus / STM 里
-    # 触发要求：必须带"刚 / 最近 / 上一句 / just"这类时间指代 + 一个可被 working_feed 命中的对象（剪贴板/命令/历史话题）
-    # 优先级高于 TOOL_REQUEST，避免"刚复制的是什么"被误判为"copy 动作 → 调工具"。
-    _TIER_FACTUAL_RECALL_KEYWORDS = [
-        # 中文：刚/才/最近 + 复制/粘贴/命令/说过/聊
-        r'刚(复制|粘贴|说|讲|跑|敲|点|聊|提到)',
-        r'(刚才|刚刚|刚)\s*(复制|粘贴|说|讲|跑|敲|点|聊|提到|那个|那段|的)',
-        r'(我|你)\s*刚\s*(复制|粘贴|说|讲|跑|敲|点|聊|提到)',
-        r'(刚刚|刚才|刚)[^。！？]{0,12}?(剪贴板|粘贴板|命令|对话|话|聊的|说的)',
-        r'最近\s*(复制|粘贴|跑|敲|聊|说|提到)',
-        r'剪贴板.*内容',
-        r'(刚.{0,4}(复制|粘贴).{0,8}内容)',
-        # English: just + verb / what did i just / what command did i just run
-        r"\b(what|which)(\s+\w+){0,3}\s+(did|do)\s+i\s+(just\s+|recently\s+)?(copy|paste|run|say|type|hit)",
-        r"\bdid\s+i\s+just\s+(copy|paste|run|say|type|hit)",
-        # "what is on/in the clipboard" / "what's on the clipboard"
-        r"\b(what'?s|what\s+is|what\s+are|whats)\s+(on|in)\s+(the\s+)?clipboard\b",
-        r"\bclipboard\s+(content|right\s+now|currently)\b",
-        r"\bjust\s+(copied|pasted|typed|ran|said|hit)\b",
-        r"\bthe\s+thing\s+i\s+just\b",
-        r"\brecent(ly)?\s+(copied|ran|typed|pasted|hit)\b",
-    ]
-    _TIER_TOOL_KEYWORDS = [
-        # English action verbs
-        r'\b(open|close|launch|start|stop|play|pause|resume|skip|next|previous)\b',
-        r'\b(search|find|locate|copy|paste|cut|delete|create|make|generate)\b',
-        r'\b(set|change|adjust|increase|decrease|raise|lower|mute|unmute)\b',
-        r'\b(volume|brightness|wallpaper|theme|notification|wifi|bluetooth)\b',
-        r'\b(screenshot|record|capture|save\s+as)\b',
-        # 中文动作动词
-        '打开', '关闭', '启动', '停止', '播放', '暂停', '继续播放', '下一首', '上一首',
-        '搜索', '查找', '复制', '粘贴', '剪切', '删除', '新建', '创建',
-        '调到', '调高', '调低', '调成', '调亮', '调暗', '增加', '减少',
-        '音量', '亮度', '壁纸', '通知', '截图', '录屏',
-    ]
-    _TIER_DEEP_KEYWORDS = [
-        r"\b(remember\s+when|last\s+time|the\s+other\s+day|we\s+talked|we\s+discussed)\b",
-        r"\b(what\s+did\s+i|what\s+was\s+i|where\s+was\s+i|how\s+did\s+i)\b",
-        r"\bthat\s+(file|bug|error|project|thing|topic|conversation)\b",
-        '上次', '上回', '之前', '昨天', '前天', '之前咱们', '咱们聊过', '记得',
-        '那个文件', '那个项目', '那个 bug', '那个东西', '那次',
-        # [P0+18-a.4 / 2026-05-15] 修 BUG #1: "排查/诊断/分析/帮我看 X" 等动词请求被误归 SHORT_CHAT
-        # 这些是典型多步动作（需要先调用查询工具 → 再分析 → 反推），必须升 DEEP_QUERY 让
-        # 主脑看到完整 PROMISE_PROTOCOL_DIRECTIVE + AVAILABLE SKILLS，从而写 <PROMISE>
-        r"\b(diagnose|analyze|investigate|review|inspect|audit|debug|troubleshoot|figure\s+out|look\s+into|check\s+out)\b",
-        r"\bhelp\s+me\s+(see|look|check|find|fix|debug|solve|figure)",
-        r"\bwhy\s+(is|does|did|do|are|am)\b.{0,40}(error|fail|bug|issue|problem|wrong|broken)",
-        '排查', '诊断', '分析一下', '审一下', '审查', '检查一下', '体检',
-        '帮我看', '帮我查', '帮我分析', '帮我排查', '帮我诊断', '帮我审',
-        '看一下', '看看为什么', '看看哪里', '看看是不是',
-        '为什么', '怎么回事', '是什么原因', '哪里出了',
-    ]
+    # 🆕 [Reshape M6.W3 / 2026-05-24 18:15] _TIER_*_KEYWORDS 4 lists 抽到
+    # jarvis_worker_helpers.py. class attr 仍 expose (alias) 兼容 self._TIER_*_KEYWORDS
+    # 老调用. 物理 list 定义在 helpers, 此处 import-time alias.
+    _TIER_CRITICAL_KEYWORDS = TIER_CRITICAL_KEYWORDS
+    _TIER_FACTUAL_RECALL_KEYWORDS = TIER_FACTUAL_RECALL_KEYWORDS
+    _TIER_TOOL_KEYWORDS = TIER_TOOL_KEYWORDS
+    _TIER_DEEP_KEYWORDS = TIER_DEEP_KEYWORDS
 
     def _classify_prompt_tier(self, cmd: str, cmd_clean: str, cmd_words: list) -> str:
         """O(几十微秒) 的纯文本六档分类。返回 PROMPT_TIER_* 之一。

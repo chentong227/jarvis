@@ -84,5 +84,53 @@ class TestM6W2WorkerHelpersSplit(unittest.TestCase):
         self.assertEqual(out, 'wake')
 
 
+class TestM6W3TierKeywordsAlias(unittest.TestCase):
+    """W3 抽出: TIER_*_KEYWORDS 4 lists 走 jarvis_worker_helpers."""
+
+    def test_tier_lists_in_helpers(self):
+        """4 个 list 都 export from helpers."""
+        from jarvis_worker_helpers import (
+            TIER_CRITICAL_KEYWORDS,
+            TIER_FACTUAL_RECALL_KEYWORDS,
+            TIER_TOOL_KEYWORDS,
+            TIER_DEEP_KEYWORDS,
+        )
+        # 非空且类型正确
+        self.assertIsInstance(TIER_CRITICAL_KEYWORDS, list)
+        self.assertGreater(len(TIER_CRITICAL_KEYWORDS), 5)
+        self.assertGreater(len(TIER_FACTUAL_RECALL_KEYWORDS), 5)
+        self.assertGreater(len(TIER_TOOL_KEYWORDS), 10)
+        self.assertGreater(len(TIER_DEEP_KEYWORDS), 10)
+
+    def test_worker_class_attr_alias_to_helpers(self):
+        """JarvisWorkerThread._TIER_*_KEYWORDS 与 helpers 是同一对象 (alias)."""
+        from jarvis_worker import JarvisWorkerThread
+        from jarvis_worker_helpers import (
+            TIER_CRITICAL_KEYWORDS,
+            TIER_FACTUAL_RECALL_KEYWORDS,
+            TIER_TOOL_KEYWORDS,
+            TIER_DEEP_KEYWORDS,
+        )
+        self.assertIs(JarvisWorkerThread._TIER_CRITICAL_KEYWORDS, TIER_CRITICAL_KEYWORDS)
+        self.assertIs(JarvisWorkerThread._TIER_FACTUAL_RECALL_KEYWORDS, TIER_FACTUAL_RECALL_KEYWORDS)
+        self.assertIs(JarvisWorkerThread._TIER_TOOL_KEYWORDS, TIER_TOOL_KEYWORDS)
+        self.assertIs(JarvisWorkerThread._TIER_DEEP_KEYWORDS, TIER_DEEP_KEYWORDS)
+
+    def test_tier_critical_contains_known_patterns(self):
+        """TIER_CRITICAL 含 reminder/alarm 关键 pattern."""
+        import re
+        from jarvis_worker_helpers import TIER_CRITICAL_KEYWORDS
+        joined = ' '.join(TIER_CRITICAL_KEYWORDS)
+        self.assertIn('提醒我', joined)
+        # 测一个 regex pattern 真能 match
+        for pat in TIER_CRITICAL_KEYWORDS:
+            try:
+                if re.search(pat, 'remind me to drink water'):
+                    return  # 至少一个 pattern hit
+            except re.error:
+                pass
+        self.fail('No TIER_CRITICAL pattern matches "remind me ..."')
+
+
 if __name__ == '__main__':
     unittest.main()
