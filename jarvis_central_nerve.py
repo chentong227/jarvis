@@ -252,6 +252,31 @@ class CentralNerve:
                 gemini_key=getattr(self, 'gemini_key', None),
             )
             set_default_translator(self.translator)
+            # 🆕 [Translator Phase 4.A / 2026-05-24 22:40] hit_count flush daemon
+            # 每 60s 调 translator.flush_hit_updates() 把 in-memory hit buffer 落盘.
+            # 节流防过频 IO. 让 Sir CLI / dashboard 看真实 hit_count.
+            import threading as _t_threading
+            self._translator_flush_stop = _t_threading.Event()
+
+            def _flush_loop():
+                import time as _t_time
+                while not self._translator_flush_stop.is_set():
+                    try:
+                        n = self.translator.flush_hit_updates() if self.translator else 0
+                        if n > 0:
+                            try:
+                                from jarvis_utils import bg_log as _flush_bg
+                                _flush_bg(f"📊 [Translator/Flush] {n} alias hit_count 落盘")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    self._translator_flush_stop.wait(60.0)
+
+            self._translator_flush_thread = _t_threading.Thread(
+                target=_flush_loop, daemon=True, name='TranslatorHitFlush'
+            )
+            self._translator_flush_thread.start()
         except Exception as _t_e:
             self.translator = None
             print(f"⚠️ [Translator init] {_t_e} — fallback 走老 fuzzy 路径")

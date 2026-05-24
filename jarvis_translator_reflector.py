@@ -119,10 +119,16 @@ class TranslatorReflector:
             pattern_samples.setdefault(key, []).append(cmd)
 
         # 3. 阈值过滤 + 已存在不重复 propose
+        # 🆕 [Phase 4.A / 2026-05-24 22:45] dedupe 扩展: review/active/rejected 都跳过.
+        # 老 logic 只 dedupe active organ alias, 但:
+        #   - status=review: 已在 review queue, 没必要重提
+        #   - status=rejected: Sir 已明确 reject, 重提是骚扰 (Sir 准则 7 元否决)
+        # 防 reflector 无限循环 propose Sir 不要的 alias.
         vocab = _load_vocab()
         existing = {(a.get('from'), a.get('to'))
                     for a in vocab.get('aliases', []) or []
-                    if a.get('kind') == 'organ'}
+                    if a.get('kind') == 'organ'
+                    and a.get('status') in ('active', 'review', 'rejected')}
 
         new_proposals = []
         for (from_o, to_o), count in pattern_counts.items():

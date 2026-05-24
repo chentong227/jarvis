@@ -147,7 +147,7 @@ class TestATranslatorReflectorClass(unittest.TestCase):
             'aliases': [{
                 'id': 'alias_001', 'kind': 'organ',
                 'from': 'browser', 'to': 'web_search',
-                'status': 'activated',
+                'status': 'active',  # 🆕 [Phase 4.A] 修 enum: activated → active
             }],
         }
         _save_vocab(existing)

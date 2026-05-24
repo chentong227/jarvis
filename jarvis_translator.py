@@ -89,6 +89,15 @@ class Translator:
         self._command_index: Optional[Dict[str, str]] = None
         self._lock = threading.Lock()
 
+        # 🆕 [Translator Phase 4.A / 2026-05-24 22:40] hit_count 闭环
+        # 每次 _lookup_vocab_alias 命中 active alias → bump in-memory (alias_id → +1).
+        # nerve daemon 每 60s 调 flush_hit_updates() 落盘 (节流防过频写 IO).
+        # 让 reflector / dashboard 看 真实 hit_count, 不止 propose 时的初始值.
+        # Sir CLI: scripts/translator_alias_dump.py list 看 hit_count 知道哪个 alias 真常用.
+        self._hit_buffer: Dict[str, int] = {}      # alias_id → pending +N
+        self._hit_buffer_last_ts: Dict[str, float] = {}  # alias_id → last_hit_at
+        self._hit_buffer_lock = threading.Lock()
+
     # ========== 主入口 ==========
     def translate(self, organ_name: Any, command: Any,
                    params: Optional[Dict[str, Any]] = None) -> TranslationResult:
@@ -313,7 +322,15 @@ class Translator:
             return None
         # 多 active 时, 取 version 最大的
         candidates.sort(key=lambda e: e.get('version', 1), reverse=True)
-        return candidates[0].get('to')
+        winner = candidates[0]
+        # 🆕 [Phase 4.A] 命中 → bump in-memory hit (节流 60s daemon flush 落盘)
+        alias_id = winner.get('id')
+        if alias_id:
+            now = time.time()
+            with self._hit_buffer_lock:
+                self._hit_buffer[alias_id] = self._hit_buffer.get(alias_id, 0) + 1
+                self._hit_buffer_last_ts[alias_id] = now
+        return winner.get('to')
 
     def _lookup_schema_hint(self, organ: str, command: str) -> Optional[Dict[str, Any]]:
         vocab = self._load_schema_vocab()
@@ -462,6 +479,69 @@ class Translator:
             block = block[:max_chars - 4] + '...'
         return block
 
+    # ========== Phase 4.A: hit_count 闭环 flush ==========
+    def flush_hit_updates(self) -> int:
+        """落盘 in-memory hit_buffer 到 translator_alias_vocab.json.
+
+        🆕 [Translator Phase 4.A / 2026-05-24 22:40] hit_count 闭环回写.
+        被 nerve daemon 每 60s 调一次. 也可在退出时调.
+        无 pending updates 直接返 0, 不动 IO. atomic write (tmp + os.replace).
+
+        Returns:
+            int: 实际 merged 的 alias 数 (含命中的 active alias 数)
+        """
+        # 1. 快照 + 清 buffer (持锁短)
+        with self._hit_buffer_lock:
+            if not self._hit_buffer:
+                return 0
+            pending_counts = dict(self._hit_buffer)
+            pending_ts = dict(self._hit_buffer_last_ts)
+            self._hit_buffer.clear()
+            self._hit_buffer_last_ts.clear()
+
+        # 2. load 当前 vocab (绕 mtime cache, 拿最新 disk 内容)
+        try:
+            if not os.path.exists(_ALIAS_VOCAB_PATH):
+                return 0
+            with open(_ALIAS_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                vocab = json.load(f)
+        except Exception:
+            # load fail → 退回 buffer (下次 retry)
+            with self._hit_buffer_lock:
+                for aid, cnt in pending_counts.items():
+                    self._hit_buffer[aid] = self._hit_buffer.get(aid, 0) + cnt
+                    if aid in pending_ts:
+                        self._hit_buffer_last_ts[aid] = max(
+                            self._hit_buffer_last_ts.get(aid, 0.0),
+                            pending_ts[aid]
+                        )
+            return 0
+
+        # 3. merge pending → vocab.aliases
+        merged = 0
+        for entry in vocab.get('aliases', []) or []:
+            aid = entry.get('id')
+            if aid in pending_counts:
+                old_hit = int(entry.get('hit_count', 0) or 0)
+                entry['hit_count'] = old_hit + pending_counts[aid]
+                entry['last_hit_at'] = pending_ts.get(aid, time.time())
+                merged += 1
+
+        # 4. atomic write
+        try:
+            from datetime import datetime as _dt
+            vocab['last_modified'] = _dt.utcnow().isoformat() + 'Z'
+            tmp = _ALIAS_VOCAB_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(vocab, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, _ALIAS_VOCAB_PATH)
+            # invalidate cache (强制下次 _lookup reload)
+            self._alias_vocab_cache = None
+            self._alias_vocab_mtime = 0.0
+            return merged
+        except Exception:
+            return 0
+
     # ========== 调试 / stats API ==========
     def get_stats(self) -> Dict[str, Any]:
         """返当前 Translator 状态 (供 dashboard / CLI 用)."""
@@ -469,6 +549,9 @@ class Translator:
         aliases = vocab.get('aliases', []) or []
         with self._lock:
             cmd_idx_size = len(self._command_index or {})
+        with self._hit_buffer_lock:
+            hit_buffer_size = len(self._hit_buffer)
+            hit_buffer_pending = sum(self._hit_buffer.values())
         return {
             'alias_total': len(aliases),
             'alias_active': len([a for a in aliases if a.get('status') == 'active']),
@@ -476,6 +559,9 @@ class Translator:
             'alias_rejected': len([a for a in aliases if a.get('status') == 'rejected']),
             'command_index_size': cmd_idx_size,
             'hand_registry_size': len(self.hand_registry),
+            # 🆕 [Phase 4.A] hit buffer 状态
+            'hit_buffer_aliases': hit_buffer_size,
+            'hit_buffer_pending_total': hit_buffer_pending,
         }
 
 
