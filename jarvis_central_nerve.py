@@ -1577,6 +1577,445 @@ class CentralNerve:
         self._asm_stage_t['context_router'] = (time.time() - _t) * 1000
         return result
 
+    def _assemble_short_chat_prompt(
+        self, core_persona: str, user_input: str, stm_context: str,
+        current_time: str, current_hour: int, ledger_data: dict,
+        sensor_state_block: str, system_alert_text: str,
+        yesterday_block: str, open_threads_block: str,
+        project_block: str, available_skills_block: str,
+        how_to_respond: str, time_persona: str, context_str: str,
+        pc_block_value: str, correction_context: str,
+        style_adjustment: str, ledger_str: str,
+    ) -> str:
+        """[Reshape M6.2 second wave / 2026-05-24] SHORT_CHAT tier 抽 helper.
+
+        [R6/Tier] SHORT_CHAT 中档: 核心人设 + STM + ledger + event_bus.
+        不带 LTM/skill_tree/anticipator. 主脑 ≤ 20 词 reply.
+
+        🆕 [P5-fix59] PromptBuilder 主路径 + 老 f-string fallback.
+        """
+        # event_bus 快速渲染 (只取 240s 内事件, 把 prompt 控制到中等体积)
+        _short_bus = ""
+        try:
+            bus = getattr(self, 'event_bus', None)
+            if bus is not None:
+                _short_bus = bus.to_prompt_block(max_chars=350, within_seconds=240.0)
+        except Exception:
+            _short_bus = ""
+        # [R7-α/AttentionContext] SHORT_CHAT 也带 attention
+        _short_attn = ""
+        try:
+            slot = getattr(self, '_attention_slot', None)
+            if slot is not None:
+                from jarvis_utils import render_attention_block
+                _snap = slot.latest(max_age_seconds=8.0)
+                if _snap:
+                    _short_attn = render_attention_block(_snap, max_chars=300)
+        except Exception:
+            _short_attn = ""
+        # [R7-α/WorkingMemoryFeed] SHORT_CHAT 也带工作台事件
+        _short_feed = ""
+        try:
+            _feed = getattr(self, 'working_feed', None)
+            if _feed is not None:
+                _short_feed = _feed.to_prompt_block(max_chars=300, within_seconds=900.0)
+        except Exception:
+            _short_feed = ""
+        # [R7-β3] Tone Directive
+        _short_tone = ""
+        try:
+            ts = getattr(self, 'tone_selector', None)
+            if ts is not None:
+                _t_id, _t_desc = ts.select(user_input=user_input,
+                                             ledger_data=ledger_data,
+                                             hour=current_hour)
+                _short_tone = ts.render_directive(_t_id, _t_desc)
+                try:
+                    from jarvis_utils import bg_log
+                    bg_log(f"🎭 [Tone] {_t_id}  (hour={current_hour}, tier=SHORT_CHAT)")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # [P0+18-a.3] PROMISE_PROTOCOL mini directive
+        _short_promise_mini = ""
+        try:
+            from jarvis_skill_registry import PROMISE_PROTOCOL_DIRECTIVE_MINI
+            _short_promise_mini = PROMISE_PROTOCOL_DIRECTIVE_MINI
+        except Exception:
+            _short_promise_mini = ""
+
+        # [P0+18-a.16] TOOL HONESTY mini
+        _short_tool_honesty = ""
+        try:
+            from jarvis_skill_registry import TOOL_HONESTY_DIRECTIVE_MINI
+            _short_tool_honesty = TOOL_HONESTY_DIRECTIVE_MINI
+        except Exception:
+            _short_tool_honesty = ""
+
+        # [P0+18-b.8] FUZZY CANDIDATES POLICY
+        _short_fuzzy_policy = ""
+        try:
+            from jarvis_fuzzy_resolver import FUZZY_CANDIDATES_POLICY
+            _short_fuzzy_policy = FUZZY_CANDIDATES_POLICY
+        except Exception:
+            _short_fuzzy_policy = ""
+
+        # [P0+18-a.3] ACTIVE PLAN block
+        _short_active_plan = ""
+        try:
+            pl = getattr(self, 'plan_ledger', None)
+            if pl is not None:
+                _short_active_plan = pl.to_prompt_block(max_chars=400)
+        except Exception:
+            _short_active_plan = ""
+
+        # 🆕 [P5-fix59 / 2026-05-23 16:13] PromptBuilder 主路径
+        try:
+            from jarvis_prompt_builder import PromptBuilder, BlockSpec
+            sb = PromptBuilder(tier='SHORT_CHAT')
+            if yesterday_block:
+                sb.register(BlockSpec(
+                    id='yesterday', content=yesterday_block,
+                    tiers=['SHORT_CHAT'], salience=0.55))
+            if stm_context:
+                sb.register(BlockSpec(
+                    id='stm', content=f"=== WHAT JUST HAPPENED ===\n{stm_context}",
+                    tiers=['SHORT_CHAT'], hint='stm:turn_<id>', salience=0.75))
+            if open_threads_block:
+                sb.register(BlockSpec(
+                    id='open_threads', content=open_threads_block,
+                    tiers=['SHORT_CHAT'], salience=0.60))
+            if project_block:
+                sb.register(BlockSpec(
+                    id='project', content=project_block,
+                    tiers=['SHORT_CHAT'], salience=0.55))
+            if available_skills_block:
+                sb.register(BlockSpec(
+                    id='skills', content=available_skills_block,
+                    tiers=['SHORT_CHAT'], salience=0.50))
+            if _short_tool_honesty:
+                sb.register(BlockSpec(
+                    id='tool_honesty', content=_short_tool_honesty,
+                    tiers=['SHORT_CHAT'], salience=0.80))
+            if _short_fuzzy_policy:
+                sb.register(BlockSpec(
+                    id='fuzzy_policy', content=_short_fuzzy_policy,
+                    tiers=['SHORT_CHAT'], salience=0.65))
+            if _short_promise_mini:
+                sb.register(BlockSpec(
+                    id='promise_mini', content=_short_promise_mini,
+                    tiers=['SHORT_CHAT'], salience=0.85))
+            if _short_active_plan:
+                sb.register(BlockSpec(
+                    id='active_plan', content=_short_active_plan,
+                    tiers=['SHORT_CHAT'], salience=0.75))
+            if _short_bus:
+                sb.register(BlockSpec(
+                    id='event_bus', content=_short_bus,
+                    tiers=['SHORT_CHAT'], hint='swm:<etype>', salience=0.75))
+            if _short_attn:
+                sb.register(BlockSpec(
+                    id='attention', content=_short_attn,
+                    tiers=['SHORT_CHAT'], salience=0.70))
+            if _short_feed:
+                sb.register(BlockSpec(
+                    id='working_feed', content=_short_feed,
+                    tiers=['SHORT_CHAT'], salience=0.75))
+            if _short_tone:
+                sb.register(BlockSpec(
+                    id='tone', content=_short_tone,
+                    tiers=['SHORT_CHAT'], salience=0.55))
+            if how_to_respond:
+                sb.register(BlockSpec(
+                    id='how_to_respond', content=how_to_respond,
+                    tiers=['SHORT_CHAT'], salience=0.85))
+            sb.register(BlockSpec(
+                id='time_persona',
+                content=f"=== TIME CONTEXT ===\n{time_persona}",
+                tiers=['SHORT_CHAT'], salience=0.65))
+            if context_str:
+                sb.register(BlockSpec(
+                    id='context', content=context_str,
+                    tiers=['SHORT_CHAT'], salience=0.65))
+            if pc_block_value:
+                sb.register(BlockSpec(
+                    id='profile_card', content=pc_block_value,
+                    tiers=['SHORT_CHAT'], hint='profile:<field>', salience=0.70))
+            if correction_context:
+                sb.register(BlockSpec(
+                    id='correction', content=correction_context,
+                    tiers=['SHORT_CHAT'], salience=0.80))
+            if style_adjustment:
+                sb.register(BlockSpec(
+                    id='style', content=style_adjustment,
+                    tiers=['SHORT_CHAT'], salience=0.55))
+            if ledger_str and ledger_str != "No status data":
+                sb.register(BlockSpec(
+                    id='ledger',
+                    content=f"=== REAL-TIME STATE ===\n{ledger_str}",
+                    tiers=['SHORT_CHAT'], hint='ledger:<field>', salience=0.70))
+            sb.register(BlockSpec(
+                id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                tiers=['SHORT_CHAT'], salience=0.85))
+            if sensor_state_block:
+                sb.register(BlockSpec(
+                    id='sensor', content=sensor_state_block,
+                    tiers=['SHORT_CHAT'], hint='sensor:<field>',
+                    salience=0.85))
+            _l2 = getattr(self, '_l2_injected_block', '') or ''
+            if _l2:
+                sb.register(BlockSpec(
+                    id='l2', content=_l2,
+                    tiers=['SHORT_CHAT'], hint='l2:<directive_id>',
+                    salience=0.65))
+            return sb.compose(
+                persona=core_persona,
+                user_input=user_input,
+                system_alert=system_alert_text,
+                include_meta_hint=True,
+            )
+        except Exception:
+            # fallback 老 f-string
+            return f"""{core_persona}
+
+{yesterday_block}
+
+=== WHAT JUST HAPPENED ===
+{stm_context}
+
+{open_threads_block}
+
+{project_block}
+
+{available_skills_block}
+
+{_short_tool_honesty}
+
+{_short_fuzzy_policy}
+
+{_short_promise_mini}
+
+{_short_active_plan}
+
+{_short_bus}
+
+{_short_attn}
+
+{_short_feed}
+
+{_short_tone}
+
+{how_to_respond}
+
+=== TIME CONTEXT ===
+{time_persona}
+
+{context_str}
+{pc_block_value}
+{correction_context}
+{style_adjustment}
+
+=== REAL-TIME STATE ===
+{ledger_str}
+
+[SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
+{getattr(self, '_l2_injected_block', '')}
+
+User: {user_input}
+{system_alert_text}
+"""
+
+    def _assemble_factual_recall_prompt(
+        self, core_persona: str, user_input: str, stm_context: str,
+        current_time: str, current_hour: int, ledger_data: dict,
+        sensor_state_block: str, system_alert_text: str,
+        yesterday_block: str, open_threads_block: str,
+        project_block: str, available_skills_block: str,
+    ) -> str:
+        """[Reshape M6.2 second wave / 2026-05-24] FACTUAL_RECALL tier 抽 helper.
+
+        [R7-β1] 近期事实查询: 答案大概率已在 working_feed / event_bus / STM /
+        attention 里. 绝对禁止调用工具, 目标 TTFT < 2s.
+
+        🆕 [P5-fix57] PromptBuilder 主路径 + 老 f-string fallback.
+        """
+        _fr_working = ""
+        try:
+            feed = getattr(self, 'working_feed', None)
+            if feed is not None:
+                # FACTUAL_RECALL 要把 working_feed 拉得更宽 (1 小时 + 较多事件 + 较多字符)
+                _fr_working = feed.to_prompt_block(max_chars=700, within_seconds=3600.0)
+        except Exception:
+            pass
+        _fr_attention = ""
+        try:
+            slot = getattr(self, '_attention_slot', None)
+            if slot is not None:
+                from jarvis_utils import render_attention_block
+                _snap = slot.latest(max_age_seconds=8.0)
+                if _snap:
+                    _fr_attention = render_attention_block(_snap, max_chars=300)
+        except Exception:
+            pass
+        _fr_bus = ""
+        try:
+            bus = getattr(self, 'event_bus', None)
+            if bus is not None:
+                _fr_bus = bus.to_prompt_block(max_chars=350, within_seconds=600.0)
+        except Exception:
+            pass
+        # STM 拉宽到 6 条 (FACTUAL_RECALL 经常要回看刚说过的话)
+        short_stm = stm_context
+        if short_stm and len(short_stm) > 1200:
+            short_stm = "..." + short_stm[-1200:]
+        # [R7-β3] Tone Directive (FACTUAL_RECALL 也带 tone 让回答有 persona 味)
+        _fr_tone = ""
+        try:
+            ts = getattr(self, 'tone_selector', None)
+            if ts is not None:
+                _t_id, _t_desc = ts.select(user_input=user_input,
+                                             ledger_data=ledger_data,
+                                             hour=current_hour)
+                _fr_tone = ts.render_directive(_t_id, _t_desc)
+                try:
+                    from jarvis_utils import bg_log
+                    bg_log(f"🎭 [Tone] {_t_id}  (hour={current_hour}, tier=FACTUAL_RECALL)")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # 🆕 [P5-fix57 / 2026-05-23 16:05] PromptBuilder 主路径
+        try:
+            from jarvis_prompt_builder import PromptBuilder, BlockSpec
+            _how_to_respond_fr = (
+                "=== HOW TO RESPOND (FACTUAL_RECALL — 近期事实查询) ===\n"
+                "Sir is asking about something that JUST happened or is in your immediate context.\n"
+                "DO NOT call any tool. The answer is already in the context blocks below — find it and answer directly.\n\n"
+                "Priority order to find the answer:\n"
+                "1. WORKING MEMORY (clipboard / terminal command / file saved / window switch history)\n"
+                "2. WHAT JUST HAPPENED (STM)\n"
+                "3. CONVERSATION STATE (event_bus — recent breakthroughs / callbacks / commitments)\n"
+                "4. ATTENTION (current window / cursor)\n"
+                "5. SENSOR STATE (current_window_stay_s for 'how long am I on X')\n\n"
+                "Reply in ONE sentence. Quote the actual content if relevant (e.g. for clipboard contents,\n"
+                "quote the first 60 chars). Append `---ZH---` and Chinese at the end.\n\n"
+                "If none of the above sources have the answer, say so honestly:\n"
+                "\"I don't have that in my immediate memory, Sir — could you give me a hint?\"\n"
+                "Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user\n"
+                "expects an instant reply from your recent memory, not a tool round-trip."
+            )
+            fb = PromptBuilder(tier='FACTUAL_RECALL')
+            if _fr_tone:
+                fb.register(BlockSpec(
+                    id='tone', content=_fr_tone,
+                    tiers=['FACTUAL_RECALL'], salience=0.55))
+            fb.register(BlockSpec(
+                id='how_to_respond', content=_how_to_respond_fr,
+                tiers=['FACTUAL_RECALL'], salience=0.95))
+            if yesterday_block:
+                fb.register(BlockSpec(
+                    id='yesterday', content=yesterday_block,
+                    tiers=['FACTUAL_RECALL'], salience=0.55))
+            if short_stm:
+                fb.register(BlockSpec(
+                    id='stm', content=f"=== WHAT JUST HAPPENED ===\n{short_stm}",
+                    tiers=['FACTUAL_RECALL'], hint='stm:turn_<id>', salience=0.80))
+            if open_threads_block:
+                fb.register(BlockSpec(
+                    id='open_threads', content=open_threads_block,
+                    tiers=['FACTUAL_RECALL'], salience=0.60))
+            if project_block:
+                fb.register(BlockSpec(
+                    id='project', content=project_block,
+                    tiers=['FACTUAL_RECALL'], salience=0.55))
+            if available_skills_block:
+                fb.register(BlockSpec(
+                    id='skills', content=available_skills_block,
+                    tiers=['FACTUAL_RECALL'], salience=0.50))
+            if _fr_bus:
+                fb.register(BlockSpec(
+                    id='event_bus', content=_fr_bus,
+                    tiers=['FACTUAL_RECALL'], hint='swm:<etype>', salience=0.75))
+            if _fr_attention:
+                fb.register(BlockSpec(
+                    id='attention', content=_fr_attention,
+                    tiers=['FACTUAL_RECALL'], salience=0.70))
+            if _fr_working:
+                fb.register(BlockSpec(
+                    id='working_feed', content=_fr_working,
+                    tiers=['FACTUAL_RECALL'], salience=0.80))
+            fb.register(BlockSpec(
+                id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
+                tiers=['FACTUAL_RECALL'], salience=0.85))
+            if sensor_state_block:
+                fb.register(BlockSpec(
+                    id='sensor', content=sensor_state_block,
+                    tiers=['FACTUAL_RECALL'], hint='sensor:<field>',
+                    salience=0.90))  # FACTUAL_RECALL 高优
+            _l2 = getattr(self, '_l2_injected_block', '') or ''
+            if _l2:
+                fb.register(BlockSpec(
+                    id='l2', content=_l2,
+                    tiers=['FACTUAL_RECALL'], hint='l2:<directive_id>',
+                    salience=0.65))
+            return fb.compose(
+                persona=core_persona,
+                user_input=user_input,
+                system_alert=system_alert_text,
+                include_meta_hint=True,  # FACTUAL_RECALL 允许 META 自检
+            )
+        except Exception:
+            # fallback 老 f-string
+            return f"""{core_persona}
+
+{_fr_tone}
+
+=== HOW TO RESPOND (FACTUAL_RECALL — 近期事实查询) ===
+Sir is asking about something that JUST happened or is in your immediate context.
+DO NOT call any tool. The answer is already in the context blocks below — find it and answer directly.
+
+Priority order to find the answer:
+1. WORKING MEMORY (clipboard / terminal command / file saved / window switch history)
+2. WHAT JUST HAPPENED (STM)
+3. CONVERSATION STATE (event_bus — recent breakthroughs / callbacks / commitments)
+4. ATTENTION (current window / cursor)
+
+Reply in ONE sentence. Quote the actual content if relevant (e.g. for clipboard contents,
+quote the first 60 chars). Append `---ZH---` and Chinese at the end.
+
+If none of the above sources have the answer, say so honestly:
+"I don't have that in my immediate memory, Sir — could you give me a hint?"
+Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user
+expects an instant reply from your recent memory, not a tool round-trip.
+
+{yesterday_block}
+
+=== WHAT JUST HAPPENED ===
+{short_stm}
+
+{open_threads_block}
+
+{project_block}
+
+{available_skills_block}
+
+{_fr_bus}
+
+{_fr_attention}
+
+{_fr_working}
+
+[SYSTEM CLOCK]: {current_time}
+{sensor_state_block}
+{getattr(self, '_l2_injected_block', '')}
+
+User: {user_input}
+{system_alert_text}
+"""
+
     def _assemble_wake_only_prompt(self, core_persona: str, user_input: str,
                                       stm_context: str, current_time: str,
                                       sensor_state_block: str,
@@ -3348,182 +3787,22 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
 {user_input}
 """
 
-        # [R7-β1] FACTUAL_RECALL 短路返回：近期事实查询，答案大概率已在
-        # working_feed / event_bus / STM / attention 里。绝对禁止调用工具，目标 TTFT < 2s。
+        # [Reshape M6.2 second wave / 2026-05-24] FACTUAL_RECALL tier 抽 helper. 行为不变.
         if prompt_tier == self.PROMPT_TIER_FACTUAL_RECALL:
-            _fr_working = ""
-            try:
-                feed = getattr(self, 'working_feed', None)
-                if feed is not None:
-                    # FACTUAL_RECALL 要把 working_feed 拉得更宽一点（1 小时 + 较多事件 + 较多字符）
-                    _fr_working = feed.to_prompt_block(max_chars=700, within_seconds=3600.0)
-            except Exception:
-                pass
-            _fr_attention = ""
-            try:
-                slot = getattr(self, '_attention_slot', None)
-                if slot is not None:
-                    from jarvis_utils import render_attention_block
-                    _snap = slot.latest(max_age_seconds=8.0)
-                    if _snap:
-                        _fr_attention = render_attention_block(_snap, max_chars=300)
-            except Exception:
-                pass
-            _fr_bus = ""
-            try:
-                bus = getattr(self, 'event_bus', None)
-                if bus is not None:
-                    _fr_bus = bus.to_prompt_block(max_chars=350, within_seconds=600.0)
-            except Exception:
-                pass
-            # STM 拉宽到 6 条（FACTUAL_RECALL 经常要回看刚说过的话）
-            short_stm = stm_context
-            if short_stm and len(short_stm) > 1200:
-                short_stm = "..." + short_stm[-1200:]
-            # [R7-β3] Tone Directive（FACTUAL_RECALL 也带 tone 让回答有 persona 味）
-            _fr_tone = ""
-            try:
-                ts = getattr(self, 'tone_selector', None)
-                if ts is not None:
-                    _t_id, _t_desc = ts.select(user_input=user_input,
-                                               ledger_data=ledger_data,
-                                               hour=current_hour)
-                    _fr_tone = ts.render_directive(_t_id, _t_desc)
-                    try:
-                        from jarvis_utils import bg_log
-                        bg_log(f"🎭 [Tone] {_t_id}  (hour={current_hour}, tier=FACTUAL_RECALL)")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            # 🆕 [P5-fix57 / 2026-05-23 16:05] Phase 3b: FACTUAL_RECALL 迁 builder
-            try:
-                from jarvis_prompt_builder import PromptBuilder, BlockSpec
-                _how_to_respond_fr = (
-                    "=== HOW TO RESPOND (FACTUAL_RECALL — 近期事实查询) ===\n"
-                    "Sir is asking about something that JUST happened or is in your immediate context.\n"
-                    "DO NOT call any tool. The answer is already in the context blocks below — find it and answer directly.\n\n"
-                    "Priority order to find the answer:\n"
-                    "1. WORKING MEMORY (clipboard / terminal command / file saved / window switch history)\n"
-                    "2. WHAT JUST HAPPENED (STM)\n"
-                    "3. CONVERSATION STATE (event_bus — recent breakthroughs / callbacks / commitments)\n"
-                    "4. ATTENTION (current window / cursor)\n"
-                    "5. SENSOR STATE (current_window_stay_s for 'how long am I on X')\n\n"
-                    "Reply in ONE sentence. Quote the actual content if relevant (e.g. for clipboard contents,\n"
-                    "quote the first 60 chars). Append `---ZH---` and Chinese at the end.\n\n"
-                    "If none of the above sources have the answer, say so honestly:\n"
-                    "\"I don't have that in my immediate memory, Sir — could you give me a hint?\"\n"
-                    "Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user\n"
-                    "expects an instant reply from your recent memory, not a tool round-trip."
-                )
-                fb = PromptBuilder(tier='FACTUAL_RECALL')
-                if _fr_tone:
-                    fb.register(BlockSpec(
-                        id='tone', content=_fr_tone,
-                        tiers=['FACTUAL_RECALL'], salience=0.55))
-                fb.register(BlockSpec(
-                    id='how_to_respond', content=_how_to_respond_fr,
-                    tiers=['FACTUAL_RECALL'], salience=0.95))
-                if yesterday_block:
-                    fb.register(BlockSpec(
-                        id='yesterday', content=yesterday_block,
-                        tiers=['FACTUAL_RECALL'], salience=0.55))
-                if short_stm:
-                    fb.register(BlockSpec(
-                        id='stm', content=f"=== WHAT JUST HAPPENED ===\n{short_stm}",
-                        tiers=['FACTUAL_RECALL'], hint='stm:turn_<id>', salience=0.80))
-                if open_threads_block:
-                    fb.register(BlockSpec(
-                        id='open_threads', content=open_threads_block,
-                        tiers=['FACTUAL_RECALL'], salience=0.60))
-                if project_block:
-                    fb.register(BlockSpec(
-                        id='project', content=project_block,
-                        tiers=['FACTUAL_RECALL'], salience=0.55))
-                if available_skills_block:
-                    fb.register(BlockSpec(
-                        id='skills', content=available_skills_block,
-                        tiers=['FACTUAL_RECALL'], salience=0.50))
-                if _fr_bus:
-                    fb.register(BlockSpec(
-                        id='event_bus', content=_fr_bus,
-                        tiers=['FACTUAL_RECALL'], hint='swm:<etype>', salience=0.75))
-                if _fr_attention:
-                    fb.register(BlockSpec(
-                        id='attention', content=_fr_attention,
-                        tiers=['FACTUAL_RECALL'], salience=0.70))
-                if _fr_working:
-                    fb.register(BlockSpec(
-                        id='working_feed', content=_fr_working,
-                        tiers=['FACTUAL_RECALL'], salience=0.80))
-                fb.register(BlockSpec(
-                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
-                    tiers=['FACTUAL_RECALL'], salience=0.85))
-                if sensor_state_block:
-                    fb.register(BlockSpec(
-                        id='sensor', content=sensor_state_block,
-                        tiers=['FACTUAL_RECALL'], hint='sensor:<field>',
-                        salience=0.90))  # FACTUAL_RECALL 高优 — Sir 问 'X 多久' 必用
-                _l2 = getattr(self, '_l2_injected_block', '') or ''
-                if _l2:
-                    fb.register(BlockSpec(
-                        id='l2', content=_l2,
-                        tiers=['FACTUAL_RECALL'], hint='l2:<directive_id>',
-                        salience=0.65))
-                return fb.compose(
-                    persona=core_persona,
-                    user_input=user_input,
-                    system_alert=system_alert_text,
-                    include_meta_hint=True,  # FACTUAL_RECALL 允许 META 自检
-                )
-            except Exception:
-                # fallback 老 f-string
-                return f"""{core_persona}
-
-{_fr_tone}
-
-=== HOW TO RESPOND (FACTUAL_RECALL — 近期事实查询) ===
-Sir is asking about something that JUST happened or is in your immediate context.
-DO NOT call any tool. The answer is already in the context blocks below — find it and answer directly.
-
-Priority order to find the answer:
-1. WORKING MEMORY (clipboard / terminal command / file saved / window switch history)
-2. WHAT JUST HAPPENED (STM)
-3. CONVERSATION STATE (event_bus — recent breakthroughs / callbacks / commitments)
-4. ATTENTION (current window / cursor)
-
-Reply in ONE sentence. Quote the actual content if relevant (e.g. for clipboard contents,
-quote the first 60 chars). Append `---ZH---` and Chinese at the end.
-
-If none of the above sources have the answer, say so honestly:
-"I don't have that in my immediate memory, Sir — could you give me a hint?"
-Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user
-expects an instant reply from your recent memory, not a tool round-trip.
-
-{yesterday_block}
-
-=== WHAT JUST HAPPENED ===
-{short_stm}
-
-{open_threads_block}
-
-{project_block}
-
-{available_skills_block}
-
-{_fr_bus}
-
-{_fr_attention}
-
-{_fr_working}
-
-[SYSTEM CLOCK]: {current_time}
-{sensor_state_block}
-{getattr(self, '_l2_injected_block', '')}
-
-User: {user_input}
-{system_alert_text}
-"""
+            return self._assemble_factual_recall_prompt(
+                core_persona=core_persona,
+                user_input=user_input,
+                stm_context=stm_context,
+                current_time=current_time,
+                current_hour=current_hour,
+                ledger_data=ledger_data,
+                sensor_state_block=sensor_state_block,
+                system_alert_text=system_alert_text,
+                yesterday_block=yesterday_block,
+                open_threads_block=open_threads_block,
+                project_block=project_block,
+                available_skills_block=available_skills_block,
+            )
 
         # [Reshape M6.2 / 2026-05-24] WAKE_ONLY tier 抽 helper. 行为不变.
         if prompt_tier == self.PROMPT_TIER_WAKE_ONLY:
@@ -3535,245 +3814,30 @@ User: {user_input}
         # [P0+18-a.3 / 2026-05-15] 注入 PROMISE_PROTOCOL_DIRECTIVE_MINI — 修 BUG #2:
         # 之前 SHORT_CHAT tier 完全没注入 PROMISE 协议，导致 Sir 说"排查 403"等多步动作时
         # 主脑根本不知道要写 <PROMISE>，直接编答案 → Integrity Check 抓 hallucination
+        # [Reshape M6.2 second wave / 2026-05-24] SHORT_CHAT tier 抽 helper. 行为不变.
         if prompt_tier == self.PROMPT_TIER_SHORT_CHAT:
-            # event_bus 快速渲染（只取 240s 内事件，把 prompt 控制到中等体积）
-            _short_bus = ""
-            try:
-                bus = getattr(self, 'event_bus', None)
-                if bus is not None:
-                    _short_bus = bus.to_prompt_block(max_chars=350, within_seconds=240.0)
-            except Exception:
-                _short_bus = ""
-            # [R7-α/AttentionContext] SHORT_CHAT 档也要带 attention（短聊也常用"这个/这里"）
-            _short_attn = ""
-            try:
-                slot = getattr(self, '_attention_slot', None)
-                if slot is not None:
-                    from jarvis_utils import render_attention_block
-                    _snap = slot.latest(max_age_seconds=8.0)
-                    if _snap:
-                        _short_attn = render_attention_block(_snap, max_chars=300)
-            except Exception:
-                _short_attn = ""
-            # [R7-α/WorkingMemoryFeed] SHORT_CHAT 档也带工作台事件（限到 300 字保持轻）
-            _short_feed = ""
-            try:
-                _feed = getattr(self, 'working_feed', None)
-                if _feed is not None:
-                    _short_feed = _feed.to_prompt_block(max_chars=300, within_seconds=900.0)
-            except Exception:
-                _short_feed = ""
-            # [R7-β3] Tone Directive
-            _short_tone = ""
-            try:
-                ts = getattr(self, 'tone_selector', None)
-                if ts is not None:
-                    _t_id, _t_desc = ts.select(user_input=user_input,
-                                               ledger_data=ledger_data,
-                                               hour=current_hour)
-                    _short_tone = ts.render_directive(_t_id, _t_desc)
-                    # [R7-β1/post-test] SHORT_CHAT 也要 bg_log，让 Sir 复盘
-                    try:
-                        from jarvis_utils import bg_log
-                        bg_log(f"🎭 [Tone] {_t_id}  (hour={current_hour}, tier=SHORT_CHAT)")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            return self._assemble_short_chat_prompt(
+                core_persona=core_persona,
+                user_input=user_input,
+                stm_context=stm_context,
+                current_time=current_time,
+                current_hour=current_hour,
+                ledger_data=ledger_data,
+                sensor_state_block=sensor_state_block,
+                system_alert_text=system_alert_text,
+                yesterday_block=yesterday_block,
+                open_threads_block=open_threads_block,
+                project_block=project_block,
+                available_skills_block=available_skills_block,
+                how_to_respond=how_to_respond,
+                time_persona=time_persona,
+                context_str=context_str,
+                pc_block_value=_pc_block_value,
+                correction_context=correction_context,
+                style_adjustment=style_adjustment,
+                ledger_str=ledger_str,
+            )
 
-            # [P0+18-a.3] PROMISE_PROTOCOL mini directive 注入 — 让 SHORT_CHAT tier 主脑
-            # 也知道"多步动作要写 <PROMISE>"，避免 Sir 说"排查 403"时主脑直接编答案
-            _short_promise_mini = ""
-            try:
-                from jarvis_skill_registry import PROMISE_PROTOCOL_DIRECTIVE_MINI
-                _short_promise_mini = PROMISE_PROTOCOL_DIRECTIVE_MINI
-            except Exception:
-                _short_promise_mini = ""
-
-            # [P0+18-a.16] TOOL HONESTY mini —— 拦"我能用 X 来查 Y"型越界许诺（短档版 ~400字）
-            # 这次 bug (process_hands.get_process_info → 查 logged errors) 主响应也走 SHORT_CHAT，
-            # 因此必须把这条软约束注入 SHORT_CHAT，否则 mini 形式根本看不到约束。
-            _short_tool_honesty = ""
-            try:
-                from jarvis_skill_registry import TOOL_HONESTY_DIRECTIVE_MINI
-                _short_tool_honesty = TOOL_HONESTY_DIRECTIVE_MINI
-            except Exception:
-                _short_tool_honesty = ""
-
-            # [P0+18-b.8] FUZZY CANDIDATES POLICY —— SHORT_CHAT 也要带（"查 XYZ 进程"经常分到 SHORT_CHAT）
-            _short_fuzzy_policy = ""
-            try:
-                from jarvis_fuzzy_resolver import FUZZY_CANDIDATES_POLICY
-                _short_fuzzy_policy = FUZZY_CANDIDATES_POLICY
-            except Exception:
-                _short_fuzzy_policy = ""
-
-            # [P0+18-a.3] 同时注入 ACTIVE PLAN 块（如果有 paused/awaiting_go plan，
-            # SHORT_CHAT 也要让主脑看见，否则 Sir 说"go"时主脑没上下文）
-            _short_active_plan = ""
-            try:
-                pl = getattr(self, 'plan_ledger', None)
-                if pl is not None:
-                    _short_active_plan = pl.to_prompt_block(max_chars=400)
-            except Exception:
-                _short_active_plan = ""
-
-            # 🆕 [P5-fix59 / 2026-05-23 16:13] Phase 3c: SHORT_CHAT 迁 builder
-            try:
-                from jarvis_prompt_builder import PromptBuilder, BlockSpec
-                sb = PromptBuilder(tier='SHORT_CHAT')
-                if yesterday_block:
-                    sb.register(BlockSpec(
-                        id='yesterday', content=yesterday_block,
-                        tiers=['SHORT_CHAT'], salience=0.55))
-                if stm_context:
-                    sb.register(BlockSpec(
-                        id='stm', content=f"=== WHAT JUST HAPPENED ===\n{stm_context}",
-                        tiers=['SHORT_CHAT'], hint='stm:turn_<id>', salience=0.75))
-                if open_threads_block:
-                    sb.register(BlockSpec(
-                        id='open_threads', content=open_threads_block,
-                        tiers=['SHORT_CHAT'], salience=0.60))
-                if project_block:
-                    sb.register(BlockSpec(
-                        id='project', content=project_block,
-                        tiers=['SHORT_CHAT'], salience=0.55))
-                if available_skills_block:
-                    sb.register(BlockSpec(
-                        id='skills', content=available_skills_block,
-                        tiers=['SHORT_CHAT'], salience=0.50))
-                if _short_tool_honesty:
-                    sb.register(BlockSpec(
-                        id='tool_honesty', content=_short_tool_honesty,
-                        tiers=['SHORT_CHAT'], salience=0.80))
-                if _short_fuzzy_policy:
-                    sb.register(BlockSpec(
-                        id='fuzzy_policy', content=_short_fuzzy_policy,
-                        tiers=['SHORT_CHAT'], salience=0.65))
-                if _short_promise_mini:
-                    sb.register(BlockSpec(
-                        id='promise_mini', content=_short_promise_mini,
-                        tiers=['SHORT_CHAT'], salience=0.85))
-                if _short_active_plan:
-                    sb.register(BlockSpec(
-                        id='active_plan', content=_short_active_plan,
-                        tiers=['SHORT_CHAT'], salience=0.75))
-                if _short_bus:
-                    sb.register(BlockSpec(
-                        id='event_bus', content=_short_bus,
-                        tiers=['SHORT_CHAT'], hint='swm:<etype>', salience=0.75))
-                if _short_attn:
-                    sb.register(BlockSpec(
-                        id='attention', content=_short_attn,
-                        tiers=['SHORT_CHAT'], salience=0.70))
-                if _short_feed:
-                    sb.register(BlockSpec(
-                        id='working_feed', content=_short_feed,
-                        tiers=['SHORT_CHAT'], salience=0.75))
-                if _short_tone:
-                    sb.register(BlockSpec(
-                        id='tone', content=_short_tone,
-                        tiers=['SHORT_CHAT'], salience=0.55))
-                if how_to_respond:
-                    sb.register(BlockSpec(
-                        id='how_to_respond', content=how_to_respond,
-                        tiers=['SHORT_CHAT'], salience=0.85))
-                sb.register(BlockSpec(
-                    id='time_persona',
-                    content=f"=== TIME CONTEXT ===\n{time_persona}",
-                    tiers=['SHORT_CHAT'], salience=0.65))
-                if context_str:
-                    sb.register(BlockSpec(
-                        id='context', content=context_str,
-                        tiers=['SHORT_CHAT'], salience=0.65))
-                if _pc_block_value:
-                    sb.register(BlockSpec(
-                        id='profile_card', content=_pc_block_value,
-                        tiers=['SHORT_CHAT'], hint='profile:<field>', salience=0.70))
-                if correction_context:
-                    sb.register(BlockSpec(
-                        id='correction', content=correction_context,
-                        tiers=['SHORT_CHAT'], salience=0.80))
-                if style_adjustment:
-                    sb.register(BlockSpec(
-                        id='style', content=style_adjustment,
-                        tiers=['SHORT_CHAT'], salience=0.55))
-                if ledger_str and ledger_str != "No status data":
-                    sb.register(BlockSpec(
-                        id='ledger',
-                        content=f"=== REAL-TIME STATE ===\n{ledger_str}",
-                        tiers=['SHORT_CHAT'], hint='ledger:<field>', salience=0.70))
-                sb.register(BlockSpec(
-                    id='clock', content=f"[SYSTEM CLOCK]: {current_time}",
-                    tiers=['SHORT_CHAT'], salience=0.85))
-                if sensor_state_block:
-                    sb.register(BlockSpec(
-                        id='sensor', content=sensor_state_block,
-                        tiers=['SHORT_CHAT'], hint='sensor:<field>',
-                        salience=0.85))
-                _l2 = getattr(self, '_l2_injected_block', '') or ''
-                if _l2:
-                    sb.register(BlockSpec(
-                        id='l2', content=_l2,
-                        tiers=['SHORT_CHAT'], hint='l2:<directive_id>',
-                        salience=0.65))
-                return sb.compose(
-                    persona=core_persona,
-                    user_input=user_input,
-                    system_alert=system_alert_text,
-                    include_meta_hint=True,
-                )
-            except Exception:
-                # fallback 老 f-string
-                return f"""{core_persona}
-
-{yesterday_block}
-
-=== WHAT JUST HAPPENED ===
-{stm_context}
-
-{open_threads_block}
-
-{project_block}
-
-{available_skills_block}
-
-{_short_tool_honesty}
-
-{_short_fuzzy_policy}
-
-{_short_promise_mini}
-
-{_short_active_plan}
-
-{_short_bus}
-
-{_short_attn}
-
-{_short_feed}
-
-{_short_tone}
-
-{how_to_respond}
-
-=== TIME CONTEXT ===
-{time_persona}
-
-{context_str}
-{_pc_block_value}
-{correction_context}
-{style_adjustment}
-
-=== REAL-TIME STATE ===
-{ledger_str}
-
-[SYSTEM CLOCK]: {current_time}
-{sensor_state_block}
-{getattr(self, '_l2_injected_block', '')}
-
-User: {user_input}
-{system_alert_text}
-"""
 
         if mode == "light":
             # 🆕 [P5-fix56 / 2026-05-23 16:00] Phase 3a: light mode 迁 builder
