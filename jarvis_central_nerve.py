@@ -428,162 +428,23 @@ class CentralNerve:
         # [Reshape M6.3 fourth wave / 2026-05-24] ReplyPreFlight init helper. 行为不变.
         self._init_reply_preflight()
 
-        # 🩹 [β.5.43-fix3-㋭ / 2026-05-20 18:52] SirRequestReflector L7 daemon
-        # Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
-        # 此 daemon 60s tick, LLM judge STM 看 Sir 是否要求 long-watch X,
-        # 命中 → propose concern 进 review queue, Sir dashboard 一键激活.
-        self.sir_request_reflector = None
-        try:
-            from jarvis_sir_request_reflector import SirRequestReflector
-            def _srr_stm_provider():
-                return list(getattr(self, 'short_term_memory', []) or [])
-            self.sir_request_reflector = SirRequestReflector(
-                key_router=self.key_router,
-                stm_provider=_srr_stm_provider,
-                concerns_ledger=getattr(self, 'concerns_ledger', None),
-            )
-            if self.sir_request_reflector is not None and not self.sir_request_reflector.is_alive():
-                self.sir_request_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _srr_bg
-                _srr_bg("🪞 [SirRequestReflector] L7 watch-request daemon ready (β.5.43-fix3-㋭)")
-            except Exception:
-                pass
-        except Exception as _srr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[SirRequestReflector] 初始化失败（非致命）：{_srr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fifth wave / 2026-05-24] SirRequestReflector init helper. 行为不变.
+        self._init_sir_request_reflector()
 
-        # 🩹 [β.5.40-E1 / 2026-05-20] CompanionRhythmReflector L7 daemon (Sir 方向 E.1)
-        # 每日 03:30 LLM 扫近 7 天 STM 算每 hour nudge-receptive score,
-        # 写 memory_pool/nudge_window_vocab.json. ProactiveCare 看 vocab + publish
-        # nudge_window_advice SWM. 主脑 prompt 看 evidence 调 tone.
-        self.companion_rhythm_reflector = None
-        try:
-            from jarvis_companion_rhythm_reflector import CompanionRhythmReflector
-            def _crr_stm_provider():
-                return list(getattr(self, 'short_term_memory', []) or [])
-            self.companion_rhythm_reflector = CompanionRhythmReflector(
-                stm_provider=_crr_stm_provider,
-            )
-            if self.companion_rhythm_reflector is not None and not self.companion_rhythm_reflector.is_alive():
-                self.companion_rhythm_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _crr_bg
-                _crr_bg("📈 [CompanionRhythmReflector] L7 daemon ready (β.5.40-E1)")
-            except Exception:
-                pass
-        except Exception as _crr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[CompanionRhythmReflector] 初始化失败（非致命）：{_crr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fifth wave / 2026-05-24] CompanionRhythmReflector init helper. 行为不变.
+        self._init_companion_rhythm_reflector()
 
-        # 🩹 [β.5.40-B1 / 2026-05-20] InsideJokeReflector L7 daemon (Sir 方向 B.1)
-        # 每日 03:30 LLM 扫近 7 天 STM, 提取 Sir 重复梗/称呼 (≥2 evidence + conf ≥ 0.8)
-        # propose 到 relational_state.inside_jokes review queue. Sir CLI 拍板 → active.
-        # 主脑 prompt 看 active jokes 适时引用 → Sir "他真懂我" 体感.
-        # stm_provider 复用 short_term_memory (StruggleReflector 同款 lambda).
-        self.inside_joke_reflector = None
-        try:
-            from jarvis_inside_joke_reflector import InsideJokeReflector
-            def _ijr_stm_provider():
-                return list(getattr(self, 'short_term_memory', []) or [])
-            self.inside_joke_reflector = InsideJokeReflector(
-                key_router=self.key_router,
-                stm_provider=_ijr_stm_provider,
-                relational_store=getattr(self, 'relational_state', None),
-            )
-            if self.inside_joke_reflector is not None and not self.inside_joke_reflector.is_alive():
-                self.inside_joke_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _ijr_bg
-                _ijr_bg("😄 [InsideJokeReflector] L7 daemon ready (β.5.40-B1)")
-            except Exception:
-                pass
-        except Exception as _ijr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[InsideJokeReflector] 初始化失败（非致命）：{_ijr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fifth wave / 2026-05-24] InsideJokeReflector init helper. 行为不变.
+        self._init_inside_joke_reflector()
 
-        # 🩹 [β.5.39 / 2026-05-20] SleepPatternReflector L7 daemon
-        # 每日 03:00 扫 hippocampus + history 重算 Sir 典型入睡时间, 让 ProactiveCare distance-based 公式有数据.
-        self.sleep_pattern_reflector = None
-        try:
-            from jarvis_sleep_pattern_reflector import SleepPatternReflector
-            self.sleep_pattern_reflector = SleepPatternReflector(
-                hippocampus=getattr(self, 'hippocampus', None),
-            )
-            if self.sleep_pattern_reflector is not None and not self.sleep_pattern_reflector.is_alive():
-                self.sleep_pattern_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _spr_bg
-                _spr_bg("💤 [SleepPatternReflector] L7 vocab daemon ready (β.5.39)")
-            except Exception:
-                pass
-        except Exception as _spr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[SleepPatternReflector] 初始化失败（非致命）：{_spr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fifth wave / 2026-05-24] SleepPatternReflector init helper. 行为不变.
+        self._init_sleep_pattern_reflector()
 
-        # [P0+20-β.0.5 / 2026-05-16] DirectiveEvaluator —— L2 directive 异步评分链
-        # 走 OpenRouter 的 google/gemini-3-flash-preview（β.1.16 升级 / 与主脑一致），
-        # 每轮对话完成后异步评分 fired 的 directive 是否真被 LLM 遵守 (yes/no/partial)
-        # → 写回 directive.helped。主路径不阻塞；失败/超时静默丢弃；rate limit 60 calls/min。
-        self.directive_evaluator = None
-        try:
-            from jarvis_directive_evaluator import get_default_evaluator as _get_eval
-            self.directive_evaluator = _get_eval(
-                key_router=self.key_router,
-                registry=_dr if '_dr' in dir() else None,
-            )
-        except Exception as _ev_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[DirectiveEvaluator] 初始化失败（非致命，评分链跳过）：{_ev_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fifth wave / 2026-05-24] DirectiveEvaluator init helper. 行为不变.
+        self._init_directive_evaluator()
 
-        # [轴3-L3.2 + L3.3 / 2026-05-15] PromiseExecutor — 后台步骤执行器
-        # daemon 每 1s 扫 ledger，跑 STATE_RUNNING plan 的 next pending step。
-        # 注入三回调：
-        #   fast_call_executor → chat_bypass._execute_fast_call (跑 l4_hands_pool 工具)
-        #   say_to_sir         → vocal.say (clarification 反向提问 / dangerous 警告 / 完工汇报)
-        #   skill_registry     → 启动时已经 bootstrap 的 SkillRegistry 单例
-        # 注：fast_call/vocal 在 main 段创建 chat_bypass / vocal 之后才能注入 → 这里先 None 占位，
-        #     由 _wire_promise_executor() 延迟注入（main 段或 worker thread 启动时调）
-        # [P0+18-a.2] 异常不再静默吞 — 失败必须打 traceback 让 Sir 重启时一眼看见根因
-        self.promise_executor = None
-        if self.plan_ledger is not None:
-            try:
-                from jarvis_skill_registry import PromiseExecutor, get_registry
-                self.promise_executor = PromiseExecutor(
-                    plan_ledger=self.plan_ledger,
-                    skill_registry=get_registry(),
-                    fast_call_executor=None,  # 延迟注入
-                    say_to_sir=None,          # 延迟注入
-                    event_bus=self.event_bus,
-                    tick_s=1.0,
-                )
-                print(f"[PromiseExecutor] 实例已创建（等 JarvisWorker 注入 fast_call/say 后 .start()）")
-            except Exception as _e:
-                self.promise_executor = None
-                import traceback as _tb
-                try:
-                    from jarvis_utils import bg_log as _bg
-                    _bg(f"[PromiseExecutor] 初始化失败：{_e}")
-                except Exception:
-                    pass
-                _tb.print_exc()
-        else:
-            print(f"[PromiseExecutor] 跳过创建：plan_ledger 为 None")
+        # [Reshape M6.3 fifth wave / 2026-05-24] PromiseExecutor init helper. 行为不变.
+        self._init_promise_executor()
 
         # [R7-β3] ToneSelector：8 档 tone 池 + 情绪/时段/硬触发词
         # _assemble_prompt 会调 self.tone_selector.select(...) 拿到 (tone, desc) 注入 prompt
@@ -2184,6 +2045,174 @@ User: {user_input}
                 _bg(f"[ReplyPreFlight] 初始化失败（非致命）：{_pf_e}")
             except Exception:
                 pass
+
+    def _init_sir_request_reflector(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] SirRequestReflector L7 daemon (β.5.43-fix3-㋭).
+
+        Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
+        60s tick, LLM judge STM 是否要求 long-watch X → propose concern 进 review.
+        """
+        self.sir_request_reflector = None
+        try:
+            from jarvis_sir_request_reflector import SirRequestReflector
+
+            def _srr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.sir_request_reflector = SirRequestReflector(
+                key_router=self.key_router,
+                stm_provider=_srr_stm_provider,
+                concerns_ledger=getattr(self, 'concerns_ledger', None),
+            )
+            if self.sir_request_reflector is not None and not self.sir_request_reflector.is_alive():
+                self.sir_request_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _srr_bg
+                _srr_bg("🪞 [SirRequestReflector] L7 watch-request daemon ready (β.5.43-fix3-㋭)")
+            except Exception:
+                pass
+        except Exception as _srr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SirRequestReflector] 初始化失败（非致命）：{_srr_e}")
+            except Exception:
+                pass
+
+    def _init_companion_rhythm_reflector(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] CompanionRhythmReflector L7 (β.5.40-E1).
+
+        每日 03:30 LLM 扫近 7 天 STM 算每 hour nudge-receptive score,
+        写 memory_pool/nudge_window_vocab.json. ProactiveCare 看 vocab + publish.
+        """
+        self.companion_rhythm_reflector = None
+        try:
+            from jarvis_companion_rhythm_reflector import CompanionRhythmReflector
+
+            def _crr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.companion_rhythm_reflector = CompanionRhythmReflector(
+                stm_provider=_crr_stm_provider,
+            )
+            if self.companion_rhythm_reflector is not None and not self.companion_rhythm_reflector.is_alive():
+                self.companion_rhythm_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _crr_bg
+                _crr_bg("📈 [CompanionRhythmReflector] L7 daemon ready (β.5.40-E1)")
+            except Exception:
+                pass
+        except Exception as _crr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[CompanionRhythmReflector] 初始化失败（非致命）：{_crr_e}")
+            except Exception:
+                pass
+
+    def _init_inside_joke_reflector(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] InsideJokeReflector L7 (β.5.40-B1).
+
+        每日 03:30 LLM 扫近 7 天 STM, 提取 Sir 重复梗 (≥2 evidence + conf ≥ 0.8)
+        propose 到 relational_state.inside_jokes review queue.
+        """
+        self.inside_joke_reflector = None
+        try:
+            from jarvis_inside_joke_reflector import InsideJokeReflector
+
+            def _ijr_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.inside_joke_reflector = InsideJokeReflector(
+                key_router=self.key_router,
+                stm_provider=_ijr_stm_provider,
+                relational_store=getattr(self, 'relational_state', None),
+            )
+            if self.inside_joke_reflector is not None and not self.inside_joke_reflector.is_alive():
+                self.inside_joke_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _ijr_bg
+                _ijr_bg("😄 [InsideJokeReflector] L7 daemon ready (β.5.40-B1)")
+            except Exception:
+                pass
+        except Exception as _ijr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[InsideJokeReflector] 初始化失败（非致命）：{_ijr_e}")
+            except Exception:
+                pass
+
+    def _init_sleep_pattern_reflector(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] SleepPatternReflector L7 (β.5.39).
+
+        每日 03:00 扫 hippocampus + history 重算 Sir 典型入睡时间.
+        """
+        self.sleep_pattern_reflector = None
+        try:
+            from jarvis_sleep_pattern_reflector import SleepPatternReflector
+            self.sleep_pattern_reflector = SleepPatternReflector(
+                hippocampus=getattr(self, 'hippocampus', None),
+            )
+            if self.sleep_pattern_reflector is not None and not self.sleep_pattern_reflector.is_alive():
+                self.sleep_pattern_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _spr_bg
+                _spr_bg("💤 [SleepPatternReflector] L7 vocab daemon ready (β.5.39)")
+            except Exception:
+                pass
+        except Exception as _spr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SleepPatternReflector] 初始化失败（非致命）：{_spr_e}")
+            except Exception:
+                pass
+
+    def _init_directive_evaluator(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] DirectiveEvaluator (P0+20-β.0.5).
+
+        L2 directive 异步评分链: 走 OpenRouter, 每轮对话完成后异步评 fired directive
+        是否真被 LLM 遵守 (yes/no/partial) → 写回 directive.helped.
+        """
+        self.directive_evaluator = None
+        try:
+            from jarvis_directive_evaluator import get_default_evaluator as _get_eval
+            from jarvis_directives import get_default_registry as _get_dr
+            self.directive_evaluator = _get_eval(
+                key_router=self.key_router,
+                registry=_get_dr(),
+            )
+        except Exception as _ev_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[DirectiveEvaluator] 初始化失败（非致命，评分链跳过）：{_ev_e}")
+            except Exception:
+                pass
+
+    def _init_promise_executor(self) -> None:
+        """[Reshape M6.3 fifth wave / 2026-05-24] PromiseExecutor (轴3-L3.2 + L3.3).
+
+        后台步骤执行器 daemon 每 1s 扫 ledger, 跑 STATE_RUNNING plan 的 next pending step.
+        三回调 (fast_call_executor / say_to_sir / skill_registry) 由 main 段延迟注入.
+        """
+        self.promise_executor = None
+        if self.plan_ledger is not None:
+            try:
+                from jarvis_skill_registry import PromiseExecutor, get_registry
+                self.promise_executor = PromiseExecutor(
+                    plan_ledger=self.plan_ledger,
+                    skill_registry=get_registry(),
+                    fast_call_executor=None,  # 延迟注入
+                    say_to_sir=None,          # 延迟注入
+                    event_bus=self.event_bus,
+                    tick_s=1.0,
+                )
+                print(f"[PromiseExecutor] 实例已创建（等 JarvisWorker 注入 fast_call/say 后 .start()）")
+            except Exception as _e:
+                self.promise_executor = None
+                import traceback as _tb
+                try:
+                    from jarvis_utils import bg_log as _bg
+                    _bg(f"[PromiseExecutor] 初始化失败：{_e}")
+                except Exception:
+                    pass
+                _tb.print_exc()
+        else:
+            print(f"[PromiseExecutor] 跳过创建：plan_ledger 为 None")
 
     def _build_layer_0_self_anchor_block(self) -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 0: SelfAnchor block.
