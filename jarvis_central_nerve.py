@@ -397,6 +397,32 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [Translator Phase 3 / 2026-05-24 21:15] L7 TranslatorReflector daemon
+        # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md §7.6
+        # 周期扫 SWM translator events, 模式探测 → propose 新 alias 进 review queue.
+        # Sir CLI activate: python scripts/translator_alias_dump.py activate alias_XXX
+        try:
+            from jarvis_translator_reflector import (
+                TranslatorReflector, set_default_reflector,
+            )
+            self.translator_reflector = TranslatorReflector(
+                event_bus=getattr(self, 'event_bus', None)
+            )
+            set_default_reflector(self.translator_reflector)
+            self.translator_reflector.start_daemon()
+            try:
+                from jarvis_utils import bg_log as _trr_bg
+                _trr_bg("📚 [TranslatorReflector] daemon 已启动 (L7 alias propose 30min cycle)")
+            except Exception:
+                pass
+        except Exception as _trr_e:
+            self.translator_reflector = None
+            try:
+                from jarvis_utils import bg_log as _trr_err
+                _trr_err(f"[TranslatorReflector] 初始化失败 (非致命): {_trr_e}")
+            except Exception:
+                pass
+
         # [Reshape M6.3 fourth wave / 2026-05-24] STMSummarizer init helper. 行为不变.
         self._init_stm_summarizer()
 

@@ -1667,6 +1667,17 @@ def _trigger_sir_intent_judge(ctx: DirectiveContext) -> bool:
     return _swm_has_recent('sir_struggle_observed', max_age_s=300.0)
 
 
+def _trigger_translator_self_correct(ctx: DirectiveContext) -> bool:
+    """🆕 [Translator Phase 3 / 2026-05-24 21:20] L4.6 翻译层 self-correct.
+    SWM 含 translator_aliased / translator_rejected (< 10 min 内) → 注入 self-correct
+    directive. 让主脑下次 emit FAST_CALL 时用精确 organ 名 + 缺 param 时先问 Sir.
+
+    详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md §4.2 (盲点 B: 主脑 self-game)
+    """
+    return (_swm_has_recent('translator_aliased', max_age_s=600.0)
+            or _swm_has_recent('translator_rejected', max_age_s=600.0))
+
+
 # ============================================================
 # 🩹 [β.5.38 / 2026-05-20] 5 个新 SWM evidence directive (Sir 选 方向 C)
 # 利用 β.5.37 架构杠杆: 主脑看 SWM evidence + 时间 + Sir 当前一句 自决 contextual.

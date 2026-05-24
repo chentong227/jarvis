@@ -67,6 +67,12 @@ class WriteReceipt:
     # 🆕 [P5-fix34 / 2026-05-23] 主脑 model 标签 — A/B 跑模型时按 model 分组 audit.
     # 空字符串 = 不知道 / 调用方没传. fast_call_mutation 路径会传当前 chat_bypass.main_brain_model.
     model: str = ''
+    # 🆕 [Sir 2026-05-24 21:14 真测 / hydration_goal BUG] 区分 "真物理覆写" vs "audit only fallback".
+    # ProfileCard.overwrite_field 真改 sir_profile.json → True.
+    # apply_correction fallback (audit only, profile 没真改) → False.
+    # chat_bypass 据这个判是否显示 "sir_profile.json 已 atomic 覆写" — 防主脑/Sir 看到谎报.
+    # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md (受 Translator review 启发, 同诚信原则)
+    physical_write: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -216,6 +222,9 @@ class MemoryMutationGateway:
 
         ok = False
         err = ''
+        # 🆕 [Sir 2026-05-24 21:14 真测 / hydration_goal BUG] 区分 "真物理覆写" vs "audit only".
+        # ProfileCard.overwrite_field 真改 sir_profile.json → True. 默认 False (audit only / fail).
+        physical_write_flag = False
         try:
             if layer == 'ProfileCard':
                 profile = getattr(nerve, 'profile_card', None) if nerve else None
@@ -255,6 +264,7 @@ class MemoryMutationGateway:
                             )
                             if ow_ok:
                                 ok = True
+                                physical_write_flag = True  # 🆕 真物理覆写成功
                                 if ow_old is not None:
                                     old_excerpt = str(ow_old)[:100]
                             else:
@@ -268,7 +278,7 @@ class MemoryMutationGateway:
                                         new_value=new_excerpt,
                                         confidence=float(confidence),
                                     )
-                                    ok = True  # audit 成功
+                                    ok = True  # audit 成功 (但 physical_write 仍 False)
                         except Exception as _owe:
                             err = f'overwrite_field exception: {_owe}'
                     elif hasattr(profile, 'apply_correction'):
@@ -555,6 +565,7 @@ class MemoryMutationGateway:
             error=err[:200],
             turn_id=turn_id,
             model=model or '',
+            physical_write=physical_write_flag,  # 🆕 BUG A L1: ProfileCard 真覆写区分 audit-only
         )
         self._write_receipt(receipt)
         self._publish_swm(receipt)

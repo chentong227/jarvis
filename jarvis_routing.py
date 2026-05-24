@@ -761,6 +761,13 @@ class ProfileCard:
         # e.g. {"cup_ml": 300, "lunch_cup_ml": 200}. 主脑看 prompt block → 自己算.
         # Sir 没说过 → 主脑应主动问 (directive ambiguous_unit_handling 教).
         'unit_preferences',
+        # 🆕 [Sir 2026-05-24 21:14 真测 / hydration_goal BUG A L3]
+        # Sir 教健康目标 (hydration / sleep / exercise) 时, 主脑 emit FAST_CALL
+        # field_path='profile.health_goals.water_ml' 等 — 之前 hydration_goal 不在
+        # 白名单 → ProfileCard 拒收 → fallback audit-only → Sir 看到谎报 ✅ 覆写.
+        # 治本: health_goals 是 dict, Sir 教任何 daily target 都进这个 dict.
+        # 同 unit_preferences 范式. Sir CLI 可改 jarvis_config/sir_profile.json 直接看.
+        'health_goals',
     })
 
     def overwrite_field(self, field: str, new_value, source: str = 'fast_call_mutation',

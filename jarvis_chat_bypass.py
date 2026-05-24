@@ -609,6 +609,24 @@ class ChatBypass:
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-24 22:00 真测 META 泄漏字幕 BUG] 末路守门
+        # 上游 splitter 已加 [META] 切 (双处, line 2305+ / 3178+), 这里兜底防回归.
+        # 任何 text 含 [META] 直接拒收 audio (TTS 不念这种非自然语言, 防 cosyvoice 卡).
+        try:
+            if text and '[META]' in text:
+                _orig_meta = text
+                # 截 [META] 之前 — 后续若 sentence 仅是 META 则直接 return
+                text = text.split('[META]')[0].rstrip()
+                if not text:
+                    return
+                try:
+                    from jarvis_utils import bg_log as _meta_bg
+                    _meta_bg(f"⚠️ [Audio Guard] 拦截 [META] 漏到 TTS: '{_orig_meta[:80]}' → '{text[:60]}'")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # 🩹 [β.5.28-fix7 / 2026-05-20] Sir 03:22 实测 TTS 输出末尾 '---ZH' (partial marker).
         # Root cause: stream 末 buffer 含 LLM 输出截断的 partial '---ZH' (没等到完整 '---ZH---').
         # 老 5 处 splitter 末尾 flush 只查完整 '---ZH---', miss partial → TTS 念出 'ZH'.
@@ -1901,9 +1919,21 @@ Spoken English:"""
                     f". mutation_id={receipt.mutation_id}. "
                     f"主脑下次 retrieve 看新版."
                 )
-                # Bonus: 若是 profile overwrite, 提示 sir_profile.json 已真改
+                # 🆕 [Sir 2026-05-24 21:14 真测 / hydration_goal BUG A L2]
+                # 之前: ProfileCard + confidence≥0.8 就报 "已 atomic 覆写" — 但实际
+                # fallback apply_correction (audit-only) 时也走这里 → 谎报 atomic 覆写.
+                # 治本: 仅 physical_write=True (真 overwrite_field 成功) 才报 atomic;
+                # audit-only fallback 时显示精准: "audit only, field 不在白名单".
                 if layer_name == 'ProfileCard' and confidence >= 0.8:
-                    summary += " (sir_profile.json 已 atomic 覆写)"
+                    if getattr(receipt, 'physical_write', False):
+                        summary += " (sir_profile.json 已 atomic 覆写)"
+                    else:
+                        # audit only — error 含 fallback fail msg, 截一段给主脑
+                        _err_excerpt = (receipt.error or '')[:80]
+                        summary += (
+                            f" ⚠️ audit-only fallback (sir_profile.json 未真改: "
+                            f"{_err_excerpt or 'field 不在白名单'})"
+                        )
                 return summary
             else:
                 return (f"❌ mutation.{command} fail: {receipt.error[:120]} "
@@ -2302,6 +2332,14 @@ Spoken English:"""
                                 clean_full = clean_full.split("---ZH---")[0].rstrip('\n')
                             if "[CLIPBOARD]" in clean_full:
                                 clean_full = clean_full.split("[CLIPBOARD]")[0]
+                            # 🆕 [Sir 2026-05-24 22:00 真测 META 泄漏字幕 BUG]
+                            # 主脑 reply 末尾 emit [META] 一行 (evidence/reaction/skip_alert)
+                            # 后置 parse_meta 在 stream 完成后才裁 → 中间 splitter 已把 [META] 行
+                            # 当 sentence 喂 _put_audio + subtitle_queue.put → Sir 字幕看到 META +
+                            # TTS render 非自然语言 → 可能卡 wave_queue.
+                            # 治本: 上游 stream 时同 [CLIPBOARD] 切, [META] 后内容不进 streamed_text.
+                            if "[META]" in clean_full:
+                                clean_full = clean_full.split("[META]")[0].rstrip()
 
                             delta = clean_full[len(streamed_text):]
                             if delta:
@@ -3167,7 +3205,11 @@ Spoken English:"""
                                 
                             if "[CLIPBOARD]" in clean_full:
                                 clean_full = clean_full.split("[CLIPBOARD]")[0]
-                                
+                            # 🆕 [Sir 2026-05-24 22:00 真测 META 泄漏字幕 BUG]
+                            # 同 cloud_followup 路径. 详见上方注释.
+                            if "[META]" in clean_full:
+                                clean_full = clean_full.split("[META]")[0].rstrip()
+
                             delta = clean_full[len(streamed_text):]
                             if delta:
                                 if _pending_jarvis_header:
