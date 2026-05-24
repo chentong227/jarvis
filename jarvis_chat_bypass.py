@@ -612,11 +612,15 @@ class ChatBypass:
         # 🆕 [Sir 2026-05-24 22:00 真测 META 泄漏字幕 BUG] 末路守门
         # 上游 splitter 已加 [META] 切 (双处, line 2305+ / 3178+), 这里兜底防回归.
         # 任何 text 含 [META] 直接拒收 audio (TTS 不念这种非自然语言, 防 cosyvoice 卡).
+        # 🆕 [Sir 2026-05-24 22:57 audit BUG #4 治本] case-insensitive + 中英括号.
+        # 主脑可能 emit [META] / [Meta] / [meta] / 【META】 (中文括号) 任一变体, 全拦.
         try:
-            if text and '[META]' in text:
+            import re as _re_meta
+            _META_RE = _re_meta.compile(r'[\[【]\s*meta\s*[\]】]', _re_meta.IGNORECASE)
+            if text and _META_RE.search(text):
                 _orig_meta = text
-                # 截 [META] 之前 — 后续若 sentence 仅是 META 则直接 return
-                text = text.split('[META]')[0].rstrip()
+                # 截 META 之前 — 后续若 sentence 仅是 META 则直接 return
+                text = _META_RE.split(text, 1)[0].rstrip()
                 if not text:
                     return
                 try:
@@ -1696,7 +1700,68 @@ Spoken English:"""
                     return (f"✅ concerns.reactivate: {cid} 重新主动监控 "
                               f"(triggers_proactive=True)")
                 return f"❌ concerns.reactivate: 未找到 concern_id={cid}"
-            return f"❌ concerns: 未知指令 {command} (支持 dismiss/reactivate)"
+
+            # 🆕 [Sir 2026-05-24 23:01 真测追根 BUG 治本] concerns.progress_update
+            # =====================================================================
+            # 源 BUG: directive `habit_progress_routing` (priority=13) 教主脑 emit
+            #   FAST_CALL concerns.progress_update {concern_id, current, target, unit}
+            # 但 handler 漏写, fallback 报 "未知指令 progress_update".
+            # 治本: 加 handler, 调现成的 ConcernsLedger.record_user_feedback(),
+            # 把 directive 教的 params 翻成 judgement dict 写 daily_progress.
+            # 设计意图自洽: directive 教 + organ handler + ledger API 三对齐.
+            if command == "progress_update":
+                if not cid:
+                    cid = (params.get('concern_id', '') or '').strip()
+                if not cid:
+                    return "❌ concerns.progress_update: missing 'concern_id' param"
+                try:
+                    cur = params.get('current', None)
+                    tgt = params.get('target', None)
+                    unit = (params.get('unit', '') or '').strip()
+                    if cur is None:
+                        return ("❌ concerns.progress_update: missing 'current' "
+                                "(Sir 报的进度数 e.g. 9 杯水的 9)")
+                    cur_f = float(cur)
+                    tgt_f = float(tgt) if tgt is not None else None
+                    progress = {'current': cur_f}
+                    if tgt_f is not None:
+                        progress['target'] = tgt_f
+                    if unit:
+                        progress['unit'] = unit
+                    raw_text = (params.get('raw_text', '') or '')[:300]
+                    judgement = {
+                        'has_relevance': True,
+                        'progress': progress,
+                        # severity_delta: 进度达标 → severity 下降 (1 cup = -0.1)
+                        'severity_delta': (
+                            -0.5 if (tgt_f and cur_f >= tgt_f)
+                            else (-0.2 if (tgt_f and cur_f >= tgt_f * 0.75)
+                                  else 0.0)
+                        ),
+                        'source': 'directive:habit_progress_routing',
+                    }
+                    ok = ledger.record_user_feedback(cid, raw_text, judgement)
+                    if not ok:
+                        return (f"❌ concerns.progress_update: 未找到 concern_id={cid} "
+                                f"(LLM 教 directive 列了已 register 的 id)")
+                    try:
+                        ledger.persist()
+                    except Exception:
+                        pass
+                    progress_str = (
+                        f"{int(cur_f) if cur_f == int(cur_f) else cur_f}"
+                        + (f"/{int(tgt_f) if tgt_f == int(tgt_f) else tgt_f}" if tgt_f else '')
+                        + (f" {unit}" if unit else '')
+                    )
+                    return (f"✅ concerns.progress_update: {cid} → {progress_str} "
+                            f"(severity_delta={judgement['severity_delta']:+.2f})")
+                except ValueError as _ve:
+                    return f"❌ concerns.progress_update: invalid number ({_ve})"
+                except Exception as _pe:
+                    return f"❌ concerns.progress_update: {_pe}"
+
+            return (f"❌ concerns: 未知指令 {command} "
+                    f"(支持 dismiss/reactivate/progress_update)")
 
         # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式
         # ============================================================
@@ -3605,9 +3670,25 @@ Spoken English:"""
                             _sig = (organ_name, command, repr(sorted(params.items())))
                         _call_signature_count[_sig] = _call_signature_count.get(_sig, 0) + 1
                         if _call_signature_count[_sig] >= _MAX_SAME_CALL:
+                            # 🆕 [Sir 2026-05-24 23:01 真测 dedup 撒谎 BUG 治本] 区分 success/fail.
+                            # 老逻辑无脑文案"上一次已成功", 但若 handler fail, 两次都 fail, 撒谎
+                            # 误导调试. 改成检查上一次 _tool_results 是 ✅ 还是 ❌, 真话.
+                            _last_status = '未知'
+                            try:
+                                # 看最近 _tool_results 第一字符判 success/fail
+                                if _tool_results:
+                                    _last_msg = str(_tool_results[-1].get('content', ''))
+                                    if _last_msg.startswith('✅'):
+                                        _last_status = '上一次已成功'
+                                    elif _last_msg.startswith('❌'):
+                                        _last_status = '上一次失败 (重试同参数无意义)'
+                                    else:
+                                        _last_status = '上一次状态未知 (无 ✅/❌ 前缀)'
+                            except Exception:
+                                pass
                             print(f"\n║ 🛑 [Tool Chain] 检测到重复调用 {organ_name}.{command} "
                                   f"(参数完全相同，第 {_call_signature_count[_sig]} 次)，提前熔断 — "
-                                  f"上一次已成功，不再重复执行")
+                                  f"{_last_status}")
                             _circuit_broken_reason = f"duplicate_call:{organ_name}.{command}"
                             # 别把这次"重复幻觉"再写进 _tool_results — 它没真执行，只是 LLM 在原地踏步
                             if '_stream_key_name' in dir() and _stream_key_name:

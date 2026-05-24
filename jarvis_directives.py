@@ -2819,6 +2819,73 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             """).rstrip(),
             trigger=_trigger_correction_dispatcher,
         ),
+        # 🆕 [Sir 2026-05-24 23:24 真测追根 BUG 治本] Channel Boundary
+        # ============================================================
+        # 源 BUG (turn_20260524_232427): Sir "早上7点叫我" → 主脑 emit
+        #   <TOOL_CALL>{"intent": "memory_hands/add_reminder", "trigger_time":"..."}</TOOL_CALL>
+        # 但 intent_to_tool_map 没注册 add_reminder + intent 应是 simple_id 不是路径
+        # → IntentRouter fail → 主脑虚报 "I have set a reminder" → ClaimTracer 拦.
+        # 根因: 主脑混淆 FAST_CALL vs TOOL_CALL channel 边界.
+        # 治本: 明确教 channel 边界 — TOOL_CALL 只用 intent_map 注册的 simple_id
+        Directive(
+            id='channel_boundary_fast_call_vs_tool_call',
+            source_marker='Sir-2026-05-24-23:24-真测追根',
+            priority=14,  # 最高档 (与 sir_voice_correction_priority 同级, 防主脑混)
+            ttl_days=365,
+            tier_whitelist=[],
+            purpose_short='主脑 emit tool 时 channel 边界: TOOL_CALL 仅限 intent_map 14 个 registered intent, 其他全用 FAST_CALL',
+            text=_tw.dedent("""\
+                [CHANNEL BOUNDARY — FAST_CALL vs TOOL_CALL — MUST OBEY]:
+                你有 2 个 tool 调用 channel, 边界明确:
+
+                ✅ <FAST_CALL>{"organ":"X","command":"Y","params":{...}}</FAST_CALL>
+                   - 通用 organ.command 直调 (any organ in hand_registry)
+                   - 用于: memory_hands.add_reminder / concerns.progress_update /
+                     concerns.dismiss / cyclic_task.create / mutation.update /
+                     stand_down.set / ui_control.dashboard_open / 等
+                   - 此 channel 是 default — 不确定哪个时用 FAST_CALL
+                   - directive 教的 organ.command 全用 FAST_CALL
+
+                ✅ <TOOL_CALL>{"intent":"X","args":{...}}</TOOL_CALL>
+                   - 只用于 intent_to_tool_map.json 已注册的 14 个 semantic intent
+                   - Sir CLI 拍板 register 的 — list: scripts/intent_map_dump.py list
+                   - 当前 registered: check_top_cpu / list_processes / kill_process /
+                     mute_audio / unmute_audio / set_volume / pause_media / play_media /
+                     send_notification / list_recent_files / search_memory / dashboard_open /
+                     dashboard_close / focus_window / system_info / set_reminder / list_reminders
+                   - intent 是 simple_id (e.g. "set_reminder"), 不是 organ/command 路径
+
+                ⛔ FORBIDDEN — 这些会让你失败 + 撒谎:
+                   ❌ <TOOL_CALL>{"intent":"memory_hands/add_reminder"...} — intent 含 / 是路径不是 id
+                   ❌ <TOOL_CALL>{"intent":"memory_hands.add_reminder"...} — intent 含 . 是路径不是 id
+                   ❌ <TOOL_CALL>{"intent":"X","trigger_time":"7:00"} — args 应在 args 子 dict 不在顶层
+                      (系统已加容错把顶层 key 平铺进 args, 但你仍 emit 标准格式)
+                   ❌ <FAST_CALL>{"intent":"X"...} — FAST_CALL 用 organ+command 不用 intent
+
+                ✅ CANONICAL EXAMPLES:
+                   Sir 设提醒 (推 FAST_CALL — 标准格式不依赖 intent_map):
+                     <FAST_CALL>{"organ":"memory_hands","command":"add_reminder",
+                                  "params":{"intent":"叫 Sir 起床",
+                                            "trigger_time":"2026-05-25 07:00:00"}}</FAST_CALL>
+
+                   或 (TOOL_CALL — 因为 set_reminder 已注册):
+                     <TOOL_CALL>{"intent":"set_reminder",
+                                  "args":{"intent":"叫 Sir 起床",
+                                          "trigger_time":"2026-05-25 07:00:00"}}</TOOL_CALL>
+
+                   Sir 报喝水进度 (必 FAST_CALL — directive habit_progress_routing 教):
+                     <FAST_CALL>{"organ":"concerns","command":"progress_update",
+                                  "params":{"concern_id":"sir_hydration_habit",
+                                            "current":9,"target":8,"unit":"杯"}}</FAST_CALL>
+
+                   Sir 让开面板 (TOOL_CALL OK — dashboard_open 已注册):
+                     <TOOL_CALL>{"intent":"dashboard_open"}</TOOL_CALL>
+
+                RULE OF THUMB: **不确定 → 用 FAST_CALL** (organ+command, 万能).
+                只在你 100% 确定 intent 已 register 时才用 TOOL_CALL.
+                """),
+            trigger=lambda **kw: True,  # 永久 active, 任何 turn 都 inject (priority 14)
+        ),
         # 🆕 [P5-fix35-B / 2026-05-23 11:11] Cyclic Task Dispatcher
         # Sir 真意 (11:09): 通用 clarify → confirm → cyclic_emit 链路.
         # 主脑听 Sir 说"每 N 分钟/小时/天 X" → MUST emit cyclic_task FAST_CALL.

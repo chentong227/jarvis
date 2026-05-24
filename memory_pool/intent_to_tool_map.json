@@ -156,8 +156,29 @@
       "human_phrases_zh": ["系统状态", "电脑情况怎么样"],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
+    },
+    {
+      "id": "set_reminder",
+      "state": "active",
+      "tool": "memory_hands.add_reminder",
+      "semantic_hint": "设单次提醒 — args 必含 intent (做啥) + trigger_time (ISO datetime / '07:00' / 'tomorrow 7am')",
+      "human_phrases_en": ["set a reminder", "remind me at"],
+      "human_phrases_zh": ["设个提醒", "提醒我"],
+      "dangerous_flag": "safe",
+      "source": "Sir 2026-05-24 23:01 真测追根 BUG 治本 — 主脑 emit add_reminder TOOL_CALL 但 intent 没注册 → fail"
+    },
+    {
+      "id": "list_reminders",
+      "state": "active",
+      "tool": "memory_hands.list_reminders",
+      "semantic_hint": "列出未触发的提醒/待办 (args 可选 {})",
+      "human_phrases_en": ["what reminders do I have", "list my reminders"],
+      "human_phrases_zh": ["我有什么提醒", "提醒列表"],
+      "dangerous_flag": "safe",
+      "source": "Sir 2026-05-24 23:01 配套 set_reminder"
     }
   ],
+  "_doc_cancel_reminder": "取消提醒走 FAST_CALL[memory_hands/delete_record]{id=N} — 因为 LLM 必须先 list_reminders 拿 id, 不适合一步式 intent (有误删风险, danger=risky)",
   "review_queue": [],
   "rejected_history": []
 }

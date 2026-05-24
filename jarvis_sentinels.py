@@ -2013,12 +2013,21 @@ class ReflectionScheduler(threading.Thread):
             if result.get('success') and not result.get('cached'):
                 conf = result.get('result', {}).get('overall_confidence', 0)
                 stats = self.reflector.get_daily_stats()
-                if conf >= 0.7:
-                    print(f"[CausalChain LLM] 高置信度因果推理完成 (置信度: {conf:.0%}, 今日费用: ${stats['estimated_cost_usd']:.5f})")
-                else:
-                    print(f"[CausalChain LLM] 因果推理完成 (置信度: {conf:.0%}, 今日费用: ${stats['estimated_cost_usd']:.5f})")
+                # 🆕 [Sir 2026-05-24 23:29 真测 BUG-B 治本] bg thread 改 bg_log 防混进 reply stdout
+                try:
+                    from jarvis_utils import bg_log as _cc_bg
+                    if conf >= 0.7:
+                        _cc_bg(f"[CausalChain LLM] 高置信度因果推理完成 (置信度: {conf:.0%}, 今日费用: ${stats['estimated_cost_usd']:.5f})")
+                    else:
+                        _cc_bg(f"[CausalChain LLM] 因果推理完成 (置信度: {conf:.0%}, 今日费用: ${stats['estimated_cost_usd']:.5f})")
+                except Exception:
+                    pass
         except Exception as e:
-            print(f"[CausalChain] 反思异常: {e}")
+            try:
+                from jarvis_utils import bg_log as _cc_err_bg
+                _cc_err_bg(f"[CausalChain] 反思异常: {e}")
+            except Exception:
+                pass
     
     def force_reflect(self):
         """Single reflection trigger (used by sleep archive)"""

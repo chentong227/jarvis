@@ -49,12 +49,15 @@ class TestMetaStripUpstream(unittest.TestCase):
                       'cloud_followup 附近必须含 [META] in clean_full 检查')
 
     def test_put_audio_meta_guard(self):
-        """_put_audio 入口必须含 [META] 末路守门."""
+        """_put_audio 入口必须含 [META] 末路守门 (audit BUG #4 后改用 regex 防 [Meta]/【META】)."""
         idx = self.src.find('def _put_audio')
         self.assertGreater(idx, 0)
         section = self.src[idx:idx + 3000]
-        self.assertIn("'[META]' in text", section,
-                      '_put_audio 必须有 [META] in text 检查')
+        # 接受老的字面 check 或 audit BUG #4 后的 regex (任一存在即可)
+        has_literal = "'[META]' in text" in section
+        has_regex = '_META_RE' in section and 'IGNORECASE' in section
+        self.assertTrue(has_literal or has_regex,
+                        '_put_audio 必须有 [META] 字面 check 或 _META_RE regex')
         self.assertIn('Audio Guard', section,
                       '_put_audio 必须有 Audio Guard log')
 

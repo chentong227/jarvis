@@ -83,23 +83,61 @@ def publish_proactive_nudge_fired(
     salience: float = 0.6,
     extra_metadata: Optional[dict] = None,
 ) -> bool:
-    """fire __NUDGE__ 后调此 publish SWM event 让别人能让位."""
+    """fire __NUDGE__ 后调此 publish SWM event 让别人能让位.
+
+    🆕 [Sir 2026-05-24 23:31 真测追根 + 准则 6 优雅治本]
+    Sir 真测: SmartNudge 12s 内 commitment_check 连推 2 次.
+    根因: 第 2 次 fire 时 SWM 中 12s 前 fired evidence salience=0.6, 主脑权重平等
+          看到但不当回事 — 仍 voice.
+    优雅修法 (零硬 cooldown, 符合准则 6): 自检最近 60s 同 kind 已 fire N 次 → 当前
+          salience boost 到 critical (0.92+). evidence 显眼, 主脑 SWM 自决 [SILENCE].
+    """
     try:
         import time
         from jarvis_utils import get_event_bus as _geb
         bus = _geb()
         if bus is None:
             return False
+
+        # 🆕 自检: 60s 内同 kind 已 fire N 次 → salience boost
+        # N=1 (本次是 60s 内第 2 次) → 0.85
+        # N=2 (本次是 60s 内第 3 次) → 0.92 critical
+        # N>=3 (60s 内第 4+ 次) → 0.98 极高
+        boost_count = 0
+        boost_note = ''
+        try:
+            top = bus.top_n(n=30)
+            for e in top:
+                if e.get('type') != 'proactive_nudge_fired':
+                    continue
+                if e.get('_age_s', 9999) > 60:
+                    continue
+                m = e.get('metadata') or {}
+                if m.get('kind') == kind:
+                    boost_count += 1
+            if boost_count >= 3:
+                salience = max(salience, 0.98)
+                boost_note = f' [{boost_count + 1}th fire in 60s — DEFAULT [SILENCE]]'
+            elif boost_count >= 2:
+                salience = max(salience, 0.92)
+                boost_note = f' [{boost_count + 1}rd fire in 60s — reconsider [SILENCE]]'
+            elif boost_count >= 1:
+                salience = max(salience, 0.85)
+                boost_note = f' [{boost_count + 1}nd fire in 60s]'
+        except Exception:
+            pass
+
         meta = {
             'kind': kind,
             'sentinel': sentinel,
             'fired_at': time.time(),
+            'same_kind_fires_60s': boost_count + 1,
         }
         if extra_metadata:
             meta.update(extra_metadata)
         bus.publish(
             etype='proactive_nudge_fired',
-            description=f"{kind} fired by {sentinel}",
+            description=f"{kind} fired by {sentinel}{boost_note}",
             source=sentinel,
             salience=salience,
             metadata=meta,

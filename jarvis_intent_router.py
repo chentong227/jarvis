@@ -64,9 +64,17 @@ class IntentParser:
         """提取所有 <TOOL_CALL>...</TOOL_CALL> 的 IntentCall.
 
         损坏的 JSON 跳过, 不抛. intent_id 必填; args 可选 (默认 {}).
+
+        🆕 [Sir 2026-05-24 23:24 真测追根 BUG 治本] 容错 LLM 常见误格式:
+          - intent='organ/command' 路径 (主脑混淆 FAST_CALL/TOOL_CALL) — passthrough 标记
+          - args 顶层平铺 (LLM 喜欢把 trigger_time 放外层不在 args 子 dict)
+            → 自动把顶层非 reserved key 收进 args
+          - intent='organ.command' (点号) 也接受 (转 slash 风格)
         """
         if not text:
             return []
+        # 顶层 reserved keys 不进 args (其他全进)
+        _RESERVED_TOP = {'intent', 'args'}
         calls: List[IntentCall] = []
         for m in _TOOL_CALL_TAG_RE.finditer(text):
             raw = (m.group(1) or '').strip()
@@ -81,9 +89,19 @@ class IntentParser:
             intent_id = (data.get('intent') or '').strip()
             if not intent_id:
                 continue
+            # 容错 1: '.' 转 '/' (主脑误用 organ.command)
+            if '.' in intent_id and '/' not in intent_id:
+                intent_id = intent_id.replace('.', '/', 1)
+            # args dict (若主脑给了 args 优先用)
             args = data.get('args', {}) or {}
             if not isinstance(args, dict):
                 args = {}
+            # 容错 2: 顶层 key 平铺 (除 reserved 外, merge 进 args, args 优先)
+            for k, v in data.items():
+                if k in _RESERVED_TOP:
+                    continue
+                if k not in args:  # args 已显式给的 key 优先
+                    args[k] = v
             calls.append(IntentCall(
                 intent_id=intent_id,
                 args=args,
@@ -166,6 +184,29 @@ class IntentRouter:
         }
 
         entry = self.resolve_intent(call.intent_id)
+        # 🆕 [Sir 2026-05-24 23:24 真测追根 BUG 治本] passthrough mode:
+        # intent='organ/command' 路径形式 (主脑混淆 FAST_CALL/TOOL_CALL) →
+        # 自动当 organ.command 直 invoke. tool_full 重组为 organ.command 形式.
+        # 防主脑 emit 错 channel 时 silent fail.
+        if entry is None and '/' in call.intent_id:
+            # passthrough: intent='memory_hands/add_reminder' → tool='memory_hands.add_reminder'
+            tool_full = call.intent_id.replace('/', '.', 1)
+            entry = {
+                'tool': tool_full,
+                'dangerous_flag': 'risky',  # passthrough 不知 danger, 保守
+                'id': call.intent_id,
+                '_passthrough': True,
+            }
+            try:
+                from jarvis_utils import bg_log
+                bg_log(
+                    f"⚠️ [IntentRouter/passthrough] intent='{call.intent_id}' "
+                    f"未注册但形如 organ/command — 容错直 invoke ({tool_full}). "
+                    f"建议: Sir CLI scripts/intent_map_dump.py 加 intent 注册."
+                )
+            except Exception:
+                pass
+
         if entry is None:
             result['reason'] = 'unknown_intent'
             self._publish_event(call, result)

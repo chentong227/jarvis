@@ -277,6 +277,22 @@ class CentralNerve:
                 target=_flush_loop, daemon=True, name='TranslatorHitFlush'
             )
             self._translator_flush_thread.start()
+            # 🆕 [Sir 2026-05-24 22:57 audit BUG #6 治本] atexit 优雅退出:
+            # 退出前 flush 1 次 (Sir Ctrl+C 不丢 in-memory hit_count) + stop daemon event.
+            try:
+                import atexit as _t_atexit
+
+                def _translator_flush_on_exit():
+                    try:
+                        self._translator_flush_stop.set()
+                        if self.translator:
+                            self.translator.flush_hit_updates()
+                    except Exception:
+                        pass
+
+                _t_atexit.register(_translator_flush_on_exit)
+            except Exception:
+                pass
         except Exception as _t_e:
             self.translator = None
             print(f"⚠️ [Translator init] {_t_e} — fallback 走老 fuzzy 路径")

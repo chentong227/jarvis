@@ -3220,9 +3220,22 @@ def api_translator():
 
 @app.route('/api/translator/<alias_id>/<action>', methods=['POST'])
 def api_translator_action(alias_id: str, action: str):
-    """Sir 一键 activate / reject alias (调 scripts/translator_alias_dump.py)."""
+    """Sir 一键 activate / reject alias (调 scripts/translator_alias_dump.py).
+
+    🆕 [Sir 2026-05-24 22:57 audit BUG #3 治本] alias_id input validation.
+    必须 match `alias_\\d{1,8}` 防 path traversal / DOS 长字符串 / shell injection.
+    """
     if action not in ('activate', 'reject'):
-        return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
+        return jsonify({'ok': False, 'error': f'invalid action: {action}',
+                        'message_zh': f'非法操作: {action}'}), 400
+    # 🆕 input validation: alias_id 必须形如 alias_XXX 数字 (最长 8 位防 DOS)
+    import re as _re
+    if not _re.fullmatch(r'alias_\d{1,8}', alias_id):
+        return jsonify({
+            'ok': False,
+            'error': f'invalid alias_id format: {alias_id[:40]}',
+            'message_zh': f'非法 alias 编号格式 (必须形如 alias_001)',
+        }), 400
     try:
         import subprocess as _sp
         import sys as _sys

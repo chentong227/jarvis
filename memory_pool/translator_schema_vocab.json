@@ -170,6 +170,33 @@
           "fast_call": "FAST_CALL[mutation/update]{field_path='profile.work_rhythms', new_value='sleep at 23:00', intent='revise', reason='Sir 教正'}"
         }
       ]
+    },
+    {
+      "organ": "concerns",
+      "command": "progress_update",
+      "_doc": "[Sir 2026-05-24 23:01 真测追根] habit progress 单一治本路径 (directive habit_progress_routing priority=13 教).",
+      "required_params": ["concern_id", "current"],
+      "param_formats": {
+        "concern_id": "已 register 的 concern.id (e.g. sir_hydration_habit / sir_pomodoro_habit / sir_sleep_habit)",
+        "current": "数字 — Sir 报的当前进度 (e.g. 9 表示喝了 9 杯)",
+        "target": "数字 — daily 目标 (可选, 不传仍可写 current 进 daily_progress)",
+        "unit": "中文单位 (e.g. '杯' / '个' / '小时', 可选)"
+      },
+      "common_mistakes": [
+        "concern_id 写错 (e.g. 'hydration' 而非 'sir_hydration_habit') — 必须用 register 时的全 id",
+        "误用 progress.set 或 progress.update — progress organ 是 track_id 系统, habit 应走 concerns.progress_update (priority=13 directive 强制)",
+        "missing 'current' — Sir 说'喝了 9 杯', 9 是 current"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir: '我喝了 9 杯水了, 今天'",
+          "fast_call": "FAST_CALL[concerns/progress_update]{concern_id='sir_hydration_habit', current=9, target=8, unit='杯'}"
+        },
+        {
+          "scenario": "Sir: '我刚做完第 3 个番茄钟'",
+          "fast_call": "FAST_CALL[concerns/progress_update]{concern_id='sir_pomodoro_habit', current=3, target=8, unit='个'}"
+        }
+      ]
     }
   ]
 }

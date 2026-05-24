@@ -484,13 +484,14 @@ class Translator:
         """落盘 in-memory hit_buffer 到 translator_alias_vocab.json.
 
         🆕 [Translator Phase 4.A / 2026-05-24 22:40] hit_count 闭环回写.
-        被 nerve daemon 每 60s 调一次. 也可在退出时调.
-        无 pending updates 直接返 0, 不动 IO. atomic write (tmp + os.replace).
+        🆕 [Sir 2026-05-24 22:57 audit BUG #1 治本] 用 vocab_io.read_then_mutate
+           原子 read-modify-write, 防与 reflector propose 并发 race.
+        🆕 [BUG #2 治本] alias 被 reject 后跳过 bump (active alias 才 bump hit_count).
 
         Returns:
-            int: 实际 merged 的 alias 数 (含命中的 active alias 数)
+            int: 实际 merged 的 alias 数
         """
-        # 1. 快照 + 清 buffer (持锁短)
+        # 1. 快照 + 清 buffer (持 lock 短)
         with self._hit_buffer_lock:
             if not self._hit_buffer:
                 return 0
@@ -499,14 +500,34 @@ class Translator:
             self._hit_buffer.clear()
             self._hit_buffer_last_ts.clear()
 
-        # 2. load 当前 vocab (绕 mtime cache, 拿最新 disk 内容)
+        # 2. 原子 read-modify-write (vocab_io 全局锁 — 防与 reflector race)
+        from jarvis_translator_vocab_io import read_then_mutate
+
+        def _merge(vocab):
+            merged = 0
+            for entry in vocab.get('aliases', []) or []:
+                aid = entry.get('id')
+                if aid not in pending_counts:
+                    continue
+                # BUG #2: 只 bump active alias (reject/archived 不动)
+                if entry.get('status') != 'active':
+                    continue
+                old_hit = int(entry.get('hit_count', 0) or 0)
+                entry['hit_count'] = old_hit + pending_counts[aid]
+                entry['last_hit_at'] = pending_ts.get(aid, time.time())
+                merged += 1
+            return merged if merged > 0 else None  # None → 跳过 save
+
         try:
-            if not os.path.exists(_ALIAS_VOCAB_PATH):
-                return 0
-            with open(_ALIAS_VOCAB_PATH, 'r', encoding='utf-8') as f:
-                vocab = json.load(f)
+            merged = read_then_mutate(_ALIAS_VOCAB_PATH, _merge)
+            if merged:
+                # invalidate cache (强制下次 _lookup reload)
+                self._alias_vocab_cache = None
+                self._alias_vocab_mtime = 0.0
+                return merged
+            return 0
         except Exception:
-            # load fail → 退回 buffer (下次 retry)
+            # 失败 → 退回 buffer (下次 retry)
             with self._hit_buffer_lock:
                 for aid, cnt in pending_counts.items():
                     self._hit_buffer[aid] = self._hit_buffer.get(aid, 0) + cnt
@@ -515,31 +536,6 @@ class Translator:
                             self._hit_buffer_last_ts.get(aid, 0.0),
                             pending_ts[aid]
                         )
-            return 0
-
-        # 3. merge pending → vocab.aliases
-        merged = 0
-        for entry in vocab.get('aliases', []) or []:
-            aid = entry.get('id')
-            if aid in pending_counts:
-                old_hit = int(entry.get('hit_count', 0) or 0)
-                entry['hit_count'] = old_hit + pending_counts[aid]
-                entry['last_hit_at'] = pending_ts.get(aid, time.time())
-                merged += 1
-
-        # 4. atomic write
-        try:
-            from datetime import datetime as _dt
-            vocab['last_modified'] = _dt.utcnow().isoformat() + 'Z'
-            tmp = _ALIAS_VOCAB_PATH + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(vocab, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, _ALIAS_VOCAB_PATH)
-            # invalidate cache (强制下次 _lookup reload)
-            self._alias_vocab_cache = None
-            self._alias_vocab_mtime = 0.0
-            return merged
-        except Exception:
             return 0
 
     # ========== 调试 / stats API ==========

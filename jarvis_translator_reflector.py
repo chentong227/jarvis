@@ -43,12 +43,27 @@ _STARTUP_DELAY_S = _DEFAULT_STARTUP_DELAY_S
 # Sir CLI scripts/translator_reflector_config.py set --tick-interval-s 600
 # 改完不需重启 Jarvis, daemon 下次 cycle 自动 pick up (因为每次 cycle 都 reload).
 def _load_config() -> Dict[str, Any]:
-    """加载 reflector config (默认值 fallback). 每次 cycle 调一次 — 实现 hot reload."""
+    """加载 reflector config (默认值 fallback + 值域 validation).
+
+    🆕 [Sir 2026-05-24 22:57 audit BUG #5 治本] 加值域 validate:
+      - tick_interval_s / startup_delay_s / scan_window_s: 必须 > 0
+      - propose_threshold: 必须 >= 1
+    防 Sir 误输负数 / 0 → daemon undefined behavior. 越界时 fallback 默认.
+
+    每次 cycle 调一次 — 实现 hot reload.
+    """
     defaults = {
         'tick_interval_s': _DEFAULT_TICK_INTERVAL_S,
         'startup_delay_s': _DEFAULT_STARTUP_DELAY_S,
         'propose_threshold': _DEFAULT_PROPOSE_THRESHOLD,
         'scan_window_s': _DEFAULT_SCAN_WINDOW_S,
+    }
+    # 最小值边界 (validate)
+    _MIN_VALUES = {
+        'tick_interval_s': 10.0,    # 至少 10s, 防误改 0/负数 + 防过频 IO
+        'startup_delay_s': 0.0,     # 0 OK (立即跑)
+        'propose_threshold': 1,     # 至少 1 (0 = 无脑 propose)
+        'scan_window_s': 60.0,      # 至少 60s scan window
     }
     if not os.path.exists(CONFIG_PATH):
         return defaults
@@ -56,8 +71,15 @@ def _load_config() -> Dict[str, Any]:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
         for k in defaults:
-            if k in data and isinstance(data[k], (int, float)):
-                defaults[k] = float(data[k]) if 'interval' in k or 'delay' in k or 'window' in k else int(data[k])
+            if k not in data or not isinstance(data[k], (int, float)):
+                continue
+            raw_val = data[k]
+            # 类型转换
+            cast_val = float(raw_val) if 'interval' in k or 'delay' in k or 'window' in k else int(raw_val)
+            # 值域 validate (越界 → fallback 默认)
+            if cast_val < _MIN_VALUES[k]:
+                continue  # 保留默认值, 不接受越界配置
+            defaults[k] = cast_val
         return defaults
     except Exception:
         return defaults
@@ -158,48 +180,51 @@ class TranslatorReflector:
 
         # 3. 阈值过滤 + 已存在不重复 propose
         # 🆕 [Phase 4.A / 2026-05-24 22:45] dedupe 扩展: review/active/rejected 都跳过.
-        # 老 logic 只 dedupe active organ alias, 但:
-        #   - status=review: 已在 review queue, 没必要重提
-        #   - status=rejected: Sir 已明确 reject, 重提是骚扰 (Sir 准则 7 元否决)
-        # 防 reflector 无限循环 propose Sir 不要的 alias.
-        vocab = _load_vocab()
-        existing = {(a.get('from'), a.get('to'))
-                    for a in vocab.get('aliases', []) or []
-                    if a.get('kind') == 'organ'
-                    and a.get('status') in ('active', 'review', 'rejected')}
+        # 🆕 [Sir 2026-05-24 22:57 audit BUG #1 治本] 用 vocab_io.read_then_mutate
+        #    原子 read-modify-write, 防与 translator.flush_hit_updates 并发 race.
+        from jarvis_translator_vocab_io import read_then_mutate
 
-        new_proposals = []
-        for (from_o, to_o), count in pattern_counts.items():
-            if count < propose_threshold:
-                continue
-            if (from_o, to_o) in existing:
-                continue
-            new_id = _next_alias_id(vocab)
-            samples = pattern_samples.get((from_o, to_o), [])[:3]
-            entry = {
-                'id': new_id,
-                'kind': 'organ',
-                'from': from_o,
-                'to': to_o,
-                'status': 'review',
-                'evidence': (
-                    f"L7 reflector propose: {count} 次 by_command alias 在 {scan_window_s/3600:.0f}h 内. "
-                    f"samples: {', '.join(samples)}"
-                ),
-                'added_by': 'L7-TranslatorReflector',
-                'added_at': datetime.utcnow().isoformat() + 'Z',
-                'activated_by': None,
-                'activated_at': None,
-                'hit_count': count,
-                'last_hit_at': None,
-                'version': 1,
-                'superseded_by': None,
-            }
-            vocab.setdefault('aliases', []).append(entry)
-            new_proposals.append(entry)
+        def _propose_into_vocab(vocab):
+            existing = {(a.get('from'), a.get('to'))
+                        for a in vocab.get('aliases', []) or []
+                        if a.get('kind') == 'organ'
+                        and a.get('status') in ('active', 'review', 'rejected')}
+            new_proposals_local = []
+            for (from_o, to_o), count in pattern_counts.items():
+                if count < propose_threshold:
+                    continue
+                if (from_o, to_o) in existing:
+                    continue
+                new_id = _next_alias_id(vocab)
+                samples = pattern_samples.get((from_o, to_o), [])[:3]
+                entry = {
+                    'id': new_id,
+                    'kind': 'organ',
+                    'from': from_o,
+                    'to': to_o,
+                    'status': 'review',
+                    'evidence': (
+                        f"L7 reflector propose: {count} 次 by_command alias 在 {scan_window_s/3600:.0f}h 内. "
+                        f"samples: {', '.join(samples)}"
+                    ),
+                    'added_by': 'L7-TranslatorReflector',
+                    'added_at': datetime.utcnow().isoformat() + 'Z',
+                    'activated_by': None,
+                    'activated_at': None,
+                    'hit_count': count,
+                    'last_hit_at': None,
+                    'version': 1,
+                    'superseded_by': None,
+                }
+                vocab.setdefault('aliases', []).append(entry)
+                # 防止同一 vocab 内 (from, to) 重复 propose (extreme edge)
+                existing.add((from_o, to_o))
+                new_proposals_local.append(entry)
+            return new_proposals_local if new_proposals_local else None
+
+        new_proposals = read_then_mutate(VOCAB_PATH, _propose_into_vocab) or []
 
         if new_proposals:
-            _save_vocab(vocab)
             self._stats['proposals_total'] += len(new_proposals)
 
             # SWM publish 'translator_proposed' (Sir 看 review queue)

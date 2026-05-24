@@ -796,12 +796,22 @@ Output this JSON:
                 reflector.store_reflection('causal_chain', 'latest', result['result'])
                 
                 if result['result'].get('overall_confidence', 0) >= 0.7:
-                    print(f"[CausalChain LLM] 高置信度因果链: {result['result'].get('dominant_pattern', 'N/A')}")
-            
+                    # 🆕 [Sir 2026-05-24 23:29 真测 BUG-B 治本] 改 bg_log 防混进 reply stdout.
+                    # 老 print 在 reply stream 时插队, 字幕显示 'It appears...[CausalChain LLM]...'
+                    try:
+                        from jarvis_utils import bg_log as _cc_bg
+                        _cc_bg(f"[CausalChain LLM] 高置信度因果链: {result['result'].get('dominant_pattern', 'N/A')}")
+                    except Exception:
+                        pass
+
             return result
-            
+
         except Exception as e:
-            print(f"[CausalChain._llm_reflect] 异常: {e}")
+            try:
+                from jarvis_utils import bg_log as _cc_err_bg
+                _cc_err_bg(f"[CausalChain._llm_reflect] 异常: {e}")
+            except Exception:
+                pass
             return {'success': False, 'reason': str(e)}
     
     def get_llm_enhanced_summary(self) -> str:
