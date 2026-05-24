@@ -570,6 +570,35 @@ class Conductor(threading.Thread):
         except Exception:
             pass
 
+        # 🆕 [Reshape M5.1 / 2026-05-24] DUAL-EMIT 'conductor_intent' to SWM
+        # 让 lineage trace 能反向追到 Conductor 决策 + 主脑下轮 prompt 看 evidence
+        # (M5.2 后续可让主脑自决纳/弃, M5.3 真停 __NUDGE__ push). 失败静默不破老路径.
+        try:
+            from jarvis_utils import get_event_bus as _m51_geb
+            _m51_bus = _m51_geb()
+            if _m51_bus is not None:
+                _m51_bus.publish(
+                    etype='conductor_intent',
+                    description=(
+                        f"Conductor fired path_a {nudge_type} "
+                        f"from {alert_info.get('source', '?')}: "
+                        f"{(alert_info.get('reason') or '')[:80]}"
+                    ),
+                    source=f'Conductor.path_a/{alert_info.get("source", "unknown")}',
+                    salience=0.7,
+                    metadata={
+                        'path': 'A',
+                        'nudge_type': nudge_type,
+                        'action': alert_info.get('action', ''),
+                        'alert_source': alert_info.get('source', ''),
+                        'alert_type': alert_info.get('alert_type', ''),
+                        'tone': alert_info.get('tone', ''),
+                        'fired_via': '__NUDGE__',  # M5.1 仍走老路径
+                    },
+                )
+        except Exception:
+            pass
+
         # 🩹 [P4-Case3 / 2026-05-20 23:59] SoftFocus wire (Sir 23:11 真痛点)
         # Sir 23:32 真测: Conductor late_night nudge fire 后无 [Focus Mode], Sir 想短回应
         # 还要喊 Jarvis. ProactiveCare 已 wire SoftFocus, Conductor missed.
@@ -786,6 +815,34 @@ class Conductor(threading.Thread):
                 sentinel='Conductor',
                 extra_metadata={'path': 'B', 'action': decision.get('action', '')},
             )
+        except Exception:
+            pass
+
+        # 🆕 [Reshape M5.1 / 2026-05-24] DUAL-EMIT 'conductor_intent' to SWM (path_b)
+        # 同 path_a, 让 lineage trace 能反向追到 path_b 决策 + 主脑下轮看 evidence.
+        try:
+            from jarvis_utils import get_event_bus as _m51b_geb
+            _m51b_bus = _m51b_geb()
+            if _m51b_bus is not None:
+                _m51b_bus.publish(
+                    etype='conductor_intent',
+                    description=(
+                        f"Conductor fired path_b {nudge_type}: "
+                        f"{(filter_result.get('reason') or '')[:80]}"
+                    ),
+                    source='Conductor.path_b/SensorFilter',
+                    salience=0.7,
+                    metadata={
+                        'path': 'B',
+                        'nudge_type': nudge_type,
+                        'action': decision.get('action', ''),
+                        'decision_reason': (decision.get('decision_reason') or '')[:120],
+                        'filter_reason': (filter_result.get('reason') or '')[:120],
+                        'confidence': decision.get('confidence', 0),
+                        'tone': decision.get('tone', ''),
+                        'fired_via': '__NUDGE__',  # M5.1 仍走老路径
+                    },
+                )
         except Exception:
             pass
 

@@ -54,16 +54,20 @@
 
 ---
 
-### 3. Dual-write (老 SQLite + 新 PromiseLog) — 1 项
+### 3. Dual-write / Dual-emit (老路径 + 新 SWM publish) — 2 项
 
 | Dual-write | 文件 | 行 | Cleanup trigger | 预计 milestone |
 |---|---|---|---|---|
 | `CommitmentWatcher.add_commitment` dual-write to PromiseLog | `jarvis_commitment_watcher.py` | 1020-1039 | M4.5.3 daemon 真切 PromiseLog 后, 老 SQLite write 删 → dual-write 退化为单写 PromiseLog | **M4.5.3** |
+| `Conductor._dispatch_path_a/_execute_path_b` dual-emit `conductor_intent` SWM | `jarvis_conductor.py` | 573-600, 821-847 | M5.3 主脑能从 [CONDUCTOR INTENT] block 自决纳/弃 后, 停 `__NUDGE__` push, 完全靠 SWM | **M5.3** |
 
 **渐进 cleanup**:
-- **M4.5.1 ✅ (此 commit)**: dual-write 同时进 PromiseLog + SQLite
-- **M4.5.2 (next)**: daemon 改读 PromiseLog (优先, SQLite fallback)
-- **M4.5.3 (then)**: 停 SQLite 写 (commit dual-write block 删, hub.write_commitment 单写)
+- **M4.5.1 ✅**: CW dual-write 同时进 PromiseLog + SQLite
+- **M4.5.2 ✅**: CW daemon init dual-source restore
+- **M4.5.3 (then)**: 停 SQLite 写 (dual-write block 删)
+- **M5.1 ✅**: Conductor dual-emit `__NUDGE__` + `conductor_intent` SWM publish
+- **M5.2 (next)**: 主脑 prompt 加 `[CONDUCTOR INTENT]` block + 自决纳/弃
+- **M5.3 (then)**: 停 `__NUDGE__` push, Conductor 100% publish-only sentinel
 
 ---
 
