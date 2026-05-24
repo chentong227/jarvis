@@ -1499,6 +1499,50 @@ class CentralNerve:
         except Exception:
             pass
 
+    # ========================================================================
+    # 🆕 [Reshape M6.1 / 2026-05-24] _assemble_prompt 子函数化 — 渐进抽 helper.
+    # 目标: 让 _assemble_prompt 主方法变成 dispatch, 各 block 渲染抽到独立 method.
+    # M6.4 真 class split 时这些 _build_xxx 会迁到 PromptAssembler class.
+    # ========================================================================
+
+    def _build_unified_memory_block(self, user_input: str,
+                                      _allow_full: bool, _skip_heavy: bool) -> str:
+        """[M6.1] 抽自 _assemble_prompt — UNIFIED MEMORY block 渲染.
+        从 memory_gateway (Hub) 拿跨源 recall. 行为与原嵌入代码一致.
+        """
+        if not (hasattr(self, 'memory_gateway') and _allow_full and not _skip_heavy):
+            return ""
+        _t = time.time()
+        # [Reshape M2.B] hub.to_prompt_block 需显式 nerve (hub 是全局单例);
+        # 老 UnifiedMemoryGateway 是 instance-bound, hub 不绑. signature 兼容.
+        try:
+            block = self.memory_gateway.to_prompt_block(
+                user_input, top_k=3, nerve=self)
+        except TypeError:
+            # 老 UnifiedMemoryGateway 没 nerve 参数 fallback (M5+ 删 stub 后可 remove)
+            block = self.memory_gateway.to_prompt_block(user_input, top_k=3)
+        self._asm_stage_t['memory_gateway'] = (time.time() - _t) * 1000
+        return block
+
+    def _build_skill_tree_block(self, _allow_full: bool, _skip_heavy: bool) -> str:
+        """[M6.1] 抽自 _assemble_prompt — SkillTree summary 渲染."""
+        if not (hasattr(self, 'skill_tree') and _allow_full and not _skip_heavy):
+            return ""
+        _t = time.time()
+        block = self.skill_tree.get_skill_summary_for_prompt()
+        self._asm_stage_t['skill_tree'] = (time.time() - _t) * 1000
+        return block
+
+    def _build_anticipator_block(self, _skip_heavy: bool) -> str:
+        """[M6.1] 抽自 _assemble_prompt — Anticipator 预载 context 渲染."""
+        if (not hasattr(self, 'prompt_center') or self.prompt_center is None
+                or self.prompt_center.anticipator is None or _skip_heavy):
+            return ""
+        _t = time.time()
+        block = self.prompt_center.anticipator.get_preloaded_context()
+        self._asm_stage_t['anticipator'] = (time.time() - _t) * 1000
+        return block
+
     def _assemble_prompt(self, user_input: str, stm_context: str = "", ltm_context: str = "",
                         chat_organs: str = "", ledger_data: dict = None, landmarks_str: str = "",
                         system_alert_text: str = "", mode: str = "full",
@@ -2852,33 +2896,11 @@ class CentralNerve:
             self.PROMPT_TIER_FACTUAL_RECALL,
         ))
 
-        unified_memory = ""
-        if hasattr(self, 'memory_gateway') and _allow_full and not _skip_heavy:
-            _t_mem_start = time.time()
-            # [Reshape M2.B / 2026-05-24] hub.to_prompt_block 需显式 nerve (hub 是全局单例)
-            # 老 UnifiedMemoryGateway 是 instance-bound, hub 不绑. signature 兼容.
-            try:
-                unified_memory = self.memory_gateway.to_prompt_block(
-                    user_input, top_k=3, nerve=self)
-            except TypeError:
-                # 老 UnifiedMemoryGateway 没 nerve 参数, fallback (M2.C 阶段彻底删后可 remove)
-                unified_memory = self.memory_gateway.to_prompt_block(user_input, top_k=3)
-            _t_mem_done = time.time()
-            self._asm_stage_t['memory_gateway'] = (_t_mem_done - _t_mem_start) * 1000
-
-        skill_tree_str = ""
-        if hasattr(self, 'skill_tree') and _allow_full and not _skip_heavy:
-            _t_skill_start = time.time()
-            skill_tree_str = self.skill_tree.get_skill_summary_for_prompt()
-            _t_skill_done = time.time()
-            self._asm_stage_t['skill_tree'] = (_t_skill_done - _t_skill_start) * 1000
-
-        anticipator_ctx = ""
-        if hasattr(self, 'prompt_center') and self.prompt_center and self.prompt_center.anticipator and not _skip_heavy:
-            _t_anti_start = time.time()
-            anticipator_ctx = self.prompt_center.anticipator.get_preloaded_context()
-            _t_anti_done = time.time()
-            self._asm_stage_t['anticipator'] = (_t_anti_done - _t_anti_start) * 1000
+        # [Reshape M6.1 / 2026-05-24] 3 stage 抽自 helper. 行为不变.
+        unified_memory = self._build_unified_memory_block(
+            user_input, _allow_full, _skip_heavy)
+        skill_tree_str = self._build_skill_tree_block(_allow_full, _skip_heavy)
+        anticipator_ctx = self._build_anticipator_block(_skip_heavy)
 
         commitment_context = ""
         if pending_commitment:
