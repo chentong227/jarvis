@@ -119,6 +119,12 @@ HTML_TEMPLATE = r"""
          title="每轮 IntentResolver mutation log - 看贾维斯真做了什么 tool 调用 (β.5.44)">
         🧭 Intent
       </a>
+      <!-- 🆕 [Translator Phase 4.C / 2026-05-24 23:00] Translator vocab 入口 -->
+      <a href="/translator"
+         class="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-600 transition text-sm font-medium"
+         title="L4.6 翻译层 alias vocab + reflector propose - Sir 一键 activate/reject (Translator Phase 4)">
+        📚 Translator
+      </a>
       <button @click="refresh()" :disabled="loading"
               class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition text-sm font-medium">
         <span x-show="!loading">🔄 刷新</span>
@@ -3144,6 +3150,241 @@ def page_main_brain_meta():
     """🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] 主脑 thinking pass META 可视化."""
     from flask import make_response
     resp = make_response(render_template_string(_MAIN_BRAIN_META_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# ============================================================
+# 🆕 [Translator Phase 4.C / 2026-05-24 23:00] /translator dashboard
+# Sir 一眼看 alias vocab 健康: active/review/rejected 列表 + hit_count 排序
+# + reflector stats + 一键 activate/reject (Sir 准则 7 元否决, 不自动 promote).
+# 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md §7.8
+# ============================================================
+
+@app.route('/api/translator')
+def api_translator():
+    """Translator vocab + reflector stats snapshot."""
+    try:
+        import json as _json
+        import os as _os
+        _here = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        vocab_path = _os.path.join(_here, 'memory_pool',
+                                    'translator_alias_vocab.json')
+        if not _os.path.exists(vocab_path):
+            return jsonify({'ok': True, 'aliases': [],
+                            'stats': {}, 'note': 'no vocab file yet'})
+        with open(vocab_path, 'r', encoding='utf-8') as f:
+            vocab = _json.load(f)
+        aliases = vocab.get('aliases', []) or []
+        # 排序: review 优先 (Sir 待 review), 内部按 hit_count desc
+        def _sort_key(a):
+            status_rank = {'review': 0, 'active': 1, 'rejected': 2, 'archived': 3}
+            return (status_rank.get(a.get('status', 'review'), 4),
+                    -int(a.get('hit_count', 0) or 0))
+        aliases_sorted = sorted(aliases, key=_sort_key)
+        # stats
+        stats = {
+            'total': len(aliases),
+            'active': sum(1 for a in aliases if a.get('status') == 'active'),
+            'review': sum(1 for a in aliases if a.get('status') == 'review'),
+            'rejected': sum(1 for a in aliases if a.get('status') == 'rejected'),
+            'archived': sum(1 for a in aliases if a.get('status') == 'archived'),
+            'total_hits': sum(int(a.get('hit_count', 0) or 0) for a in aliases),
+        }
+        # reflector stats
+        try:
+            from jarvis_translator_reflector import get_default_reflector
+            r = get_default_reflector()
+            if r is not None:
+                stats['reflector'] = r.stats()
+        except Exception:
+            pass
+        # translator runtime stats (含 hit buffer pending)
+        try:
+            from jarvis_translator import get_default_translator
+            tr = get_default_translator()
+            if tr is not None:
+                stats['translator_runtime'] = tr.get_stats()
+        except Exception:
+            pass
+        return jsonify({
+            'ok': True,
+            'aliases': aliases_sorted,
+            'stats': stats,
+            'last_modified': vocab.get('last_modified', ''),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/translator/<alias_id>/<action>', methods=['POST'])
+def api_translator_action(alias_id: str, action: str):
+    """Sir 一键 activate / reject alias (调 scripts/translator_alias_dump.py)."""
+    if action not in ('activate', 'reject'):
+        return jsonify({'ok': False, 'error': f'invalid action: {action}'}), 400
+    try:
+        import subprocess as _sp
+        import sys as _sys
+        import os as _os
+        _here = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        script = _os.path.join(_here, 'scripts', 'translator_alias_dump.py')
+        if not _os.path.exists(script):
+            return jsonify({'ok': False, 'error': 'CLI script not found'}), 500
+        # 同步 invoke (浏览器请求会等)
+        result = _sp.run(
+            [_sys.executable, script, action, alias_id],
+            capture_output=True, text=True, timeout=10,
+            cwd=_here,
+        )
+        ok = result.returncode == 0
+        return jsonify({
+            'ok': ok,
+            'stdout': (result.stdout or '')[:500],
+            'stderr': (result.stderr or '')[:500],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+_TRANSLATOR_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><title>Translator Vocab — Jarvis</title>
+<script src="https://unpkg.com/[email protected]/dist/cdn.min.js" defer></script>
+<style>
+body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1d9;
+       margin: 0; padding: 20px; }
+.header { background: #161b22; padding: 16px 24px; border-radius: 12px;
+          border: 1px solid #30363d; margin-bottom: 20px; }
+.header h1 { margin: 0 0 8px 0; font-size: 22px; }
+.header p { margin: 4px 0; color: #8b949e; font-size: 13px; }
+.nav-links a { color: #58a6ff; margin-right: 16px; text-decoration: none; }
+.nav-links a:hover { text-decoration: underline; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+              gap: 12px; margin-bottom: 20px; }
+.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+             padding: 14px; }
+.stat-card .label { color: #8b949e; font-size: 12px; margin-bottom: 6px; }
+.stat-card .value { font-size: 24px; font-weight: 600; }
+.stat-card.review .value { color: #d29922; }
+.stat-card.active .value { color: #3fb950; }
+.stat-card.rejected .value { color: #f85149; }
+.alias-table { background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+               overflow: hidden; }
+.alias-table table { width: 100%; border-collapse: collapse; }
+.alias-table th { background: #21262d; padding: 10px 14px; text-align: left;
+                  font-size: 12px; color: #8b949e; font-weight: 500; }
+.alias-table td { padding: 10px 14px; border-top: 1px solid #21262d; font-size: 13px; }
+.status-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px;
+                font-weight: 500; }
+.status-review { background: #5d4715; color: #d29922; }
+.status-active { background: #1f3a26; color: #3fb950; }
+.status-rejected { background: #4d1d22; color: #f85149; }
+.status-archived { background: #21262d; color: #6e7681; }
+.action-btn { padding: 4px 10px; margin-right: 6px; border-radius: 4px;
+              border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+              cursor: pointer; font-size: 12px; }
+.action-btn:hover { background: #30363d; }
+.action-btn.activate { color: #3fb950; border-color: #3fb950; }
+.action-btn.reject { color: #f85149; border-color: #f85149; }
+.evidence { color: #8b949e; font-size: 11px; max-width: 300px; }
+.arrow { color: #58a6ff; }
+</style>
+</head>
+<body x-data="trVocab()" x-init="load()">
+<div class="header">
+  <h1>📚 Translator Vocab — alias 健康 / Sir 拍板</h1>
+  <p>L4.6 翻译层 alias vocab (organ/command). reflector 周期 propose → Sir review → activate/reject.</p>
+  <p style="color:#6e7681;font-size:0.83rem;">数据源: <code>memory_pool/translator_alias_vocab.json</code> · L7 reflector daemon 30min cycle · 详 <code>docs/JARVIS_TRANSLATOR_ARCHITECTURE.md</code></p>
+  <div class="nav-links">
+    <a href="/">← 主面板</a>
+    <a href="/main_brain_meta">🧠 主脑 META</a>
+    <a href="/intent_resolved">🎯 IntentResolver</a>
+    <a href="javascript:void(0)" @click="load()">🔄 刷新</a>
+  </div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card"><div class="label">总计</div>
+    <div class="value" x-text="stats.total || 0"></div></div>
+  <div class="stat-card review"><div class="label">📋 review (待 Sir 拍板)</div>
+    <div class="value" x-text="stats.review || 0"></div></div>
+  <div class="stat-card active"><div class="label">✅ active (在用)</div>
+    <div class="value" x-text="stats.active || 0"></div></div>
+  <div class="stat-card rejected"><div class="label">❌ rejected (Sir 否决)</div>
+    <div class="value" x-text="stats.rejected || 0"></div></div>
+  <div class="stat-card"><div class="label">总命中数</div>
+    <div class="value" x-text="stats.total_hits || 0"></div></div>
+  <div class="stat-card"><div class="label">Reflector cycles</div>
+    <div class="value" x-text="(stats.reflector || {}).cycles_run || 0"></div></div>
+</div>
+
+<div class="alias-table">
+  <table>
+    <thead><tr>
+      <th>状态</th><th>ID</th><th>kind</th><th>from</th><th></th><th>to</th>
+      <th>hit_count</th><th>evidence</th><th>操作</th>
+    </tr></thead>
+    <tbody>
+      <template x-for="a in aliases" :key="a.id">
+        <tr>
+          <td><span class="status-badge" :class="'status-' + (a.status || 'review')"
+              x-text="a.status || 'review'"></span></td>
+          <td x-text="a.id"></td>
+          <td x-text="a.kind || 'organ'"></td>
+          <td><code x-text="a.from"></code></td>
+          <td class="arrow">→</td>
+          <td><code x-text="a.to"></code></td>
+          <td x-text="a.hit_count || 0"></td>
+          <td class="evidence" x-text="(a.evidence || '').slice(0, 120)"></td>
+          <td>
+            <template x-if="a.status === 'review'">
+              <div>
+                <button class="action-btn activate" @click="act(a.id, 'activate')">✅ 用</button>
+                <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 拒</button>
+              </div>
+            </template>
+            <template x-if="a.status === 'active'">
+              <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 撤</button>
+            </template>
+          </td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function trVocab() {
+  return {
+    aliases: [], stats: {},
+    async load() {
+      const r = await fetch('/api/translator');
+      const d = await r.json();
+      if (d.ok) { this.aliases = d.aliases || []; this.stats = d.stats || {}; }
+    },
+    async act(id, action) {
+      const verb = action === 'activate' ? '激活' : '拒绝';
+      if (!confirm(`确定 ${verb} alias ${id}?`)) return;
+      const r = await fetch(`/api/translator/${id}/${action}`, {method:'POST'});
+      const d = await r.json();
+      if (d.ok) { await this.load(); }
+      else { alert('失败: ' + (d.stderr || d.error || '')); }
+    }
+  };
+}
+</script>
+</body>
+</html>
+"""
+
+
+@app.route('/translator')
+def page_translator():
+    """🆕 [Translator Phase 4.C / 2026-05-24 23:00] /translator dashboard page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_TRANSLATOR_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
