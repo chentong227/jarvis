@@ -378,7 +378,15 @@ class DirectiveRegistry:
             return False
 
     def load(self) -> int:
-        """从 JSON 恢复运行时计数。返回成功恢复的 directive 数。"""
+        """从 JSON 恢复运行时计数。返回成功恢复的 directive 数。
+
+        🆕 [Sir 2026-05-24 22:30 真测 hydration BUG 治本] priority 取 max(persisted, defined).
+        根因: 老 priority=11 时 evaluator decay → persisted=10 → 后 .py/JSON 显式升 priority=13,
+        但 load() 无脑覆盖 → 重启后 directive 仍 priority=10 < progress_tracker_dispatcher 11,
+        主脑听老 dispatcher → emit progress.set → fail → 熔断.
+        修: load priority 取 max — Sir 准则 7 元否决, .py/JSON 显式定义的提升永远优先.
+        其他 field (fired/rejected/helped/not_helped/last_*) 仍正常 restore (历史 audit).
+        """
         if not os.path.exists(self.persist_path):
             return 0
         try:
@@ -393,7 +401,14 @@ class DirectiveRegistry:
                 if d is None:
                     continue  # bootstrap 没注册过这条，跳过（可能 directive 已删）
                 for k in _PERSISTABLE_FIELDS:
-                    if k in data:
+                    if k not in data:
+                        continue
+                    if k == 'priority':
+                        # 🆕 取 max — 防止 persisted decay 覆盖 .py/JSON 显式定义的升级
+                        defined = getattr(d, 'priority', 1)
+                        persisted = int(data[k] or 1)
+                        d.priority = max(defined, persisted)
+                    else:
                         setattr(d, k, data[k])
                 n += 1
         return n
