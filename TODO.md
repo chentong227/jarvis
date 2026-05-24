@@ -1,6 +1,57 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 07:58 Sir — M2 全部 done 5 commit (A+B+C.1+2+C.3), 等真测** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:05 Sir — M3.A + M3.B (partial) done 3 commit, 等真测** 🚨🚨🚨
+>
+> Sir 8:01 M2 全部真测 OK (14 decision / 224 evidence / 0 broken / blocks=2,0 = prompt tier 正常分布), Cascade 立刻按顺序推 M3.
+>
+> ## ✅ M3.A + M3.B (partial) 完成 (3 commit, ~250 行 cleanup)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `08e65df` | **M3.A** | 死代码 + proxy 单源 — 删 2 bak file (archive_promise / integrity tainted) + `jarvis_config/network.json` 配置抽取 + `jarvis_utils._PROXY_URL` 走 config + `jarvis_nerve` 用 utils _PROXY_URL (8 test) |
+> | `fb27f39` | **M3.B.1** | 删 blood.py 3 个死 dataclass (`CorrectionEntry / MemoryFragment / PromptLayer`) — P0+19-5 拆分残留 0 caller, 同名 class 冲突消除 (11 test) |
+> | `11208b5` | **M3.B.2** | 删 enhanced.SoulRouter 死代码 — 50 行 lightweight 占位 0 caller, 唯一在 `jarvis_routing.SoulRouter` (advanced w/ BILINGUAL_BRIDGE) (2 test) |
+>
+> ## 📋 Sir M3.A+B 真测 (~3 min, 重启 jarvis)
+>
+> ```powershell
+> # 1. 重启 jarvis 跑 1-3 轮
+> # 2. 验 proxy 仍走 jarvis_config/network.json
+> python -c "from jarvis_utils import _PROXY_URL; print('Proxy:', _PROXY_URL)"
+> # 3. 验 enhanced.SoulRouter 没了 / routing.SoulRouter 仍在
+> python -c "import jarvis_enhanced; print('enhanced.SoulRouter exists:', hasattr(jarvis_enhanced, 'SoulRouter'))"
+> python -c "from jarvis_routing import SoulRouter; print('routing.SoulRouter:', SoulRouter)"
+> # 4. 验 blood.py 3 个死类没了
+> python -c "import jarvis_blood; print('blood.CorrectionEntry:', hasattr(jarvis_blood, 'CorrectionEntry'))"
+> # 5. 看 chat 仍 work + lineage 仍 record
+> python scripts/lineage_dump.py --list-decisions --limit 2
+> ```
+>
+> **预期**:
+> - `Proxy: http://127.0.0.1:7890` (从 config 读)
+> - `enhanced.SoulRouter exists: False`
+> - `routing.SoulRouter: <class 'jarvis_routing.SoulRouter'>`
+> - `blood.CorrectionEntry: False`
+> - chat 流畅 + lineage 0 broken
+>
+> ## ⏸ M3 剩余子项 (Sir 决定优先级)
+>
+> | 子项 | risk | scope | 状态 |
+> |---|---|---|---|
+> | **M3.B.Claim** | 中 | Claim → FactClaim/IntegrityClaim 改名 + 8+ testcase update | 等 Sir 决定 |
+> | **M3.E** | 中 | jarvis_enhanced 拆 3 file (ProactiveShield + ProactiveCompanion + SkillTreeTracker) | 等 Sir 决定 |
+> | **M3.C/D/G/F** | 高 | 3-brain 整体移 `_legacy/` + central_nerve.run() 800 行剥离 + worker.trigger_routing 删 | 建议跟 M6 NERVE_SPLIT 一起做 |
+> | **M4** | 高 | 5 promise sources → PromiseLog 单源 (data migration) | Sir 决定 |
+>
+> ## 🎯 Sir M3.A+B 真测 OK 后下一步
+>
+> ```
+> Cascade, M3 真测 OK, 推 M3.B.Claim 改名 (低-中 risk).
+> # 或
+> Cascade, 跳 M3.E, 直接动工 M4 (PromiseLog 合并).
+> # 或
+> Cascade, M3 partial 够了, 暂停 reshape 让我写真用例.
+> ```
 >
 > Sir 7:53 M2.B 真测全 OK ("chat 流畅 / mutation 写 / lineage record / blocks=2"), Cascade 按 Sir 指示按顺序推 M2.C cleanup 全部完成.
 >
