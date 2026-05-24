@@ -1,6 +1,48 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:20 Sir — M4.1+2+3 done 3 commit, 等真测 + 决定 M4.4** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:27 Sir — M4.1+2+3+4 done 4 commit, 等 Sir 真跑 --apply** 🚨🚨🚨
+>
+> Sir 8:23 M4.1+2+3 真测 OK + 指示"按顺序往下推进, 除非合后面更优雅", Cascade 继续推 M4.4 — 写完 migration script + 11 test, 但**没擅自动 prod 数据** (准则 8). Sir 自己跑 `--apply` 真执行.
+>
+> ## ✅ M4.4 done (commit `fe4e9b2`, script + 11 test, 0 prod 数据动)
+>
+> 写完 `scripts/migrate_commitments_to_promise_log.py` (dry-run / apply / rollback 三模式), 跑 dry-run 显示**真 active 只 1 条** (audit 之前算 4 是没过滤 `is_deleted=0`).
+>
+> ## � Sir 真执行 M4.4 apply (~30s, 真写 prod 数据)
+>
+> ```powershell
+> # 1. dry-run 再看一遍
+> python scripts/migrate_commitments_to_promise_log.py
+>
+> # 2. 真执行 (auto backup → 真写 → mark SQLite)
+> python scripts/migrate_commitments_to_promise_log.py --apply
+>
+> # 3. 看 PromiseLog 多了 1 条 (kind=commitment, author=sir, evidence 含 migration tag)
+> python scripts/audit_promise_sources.py
+>
+> # 4. 出问题回滚 (backup 在 _legacy/data_migration_backup/<timestamp>/)
+> # python scripts/migrate_commitments_to_promise_log.py --rollback 20260524_xxxxxx
+> ```
+>
+> ## 🎯 M4.5+6+7 路线 (Sir M4.4 apply 真测 OK 后)
+>
+> | 子项 | risk | scope |
+> |---|---|---|
+> | **M4.5** | 高 | CommitmentWatcher 改 read-only PromiseLog (老 add_commitment 退化为 hub shim, 不再写 SQLite) |
+> | **M4.6** | 中 | 全文 grep `add_commitment` / `mark_fulfilled` 替换 `hub.write_commitment` |
+> | **M4.7** | 低 | dashboard `pending_callbacks.jsonl` 消费时读 PromiseLog |
+>
+> ## Sir M4.4 真测 OK 后 menu
+>
+> ```
+> Cascade, M4.4 apply OK, 推 M4.5 CommitmentWatcher 退化.
+> # 或
+> Cascade, 暂停 reshape 真用一段, M4.5+6+7 之后再做.
+> ```
+>
+> ---
+>
+> ## 历史: M4.1+2+3 完成 (08:20)
 >
 > Sir 8:12 M3.A+B 真测 OK, Cascade 按 Sir 准则 7+8 跳 M3 剩余子项 (Claim/E/CDGF 合 M6 一起做), 直接推 M4 PromiseLog 合并主体.
 >
