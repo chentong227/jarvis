@@ -287,40 +287,8 @@ class CentralNerve:
         self.key_router = key_router
         self.vocal = VocalCord()  
         self.blood = JarvisBlood()
-        # 🆕 [Reshape M6.5.1 / 2026-05-24] 3-brain 实例化 try/except 保护 (mv 准备).
-        # Sir Q2 决议: 3-brain (l1_right_brain / l3_left_brain / l5_reflection_brain)
-        # 彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑路径. M6.5.2 真 git mv
-        # 这 3 file 到 _legacy/3_brain_attempt/ 时, 此处 try/except 让 init 仍能完成
-        # (fallback None). 老路径 central_nerve.run() 仍兜底, 但 worker.trigger_routing
-        # 已加 deprecation warn (M3.C-trace). 看 SWM `deprecated_3_brain_invoked` event = 0
-        # 1 周后, M6.5.3 真删 run() + 3 self.X_brain 引用.
-        self.right_brain = None
-        self.left_brain = None
-        self.l5_brain = None
-        try:
-            self.right_brain = RightBrain(api_key)
-        except Exception as _rb_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg
-                _3b_bg(f"⚠️ [3-brain/Init] RightBrain 实例化失败 (legacy mv?): {type(_rb_e).__name__}: {str(_rb_e)[:80]}")
-            except Exception:
-                pass
-        try:
-            self.left_brain = LeftBrain()
-        except Exception as _lb_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg2
-                _3b_bg2(f"⚠️ [3-brain/Init] LeftBrain 实例化失败 (legacy mv?): {type(_lb_e).__name__}: {str(_lb_e)[:80]}")
-            except Exception:
-                pass
-        try:
-            self.l5_brain = ReflectionBrain(api_key)
-        except Exception as _l5_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg3
-                _3b_bg3(f"⚠️ [3-brain/Init] ReflectionBrain 实例化失败 (legacy mv?): {type(_l5_e).__name__}: {str(_l5_e)[:80]}")
-            except Exception:
-                pass
+        # [Reshape M6.3 second wave / 2026-05-24] 3-brain init helper. 行为不变.
+        self._init_3_brain_legacy(api_key)
         self.hippocampus = Hippocampus(key_router=key_router)
         self.habit_clock = HabitClock()
         self.causal_chain = CausalChain()
@@ -366,23 +334,8 @@ class CentralNerve:
         #   2. 后台 daemon 每 30s _persist_stm_to_disk() atomic dump 整 STM 到 jsonl
         #   3. atexit 强制 dump 1 次 (Sir Ctrl+C 不丢)
         # 准则 6.5: 路径 / max_persist_size 可在 vocab 里调 (β.4.10 暂硬常量).
-        self._stm_persist_path = os.path.join('memory_pool', 'stm_recent.jsonl')
-        self._stm_persist_max = 50  # 最近 50 条 (= ~25 对来回, 覆盖 1 小时聊天)
-        self._stm_persist_interval_s = 30.0
-        self._stm_dirty = False  # 标识 STM 改了, 下次 dump 该写
-        self._stm_persist_lock = threading.Lock()
-        try:
-            self._restore_stm_from_disk()
-        except Exception as _stm_e:
-            try:
-                from jarvis_utils import bg_log as _stm_bg
-                _stm_bg(f"⚠️ [STM/Persist] restore 失败 (容忍): {_stm_e}")
-            except Exception:
-                pass
-        try:
-            self._start_stm_persist_daemon()
-        except Exception:
-            pass
+        # [Reshape M6.3 second wave / 2026-05-24] STM persist init helper. 行为不变.
+        self._init_stm_persist()
         self.interruption_queue = queue.Queue()
         # [R7-α/B1] is_active_task 改走 state；此处不再做老字段直接初始化
         # （property setter 会兼容 self.is_active_task = X 老写法，新代码请用 self.state.set_active_task）
@@ -406,97 +359,17 @@ class CentralNerve:
         self.nudge_gate = NudgeGate(cooldown_seconds=90)
         self.sleep_detector = SleepIntentDetector(self)
 
-        # [R6/B1] 对话事件总线 —— 替代散落的 pending_event/commitment/soft_focus_reason 等字段
-        # 后续 gatekeeper、SmartNudge、Conductor、focus_lock 都往这里 publish；prompt assembler 读
-        try:
-            from jarvis_utils import ConversationEventBus
-            self.event_bus = ConversationEventBus()
-            # [β.5.0-A / 2026-05-19] 注册全局 SWM 让远端模块 (PhysicalEnvProbe /
-            # OfferGuard / ProactiveCare / Reflectors) publish 不需 self.jarvis ref
-            try:
-                ConversationEventBus.register_global(self.event_bus)
-            except Exception:
-                pass
-        except Exception:
-            self.event_bus = None
-        # [R7-α/B1] event_bus 准备好后，回填到 state，让状态切换也能 publish 出去
-        if self.state is not None and self.event_bus is not None:
-            self.state.set_event_bus(self.event_bus)
+        # [Reshape M6.3 second wave / 2026-05-24] event_bus + global SWM init helper. 行为不变.
+        self._init_event_bus_swm()
 
-        # [R7-α/WorkingMemoryFeed] 会话级环境事件流：剪贴板 / PowerShell history / 文件保存
-        # 这条流与 event_bus 分开：event_bus 是对话事件 (TTL 短 / 优先级高)，feed 是工作台
-        # 环境事件 (TTL 30min / 低优先级 / 帮 LLM 答"我刚复制的是什么"/"我刚跑的那个命令")。
-        try:
-            from jarvis_utils import (
-                WorkingMemoryFeed, ClipboardWatcher, PSHistoryWatcher,
-                is_recent_jarvis_echo,
-            )
-            self.working_feed = WorkingMemoryFeed(max_events=80, ttl_seconds=1800.0)
-            # 剪贴板 watcher：跳过 Jarvis 自己刚塞进去的内容（避免自循环）
-            self._clipboard_watcher = ClipboardWatcher(
-                self.working_feed,
-                skip_if_match_fn=lambda txt: bool(txt) and is_recent_jarvis_echo(txt, threshold=85),
-            )
-            self._clipboard_watcher.start()
-            # PowerShell history watcher
-            self._ps_history_watcher = PSHistoryWatcher(self.working_feed)
-            self._ps_history_watcher.start()
-        except Exception as _e:
-            self.working_feed = None
-            self._clipboard_watcher = None
-            self._ps_history_watcher = None
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[WorkingMemoryFeed] 初始化失败：{_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 second wave / 2026-05-24] WorkingFeed + 2 watcher init helper. 行为不变.
+        self._init_working_feed()
 
-        # [R7-α/PlanLedger] 任务计划账本：5 态状态机 + JSON 持久化
-        # α4 阶段只做雏形：能创建、能查询、能持久化、能 publish。
-        # [轴3-L3.2 / 2026-05-15] 接 PromiseExecutor 后真能跑步骤 + 反推 + 重试 + dangerous 二次确认。
-        try:
-            from jarvis_utils import PlanLedger
-            self.plan_ledger = PlanLedger(
-                persist_path=os.path.join('memory_pool', 'plans.json'),
-                event_bus=self.event_bus,
-                max_active=3,
-                autosave=True,
-            )
-            # 启动时恢复未完结的计划
-            self.plan_ledger.load()
-        except Exception as _e:
-            self.plan_ledger = None
-            import traceback as _tb
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[PlanLedger] 初始化失败：{_e}")
-                _bg(_tb.format_exc())
-            except Exception:
-                pass
+        # [Reshape M6.3 second wave / 2026-05-24] PlanLedger init helper. 行为不变.
+        self._init_plan_ledger()
 
-        # [轴3-L0.3 / 2026-05-15 P0+18-a.1] 启动时 bootstrap SkillRegistry
-        # 不调这个 → registry 永远空 → AVAILABLE SKILLS prompt 块空 →
-        # PromiseExecutor 即便启动也无 skill 可跑 → 主脑也不知道自己能做什么。
-        # 130 个 skill 从 l4_hands_pool / l2_eyes_pool 自动入册 + autosave daemon
-        # 每 60s 检查 dirty 落盘到 memory_pool/skill_registry.jsonl
-        try:
-            from jarvis_skill_registry import get_registry as _get_reg
-            _reg = _get_reg()
-            _reg.bootstrap(
-                pools_root='.',
-                jsonl_path=os.path.join('memory_pool', 'skill_registry.jsonl'),
-                enable_autosave=True,
-                autosave_interval_s=60,
-            )
-            # bootstrap 内部已经 print 了 ♻️ [SkillRegistry] bootstrap 完工 log，这里不重复
-        except Exception as _e:
-            import traceback as _tb
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[SkillRegistry/bootstrap] 初始化失败：{_e}")
-                _bg(_tb.format_exc())
-            except Exception:
-                pass
+        # [Reshape M6.3 second wave / 2026-05-24] SkillRegistry bootstrap init helper. 行为不变.
+        self._init_skill_registry_bootstrap()
 
         # [P0+20-β.0.1 / 2026-05-16] DirectiveRegistry —— L2 条件 directive 注册 + 衰减 daemon
         # 启动后自动 bootstrap 12 条 directive + load 持久化计数 + start_decay_worker（60s tick）
@@ -2092,6 +1965,179 @@ Sir just called your name. Reply in UNDER 6 WORDS.
 User: {user_input}
 {system_alert_text}
 """
+
+    def _init_3_brain_legacy(self, api_key: str) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — 3-brain try/except.
+
+        🆕 [M6.5.1] 3-brain (l1_right_brain / l3_left_brain / l5_reflection_brain)
+        彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑路径. 此处 try/except
+        让 init 仍能完成 (fallback None). M6.5.2 已 git mv 这 3 file 到
+        _legacy/3_brain_attempt/, M6.5.3 stub raise + chat_bypass fallback.
+
+        看 SWM `deprecated_3_brain_invoked` event = 0 1 周后, 真删 run() + 3 self.X_brain.
+        """
+        self.right_brain = None
+        self.left_brain = None
+        self.l5_brain = None
+        try:
+            self.right_brain = RightBrain(api_key)
+        except Exception as _rb_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg
+                _3b_bg(f"⚠️ [3-brain/Init] RightBrain 实例化失败 (legacy mv?): {type(_rb_e).__name__}: {str(_rb_e)[:80]}")
+            except Exception:
+                pass
+        try:
+            self.left_brain = LeftBrain()
+        except Exception as _lb_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg2
+                _3b_bg2(f"⚠️ [3-brain/Init] LeftBrain 实例化失败 (legacy mv?): {type(_lb_e).__name__}: {str(_lb_e)[:80]}")
+            except Exception:
+                pass
+        try:
+            self.l5_brain = ReflectionBrain(api_key)
+        except Exception as _l5_e:
+            try:
+                from jarvis_utils import bg_log as _3b_bg3
+                _3b_bg3(f"⚠️ [3-brain/Init] ReflectionBrain 实例化失败 (legacy mv?): {type(_l5_e).__name__}: {str(_l5_e)[:80]}")
+            except Exception:
+                pass
+
+    def _init_stm_persist(self) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — STM 持久化.
+
+        [β.4.10 / 2026-05-19] STM 持久化 — Sir 重启不忘上轮对话.
+        治本: short_term_memory 是 RAM list, 重启清空 → Sir 跟 Jarvis 聊涌现后
+        为找 wake BUG 重启 Jarvis, Jarvis 不记得刚才的话题 (准则 4 "懂我" 退步).
+        设计:
+          1. 启动时 _restore_stm_from_disk() 读 jsonl 最近 N 条恢复
+          2. 后台 daemon 每 30s _persist_stm_to_disk() atomic dump 整 STM
+          3. atexit 强制 dump 1 次 (Sir Ctrl+C 不丢)
+        """
+        self._stm_persist_path = os.path.join('memory_pool', 'stm_recent.jsonl')
+        self._stm_persist_max = 50  # 最近 50 条 (= ~25 对来回, 覆盖 1 小时聊天)
+        self._stm_persist_interval_s = 30.0
+        self._stm_dirty = False
+        self._stm_persist_lock = threading.Lock()
+        try:
+            self._restore_stm_from_disk()
+        except Exception as _stm_e:
+            try:
+                from jarvis_utils import bg_log as _stm_bg
+                _stm_bg(f"⚠️ [STM/Persist] restore 失败 (容忍): {_stm_e}")
+            except Exception:
+                pass
+        try:
+            self._start_stm_persist_daemon()
+        except Exception:
+            pass
+
+    def _init_event_bus_swm(self) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — ConversationEventBus + 全局 SWM 注册.
+
+        [R6/B1] 对话事件总线 — 替代散落的 pending_event/commitment/soft_focus_reason 等字段.
+        gatekeeper / SmartNudge / Conductor / focus_lock 都往这里 publish; prompt assembler 读.
+
+        [β.5.0-A / 2026-05-19] 注册全局 SWM 让远端模块 (PhysicalEnvProbe / OfferGuard /
+        ProactiveCare / Reflectors) publish 不需 self.jarvis ref.
+        """
+        try:
+            from jarvis_utils import ConversationEventBus
+            self.event_bus = ConversationEventBus()
+            try:
+                ConversationEventBus.register_global(self.event_bus)
+            except Exception:
+                pass
+        except Exception:
+            self.event_bus = None
+        # [R7-α/B1] event_bus 准备好后, 回填到 state 让状态切换也能 publish
+        if self.state is not None and self.event_bus is not None:
+            self.state.set_event_bus(self.event_bus)
+
+    def _init_working_feed(self) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — WorkingFeed + 2 watcher.
+
+        [R7-α/WorkingMemoryFeed] 会话级环境事件流: 剪贴板 / PowerShell history.
+        与 event_bus 分开: event_bus 是对话事件 (TTL 短 / 优先级高), feed 是工作台
+        环境事件 (TTL 30min / 低优先级 / 帮 LLM 答"我刚复制的是什么"/"我刚跑的那个命令").
+        """
+        try:
+            from jarvis_utils import (
+                WorkingMemoryFeed, ClipboardWatcher, PSHistoryWatcher,
+                is_recent_jarvis_echo,
+            )
+            self.working_feed = WorkingMemoryFeed(max_events=80, ttl_seconds=1800.0)
+            # 剪贴板 watcher: 跳过 Jarvis 自己刚塞进去的内容 (避免自循环)
+            self._clipboard_watcher = ClipboardWatcher(
+                self.working_feed,
+                skip_if_match_fn=lambda txt: bool(txt) and is_recent_jarvis_echo(txt, threshold=85),
+            )
+            self._clipboard_watcher.start()
+            # PowerShell history watcher
+            self._ps_history_watcher = PSHistoryWatcher(self.working_feed)
+            self._ps_history_watcher.start()
+        except Exception as _e:
+            self.working_feed = None
+            self._clipboard_watcher = None
+            self._ps_history_watcher = None
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[WorkingMemoryFeed] 初始化失败：{_e}")
+            except Exception:
+                pass
+
+    def _init_plan_ledger(self) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — PlanLedger.
+
+        [R7-α/PlanLedger] 任务计划账本: 5 态状态机 + JSON 持久化.
+        α4 阶段只做雏形: 能创建 / 能查询 / 能持久化 / 能 publish.
+        [轴 3-L3.2 / 2026-05-15] 接 PromiseExecutor 后真能跑步骤 + 反推 + 重试.
+        """
+        try:
+            from jarvis_utils import PlanLedger
+            self.plan_ledger = PlanLedger(
+                persist_path=os.path.join('memory_pool', 'plans.json'),
+                event_bus=self.event_bus,
+                max_active=3,
+                autosave=True,
+            )
+            self.plan_ledger.load()
+        except Exception as _e:
+            self.plan_ledger = None
+            import traceback as _tb
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[PlanLedger] 初始化失败：{_e}")
+                _bg(_tb.format_exc())
+            except Exception:
+                pass
+
+    def _init_skill_registry_bootstrap(self) -> None:
+        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — SkillRegistry bootstrap.
+
+        [轴 3-L0.3 / 2026-05-15 P0+18-a.1] 启动时 bootstrap SkillRegistry.
+        不调这个 → registry 永远空 → AVAILABLE SKILLS prompt 块空 → PromiseExecutor
+        即便启动也无 skill 可跑. 130 个 skill 从 l4_hands_pool / l2_eyes_pool 自动入册
+        + autosave daemon 每 60s 检查 dirty 落盘到 memory_pool/skill_registry.jsonl.
+        """
+        try:
+            from jarvis_skill_registry import get_registry as _get_reg
+            _reg = _get_reg()
+            _reg.bootstrap(
+                pools_root='.',
+                jsonl_path=os.path.join('memory_pool', 'skill_registry.jsonl'),
+                enable_autosave=True,
+                autosave_interval_s=60,
+            )
+        except Exception as _e:
+            import traceback as _tb
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[SkillRegistry/bootstrap] 初始化失败：{_e}")
+                _bg(_tb.format_exc())
+            except Exception:
+                pass
 
     def _build_layer_0_self_anchor_block(self) -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 0: SelfAnchor block.
