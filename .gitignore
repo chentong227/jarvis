@@ -81,6 +81,8 @@ memory_pool/screen_snapshot.json
 memory_pool/*.bak
 # [Reshape M3.A / 2026-05-24] 扩 glob: conftest fix backup 等
 memory_pool/*.bak.*
+# 🆕 [Sir 2026-05-24 22:10] hydration BUG fix 时不慎 commit .bak_TIMESTAMP — 加 glob 防回归
+memory_pool/*.bak_*
 jarvis_config/screenshots/
 jarvis_config/user_status_history/
 jarvis_config/user_status_ledger.json
