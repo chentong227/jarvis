@@ -169,5 +169,23 @@ class TestContextRouterStr(unittest.TestCase):
         self.assertIn('context_router', n._asm_stage_t)
 
 
+class TestInitAudioVolumeRecovery(unittest.TestCase):
+    """M6.3 first wave — _init_audio_volume_recovery extracted from __init__."""
+
+    def test_method_exists(self):
+        from jarvis_central_nerve import CentralNerve
+        self.assertTrue(hasattr(CentralNerve, '_init_audio_volume_recovery'))
+
+    def test_silent_when_pycaw_unavailable(self):
+        """pycaw import 失败应静默 (e.g. Linux/macOS)."""
+        n = _make_minimal_nerve()
+        from unittest.mock import patch
+        with patch.dict('sys.modules', {'pycaw': None}):
+            try:
+                n._init_audio_volume_recovery()
+            except Exception:
+                self.fail('应静默 swallow 异常')
+
+
 if __name__ == '__main__':
     unittest.main()
