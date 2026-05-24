@@ -127,6 +127,36 @@
       "annotation": "是否夜间时段",
       "tiers": ["CHAT", "DEEP_QUERY"],
       "active": true
+    },
+    {
+      "id": "is_gaming_active",
+      "source": "PhysicalEnvironmentProbe.is_gaming_active",
+      "transform": "bool",
+      "label": "is_gaming_active",
+      "annotation": "全屏游戏中. True → 减少打扰, Sir 不开口你不主动催",
+      "tiers": ["SHORT_CHAT", "CHAT", "DEEP_QUERY"],
+      "active": true
+    },
+    {
+      "id": "current_gaming_title",
+      "source": "PhysicalEnvironmentProbe.current_gaming_title",
+      "transform": "str_truncate_40",
+      "label": "gaming_title",
+      "annotation": "当前游戏",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true,
+      "format": "\"{value}\"",
+      "gating_field": "is_gaming_active"
+    },
+    {
+      "id": "gaming_minutes",
+      "source": "PhysicalEnvironmentProbe.gaming_started_at",
+      "transform": "elapsed_minutes",
+      "label": "gaming_min",
+      "annotation": ">120min 可轻关心",
+      "tiers": ["CHAT", "DEEP_QUERY"],
+      "active": true,
+      "gating_field": "is_gaming_active"
     }
   ],
   "header_text": "[SENSOR STATE — Sir 真实物理传感数据, **任何 specific claim 必须用这里的数字, 不可 hallucinate**]:",

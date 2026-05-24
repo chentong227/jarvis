@@ -99,6 +99,17 @@ def _apply_transform(val, transform: str):
         return str(val) if val else 'Idle'
     if transform == 'bool':
         return bool(val)
+    if transform == 'elapsed_minutes':
+        # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24] gaming_started_at (timestamp) → 已 N min
+        # val=0 (never started) → 返 0. val>0 (ts) → 算 now - ts, 转 min.
+        try:
+            ts = float(val or 0)
+            if ts <= 0:
+                return 0
+            elapsed_s = max(0, time.time() - ts)
+            return int(elapsed_s / 60)
+        except (TypeError, ValueError):
+            return 0
     return val
 
 
@@ -121,6 +132,15 @@ def build_sensor_state_block(tier: str = 'CHAT', max_chars: int = 600) -> str:
     header = vocab.get('header_text', '[SENSOR STATE]:')
     footer = vocab.get('footer_text', '')
     lines = [header]
+    # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24] 第 1 pass 收集 raw values, 用于 gating
+    # (e.g. gaming_title 仅在 is_gaming_active=True 时 inject — 否则浪费 token).
+    raw_by_id: dict = {}
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        fid = field.get('id', '')
+        if fid:
+            raw_by_id[fid] = _resolve_value(field.get('source', ''))
     for field in fields:
         if not isinstance(field, dict):
             continue
@@ -132,8 +152,13 @@ def build_sensor_state_block(tier: str = 'CHAT', max_chars: int = 600) -> str:
         fid = field.get('id', '')
         if not fid:
             continue
-        source = field.get('source', '')
-        raw = _resolve_value(source)
+        # 🆕 [BUG-2 治本] gating_field: 仅在另一字段 truthy 时 inject 本字段.
+        gating_field = field.get('gating_field')
+        if gating_field:
+            gating_raw = raw_by_id.get(gating_field)
+            if not gating_raw:
+                continue  # gating field falsy → skip 本字段
+        raw = raw_by_id.get(fid)
         val = _apply_transform(raw, field.get('transform', ''))
         label = field.get('label', fid)
         annot = field.get('annotation', '')
