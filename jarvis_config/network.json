@@ -1,0 +1,6 @@
+{
+  "_comment": "[Reshape M3.A / 2026-05-24] 网络配置单源 (准则 6 持久化). 老硬编码 in jarvis_nerve.py:73 + jarvis_utils.py:18 全迁此. Sir 改 proxy 不必改源码.",
+  "proxy_url": "http://127.0.0.1:7890",
+  "proxy_enabled": true,
+  "proxy_set_env_vars": ["HTTP_PROXY", "HTTPS_PROXY"]
+}

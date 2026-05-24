@@ -15,7 +15,22 @@ import json
 
 import httpx
 
-_PROXY_URL = 'http://127.0.0.1:7890'
+# [Reshape M3.A / 2026-05-24] _PROXY_URL 走 jarvis_config/network.json (单源, 准则 6 持久化).
+# Sir 改 proxy 不必改源码. fallback 老硬编码 'http://127.0.0.1:7890' 保 backward compat.
+def _load_proxy_url():
+    try:
+        _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   'jarvis_config', 'network.json')
+        if os.path.exists(_cfg_path):
+            with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                _cfg = json.load(_f)
+                if _cfg.get('proxy_enabled', True):
+                    return _cfg.get('proxy_url', 'http://127.0.0.1:7890')
+    except Exception:
+        pass
+    return 'http://127.0.0.1:7890'
+
+_PROXY_URL = _load_proxy_url()
 
 # ============================================================
 # [P0+18-e.4 / 2026-05-15] 终端色彩化分区 (colorama + ANSI)

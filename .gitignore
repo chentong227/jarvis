@@ -79,6 +79,8 @@ memory_pool/sir_acked_state.json
 memory_pool/screen_snapshot.json
 # memory_pool 下的 .bak 文件 (jsonl tainted 备份 / promise_log 归档备份等 runtime 残留)
 memory_pool/*.bak
+# [Reshape M3.A / 2026-05-24] 扩 glob: conftest fix backup 等
+memory_pool/*.bak.*
 jarvis_config/screenshots/
 jarvis_config/user_status_history/
 jarvis_config/user_status_ledger.json

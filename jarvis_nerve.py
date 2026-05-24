@@ -70,8 +70,15 @@ from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume, IAudioMeterInformati
 # [C1-7 / 2026-05-15] 删除重复 import：threading / queue / comtypes / pycaw
 # 上面 line 14-19 已经导入过。pycaw 第二次 import 还少了 IAudioMeterInformation 是 bug。
 # 🌐 【物理世界网络总闸】：强行统一下游所有器官的 TLS/SSL 加密信道
-os.environ["HTTP_PROXY"] = "http://127.0.0.1:7890"
-os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7890"
+# [Reshape M3.A / 2026-05-24] 单源走 jarvis_config/network.json (准则 6 持久化).
+# Sir 改 proxy 不必改源码, 改 network.json 即可. fallback 老硬编码保 backward compat.
+try:
+    from jarvis_utils import _PROXY_URL as _PROXY_URL_FROM_CONFIG
+    os.environ["HTTP_PROXY"] = _PROXY_URL_FROM_CONFIG
+    os.environ["HTTPS_PROXY"] = _PROXY_URL_FROM_CONFIG
+except Exception:
+    os.environ["HTTP_PROXY"] = "http://127.0.0.1:7890"
+    os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7890"
 # ==========================================
 # 🧬 自主神经底层基建 (Autonomic Subsystem)
 # ==========================================
