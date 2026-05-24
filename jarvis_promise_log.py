@@ -90,7 +90,7 @@ MAX_KEEP_PROMISES = 500          # 内存最多保 500 条 (老的归档/丢弃)
 class Promise:
     id: str
     description: str
-    kind: str = 'soft'                # hard/soft
+    kind: str = 'soft'                # 老: hard/soft. [M4.1] 新: commitment/cyclic/watch/self_promise. 兼容并存.
     deadline_str: str = ''
     jarvis_reply: str = ''
     turn_id: str = ''
@@ -104,6 +104,16 @@ class Promise:
     # author='sir'    = Sir 自己 cmd 表态 (CommitmentWatcher 转 PromiseLog soft).
     # 老数据无字段 → 默认 'jarvis' (兼容 - 老 Promise 主要来自 SelfPromiseDetector).
     author: str = 'jarvis'
+
+    # 🆕 [Reshape M4.1 / 2026-05-24] 5 套时间承诺合并 schema 扩展
+    # 让 PromiseLog 成为 commitment/cyclic/watch/self_promise 4 kind 单源.
+    # 老数据 0 这 3 个字段 (load 时填默认). 老 caller (register/list_pending) 不动.
+    who_promised: str = ''            # 新 alias of author, 更准确 (jarvis/sir/system)
+    # trigger_pattern: 触发条件 (主要给 cyclic/watch 用):
+    #   cyclic: {'kind': 'cycle_minutes', 'value': 30}
+    #   watch:  {'kind': 'screen_vision', 'evidence': '...'}
+    trigger_pattern: Dict = field(default_factory=dict)
+    bound_to_concern_id: str = ''     # 关联到 concern (M4.1: 替代 concern.notes_for_self 散乱)
 
     def add_evidence(self, kind: str, what: str) -> None:
         self.evidence.append({
@@ -129,6 +139,8 @@ class PromiseExecutionLog:
         # 启发: jarvis_reply 空 → sir (CommitmentWatcher 转的 Sir cmd, 填空 reply).
         #       jarvis_reply 非空 → jarvis (SelfPromiseDetector 检出必填 reply).
         self._backfill_authors()
+        # [Reshape M4.1 / 2026-05-24] backfill who_promised (新 alias) 从 author.
+        self._backfill_who_promised()
 
     def _backfill_authors(self) -> int:
         """老数据 author 字段缺失 → 按 jarvis_reply 推断回填. 返回回填条数."""
@@ -153,6 +165,26 @@ class PromiseExecutionLog:
                     f"📝 [PromiseLog] backfill author 字段 {n} 条 "
                     f"(reply 空 → sir, reply 非空 → jarvis)"
                 )
+        except Exception:
+            pass
+        return n
+
+    def _backfill_who_promised(self) -> int:
+        """[Reshape M4.1 / 2026-05-24] 老 Promise 没 who_promised → 从 author 拷贝.
+        新代码用 who_promised (更准确), 老 caller 仍读 author. backward compat."""
+        n = 0
+        try:
+            for p in self.promises.values():
+                if getattr(p, 'who_promised', ''):
+                    continue
+                # 从 author 拷贝, fallback 'jarvis'
+                p.who_promised = getattr(p, 'author', '') or 'jarvis'
+                n += 1
+            if n > 0:
+                try:
+                    self._persist()
+                except Exception:
+                    pass
         except Exception:
             pass
         return n
