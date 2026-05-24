@@ -154,6 +154,8 @@ from jarvis_worker_helpers import (  # noqa: F401
     PRACTICE_PATTERNS,
     DISMISSIVE_PATTERNS,
     SELF_INTERRUPTION_PATTERNS,
+    STAND_DOWN_PHRASES,
+    compute_adaptive_noise_threshold,
 )
 
 
@@ -626,16 +628,8 @@ class JarvisWorkerThread(QThread):
         import random
         import threading
         
-        # 贾维斯的专属退场语录池 (英文语音 + 中文字幕)
-        stand_down_phrases = [
-            ("Standing down, Sir.", "已退下，先生。"),
-            ("Entering standby mode.", "进入待机模式。"),
-            ("Awaiting your next command, Sir.", "等待您的下一个指令，先生。"),
-            ("Systems on standby.", "系统已挂起。"),
-            ("As you wish. Muting audio.", "如您所愿，已静音。")
-        ]
-        
-        en_phrase, zh_subtitle = random.choice(stand_down_phrases)
+        # 🆕 [Reshape M6.W9 / 2026-05-24 19:30] 抽到 jarvis_worker_helpers.STAND_DOWN_PHRASES
+        en_phrase, zh_subtitle = random.choice(STAND_DOWN_PHRASES)
         
         # 极简 UI 打印，保持强迫症排版
         print(_box_newline(f"\n║ 🤖  [Jarvis] {en_phrase}"))

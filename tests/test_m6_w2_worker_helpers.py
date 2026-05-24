@@ -197,6 +197,31 @@ class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
         self.assertIn('闭嘴', joined)
 
 
+class TestM6W9StandDownPhrases(unittest.TestCase):
+    """W9 抽出: STAND_DOWN_PHRASES interrupt_all 退场语录池."""
+
+    def test_const_export(self):
+        from jarvis_worker_helpers import STAND_DOWN_PHRASES
+        self.assertIsInstance(STAND_DOWN_PHRASES, list)
+        self.assertGreaterEqual(len(STAND_DOWN_PHRASES), 5)
+        # 每项 (en, zh) tuple
+        for item in STAND_DOWN_PHRASES:
+            self.assertEqual(len(item), 2)
+            self.assertIsInstance(item[0], str)
+            self.assertIsInstance(item[1], str)
+
+    def test_worker_reexport(self):
+        from jarvis_worker import STAND_DOWN_PHRASES as W
+        from jarvis_worker_helpers import STAND_DOWN_PHRASES as H
+        self.assertIs(W, H)
+
+    def test_phrase_contains_sir(self):
+        """至少 2 个 phrase 含 'Sir' (人设)."""
+        from jarvis_worker_helpers import STAND_DOWN_PHRASES
+        sir_count = sum(1 for en, _ in STAND_DOWN_PHRASES if 'Sir' in en)
+        self.assertGreaterEqual(sir_count, 2)
+
+
 class TestM6W8NoiseFloorCompute(unittest.TestCase):
     """W8 抽出: compute_adaptive_noise_threshold (BUG-2 中期治本 logic 抽 helper).
     

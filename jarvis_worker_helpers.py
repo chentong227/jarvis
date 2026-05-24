@@ -311,6 +311,18 @@ CN_DIGIT_MAP = {
 # 历史: 模糊脊髓反射词典 (巨量扩充版) — 处理英文 ASR 空耳 (jarvis ↔ garbage / charles / java...)
 # + 中文发音容错 (贾维斯 ↔ 假装是 / 夹尾巴) + 唤醒/告退/物理静音 prefix.
 
+# 🆕 [Reshape M6.W9 / 2026-05-24 19:30] interrupt_all 退场语录池抽 const
+# 5 个 (en_phrase, zh_subtitle) tuple — Sir 准则 6 未来可迁 stand_down_vocab.json + L7 reflector
+
+STAND_DOWN_PHRASES = [
+    ("Standing down, Sir.", "已退下，先生。"),
+    ("Entering standby mode.", "进入待机模式。"),
+    ("Awaiting your next command, Sir.", "等待您的下一个指令，先生。"),
+    ("Systems on standby.", "系统已挂起。"),
+    ("As you wish. Muting audio.", "如您所愿，已静音。")
+]
+
+
 # 🆕 [Reshape M6.W8 / 2026-05-24 19:20] BUG-2 noise floor compute 抽 helper fn
 # logic 真 reside 在 VoiceListenThread.run() 内, 抽 module-level fn 让 unit test 能验.
 # 输入 idle frame buffer (deque/list) → 算 percentile-30 = noise_floor → threshold.
