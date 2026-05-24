@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "last_modified": "2026-05-24T20:30:00",
+  "description": "L4.6 Translator schema vocab. manifest required_params + examples + common_mistakes (Lv2 schema 验证). 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md",
+  "schema_hints": [
+    {
+      "organ": "memory_hands",
+      "command": "add_reminder",
+      "required_params": ["intent", "trigger_time"],
+      "param_formats": {
+        "trigger_time": "YYYY-MM-DD HH:MM:00"
+      },
+      "common_mistakes": [
+        "在没问 Sir 提醒内容时就 emit, intent 为空",
+        "trigger_time 用 '明天 8 点' 而不是 ISO '2026-05-25 08:00:00' 格式"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '8 点叫我吃药'",
+          "fast_call": "FAST_CALL[memory_hands/add_reminder]{intent='吃药', trigger_time='2026-05-25 08:00:00'}"
+        }
+      ],
+      "evidence": "Sir 2026-05-23 22:11 真测 + P5-fix82-Z + Cascade BUG #2 fix 2026-05-24"
+    },
+    {
+      "organ": "memory_hands",
+      "command": "modify_record",
+      "required_params": ["id"],
+      "param_formats": {
+        "id": "integer",
+        "new_time": "YYYY-MM-DD HH:MM:00"
+      },
+      "common_mistakes": [
+        "缺 id 参数, 主脑应先 list_reminders 拿 id 再 modify"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '把那个 8 点的提醒改成 9 点'",
+          "fast_call": "FAST_CALL[memory_hands/modify_record]{id=12, new_time='2026-05-25 09:00:00'}"
+        }
+      ]
+    },
+    {
+      "organ": "memory_hands",
+      "command": "delete_record",
+      "required_params": ["id"],
+      "common_mistakes": [
+        "缺 id 参数, 主脑应先 list_reminders 拿 id 再 delete"
+      ],
+      "examples": [
+        {
+          "scenario": "Sir 说 '取消那个提醒'",
+          "fast_call": "FAST_CALL[memory_hands/delete_record]{id=12}"
+        }
+      ]
+    },
+    {
+      "organ": "memory_hands",
+      "command": "search_memory",
+      "required_params": ["query"],
+      "examples": [
+        {
+          "scenario": "Sir 问 '我们昨天聊过什么'",
+          "fast_call": "FAST_CALL[memory_hands/search_memory]{query='昨天对话', time_range_hours=24}"
+        }
+      ]
+    }
+  ]
+}

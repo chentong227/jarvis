@@ -240,6 +240,22 @@ class CentralNerve:
         
         self._hot_reload_organs()
         
+        # 🆕 [Translator Phase 1 / 2026-05-24 20:30] L4.6 LLM → schema 翻译层
+        # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md
+        # 集成位置: chat_bypass 路由前 (FEATURE_TRANSLATOR env flag 灯火切)
+        try:
+            from jarvis_translator import Translator, set_default_translator
+            self.translator = Translator(
+                hand_registry=self.hand_registry,
+                hand_manifests=self.hand_manifests,
+                event_bus=getattr(self, 'event_bus', None),
+                gemini_key=getattr(self, 'gemini_key', None),
+            )
+            set_default_translator(self.translator)
+        except Exception as _t_e:
+            self.translator = None
+            print(f"⚠️ [Translator init] {_t_e} — fallback 走老 fuzzy 路径")
+        
         self.eyes = None
         self.hands = None
         self.env = None

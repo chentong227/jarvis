@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "last_modified": "2026-05-24T20:30:00",
+  "description": "L4.6 Translator alias vocab. organ + command 同义名 → 精确名 (Lv1 词汇翻译). 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md",
+  "aliases": [
+    {
+      "id": "alias_001",
+      "kind": "organ",
+      "from": "reminder_hands",
+      "to": "memory_hands",
+      "status": "active",
+      "evidence": "Sir 2026-05-23 22:11 真测 + P5-fix82-Z + Cascade BUG #1 fix 2026-05-24 19:45. 主脑凭语义拼 organ 名, 真实 organ 是 memory_hands.",
+      "added_by": "Cascade-bootstrap",
+      "added_at": "2026-05-24T20:30:00",
+      "activated_by": "Sir-implicit",
+      "activated_at": "2026-05-24T20:30:00",
+      "hit_count": 0,
+      "last_hit_at": null,
+      "version": 1,
+      "superseded_by": null
+    },
+    {
+      "id": "alias_002",
+      "kind": "organ",
+      "from": "memory",
+      "to": "memory_hands",
+      "status": "active",
+      "evidence": "Sir 2026-05-23 19:05 真测 + P5-fix77-Q. 主脑用短名 'memory' 而非全名 'memory_hands'.",
+      "added_by": "Cascade-bootstrap",
+      "added_at": "2026-05-24T20:30:00",
+      "activated_by": "Sir-implicit",
+      "activated_at": "2026-05-24T20:30:00",
+      "hit_count": 0,
+      "last_hit_at": null,
+      "version": 1,
+      "superseded_by": null
+    },
+    {
+      "id": "alias_003",
+      "kind": "organ",
+      "from": "reminder",
+      "to": "memory_hands",
+      "status": "active",
+      "evidence": "短名同 alias_002, 主脑可能用 'reminder' 而非 'memory_hands'.",
+      "added_by": "Cascade-bootstrap",
+      "added_at": "2026-05-24T20:30:00",
+      "activated_by": "Sir-implicit",
+      "activated_at": "2026-05-24T20:30:00",
+      "hit_count": 0,
+      "last_hit_at": null,
+      "version": 1,
+      "superseded_by": null
+    },
+    {
+      "id": "alias_004",
+      "kind": "organ",
+      "from": "todo",
+      "to": "memory_hands",
+      "status": "review",
+      "evidence": "推测 alias, 待 Sir 真测确认. 主脑可能用 'todo' 调 add_reminder.",
+      "added_by": "Cascade-bootstrap",
+      "added_at": "2026-05-24T20:30:00",
+      "activated_by": null,
+      "activated_at": null,
+      "hit_count": 0,
+      "last_hit_at": null,
+      "version": 1,
+      "superseded_by": null
+    }
+  ]
+}

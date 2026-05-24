@@ -1343,6 +1343,11 @@ class ConversationEventBus:
         'system_error_visible': 600,               # ErrorBus 主动暴露 module 错误
         # [β.5.43-E / 2026-05-20] Silence Intelligence — Sir thinking pause
         'sir_thinking_pause': 60,                  # 短 TTL (turn 内有效, 主脑 reply 后清)
+        # [Translator Phase 1 / 2026-05-24 20:30] L4.6 LLM ↔ schema 翻译层
+        'translator_aliased': 600,                 # 主脑下轮看自己被 alias 过 (10min)
+        'translator_rejected': 1800,               # 主脑反对/学习用 (30min)
+        'translator_schema_matched': 60,           # 仅 metric (1min)
+        'translator_proposed': 86400,              # L7 reflector propose, Sir 审 (1d)
     }
     # [β.5.0-A / 2026-05-19] Shared World Model 显著性默认表 (准则 6.5):
     # salience 是数据耦合维度, 给主脑判该事件多重要的 signal. publish 时可覆盖.
@@ -1398,6 +1403,11 @@ class ConversationEventBus:
         'system_error_visible': 0.75,      # 默认 moderate, severe 时 publish 用 0.92
         # [β.5.43-E / 2026-05-20] Silence Intel — 主脑可顺嘴 ack, 不强制
         'sir_thinking_pause': 0.55,
+        # [Translator Phase 1 / 2026-05-24 20:30]:
+        'translator_aliased': 0.55,        # 主脑可参考 (alias 过你下次精确点)
+        'translator_rejected': 0.75,       # 主脑学习重点 (失败需 self-correct)
+        'translator_schema_matched': 0.20, # 仅 metric (背景)
+        'translator_proposed': 0.45,       # Sir 看 review queue (中等)
     }
 
     # 🆕 [Reshape M1.2 / 2026-05-24] SWM critical event 持久化

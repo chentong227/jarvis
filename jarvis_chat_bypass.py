@@ -3655,6 +3655,35 @@ Spoken English:"""
                             else:
                                 _tool_results.append(f"❌ ui_control: 未知指令 {ctrl_cmd}")
                         else:
+                            # 🆕 [Translator Phase 1 / 2026-05-24 20:30] L4.6 翻译层 (FEATURE flag 灯火切)
+                            # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md
+                            # FEATURE_TRANSLATOR=1 启用 → 老 fuzzy 退路保留 (Phase 4 才物理删)
+                            _translator = getattr(self.jarvis, 'translator', None)
+                            _use_translator = (
+                                _translator is not None
+                                and os.environ.get('JARVIS_FEATURE_TRANSLATOR', '0') == '1'
+                            )
+                            if _use_translator:
+                                _t_result = _translator.translate(organ_name, command, params)
+                                if not _t_result.success:
+                                    # actionable msg → tool_result 让主脑 self-correct
+                                    _tool_results.append(f"❌ {_t_result.actionable_msg}")
+                                    # bg_log 让 Sir 在 terminal 看到
+                                    try:
+                                        from jarvis_utils import bg_log as _t_bg
+                                        _t_bg(
+                                            f"❌ [Translator] reject {organ_name}.{command} "
+                                            f"({_t_result.error_kind}): "
+                                            f"{(_t_result.actionable_msg or '')[:80]}"
+                                        )
+                                    except Exception:
+                                        pass
+                                    # 不进 hand 执行, 等下轮主脑 self-correct
+                                    continue
+                                # 成功 — 用翻译后的 organ/cmd/params (alias_kind != 'exact' 时 SWM 已 publish)
+                                organ_name = _t_result.organ_name
+                                command = _t_result.command
+                                params = _t_result.params
                             # 🆕 [P5-fix77-Q / 2026-05-23 19:11] BUG-Q: fuzzy alias resolution
                             # Sir 19:05 真测痛点: 主脑 emit organ='memory' 但 manifest 全名是
                             # 'memory_hands' → "❌ memory 未挂载". 根因: Phase 4a fix70 砍
