@@ -867,6 +867,24 @@ class VoiceListenThread(QThread):
         last_wave_print_at = 0.0
         wave_in_progress = False  # 当前是否在打印一段声波（决定收尾换行）
 
+        # 🆕 [BUG-2 中期治本 / 2026-05-24 18:50] 自适应 noise floor (准则 6 三维耦合)
+        # Sir 真意: Gaming 1.8x mult 仍可能被持续游戏背景音 (300-500 dB) 触发录音.
+        # 治本: 5s 滑窗算 idle frame percentile-30 = noise_floor, threshold 动态自适.
+        # threshold = max(BASE * gaming_mult, floor * 2.5, MIN_THRESHOLD).
+        # 安静办公室: floor=50 → threshold=125, Sir 说话仍触发.
+        # 游戏背景音: floor=300 → threshold=750, 持续游戏不触发, Sir 大声说话仍触发.
+        # 限频 SWM publish (30s + 50dB delta) 让主脑下轮看 evidence (准则 6 数据耦合).
+        NOISE_FLOOR_WINDOW_FRAMES = 78        # ~5s @ 64ms/frame
+        NOISE_FLOOR_PERCENTILE_INDEX = 0.30   # 30%
+        NOISE_FLOOR_THRESHOLD_MULT = 2.5      # threshold >= floor * 2.5
+        NOISE_FLOOR_MIN_THRESHOLD = 80        # floor low hard min
+        NOISE_FLOOR_MIN_FRAMES_BEFORE_USE = 30  # 30 frames warmup
+        noise_floor_buffer = collections.deque(maxlen=NOISE_FLOOR_WINDOW_FRAMES)
+        last_floor_publish_ts = 0.0
+        last_published_floor = 0.0
+        NOISE_FLOOR_PUBLISH_INTERVAL = 30.0   # 30s
+        NOISE_FLOOR_PUBLISH_DELTA = 50         # 50dB
+
         while True:
             try:
                 data = stream.read(1024, exception_on_overflow=False)
@@ -981,8 +999,53 @@ class VoiceListenThread(QThread):
                     _vol_mult, _sil_mult = PhysicalEnvironmentProbe.get_gaming_vad_adaptation()
                 except Exception:
                     _vol_mult, _sil_mult = 1.0, 1.0
-                VOLUME_THRESHOLD = int(VOLUME_THRESHOLD_BASE * _vol_mult)
+                VOLUME_THRESHOLD_GAMING = int(VOLUME_THRESHOLD_BASE * _vol_mult)
                 SILENCE_THRESHOLD_EXIT = int(SILENCE_THRESHOLD_EXIT_BASE * _vol_mult)
+                # [BUG-2 mid-term fix / 2026-05-24 18:50] adaptive noise floor.
+                # idle frame buffer 5s, percentile-30 = floor, threshold = max(gaming, floor*2.5, MIN).
+                # cheap: sorted 78 elements < 1ms each frame.
+                if not is_speaking and volume < VOLUME_THRESHOLD_GAMING:
+                    noise_floor_buffer.append(float(volume))
+                noise_floor = 0.0
+                if len(noise_floor_buffer) >= NOISE_FLOOR_MIN_FRAMES_BEFORE_USE:
+                    sorted_buf = sorted(noise_floor_buffer)
+                    floor_idx = int(len(sorted_buf) * NOISE_FLOOR_PERCENTILE_INDEX)
+                    noise_floor = sorted_buf[floor_idx]
+                adaptive_threshold = max(
+                    VOLUME_THRESHOLD_GAMING,
+                    int(noise_floor * NOISE_FLOOR_THRESHOLD_MULT),
+                    NOISE_FLOOR_MIN_THRESHOLD,
+                )
+                VOLUME_THRESHOLD = adaptive_threshold
+                # SWM publish rate-limited (30s + 50dB delta) - main brain sees evidence
+                _now_floor = time.time()
+                if (noise_floor > 0 and
+                        abs(noise_floor - last_published_floor) > NOISE_FLOOR_PUBLISH_DELTA and
+                        _now_floor - last_floor_publish_ts > NOISE_FLOOR_PUBLISH_INTERVAL):
+                    last_published_floor = noise_floor
+                    last_floor_publish_ts = _now_floor
+                    try:
+                        from jarvis_utils import get_event_bus as _vad_geb
+                        _bus = _vad_geb()
+                        if _bus is not None:
+                            _bus.publish(
+                                etype='vad_noise_floor_changed',
+                                description=(
+                                    f"VAD noise floor adapted: floor={int(noise_floor)} "
+                                    f"threshold={int(adaptive_threshold)} "
+                                    f"gaming_mult={_vol_mult:.2f}"
+                                ),
+                                source='VoiceListenThread.adaptive_noise_floor',
+                                salience=0.55,
+                                metadata={
+                                    'noise_floor': int(noise_floor),
+                                    'threshold': int(adaptive_threshold),
+                                    'gaming_mult': float(_vol_mult),
+                                    'window_frames': len(noise_floor_buffer),
+                                },
+                            )
+                    except Exception:
+                        pass
                 if volume > VOLUME_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
