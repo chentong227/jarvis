@@ -373,6 +373,43 @@ class CommitmentWatcher(threading.Thread):
                 pass
         return added
 
+    def _dual_mark_fired(self, c: dict) -> None:
+        """[Reshape M4.5.3 / 2026-05-24] daemon 触发 nudge 后, 同步标 SQLite + PromiseLog.
+
+        SQLite mark_commitment_nudged 是老路径 (避免重启重发). PromiseLog 加
+        evidence_only (kind=cw_nudge_fired) 让 trace 看 daemon 真触发了哪条.
+        Sir 真用一段后, 看 PromiseLog evidence 充足 → M5+ 可停 SQLite mark
+        (cleanup checklist #3 兑现).
+
+        失败静默不破老流 (准则 1 高效). 注: 不调 mark_fulfilled — fired 不等于
+        Sir 完成, 完成 evidence 主脑下轮 fast_call.complete 才填.
+        """
+        # 1. 老 SQLite mark (兼容老 daemon load_active_commitments 过滤)
+        try:
+            db_id = c.get('db_id', 0)
+            if db_id and db_id > 0:
+                hippo = self._get_hippo()
+                if hippo is not None:
+                    hippo.mark_commitment_nudged(db_id)
+        except Exception:
+            pass
+        # 2. 新 PromiseLog evidence (M5+ 真停老路径前要先 dual-write)
+        try:
+            _pid = c.get('promise_id', '') or ''
+            if _pid:
+                from jarvis_promise_log import get_default_log
+                _plog = get_default_log()
+                _plog.add_evidence_only(
+                    promise_id=_pid,
+                    evidence_kind='cw_nudge_fired',
+                    evidence_what=(
+                        f"CW daemon fired nudge: {c.get('description','')[:80]} "
+                        f"@ deadline_ts={c.get('deadline_ts',0):.0f}"
+                    ),
+                )
+        except Exception:
+            pass
+
     def _try_parse_deadline_str(self, deadline_str: str) -> float:
         """parse 'HH:MM' / 'YYYY-MM-DD HH:MM:SS' → epoch ts. 失败返 0.0."""
         if not deadline_str:
@@ -1383,14 +1420,8 @@ class CommitmentWatcher(threading.Thread):
                                         f"'{c['description'][:50]}' by {_pred.describe()[:80]}")
                                 except Exception:
                                     pass
-                                try:
-                                    db_id = c.get('db_id', 0)
-                                    if db_id and db_id > 0:
-                                        hippo = self._get_hippo()
-                                        if hippo is not None:
-                                            hippo.mark_commitment_nudged(db_id)
-                                except Exception:
-                                    pass
+                                # [M4.5.3] dual-mark SQLite + PromiseLog evidence
+                                self._dual_mark_fired(c)
                                 self._dispatch_commitment_nudge(c)
                                 continue
                             # 未 fire: ttl 检查 (默认 24h)
@@ -1420,14 +1451,8 @@ class CommitmentWatcher(threading.Thread):
                                 if _pre_verdict == 'fulfilled':
                                     # Sir 真履行了, mark nudged=True 不催 + 走 fulfillment 反馈
                                     c['nudged'] = True
-                                    try:
-                                        db_id = c.get('db_id', 0)
-                                        if db_id and db_id > 0:
-                                            hippo = self._get_hippo()
-                                            if hippo is not None:
-                                                hippo.mark_commitment_nudged(db_id)
-                                    except Exception:
-                                        pass
+                                    # [M4.5.3] dual-mark SQLite + PromiseLog evidence
+                                    self._dual_mark_fired(c)
                                     if c.get('concern_link'):
                                         self._on_fulfillment(c, _pre_verdict)
                                     c['fulfillment_checked'] = True
@@ -1453,14 +1478,8 @@ class CommitmentWatcher(threading.Thread):
                                 if idle_ms < 120000:
                                     c['nudged'] = True
                                     # [P0+18-e.3] 同步到 SQLite，重启后避免再 nudge
-                                    try:
-                                        db_id = c.get('db_id', 0)
-                                        if db_id and db_id > 0:
-                                            hippo = self._get_hippo()
-                                            if hippo is not None:
-                                                hippo.mark_commitment_nudged(db_id)
-                                    except Exception:
-                                        pass
+                                    # [M4.5.3] dual-mark SQLite + PromiseLog evidence
+                                    self._dual_mark_fired(c)
                                     self._dispatch_commitment_nudge(c)
                             except:
                                 pass
