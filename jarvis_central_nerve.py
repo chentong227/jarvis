@@ -96,22 +96,9 @@ from jarvis_vocal_cord import VocalCord  # [P0+19-final fix / 2026-05-16]
 from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401
 
-# [P0+19-final fix / 2026-05-16] 主脑用到的 l1/l3/l5 / utils / skill_registry 类
-# 🆕 [Reshape M6.5.2 / 2026-05-24] 3-brain 即将 git mv 到 _legacy/3_brain_attempt/.
-# Sir Q2 决议放弃 3-brain. 包 try/except 让 file mv 后 import 失败也不破主链路.
-# CentralNerve.__init__ 也已加 try/except (M6.5.1) 实例化 fallback None.
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    RightBrain = None
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    LeftBrain = None
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
-except Exception:
-    ReflectionBrain = None
+# 🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] 3-brain 顶部 None 声明已删.
+# 主对话 100% 走 chat_bypass.stream_chat 单脑路径.
+# 老代码 archive: _legacy/3_brain_attempt/{l1,l3,l5}_*.py + central_nerve_run_v1.py.
 from jarvis_utils import (  # noqa: F401
     ConversationEventBus, JarvisState, PlanLedger, WorkingMemoryFeed,
     SessionDigest, ToneSelector, AntiCommonPhraseTracker,
@@ -161,80 +148,15 @@ Your core traits are IMMUTABLE and must be expressed in EVERY response:
 
 [INTEGRITY — ABSOLUTE]:
 - INTEGRITY OVER OBEDIENCE. A butler who fakes completion is no butler at all.
-- You NEVER claim to have performed an action you did not actually execute via a <FAST_CALL> tool in the current turn.
-- The following phrases are FORBIDDEN unless you have just issued a <FAST_CALL> for that exact action in this turn:
-  "I have adjusted...", "I've silenced...", "I've changed...", "I have set...", "I've opened...", "I've closed...",
-  "Settings have been updated", "Notifications are now off", "Sensitivity adjusted",
-  "已为您调整", "我已经关闭", "已经...好了", "已调整", "已关闭", "已设置".
-- 🩹 [β.2.8.13 — Sir 准则 5 future-action honesty]: 同样, 将来时 / shall / will 类
-  ACTION CLAIM 也禁止 if 你没真接口能做. 反例 (Sir 00:56 真实截图):
-  "I shall dim the displays and remain on standby" — Jarvis 没真 dim, 没接口能 dim.
-  正确说法 (任一):
-    (a) 真有接口 → <FAST_CALL> 调它再说 "I've dimmed..."
-    (b) 无接口 → "I don't have the means to dim the displays directly, Sir. Sleep well."
-    (c) 仅"remain on standby" 部分可说 (这是 Jarvis 默认行为, 真做)
-  FORBIDDEN: "I shall dim/mute/lock/close/launch X" 当 X 不在 AVAILABLE SKILLS 时.
-- 🩹 [β.5.21-B / 2026-05-20] FORBIDDEN list 扩展到读取/查阅类动词 — Sir 01:07 实测:
-  Sir said "你可以阅读一下你的架构" → Jarvis replied "I shall review the alignment
-  module and the architectural files to provide a more refined summary" — but Jarvis
-  emitted NO <FAST_CALL>, opened NO file, returned NO refined summary. 言行不一.
-  RULE: 当你说 future-tense 涉及任何"读取/检查/查阅"动作的句子, MUST 满足任一:
-    (a) 在 SAME response 立刻 emit <FAST_CALL> (text_hands.read / file_operator.read /
-        memory_hands.search_memory / hippocampus.* 等), THEN 你的 EN 句子用 past tense
-        "I've reviewed X" / "I've pulled X" 才能说.
-    (b) 改口为 "Allow me to look that up" + IMMEDIATELY emit <FAST_CALL> 在同一 turn.
-    (c) 真不打算做 → "I don't have that file open right now, Sir" / "Care to point me
-        to which file you mean by 'architecture'?" (无 future-tense action claim).
-  FORBIDDEN 关键词 (无伴随 <FAST_CALL> 时禁说):
-    EN: "I shall/will/I'll {review, check, examine, inspect, look at, look into,
-         read, scan, take a look, pull up, dig into, browse, go through,
-         investigate, audit, peek at, glance at} X"
-    ZH: "我会{查阅,阅读,查看,检查,审视,看一看,看一下,翻一下,翻阅,过一遍,
-              核对,审计,过目,浏览,扫一眼} X" (without <FAST_CALL>)
-  正例 (正确):
-    Sir: "看看你的架构" →
-    Jarvis: "Let me pull the architecture overview, Sir." <FAST_CALL>
-            text_hands.read({"path": "AGENTS.md"})</FAST_CALL> [tool result] →
-            "I've reviewed AGENTS.md — the system runs ..."
-  反例 (FORBIDDEN, Sir 01:07 真实截图):
-    "I shall review the alignment module and the architectural files to provide a
-     more refined summary." (无 <FAST_CALL>, 没真读, 没下文 — 这是空头承诺.)
-- 🩹 [β.5.21-C / 2026-05-20] FORBIDDEN: 异步/后台/Sir 睡觉/Sir 离开期间继续做的承诺 —
-  Sir 01:12 实测痛点: Sir 说 "我去睡觉了, 明天聊吧" → Jarvis "I shall continue my
-  analysis of the architectural files while you rest" / "我会继续分析架构文件" —
-  This is an ABSOLUTE LIE. Jarvis 没有任何后台异步分析任务机制. There is no daemon,
-  no scheduled job, no background worker that will "continue analysis" when Sir
-  is asleep. Tools only execute synchronously inside Sir's turn via <FAST_CALL>.
-  Saying "I'll keep working / I'll continue X / I'll monitor X" when Sir is away
-  is FABRICATING capability Jarvis does not have.
-  ABSOLUTE FORBIDDEN PATTERNS:
-    EN: "I shall/will continue [my X]"
-        "I'll keep [working/analyzing/reviewing/searching/monitoring/watching/
-                   looking into/digging into/refining/improving] X"
-        "while you [rest/sleep/are away/take a break]"
-        "in the background / behind the scenes / in your absence"
-        "by the time you wake up / when you return"
-        "ready for you tomorrow / morning"
-    ZH: "我会继续{分析,处理,查阅,研究,监控,留意,优化,完善,跟进}X"
-        "在您{休息,睡觉,离开,不在}期间"
-        "等您{醒来,回来}时"
-        "明早就/明天就为您准备好"
-  CORRECT alternative when Sir says goodnight / 拜拜 / leaves:
-    (a) Acknowledge rest, DO NOT promise future work:
-        "Sleep well, Sir. I'll be here when you wake."
-        "请好生休息, 先生. 我就在这等您."
-    (b) If Sir explicitly asked Jarvis to do work overnight, decline with honesty:
-        "I don't run analyses in the background, Sir. I work only when you
-         summon me. Want me to do it now before you sleep?"
-        "我没有后台运行的能力, 先生. 您不在时我处于待命. 要不现在就做?"
-  Why this is critical: Sir reads ZH live; if Jarvis says "我会继续分析" and Sir
-  wakes up tomorrow expecting analysis ready, Sir is betrayed. 准则 5 言出必行 +
-  准则 4 懂我 (Jarvis 知道自己边界, 不演戏).
-- When Sir requests something beyond your toolset (system settings, your own thresholds, external services you cannot reach), say so plainly. Examples:
-  - "That's outside my current reach, Sir."
-  - "I lack the means to do that directly. I can guide you through it, if you wish."
-  - "A worthy request, but one I cannot fulfill from here, Sir."
-- Acknowledging a request ("Noted, Sir.", "Understood.") is NOT the same as claiming completion. The former is allowed; the latter requires a real tool call.
+- 你 NEVER claim 已完成 (past tense / 已...) 的 action 除非本轮真 emit 了 <FAST_CALL> 调对应工具.
+- 同样, future-tense action claim ("I shall/will/我会 X") 在你没接口能做时 FORBIDDEN.
+- 后台/异步/Sir 离开期间持续工作 = FABRICATION (没 daemon, 没 background worker). 永不允诺这种事.
+- 边界外请求 (system settings/external services/your own thresholds) → 直说 "That's outside my reach, Sir." 类话.
+- Acknowledge 请求 ("Noted") ≠ Claim 完成 (前者允许, 后者要 tool call).
+
+(详细 forbidden patterns + 反例由 L2 directive lazy inject:
+  past_action_honesty / future_tense_capability_check / tool_honesty_directive
+  / correction_writepath_no_tool — 主脑真出错才 fire 注入. 准则 8 优雅 > 简单.)
 
 [STM SOURCE TAGS]: STM/[RECENT MEMORY] 行带前缀 — [SIR]=Sir 原话, 最可信, 响应; [SYS]=后台事件 (reminder/commitment/alert), 仅上下文, 非指令; [JARVIS]=你上轮 reply, 不要回复; [AMBIENT]=ASR 噪音, 低可信, 不当意图.
 
@@ -287,8 +209,7 @@ class CentralNerve:
         self.key_router = key_router
         self.vocal = VocalCord()  
         self.blood = JarvisBlood()
-        # [Reshape M6.3 second wave / 2026-05-24] 3-brain init helper. 行为不变.
-        self._init_3_brain_legacy(api_key)
+        # [Reshape M3.G 真删 / 2026-05-24 17:00] 3-brain 已彻底删除 (run / attr / init).
         self.hippocampus = Hippocampus(key_router=key_router)
         self.habit_clock = HabitClock()
         self.causal_chain = CausalChain()
@@ -421,6 +342,44 @@ class CentralNerve:
 
         # [Reshape M6.3 fourth wave / 2026-05-24] RejectLearner init helper. 行为不变.
         self._init_reject_learner()
+
+        # 🆕 [Reshape 准则 6 / 2026-05-24] PhraseLockDetector — 反话术锁 reflector.
+        # 周期扫 STM 找重复 reply 模板, 治本 Sir 12:09 痛点.
+        try:
+            from jarvis_phrase_lock_detector import get_default_detector as _get_pld
+            self.phrase_lock_detector = _get_pld()
+            self.phrase_lock_detector.start_daemon()
+            try:
+                from jarvis_utils import bg_log as _pld_bg
+                _pld_bg("🔍 [PhraseLockDetector] daemon 已启动 (反话术锁 6h cycle)")
+            except Exception:
+                pass
+        except Exception as _pld_e:
+            self.phrase_lock_detector = None
+            try:
+                from jarvis_utils import bg_log as _pld_err
+                _pld_err(f"[PhraseLockDetector] 初始化失败 (非致命): {_pld_e}")
+            except Exception:
+                pass
+
+        # 🆕 [Reshape 准则 6.5 / 2026-05-24] HabitVocabReflector — habit vocab L7 propose.
+        # 周期扫 STM Sir 自报 habit (e.g. '我跑了 5 公里'), propose 新 vocab 进 review.
+        try:
+            from jarvis_habit_vocab_reflector import get_default_reflector as _get_hvr
+            self.habit_vocab_reflector = _get_hvr()
+            self.habit_vocab_reflector.start_daemon()
+            try:
+                from jarvis_utils import bg_log as _hvr_bg
+                _hvr_bg("🌱 [HabitVocabReflector] daemon 已启动 (habit vocab L7 12h cycle)")
+            except Exception:
+                pass
+        except Exception as _hvr_e:
+            self.habit_vocab_reflector = None
+            try:
+                from jarvis_utils import bg_log as _hvr_err
+                _hvr_err(f"[HabitVocabReflector] 初始化失败 (非致命): {_hvr_e}")
+            except Exception:
+                pass
 
         # [Reshape M6.3 fourth wave / 2026-05-24] STMSummarizer init helper. 行为不变.
         self._init_stm_summarizer()
@@ -1385,43 +1344,9 @@ User: {user_input}
 {system_alert_text}
 """
 
-    def _init_3_brain_legacy(self, api_key: str) -> None:
-        """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — 3-brain try/except.
-
-        🆕 [M6.5.1] 3-brain (l1_right_brain / l3_left_brain / l5_reflection_brain)
-        彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑路径. 此处 try/except
-        让 init 仍能完成 (fallback None). M6.5.2 已 git mv 这 3 file 到
-        _legacy/3_brain_attempt/, M6.5.3 stub raise + chat_bypass fallback.
-
-        看 SWM `deprecated_3_brain_invoked` event = 0 1 周后, 真删 run() + 3 self.X_brain.
-        """
-        self.right_brain = None
-        self.left_brain = None
-        self.l5_brain = None
-        try:
-            self.right_brain = RightBrain(api_key)
-        except Exception as _rb_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg
-                _3b_bg(f"⚠️ [3-brain/Init] RightBrain 实例化失败 (legacy mv?): {type(_rb_e).__name__}: {str(_rb_e)[:80]}")
-            except Exception:
-                pass
-        try:
-            self.left_brain = LeftBrain()
-        except Exception as _lb_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg2
-                _3b_bg2(f"⚠️ [3-brain/Init] LeftBrain 实例化失败 (legacy mv?): {type(_lb_e).__name__}: {str(_lb_e)[:80]}")
-            except Exception:
-                pass
-        try:
-            self.l5_brain = ReflectionBrain(api_key)
-        except Exception as _l5_e:
-            try:
-                from jarvis_utils import bg_log as _3b_bg3
-                _3b_bg3(f"⚠️ [3-brain/Init] ReflectionBrain 实例化失败 (legacy mv?): {type(_l5_e).__name__}: {str(_l5_e)[:80]}")
-            except Exception:
-                pass
+    # 🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] _init_3_brain_legacy + 3 attr 删.
+    # SWM deprecated_3_brain_invoked event = 0 1 周 → 真删. 老测试用例已迁到验
+    # AttributeError (test_m6_3_second_wave.py / test_m6_5_3_run_deprecation.py).
 
     def _init_stm_persist(self) -> None:
         """[Reshape M6.3 second wave / 2026-05-24] 抽自 __init__ — STM 持久化.
@@ -3627,7 +3552,10 @@ User: {user_input}
             if hasattr(self, 'status_ledger'):
                 # 🆕 [P5-fix70 Phase 4a / 2026-05-23 17:01] days=3 → days=2 缩 ~30%
                 # life_log 是历史日志, 2 天足够主脑做 callback. 节省 ~700 chars.
-                life_log_context = self.status_ledger.get_recent_daily_summaries(days=2)
+                # 🆕 [Reshape M7 Phase 4c / 2026-05-24] narrative 截 200 char/day,
+                # 主脑只需要日期 + 主题 + tag 做 callback, 不需要长篇日志. 减 ~500 chars.
+                life_log_context = self.status_ledger.get_recent_daily_summaries(
+                    days=2, max_chars_per_day=200)
         except:
             pass
 
@@ -4672,418 +4600,19 @@ User: {new_cmd}
         scan_dir("l2_eyes_pool", "Eyes", self.eye_registry, self.eye_manifests)
         scan_dir("l4_hands_pool", "Hands", self.hand_registry, self.hand_manifests)
 
-    def run(self, voice_input: str, max_loops: int = 8, memory_protocol=None):
-        """🆕 [Reshape M6.5.3 / 2026-05-24] 3-brain task flow deprecated.
-
-        Sir Q2 决议: 3-brain (RightBrain/LeftBrain/L5Brain) 彻底放弃, 主对话 100%
-        走 jarvis_chat_bypass.stream_chat 单脑路径. 此 method 改为 stub:
-          1. publish SWM event `deprecated_3_brain_invoked` (audit 用)
-          2. raise RuntimeError → 让 existing except block 接管
-          3. except 调 chat_bypass.stream_chat → 主脑 fallback 道歉 + 安抚 Sir
-
-        老 364 行 task flow archive: `_legacy/3_brain_attempt/central_nerve_run_v1.py`
-        老 3 brain 文件: `_legacy/3_brain_attempt/{l1,l3,l5}_*.py`
-
-        worker.trigger_routing() (line 5073) 仍调此 method (老路径不动), 但
-        deprecation warn 已加 (M3.C-trace). 看 SWM event = 0 1 周后, M7 真删此 method
-        + worker.trigger_routing 简化.
-        """
-        self.is_interrupted = False
-        # [R7-α/B1] reason='task_started'：深度物理任务开始
-        if self.state is not None:
-            self.state.set_active_task(True, reason='task_started_deprecated', source='CentralNerve.run')
-
-        try:
-            # 🆕 publish SWM event 让 audit/lineage 看见 3-brain invoked
-            try:
-                from jarvis_utils import get_event_bus, bg_log as _3b_bg
-                _3b_bg(
-                    f"⚠️ [3-brain DEPRECATED M6.5.3] CentralNerve.run() invoked with: "
-                    f"'{voice_input[:80]}' — main-brain chat_bypass fallback engaged."
-                )
-                _bus = get_event_bus()
-                if _bus is not None:
-                    _bus.publish(
-                        etype='deprecated_3_brain_invoked',
-                        description=(
-                            f'CentralNerve.run() called for voice_input={voice_input[:80]} '
-                            f'— 3-brain stub raises, chat_bypass fallback engages'
-                        ),
-                        source='CentralNerve.run',
-                        salience=0.7,
-                        metadata={
-                            'milestone': 'M6.5.3',
-                            'voice_input': voice_input[:200],
-                            'archive': '_legacy/3_brain_attempt/central_nerve_run_v1.py',
-                        },
-                    )
-            except Exception:
-                pass
-
-            # 🆕 raise → existing except block 接管 chat_bypass.stream_chat fallback
-            raise RuntimeError(
-                "3-brain (RightBrain/LeftBrain/L5Brain) deprecated since M6.5.3 — "
-                "main-brain via chat_bypass.stream_chat handles everything. "
-                "Old 364-line task flow archived in "
-                "_legacy/3_brain_attempt/central_nerve_run_v1.py."
-            )
-
-            # 🚫 unreachable code below (M6.5.3 deprecation)
-            self._hot_reload_organs()
-            full_task_history = []
-            stm_text = "\n".join([f"[{m['time']}] 历史轨迹: {m['jarvis']}" for m in self.short_term_memory])
-            
-            organ_whitepaper_full = "\n".join([f"- {name}: {info['description']}" for name, info in self.hand_manifests.items()])
-            
-            self._set_state("THINKING") 
-            plan_res = self.right_brain.set_strategic_plan(voice_input, stm_text, organ_whitepaper_full)
-            # ...后面代码保持你原样不动...
-            tasks_queue = plan_res.get('tasks',[])
-            if not tasks_queue:
-                if 'macro_goal' in plan_res: tasks_queue = [plan_res]
-                else: 
-                    print("[Route Failed] Right brain failed to generate valid task flow")
-                    # 这里去掉了 _set_state("IDLE")，统一交给 finally 处理
-                    return
-
-            print(f"[TacticalCenter] 宏观意图已分解为 {len(tasks_queue)} 个串行阶段")
-            print("═"*65)
-
-            phase_counter = 1
-            self._save_task_snapshot(tasks_queue, phase_counter)
-
-            while tasks_queue:
-                task = tasks_queue.pop(0)  
-                
-                # 👇 核心修复：彻底换血，防止上一个阶段的感知数据污染新阶段
-                from jarvis_blood import JarvisBlood
-                self.blood = JarvisBlood() 
-                self.blood.user_voice_input = voice_input
-                self.blood.memory_protocol = memory_protocol or {} # 👈 将 DNA 注入新阶段的血液中
-                
-                if self.left_brain: self.left_brain.clear_working_memory()
-                
-                # β.5.29: source 分嵌
-                from jarvis_utils import format_stm_for_prompt as _fmt_stm_full
-                current_stm = _fmt_stm_full(self.short_term_memory, take_last=999, max_chars=10000, include_time=True)
-                self.blood.recent_context = current_stm 
-
-                self.blood.macro_goal = task.get('macro_goal', '未获取到目标')
-                req_eyes = task.get('required_eyes', 'system_eyes')
-                req_hands = task.get('required_hands', 'system_hands')
-                model_tier = task.get('left_brain_model', 'flash')
-
-                print(f"\n" + "-"*65)
-                print(f"🚀[Exec Phase {phase_counter}] Goal -> {self.blood.macro_goal}")
-                print(f"🛡️  [Organ Mount] Vision={req_eyes} | Muscle={req_hands} | Compute={model_tier.upper()}")
-                print("-"*65)
-                
-                self._hot_reload_organs()
-                
-                if "web" in req_eyes: self.env = "WEB"
-                elif "memory" in req_eyes: self.env = "MEMORY"
-                else: self.env = "DESKTOP"
-
-                try:
-                    self.eyes = self.eye_registry[req_eyes]()
-                    if req_hands == "memory_hands": self.hands = self.hand_registry[req_hands](self.gemini_key) 
-                    else: self.hands = self.hand_registry[req_hands]()
-                    self.left_brain.inject_capabilities(self.hands.get_instruction_dict())
-                except KeyError as e:
-                    try:
-                        from jarvis_utils import bg_log as _bg
-                        _bg(f"❌[Mount Failed] Organ not ready: {e}")
-                    except Exception:
-                        pass
-                    break
-
-                loop_count = 0
-                consecutive_failures = 0
-                escalated = False  
-
-                while not self.blood.is_task_complete and not self.blood.is_stuck and not escalated:
-                    
-                    # 📡 核心手术：天启探针 (Divine Probe)
-                    if not self.interruption_queue.empty():
-                        new_cmd = self.interruption_queue.get()
-                        print(f"\n📡 [Oracle Probe] New voice captured during task execution: '{new_cmd}'")
-                        self._set_state("THINKING")
-                        
-                        # 💡 第三层发声引擎：意图分类 + 闲聊/战术发声 + 变轨反馈 一波流！
-                        self._process_concurrent_interruption(new_cmd)
-
-                    loop_count += 1
-                    if loop_count > max_loops:
-                        print("⚠️ [System Guard] Phase timeout, forced fuse。")
-                        break
-                        
-                    self.blood.current_perception = self.eyes.scan(self.hands)
-                    
-                    if consecutive_failures >= 3:
-                        self._set_state("CRITICAL") 
-                        print(f"\n🚨 [System Alert] Deadlock triggered L5 inquiry...")
-                        available_tools = self.hands.get_instruction_dict() if self.hands else "无"
-                        advice = self.l5_brain.analyze_deadlock(self.blood, available_tools)
-                        self.blood.reflection_advice = advice
-                        print(f"👁️‍🗨️ [L5-Oracle] {advice}\n")
-                        consecutive_failures = 0
-                    
-                    current_tick_model = model_tier 
-                    throttle_reason = ""
-                    
-                    if not self.blood.current_perception.interactable_elements:
-                        current_tick_model = "flash"; throttle_reason = "(虚无环境)"
-                    elif self.env == "MEMORY" and not self.blood.history:
-                        current_tick_model = "flash"; throttle_reason = "(记忆初动)"
-                    elif self.blood.history and self.blood.history[-1].data:
-                        suggested = self.blood.history[-1].data.get("suggested_model")
-                        if suggested: current_tick_model = suggested; throttle_reason = "(底层建议)"
-                    if getattr(self.blood, 'reflection_advice', ""):
-                        current_tick_model = "pro"; throttle_reason = "(L5接管)"
-
-                    print(f"\n" + "-"*65)
-                    print(f"⏱️[Tick {loop_count:02d}] Compute: {current_tick_model.upper()} {throttle_reason}")
-                    
-                    self._set_state("THINKING") 
-                    actions, thought = self.left_brain.generate_actions(self.blood, current_tick_model)
-                    self.blood.next_actions = actions
-                    self.blood.thought_process = thought
-                    print(f" ├─ 💡 [Thought] {thought.replace(chr(10), ' ')}")
-                    
-                    # 👇 核心修改：非必要不开口 (Smart Vocal Valve)
-                    if hasattr(self, 'chat_bypass'):
-                        # 1. 只有当陷入僵局（滴答数达到4次）时，才开口安抚人类
-                        if loop_count == 4: 
-                            self.chat_bypass.translate_queue.put("I am encountering a slight structural complexity, navigating it now, Sir.")
-                        
-                        # 2. 只有当 L5 天启强制介入时，才开口汇报变轨
-                        if getattr(self.blood, 'reflection_advice', ""):
-                            self.chat_bypass.translate_queue.put("Adjusting strategy based on core reflection, Sir. Re-evaluating immediate environment.")
-                    
-                    for action in self.blood.next_actions:
-                        if action.command == "escalate_to_l1":
-                            reason = action.params.get("reason", "遇到了未知的物理阻碍")
-                            remainder = action.params.get("remainder_goal", "未知的后续目标")
-                            
-                            print(f" └─ 🔄 [Dynamic Reroute] 左脑请求帮助: {reason}。放弃当前路径，重路由至 L1！\n")
-                            
-                            self._append_stm("左脑系统求援", f"遭遇阻碍：{reason}。原计划中止，等待 L1 重新洗牌。", importance=0.7)
-                            
-                            replan_input = f"在执行过程中遇到了阻碍：'{reason}'。请你根据这个报错，重新挂载能够解决该阻碍的器官（如侦察兵 system_hands），并规划后续阶段以完成最终目标：'{remainder}'。"
-                            organ_wp = "\n".join([f"- {name}: {info['description']}" for name, info in self.hand_manifests.items()])
-                            # β.5.29: source 分嵌
-                            from jarvis_utils import format_stm_for_prompt as _fmt_stm_replan
-                            current_stm = _fmt_stm_replan(self.short_term_memory, take_last=999, max_chars=10000, include_time=True)
-                            
-                            print(f"📡 [Call L1 Router] 动态生成新战术队列...")
-                            self._set_state("THINKING") 
-                            new_plan = self.right_brain.set_strategic_plan(replan_input, current_stm, organ_wp)
-                            
-                            tasks_queue = new_plan.get('tasks',[])
-                            escalated = True
-                            self._save_task_snapshot(tasks_queue, phase_counter)
-                            break
-                        
-                        elif action.command == "finish":
-                            self.blood.is_task_complete = True
-                            full_task_history.extend(self.blood.history)
-                            # [P0+18-a.14 / 2026-05-15] 修 BUG #9: 默认值 '任务完成' (中文)
-                            # 会被 TTS 念出 → 改英文兜底。LLM 若传 message 字段则用 LLM 的，否则英文兜底。
-                            final_msg = action.params.get('message', 'Task complete, Sir.')
-                            should_seal = action.params.get('seal_memory', True) 
-                            
-                            # 👇 核心修改：区分总任务完毕与阶段完毕
-                            if not tasks_queue:  # 只有在这是整个队列的最后一个阶段时才发声
-                                if hasattr(self, 'chat_bypass'):
-                                    self.chat_bypass.translate_queue.put(f"[Task Completed successfully]: {final_msg}")
-                                else:
-                                    self._set_state("EXECUTING")
-                                    self.vocal.say(final_msg)
-                                    self._set_state("THINKING")
-                                print(f" └─ 🏁 [Task Complete] {final_msg.replace(chr(10), ' ')}\n")
-                            else:
-                                # 还有后续阶段，保持物理静音，只打日志
-                                print(f" └─ 🔄 [Phase {phase_counter} Done] {final_msg.replace(chr(10), ' ')} (silently entering next phase...)\n")
-                                
-                            self._append_stm(f"阶段 {phase_counter} 汇报", final_msg, importance=0.6)
-                            
-                            if not tasks_queue: 
-                                if getattr(self.hands, 'requires_memory_seal', True) and should_seal:
-                                    print(f"💾 [Memory Seal] Global task complete, sealing full chain...")
-                                    self.hippocampus.seal_memory(
-                                        self.gemini_key, self.env, voice_input, 
-                                        self.blood.macro_goal, final_msg, 
-                                        full_task_history,
-                                        None
-                                    )
-                                self._clear_task_snapshot()
-                            break
-
-                        elif self.is_interrupted:
-                            print("🛑 [CentralNerve] 物理熔断信号已接收，强制终止当前链。")
-                            self.is_interrupted = False 
-                            self._set_state("IDLE")
-                            return
-                        
-                        elif action.command == "ask_user":
-                            # [P0+18-a.14 / 2026-05-15] 修 BUG #9: 默认值中文 → 英文兜底
-                            question = action.params.get("question", "Sir, I've hit a snag and need your input.")
-                            print(f"\n   🛑 [System Paused] Jarvis 正在请求您的帮助...")
-                            print(f"   🙋‍♂️ Jarvis: {question}")
-                            
-                            try:
-                                if hasattr(self, 'chat_bypass'):
-                                    self.chat_bypass.audio_queue.put((question, {}))
-                                    self.chat_bypass.audio_queue.join()  
-                                    self.chat_bypass.wave_queue.join()   
-                                else:
-                                    self._set_state("EXECUTING")
-                                    self.vocal.say(question)
-                            except Exception as e:
-                                print(f"   (语音播报异常: {e})")
-                                
-                            self._set_state("RECOGNIZING")
-                            print("   👂 正在聆听您的指示...")
-                            
-                            user_reply = ""
-                            try:
-                                import speech_recognition as sr
-                                r = sr.Recognizer()
-                                with sr.Microphone() as source:
-                                    r.adjust_for_ambient_noise(source, duration=0.5)
-                                    audio = r.listen(source, timeout=15, phrase_time_limit=20)
-                                    user_reply = r.recognize_google(audio, language="zh-CN")
-                                    print(f"   🗣️ Your reply: {user_reply}")
-                            except sr.WaitTimeoutError:
-                                pass
-                            except sr.UnknownValueError:
-                                pass
-                            except Exception as e:
-                                if "listening timed out" not in str(e):
-                                    try:
-                                        from jarvis_utils import bg_log as _bg
-                                        _bg(f"⚠️[Audio Nerve Error]: {e}")
-                                    except Exception:
-                                        pass
-                                time.sleep(1)
-                                
-                            if not user_reply:
-                                self._set_state("IDLE")
-                                user_reply = input("   ⌨️ (语音未识别，请打字回复): ")
-                                
-                            self._set_state("THINKING")
-                            result = ExecutionResult(
-                                success=True, 
-                                msg=f"已获得人类明确答复: {user_reply}。请立即基于此答复调整战术！", 
-                                data={"suggested_model": "pro"}
-                            )
-                            self.blood.add_history(result)
-                            continue 
-                        
-                        high_risk_commands =["delete_file", "delete_memory", "run_python_code", "execute_cli"]
-                        
-                        if action.command in high_risk_commands:
-                            audit_result = self.l5_brain.audit_high_risk_action(self.blood, action)
-                            if not audit_result.get("is_approved", False):
-                                reason = audit_result.get("reason", "未知风险")
-                                print(f" 🚫[L5 Rejected] {reason}")
-                                self.blood.add_history(ExecutionResult(success=False, msg=f"🚨[L5 拦截]: {reason}"))
-                                consecutive_failures += 1
-                                continue 
-                            else:
-                                print(f" ✅[L5 Approved]")
-
-                        print(f" ├─ ⚙️ [Exec] {action.command} | Params: {action.params}")
-                        # [轴3-L0.4 / 2026-05-15] SkillRegistry 运行时 KPI 喂回
-                        # 任何 KPI 失败都被吞，绝不阻塞主流程。
-                        _skill_cmd_for_kpi = f"{req_hands}.{action.command}"
-                        _skill_kpi_start = time.time()
-                        result = self.hands.execute(action)
-                        try:
-                            from jarvis_skill_registry import safe_record
-                            _kpi_lat = int((time.time() - _skill_kpi_start) * 1000)
-                            _kpi_err = (str(getattr(result, 'msg', ''))[:200]
-                                        if not getattr(result, 'success', True) else None)
-                            safe_record(_skill_cmd_for_kpi,
-                                        success=bool(getattr(result, 'success', True)),
-                                        latency_ms=_kpi_lat,
-                                        error=_kpi_err)
-                        except Exception:
-                            pass
-                        self.blood.add_history(result) 
-                        self._set_state("THINKING")
-                        self.blood.add_history(result)
-                        
-                        res_status = "成功" if result.success else "失败"
-                        print(f" └─ ⚡ [{res_status}] {result.msg.replace(chr(10), ' ')[:117]}")
-                        
-                        if not result.success: 
-                            consecutive_failures += 1
-                            try:
-                                from jarvis_utils import bg_log as _bg
-                                _bg("🛑 [Combo Fuse] 动作失败，终止组合，重新观察环境...")
-                            except Exception:
-                                pass
-                            break 
-                        else: 
-                            consecutive_failures = 0
-                    
-                    time.sleep(1.5)
-                
-                phase_counter += 1
-
-        # 👇 终极网络熔断与物理死锁防护 (结合活人感恢复)
-        # 👇 终极网络熔断与物理死锁防护 (结合活人感恢复)
-        except Exception as e:
-            print(f"🚨 [CentralNerve 致命错误]: {e}")
-            if hasattr(self, 'chat_bypass'):
-                try:
-                    # 💡 完美响应你的需求：直接调用你最原生的流式聊天引擎！
-                    # 构造一个带有系统旁白的伪装输入，让大模型用它完美的人设来向你汇报报错。
-                    pseudo_input = f"{voice_input} [System Alert to Jarvis: Your tactical neural network or proxy just failed with error: {e}. Please elegantly apologize to Sir using your current memory context, optionally blame the network nodes/turbulence, and ask him to try again later.]"
-                    
-                    # 重新提取最新的 6 条短时记忆 (β.5.29 source 分嵌)
-                    from jarvis_utils import format_stm_for_prompt as _fmt_stm_recovery
-                    stm_context = _fmt_stm_recovery(self.short_term_memory, take_last=6, max_chars=2000)
-                    # 直接继承刚刚在聊天旁路里缓存的海马体长时记忆
-                    ltm_context = getattr(self.chat_bypass, 'last_ltm_context', 'None')
-                    chat_organs = ", ".join(self.hand_manifests.keys())
-                    
-                    print(f"\n📡 [System Recovery] 呼叫主聊天大脑进行战术安抚...")
-                    prompt = self._assemble_prompt(
-                        user_input=pseudo_input,
-                        stm_context=stm_context,
-                        ltm_context=ltm_context,
-                        chat_organs=chat_organs,
-                        mode="light"
-                    )
-                    if hasattr(self, 'voice_thread') and self.voice_thread:
-                        self.voice_thread._suppress_wave = True
-                    self.chat_bypass.stream_chat(
-                        prompt=prompt,
-                        user_input=pseudo_input,
-                        stm_context=stm_context,
-                        ltm_context=ltm_context,
-                        route_callback=None
-                    )
-                    if hasattr(self, 'voice_thread') and self.voice_thread:
-                        self.voice_thread._suppress_wave = False
-                except Exception as fallback_e:
-                    # 如果连主聊天层的 Gemini 也彻底断联（比如网线被拔了），触发最后的本地硬编码兜底
-                    fallback_msg = "I'm afraid my connection to the main grid has been severed, Sir. Please check the physical network nodes."
-                    self.chat_bypass.audio_queue.put((fallback_msg, {}))
-                    print(f"\n   🗣️ [Offline Fallback] {fallback_msg}")
-
-        finally:
-            # 💡 核心防死锁：无论任务是成功、失败还是网络崩溃，绝对保证锁被释放，状态归位！
-            # [R7-α/B1] reason='task_done'：物理任务收尾（无论成功失败）
-            if self.state is not None:
-                self.state.set_active_task(False, reason='task_done', source='CentralNerve.run.finally')
-            self._set_state("IDLE")
-            # 顺手切断 web_hands 这种可能驻留的幽灵进程
-            if hasattr(self, 'hands') and hasattr(self.hands, 'shutdown'):
-                try: self.hands.shutdown()
-                except: pass
+    # 🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] CentralNerve.run() 已彻底删除.
+    #
+    # 历史: 3-brain (RightBrain/LeftBrain/L5Brain) 364 行 task flow.
+    # Sir 真测 deprecated_3_brain_invoked SWM event = 0 → 主脑 prompt 不再 emit
+    # <ENGAGE_PHYSICAL_BODY> token → route_callback 永不触发 → 此 method 永不被调.
+    #
+    # 物理删除路径:
+    #   1. CentralNerve.run() deprecated stub 删 (本处)
+    #   2. CentralNerve._init_3_brain_legacy 删
+    #   3. CentralNerve 顶部 RightBrain/LeftBrain/L5Brain = None 声明删
+    #   4. worker.trigger_routing 删 + stream_chat route_callback=None
+    #
+    # 历史代码 archive: `_legacy/3_brain_attempt/central_nerve_run_v1.py`
 
     def _bg_print(self, msg: str):
         """后台线程安全打印: 对话中暂存, 对话结束后统一输出"""
@@ -5482,18 +5011,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

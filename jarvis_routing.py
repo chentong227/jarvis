@@ -48,142 +48,21 @@ __all__ = [
 ]
 
 
-class SoulRouter:
-    BILINGUAL_BRIDGE = {
-        "代码": "code", "编程": "coding", "项目": "project",
-        "神经网络": "neural network", "重构": "refactor", "重构的": "refactor",
-        "桌面": "desktop", "文件": "file", "部署": "deploy",
-        "服务器": "server", "数据库": "database", "接口": "api",
-        "测试": "test", "调试": "debug", "优化": "optimize",
-        "配置": "config", "安装": "install", "更新": "update",
-        "模型": "model", "训练": "train", "推理": "inference",
-        "语音": "voice", "识别": "recognition", "唤醒": "wake",
-        "记忆": "memory", "对话": "conversation", "回复": "reply",
-    }
+# 🆕 [Reshape M3.E / 2026-05-24] SoulRouter 已拆到 jarvis_soul_router.py.
+# 此处 re-export 兼容老 caller `from jarvis_routing import SoulRouter`.
+from jarvis_soul_router import SoulRouter  # noqa: F401
 
-    def __init__(self, sir_profile: dict):
-        self.chapters = {}
-        self._build_index(sir_profile)
 
-    def _build_index(self, profile: dict):
-        # [P0+20-β.2.4.3 / 2026-05-16] 老路径退役第 3 步：删 inside_jokes / milestones
-        # 两个 chapter（Layer 2 RelationalState 单源接管）。projects/progression 仍读
-        # sir_profile（Sir 画像范畴）。详 docs/JARVIS_SOUL_DRIVE.md
-        chapters_def = {
-            "projects": " ".join(profile.get("active_projects", [])),
-            "progression": " ".join(
-                s.get("skill", "") for s in profile.get("skill_progression", [])
-            ),
-        }
-        for name, text in chapters_def.items():
-            if not text.strip():
-                continue
-            freq = self._ngram_freq(text)
-            total = sum(freq.values())
-            if total > 0:
-                self.chapters[name] = {
-                    "freq": {w: c / total for w, c in freq.items()},
-                }
+class _SoulRouter_DELETED_NEVER_USED:
+    """[Reshape M3.E / 2026-05-24] 占位 — 真 class 在 jarvis_soul_router.py.
 
-    def _ngram_freq(self, text: str) -> dict:
-        text = text.lower().strip()
-        if not text:
-            return {}
+    保留 dummy class 仅为防 git diff 太大 (老 SoulRouter 136 行内容已删).
+    """
+    pass
 
-        freq = {}
-        i = 0
-        while i < len(text):
-            ch = text[i]
-            if '\u4e00' <= ch <= '\u9fff' or '\u3040' <= ch <= '\u30ff':
-                if i + 1 < len(text) and (
-                    '\u4e00' <= text[i + 1] <= '\u9fff' or '\u3040' <= text[i + 1] <= '\u30ff'
-                ):
-                    bigram = text[i:i + 2]
-                    freq[bigram] = freq.get(bigram, 0) + 1
-                    i += 2
-                    continue
-                else:
-                    freq[ch] = freq.get(ch, 0) + 1
-                    i += 1
-                    continue
 
-            if ch.isalpha():
-                j = i
-                while j < len(text) and text[j].isalpha():
-                    j += 1
-                word = text[i:j]
-                if len(word) >= 2:
-                    freq[word] = freq.get(word, 0) + 1
-                    for k in range(len(word) - 2):
-                        freq[word[k:k + 3]] = freq.get(word[k:k + 3], 0) + 1
-                i = j
-                continue
+# === 老 SoulRouter class 真删 (134 行迁到 jarvis_soul_router.py, M3.E completion) ===
 
-            i += 1
-
-        return freq
-
-    def _tokenize_context(self, text: str) -> dict:
-        freq = self._ngram_freq(text)
-
-        for cn_word, en_word in self.BILINGUAL_BRIDGE.items():
-            if cn_word in text.lower():
-                freq[en_word] = freq.get(en_word, 0) + 2
-                for part in en_word.split():
-                    freq[part] = freq.get(part, 0) + 1
-
-        return freq
-
-    def route(self, cmd: str, stm_context: str) -> list:
-        if not self.chapters:
-            return []
-
-        context_text = stm_context + " " + cmd
-        ctx_freq = self._tokenize_context(context_text)
-        ctx_total = sum(ctx_freq.values())
-        if ctx_total == 0:
-            return []
-
-        ctx_dist = {w: c / ctx_total for w, c in ctx_freq.items()}
-
-        scores = {}
-        for name, chapter in self.chapters.items():
-            kl = 0.0
-            overlap = 0
-            for word, p_chapter in chapter["freq"].items():
-                p_ctx = ctx_dist.get(word, 1e-9)
-                if word in ctx_freq:
-                    overlap += 1
-                kl += p_chapter * math.log(p_chapter / p_ctx)
-
-            if overlap == 0:
-                scores[name] = float('inf')
-            else:
-                scores[name] = kl / math.log(overlap + 1)
-
-        finite_scores = {k: v for k, v in scores.items() if v != float('inf')}
-        if not finite_scores:
-            return []
-
-        total_inv = sum(1.0 / v for v in finite_scores.values())
-        probs = {k: (1.0 / v) / total_inv for k, v in finite_scores.items()}
-
-        entropy = -sum(p * math.log(p) for p in probs.values())
-        max_entropy = math.log(len(probs))
-        if max_entropy == 0:
-            return []
-
-        normalized_h = entropy / max_entropy
-
-        if normalized_h > 0.8:
-            return []
-        elif normalized_h > 0.4:
-            k = min(2, len(probs))
-        else:
-            k = 1
-
-        ranked = sorted(probs.keys(), key=lambda x: probs[x], reverse=True)
-        return ranked[:k]
 
 class ContextRouter:
     def __init__(self, central_nerve):
@@ -826,6 +705,8 @@ class ProfileCard:
         """🩹 [β.2.9.9] 把 correction 真写到 memory_pool/profile_corrections.jsonl
         让 Sir / dashboard / Agent 都能审计 Jarvis 真改了什么.
         format: 一行一个 JSON 对象, 含 time/source/field/old/new/confidence/iso.
+
+        🆕 [Reshape M8.A / 2026-05-24] 同时 dual-write to unified mem_audit.jsonl.
         """
         import json as _json
         record = dict(correction)
@@ -837,6 +718,17 @@ class ProfileCard:
         # 追加单行写 — 原子性: JSONL 每行独立, 即便中断也不破坏其他行
         with open(path, 'a', encoding='utf-8') as f:
             f.write(_json.dumps(record, ensure_ascii=False) + '\n')
+        # 🆕 M8.A: dual-write 到 mem_audit.jsonl 单源
+        try:
+            from jarvis_mem_audit import write_audit
+            write_audit(
+                record=record,
+                kind='correction',
+                source=record.get('source', 'ProfileCard.apply_correction'),
+                dual_write=False,  # 老 file 已写
+            )
+        except Exception:
+            pass
 
     # ============================================================
     # 🆕 [P5-fix32-B / 2026-05-22 22:20] overwrite_field — 真覆写 sir_profile.json
@@ -1158,6 +1050,20 @@ class GuardianCenter:
         self.commitment_watcher.start()
         self.worker.commitment_watcher = self.commitment_watcher
 
+        # 🆕 [Reshape M5.A / 2026-05-24] SWMTrigger daemon — 集中接管 sentinel push __NUDGE__
+        # 默认 disabled (env JARVIS_SWM_TRIGGER 控). 启用后监 SWM event 自动 trigger.
+        try:
+            from jarvis_swm_trigger import get_default_trigger as _get_swm_trig
+            self.swm_trigger = _get_swm_trig(worker_ref=self.worker)
+            self.swm_trigger.start()
+            self.worker.swm_trigger = self.swm_trigger
+        except Exception as _swm_e:
+            try:
+                from jarvis_utils import bg_log as _swm_bg
+                _swm_bg(f"⚠️ [SWMTrigger/Init] 启动失败 (M5.A): {type(_swm_e).__name__}: {str(_swm_e)[:80]}")
+            except Exception:
+                pass
+
         self.wellness_guardian = WellnessGuardian(central_nerve=self.worker)
         self.wellness_guardian.start()
 
@@ -1440,18 +1346,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

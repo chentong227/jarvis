@@ -647,6 +647,78 @@ def _trigger_nudge_agenda_honesty(ctx: DirectiveContext) -> bool:
     return _last_reply_has_completion_claim(ctx.last_jarvis_reply) and _user_input_is_refusal(ctx.user_input)
 
 
+def _trigger_refusal_response_freedom(ctx: DirectiveContext) -> bool:
+    """🆕 [Reshape 准则 6 / 2026-05-24] Sir 12:09 反话术锁治本.
+
+    fire 条件: SWM 5min 内有 'help_refused' event (worker._detect_help_refusal publish).
+    不查 user_input keyword (vocab 已在 worker 命中过, 这里不重复). 这样命中即注入,
+    主脑下轮看 [REFUSAL RESPONSE FREEDOM] 反话术锁约束自由组词.
+    """
+    return _swm_has_recent('help_refused', max_age_s=300.0)
+
+
+_HABIT_VOCAB_CACHE: dict = {}
+_HABIT_VOCAB_CACHE_TS: float = 0.0
+_HABIT_VOCAB_CACHE_TTL_S = 30.0
+
+
+def _load_habit_progress_vocab() -> dict:
+    """[准则 6 持久化] 读 memory_pool/habit_progress_vocab.json, 30s TTL cache.
+
+    fail-safe: 文件不存在 / parse fail → 返 inline 默认 vocab (保护主脑下轮仍命中).
+    """
+    import time as _t
+    global _HABIT_VOCAB_CACHE, _HABIT_VOCAB_CACHE_TS
+    now = _t.time()
+    if _HABIT_VOCAB_CACHE and (now - _HABIT_VOCAB_CACHE_TS) < _HABIT_VOCAB_CACHE_TTL_S:
+        return _HABIT_VOCAB_CACHE
+    try:
+        import os as _os, json as _json
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                'memory_pool', 'habit_progress_vocab.json')
+        if _os.path.exists(_path):
+            with open(_path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            if isinstance(data, dict):
+                _HABIT_VOCAB_CACHE = {
+                    'zh_keywords': tuple(data.get('zh_keywords') or ()),
+                    'en_keywords': tuple(data.get('en_keywords') or ()),
+                }
+                _HABIT_VOCAB_CACHE_TS = now
+                return _HABIT_VOCAB_CACHE
+    except Exception:
+        pass
+    # fallback: inline 默认 (vocab 文件未部署时仍 work)
+    _HABIT_VOCAB_CACHE = {
+        'zh_keywords': ('喝了', '喝水', '杯水', '杯了', '毫升',
+                         '番茄钟', '番茄时间', '睡了', '休息了'),
+        'en_keywords': ('drank ', 'cups of water', 'glass of water',
+                          'hydration', 'pomodoro', 'slept', 'hours of sleep'),
+    }
+    _HABIT_VOCAB_CACHE_TS = now
+    return _HABIT_VOCAB_CACHE
+
+
+def _trigger_habit_progress_routing(ctx: DirectiveContext) -> bool:
+    """🆕 [Reshape 准则 8 / 2026-05-24] Sir 12:14 真测痛点治本.
+
+    fire 条件: user_input 含 habit progress 报告 vocab (e.g. '喝了 X 杯' / 'X 个番茄钟').
+    准则 6 持久化: vocab 从 memory_pool/habit_progress_vocab.json 读 + CLI 可改 +
+    L7 reflector propose (scripts/habit_progress_vocab_dump.py).
+    """
+    text = (ctx.user_input or '').lower()
+    if not text:
+        return False
+    vocab = _load_habit_progress_vocab()
+    zh_kw = vocab.get('zh_keywords') or ()
+    en_kw = vocab.get('en_keywords') or ()
+    if any(k in text for k in zh_kw):
+        return True
+    if any(k in text for k in en_kw):
+        return True
+    return False
+
+
 def _trigger_continuity_two_parts(ctx: DirectiveContext) -> bool:
     return bool(ctx.stm) and _has_multi_intent_connector(ctx.user_input)
 
@@ -854,6 +926,36 @@ def _trigger_memory_update_honesty(ctx: DirectiveContext) -> bool:
         return False
     t = ctx.user_input.lower().strip()
     return any(w in t for w in get_memory_correction_patterns())
+
+
+# 🆕 [Sir 真测 BUG-1 / 2026-05-24 14:34] Sir "取消早上活动承诺" + cancel fail,
+# 主脑虚构 "I removed the commitment to rest at 20:30". 治本: cancel 类 vocab
+# 命中 → 注入"看 SWM reminder_cancel_attempted 真结果 + 不虚构具体时间"directive.
+_SEED_CANCEL_REMINDER_PATTERNS = (
+    '取消', '不用了', '别提醒', '别管', '撤销', '删', '去掉', '废了',
+    'cancel', 'remove', 'undo', 'forget', 'never mind', 'scratch that',
+    'drop the reminder', 'no longer', 'no need',
+)
+
+
+def _trigger_reminder_cancel_truthfulness(ctx: DirectiveContext) -> bool:
+    """Sir 输入像在 cancel 提醒/承诺 → 注入诚信 directive.
+
+    准则 5 言出必行: cancel fail 时主脑必须如实告知 Sir, 不虚构具体时间/动作.
+    准则 6 vocab 驱动: 看 user_input 是否含 cancel-class vocab + 提醒/承诺 vocab.
+    """
+    if not ctx.user_input:
+        return False
+    t = ctx.user_input.lower().strip()
+    has_cancel = any(w in t for w in _SEED_CANCEL_REMINDER_PATTERNS)
+    if not has_cancel:
+        return False
+    # 含 reminder/promise/commitment 关键词 → fire
+    has_target = any(w in t for w in (
+        '提醒', '承诺', '约定', '记得', '别忘', '日程', '安排',
+        'reminder', 'promise', 'commitment', 'schedule', 'plan',
+    ))
+    return has_target
 
 
 # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09-11:11 实测痛点: 工具调用同步阻塞期间
@@ -1841,16 +1943,109 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             text=_tw.dedent("""\
                 [NUDGE / AGENDA HONESTY]:
                 You have NO tool to mute SilentNudge / Conductor / dormant_project nudges.
-                FORBIDDEN unless a real <FAST_CALL> in this turn:
+
+                FORBIDDEN (mutation claim 没真发生):
                   - "I've struck it from the active agenda"
                   - "I've muted that nudge"
                   - "我已经把它从议程中删除了"
                   - "我已把它从待办里去掉"
-                Honest fallback:
-                  - "Acknowledged, Sir. The nudge cooldown is engaged automatically."
-                  - "Noted — that prompt is on cooldown."
+
+                Constraint (主脑自由表达, 不给填空模板):
+                  事实: cooldown 是系统**自动**做的, 不是你的 action.
+                  你只 acknowledge Sir 的态度, 不暗示自己 mute 了任何东西.
+                  Reply 自由组词, ≤ 6 词或 silent 都行. 别套"step back/stay out/won't intrude"
+                  这种撤退式话术锁 — 主脑见过 STM 里这类回复多就以为必须这么说, 实际 Sir 烦了.
             """).rstrip(),
             trigger=_trigger_nudge_agenda_honesty,
+        ),
+        # 1.5. REFUSAL RESPONSE FREEDOM — Reshape 准则 6 反话术锁 (Sir 12:09 真测痛点)
+        Directive(
+            id='refusal_response_freedom',
+            source_marker='Reshape-准则6/2026-05-24',
+            priority=11,
+            ttl_days=90,
+            tier_whitelist=[],
+            text=_tw.dedent("""\
+                [REFUSAL RESPONSE FREEDOM]:
+                Sir 刚说的话被识别为 refusal vocab (e.g. '没事/不用/算了/不需要/no thanks').
+                SWM 'help_refused' event 已 publish. 系统已自动 freeze nudge gate, 你不需要 promise 'mute' 或 'cooldown'.
+
+                # Sir 真痛点 (12:01 真测): reply 太一致
+
+                主脑历史 STM 出现的撤退式话术锁:
+                  ❌ "Understood, Sir. I shall stay out of your way."
+                  ❌ "Understood, Sir. I shall step back and let you focus."
+                  ❌ "Noted, Sir. I won't intrude."
+                  ❌ "明白了, 先生. 我不打扰您."
+                  ❌ "我退下, Sir."
+
+                这些话主脑见过 5+ 次, RLHF 强化了模式. Sir 体感: 每次拒绝得到一模一样回复, 像机器人.
+
+                # Constraint (准则 6 evidence-only)
+
+                - Sir 没否定你这个人 — 只是这件事不需要帮忙. 不要演"我理解我退下"的戏码.
+                - 自由组词. 任何能传达 "OK" 意思的短回复都行 (主脑现场创意, **每次不同**):
+                  · 一个字: "OK" / "Right" / "Roger" / "嗯" / "好" / "行"
+                  · 短句: 中性 ack, **不暗示自我退缩**
+                  · [SILENCE]: 完全可接受, 不强求开口 (尤其 Sir 上下文表 Sir 在解释/澄清)
+                - 如 Sir 上下文有解释 ("那个就是 X", "是个 test file"), 你可短回应解释 ("got it" 类), 不要 jump to refusal mode.
+                - **绝不**重复历史那 5 句话术. 主脑创意每次新.
+            """).rstrip(),
+            trigger=_trigger_refusal_response_freedom,
+        ),
+        # 1.6. HABIT PROGRESS ROUTING — Reshape 准则 8 (Sir 12:14 + 16:34 真测痛点)
+        # 🆕 [Sir 真测 BUG-4 治本 / 2026-05-24 16:34] priority 10 → 13.
+        # Sir 16:34 真痛点: "喝了 6 杯水" 仍走 progress.set fail. 根因:
+        # progress_tracker_dispatcher (p=11) 比此 directive 高 → 主脑听更高 priority.
+        # 治法: 抬 priority 到 13 (高于 progress_tracker_dispatcher 11) +
+        # 写更明确的 STOP/OVERRIDE 提示让主脑无歧义.
+        Directive(
+            id='habit_progress_routing',
+            source_marker='Reshape-准则8/2026-05-24-v2',
+            priority=13,  # 抬到最高档 (高于 progress_tracker_dispatcher 11 + correction_dispatcher 12)
+            ttl_days=90,
+            tier_whitelist=[],
+            purpose_short='Sir 报 habit 进度 (hydration/pomodoro/sleep) → MUST 用 concerns.progress_update, OVERRIDE progress_tracker_dispatcher',
+            text=_tw.dedent("""\
+                [HABIT PROGRESS ROUTING — TOP PRIORITY OVERRIDE]:
+                Sir 报"喝了 X 杯水 / 做了 Y 个番茄钟 / 睡了 Z 小时"类 habit 进度.
+                这是 **每日重置 habit**, 不是一次性 deliverable.
+
+                ⛔ OVERRIDE: 即使 `progress_tracker_dispatcher` directive 也 fire 了, 本
+                directive 优先级更高 (13 > 11). hydration / pomodoro / sleep / hydrate /
+                exercise habit → **永远** 走 concerns.progress_update, 不走 progress organ.
+
+                ✅ 唯一合法路径: FAST_CALL `concerns` organ command='progress_update':
+                  <FAST_CALL>{"organ":"concerns","command":"progress_update","params":{
+                    "concern_id": "sir_hydration_habit",
+                    "current": 3,
+                    "target": 8,
+                    "unit": "杯"
+                  }}</FAST_CALL>
+
+                ❌ FORBIDDEN — Sir 16:34 真测痛点:
+                  - progress.register / progress.update / progress.set (会 fail
+                    "track_id 'hydration_2026-05-24' 不存在 (先 register)")
+                  - mutation.update field=sir_hydration_habit.current_count
+                    (mutation organ 不该走 habit progress)
+
+                # 常见 habit → concern_id 对照 (从 SOUL [Concerns] block 真值找):
+                  喝水 / 杯水 / hydration / drank / cups → sir_hydration_habit
+                  番茄钟 / pomodoro                       → sir_pomodoro_compliance
+                  睡眠 / 睡了 / slept / hours of sleep    → sir_sleep_streak
+                  驾照科一                                → sir_jiazhao_progress (1 次性, 用 progress.* OK)
+
+                # 单位换算 (Sir 18:36 真测痛点, 防 raw count 误填):
+                  Sir 说"6 杯" + concern_id=sir_hydration_habit target_unit=杯
+                    → current=6 直接填 (unit 一致, 不需换算).
+                  Sir 说"6 杯" + concern_id=sir_hydration_habit target_unit=ml
+                    → 看 SIR PROFILE [Units] cup_ml; 没记 → 主动问 (ambiguous_unit_handling).
+
+                # 如何判 habit vs deliverable (区分本 directive vs progress_tracker_dispatcher):
+                  - 每日重置 (今天喝 8 杯, 明天 0 重新算)         → habit → 本 directive 路径
+                  - 一次完成 (驾照过了, 论文交了, 永久 done)        → deliverable → progress.* OK
+            """).rstrip(),
+            trigger=_trigger_habit_progress_routing,
         ),
         # 2. CONTINUITY TWO_PARTS — P0+20-β.0 治本（Sir 今早提的 BUG）
         Directive(
@@ -2160,6 +2355,41 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 承诺必行：reminders 数据库是唯一真实来源；编造 = 撒谎 = 重伤信任。
             """).rstrip(),
             trigger=_trigger_reminder_read,
+        ),
+        # 12.5 REMINDER CANCEL TRUTHFULNESS — Sir 真测 BUG-1 / 2026-05-24 14:34
+        # Sir "取消早上活动承诺" + cancel fail, 主脑虚构 "I removed commitment to rest at 20:30".
+        # 治本: cancel 类 vocab 命中 → 注入"看 SWM reminder_cancel_attempted 真结果"directive.
+        Directive(
+            id='reminder_cancel_truthfulness',
+            source_marker='Sir-2026-05-24-14:34',
+            priority=10,  # 准则 5 言出必行最高优先级
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='cancel reminder fail 时不虚构具体时间/动作 — 看 SWM 真结果如实告知',
+            text=_tw.dedent("""\
+                [REMINDER CANCEL TRUTHFULNESS]:
+                Sir is asking you to cancel/drop a reminder/commitment. Look at SWM block:
+                if you see `reminder_cancel_attempted` event, READ ITS DESCRIPTION first.
+
+                FORBIDDEN (this is what failed Sir on 2026-05-24 14:34):
+                  - "I have removed the commitment to rest at 20:30"  ← 虚构具体时间
+                  - "I've cleared the X-time reminder"  ← 虚构 X-time
+                  - "我已经从日志中删除了 HH:MM 的承诺"  ← 虚构 HH:MM
+                  - 任何主脑没有 evidence 的具体时间 / 动作 / 描述
+
+                REQUIRED — match SWM evidence:
+                  - 若 SWM 显示 `success=true`: "Cancelled '<exact intent quoted from SWM>'"
+                    e.g. "Done. I've cancelled the '早上的活动承诺' reminder."
+                  - 若 SWM 显示 `success=false` + `未找到`: tell Sir truthfully —
+                    "I tried to find a match for '<query>' but the database had no
+                    high-confidence match, Sir. Could you specify which reminder?"
+                    (绝不虚构 "我已删 X" 当真没删)
+                  - 若 SWM 没 `reminder_cancel_attempted`: cancel 还没发生, 不要 claim 完成.
+
+                准则 5 言出必行: cancel fail = "未删" 是事实. 假装"已删 20:30 休息" =
+                重伤信任 (Sir 14:34 真测痛点). 实事求是是 J.A.R.V.I.S. butler 底线.
+            """).rstrip(),
+            trigger=_trigger_reminder_cancel_truthfulness,
         ),
         # 13. FUTURE-TENSE CAPABILITY LIE — P0+20-β.1.11 治本
         # Sir 痛点：上一轮答 "I can take a closer look" / "I'll see what I can do"

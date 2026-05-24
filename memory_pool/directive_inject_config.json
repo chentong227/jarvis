@@ -2,7 +2,7 @@
   "_doc": "Directive 分层注入配置 (Gap-Y / β.5.46-fix5 / 2026-05-21 23:30)",
   "_purpose": "Sir 22:14 真测痛点: directive cluster fired count=7 / chars=7724 → 主脑 attention 被淹. 治法: top N priority 全文 + 余 purpose_short brief, 减字符占用 + 主脑 attention 集中.",
   "_grant": "准则 1 (TTFT 不退): 纯 prompt 装配, 不调 LLM. 准则 6 (不硬编码): top N + brief 阈值持久化 + CLI 可改.",
-  "max_full_directives": 5,
+  "max_full_directives": 3,
   "always_full_priority_threshold": 11,
   "brief_max_chars_per_directive": 100,
   "_history": [
@@ -10,6 +10,11 @@
       "ts": "2026-05-21T23:30:00",
       "marker": "β.5.46-fix5 / Gap-Y",
       "reason": "Sir 22:14 fired count=7/chars=7724 主脑被淹, 加分层注入"
+    },
+    {
+      "ts": "2026-05-24T12:35:00",
+      "marker": "Reshape M7 Phase 4 / 准则 1 高效",
+      "reason": "max_full 5→3 减 ~40% directive cluster (~6K→~3.5K). priority>=11 红线 directive (no_hallucinated_tool_use_judge / past_action_honesty / refusal_response_freedom 等) 仍全文. 余下 brief mode 100 chars/条."
     }
   ],
   "_field_doc": {

@@ -1308,6 +1308,9 @@ class ConversationEventBus:
         'sleep_intent_declared': 1800,     # [v5.1] Sir 表态 X 时间内睡 → 静默催睡 nudge
         # [β.5.0-A / 2026-05-19] Shared World Model 新增 etype:
         'sensor_change': 120,              # PhysicalEnvProbe window/category/idle 变化
+        'gaming_mode_activated': 1800,     # 🆕 Sir 进 Gaming (foreground 全屏游戏), VAD 抬高 (30min)
+        'gaming_mode_ended': 600,          # 🆕 Sir 退 Gaming, VAD 恢复 (10min)
+        'commitment_retired': 7200,        # 🆕 过期承诺自动 retire, 主脑可看 (2h)
         'gate_advice': 240,                # NudgeGate / OfferGuard advise (soft mode)
         'concern_active': 360,             # ProactiveCare top_concern publish
         'afk_return': 300,                 # ReturnSentinel _on_return raw signal
@@ -1365,6 +1368,9 @@ class ConversationEventBus:
         'emotion_shift': 0.45,
         'persona_note': 0.40,
         'sensor_change': 0.30,
+        'gaming_mode_activated': 0.75,     # 🆕 Sir 进 Gaming, 主脑要知道 (调整 VAD + reply 风格)
+        'gaming_mode_ended': 0.65,         # 🆕 Sir 退 Gaming, 主脑可祝贺/确认状态
+        'commitment_retired': 0.55,        # 🆕 过期承诺 retire, 中等 salience (主脑可顺嘴说"我们清掉了那些早过期的承诺")
         'utterance_appended': 0.20,
         # [β.5.40 / 2026-05-20] Sir 方向 A.1/E.1/A.2 新:
         'ambient_state': 0.45,             # 背景听感 (默认低, 但场景特殊 publish 时可调高)
@@ -1394,12 +1400,125 @@ class ConversationEventBus:
         'sir_thinking_pause': 0.55,
     }
 
-    def __init__(self, max_events: int = 60):
+    # 🆕 [Reshape M1.2 / 2026-05-24] SWM critical event 持久化
+    # salience >= SWM_PERSIST_THRESHOLD 的 event 持久化到 swm_history.jsonl,
+    # Jarvis 重启时 restore 最近 N 条 (TTL 仍 valid) 进 deque, 让主脑下轮看见.
+    # 准则 4 (懂我): Sir 重启不丢上次 high-salience evidence.
+    # 准则 1 (高效): 异步写盘 (best effort), 不阻塞 publish 主流.
+    SWM_PERSIST_THRESHOLD = 0.85         # M1 设计要求
+    SWM_PERSIST_PATH = 'memory_pool/swm_history.jsonl'
+    SWM_RESTORE_MAX_AGE_S = 1800.0       # 30min: restore 时仅取此窗口内 (太老 TTL 已过)
+    SWM_RESTORE_TOP_N = 30               # 每次启动 restore 最近 30 条
+
+    def __init__(self, max_events: int = 60, restore: bool = True):
+        """[M1.2 / 2026-05-24] 加 restore 参数 (test 可禁 restore 避免污染).
+
+        Args:
+          max_events: deque maxlen, default 60
+          restore: True (default) → 启动时 restore swm_history.jsonl 高 salience event 进 deque.
+                   False → 不 restore (干净 deque, test 用).
+        """
         self._lock = threading.Lock()
         self._events = deque(maxlen=max_events)
         # 同类型短时间内重复 publish 的去重 fingerprint -> last_ts
         self._dedupe = {}
         self._dedupe_window = 8.0
+        # 🆕 [M1.2] 启动时 restore high-salience event from swm_history.jsonl
+        if restore:
+            try:
+                self._restore_high_salience_events()
+            except Exception:
+                pass
+
+    def _is_persist_enabled(self) -> bool:
+        try:
+            import os as _os
+            val = _os.environ.get('JARVIS_SWM_PERSIST', '').strip()
+            if val in ('0', 'false', 'False', 'no', 'off'):
+                return False
+            return True  # default ON (Sir 准则 4 重启不忘)
+        except Exception:
+            return True
+
+    def _persist_critical_event(self, record: dict) -> None:
+        """[M1.2] append high-salience event to swm_history.jsonl.
+
+        异步 best-effort, 失败静默 (不破 publish 主流).
+        """
+        try:
+            if not self._is_persist_enabled():
+                return
+            import os as _os
+            import json as _json
+            _os.makedirs(_os.path.dirname(self.SWM_PERSIST_PATH), exist_ok=True)
+            line = _json.dumps(record, ensure_ascii=False, default=str)
+            with open(self.SWM_PERSIST_PATH, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+            # rotation: 防 jsonl > 10MB
+            try:
+                from jarvis_jsonl_rotator import maybe_rotate as _mr
+                _mr(self.SWM_PERSIST_PATH, size_mb_cap=10.0)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _restore_high_salience_events(self) -> int:
+        """[M1.2] 重启时读 swm_history.jsonl 最近 SWM_RESTORE_TOP_N 条 (TTL 仍 valid) 进 deque.
+
+        Returns: 真 restore 条数.
+        """
+        try:
+            if not self._is_persist_enabled():
+                return 0
+            import os as _os
+            import json as _json
+            if not _os.path.exists(self.SWM_PERSIST_PATH):
+                return 0
+            now = time.time()
+            cutoff = now - self.SWM_RESTORE_MAX_AGE_S
+            # tail-read 最近 N*2 条防膨胀, 过滤 TTL valid
+            try:
+                with open(self.SWM_PERSIST_PATH, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()[-self.SWM_RESTORE_TOP_N * 2:]
+            except Exception:
+                return 0
+            restored = []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                ts = rec.get('timestamp', 0) or 0
+                ttl = rec.get('ttl', 180.0) or 180.0
+                # TTL 过期或太老 (> SWM_RESTORE_MAX_AGE_S) 跳过
+                if ts < cutoff or (now - ts) > ttl:
+                    continue
+                restored.append(rec)
+            # 倒序后取 N 条 (最新优先)
+            restored.sort(key=lambda r: r.get('timestamp', 0), reverse=True)
+            restored = restored[:self.SWM_RESTORE_TOP_N]
+            # 写进 deque (按 timestamp 升序, deque 末尾是最新)
+            restored.sort(key=lambda r: r.get('timestamp', 0))
+            for rec in restored:
+                # mark restored (debug / audit)
+                rec['_restored_from_disk'] = True
+                self._events.append(rec)
+            try:
+                # 启动 banner 让 Sir grep 看 restore 情况
+                if restored:
+                    print(f"[SWM] restored {len(restored)} high-salience events from "
+                          f"{self.SWM_PERSIST_PATH}", flush=True)
+            except Exception:
+                pass
+            return len(restored)
+        except Exception:
+            return 0
 
     def publish(self, etype: str, description: str,
                 ttl: float = None, source: str = 'unknown',
@@ -1489,6 +1608,26 @@ class ConversationEventBus:
                         'salience': salience,
                     },
                 ))
+            except Exception:
+                pass
+
+        # 🆕 [M1.2 SWM 持久化] salience >= SWM_PERSIST_THRESHOLD 写盘 swm_history.jsonl
+        # Sir 重启时 _restore_high_salience_events 读回 (准则 4 懂我).
+        if salience >= self.SWM_PERSIST_THRESHOLD:
+            try:
+                # 拷贝 record 写盘 (deque 末尾刚 append 的就是这条)
+                _persist_record = {
+                    'type': etype,
+                    'description': desc,
+                    'timestamp': now,
+                    'ttl': float(ttl),
+                    'source': source or 'unknown',
+                    'metadata': dict(metadata) if metadata else {},
+                    'salience': salience,
+                    'evidence_id': evidence_id,
+                    'evidence_chain': list(evidence_chain or []),
+                }
+                self._persist_critical_event(_persist_record)
             except Exception:
                 pass
 

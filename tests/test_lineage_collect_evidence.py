@@ -33,7 +33,7 @@ class TestCollectEvidenceIds(unittest.TestCase):
             auto_start_flush=False,
         )
         reset_default_tracer_for_test(self.tracer)
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
 
     def tearDown(self):
         try:
@@ -103,7 +103,7 @@ class TestPromptEvidenceLogRoundTrip(unittest.TestCase):
             auto_start_flush=False,
         )
         reset_default_tracer_for_test(self.tracer)
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
 
     def tearDown(self):
         try:

@@ -508,6 +508,32 @@ class WatchTaskRegistrar:
                f"watch='{task.what_to_watch[:60]}' "
                f"trig='{task.trigger_evidence[:60]}' "
                f"ttl={ttl // 60}min")
+
+        # 🆕 [Reshape M4.5 / 2026-05-24] DUAL-WRITE to PromiseLog (单源准备)
+        # 老 watch_tasks.json 仍写, 新 PromiseLog kind='watch' 也写一份.
+        try:
+            from jarvis_memory_hub import get_default_hub
+            _hub = get_default_hub()
+            _hub.write_commitment(
+                description=task.what_to_watch[:300],
+                kind='watch',
+                who_promised='jarvis',
+                deadline=time.strftime('%Y-%m-%d %H:%M:%S',
+                                         time.localtime(task.expires_at)),
+                trigger_pattern={
+                    'kind': 'screen_vision',
+                    'evidence': task.trigger_evidence[:200],
+                    'task_id': task.id,
+                    'notify_msg_en': task.notify_msg_en[:200],
+                    'notify_msg_zh': task.notify_msg_zh[:200],
+                    'turn_id': turn_id,
+                },
+                source=f'watch_task.register/{turn_id or "no_turn"}',
+                jarvis_reply=jarvis_reply[:300],
+            )
+        except Exception:
+            pass
+
         # publish SWM 'watch_task_registered'
         try:
             from jarvis_utils import get_event_bus

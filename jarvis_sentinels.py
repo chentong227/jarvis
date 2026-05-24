@@ -1348,7 +1348,15 @@ class UserStatusLedgerSentinel(threading.Thread):
     def get_instant_ledger(self):
         return self.current_ledger
 
-    def get_recent_daily_summaries(self, days: int = 3) -> str:
+    def get_recent_daily_summaries(self, days: int = 3,
+                                      max_chars_per_day: int = 0) -> str:
+        """🆕 [Reshape M7 Phase 4c / 2026-05-24] max_chars_per_day 截 narrative.
+
+        max_chars_per_day=0 (default) → 不截 (老行为, 不破 caller).
+        max_chars_per_day>0 → narrative 截到此长度 + "..." 后缀.
+
+        准则 1 高效: prompt 用 200, dashboard 用 0 (完整看).
+        """
         import os, json, time
         summaries = []
         try:
@@ -1364,6 +1372,8 @@ class UserStatusLedgerSentinel(threading.Thread):
                     tags = data.get('tags', [])
                     tag_str = ', '.join(tags) if tags else ''
                     if narrative:
+                        if max_chars_per_day > 0 and len(narrative) > max_chars_per_day:
+                            narrative = narrative[:max_chars_per_day].rstrip() + '...'
                         summaries.append(f"[{date_str}] {narrative}")
                         if tag_str:
                             summaries[-1] += f" (Tags: {tag_str})"
@@ -2127,18 +2137,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

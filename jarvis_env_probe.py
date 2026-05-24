@@ -86,6 +86,17 @@ class PhysicalEnvironmentProbe:
     _llm_cached_category = None
     _llm_cached_detail = None
 
+    # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24 15:55] Gaming auto-detection
+    # 准则 6.5 三件套: vocab JSON 持久化 + CLI dump + L7 reflector propose.
+    # 主路径: foreground window title 命中 + (require_fullscreen 时) 全屏 → Gaming.
+    # 不看 process list (Sir 真意: Steam 一直开但不等于在玩).
+    is_gaming_active = False  # 当前是否在玩游戏 (foreground 是游戏窗口 + fullscreen)
+    current_gaming_title = ""  # 当前游戏 title (e.g. "League of Legends (TM)")
+    gaming_started_at = 0.0  # 进入 Gaming category 的时间戳
+    _gaming_vocab_cache = None  # {'title_keywords': [...], 'require_fullscreen': bool, 'vad_adaptation': {...}}
+    _gaming_vocab_mtime = 0.0
+    _gaming_vocab_path = None  # 延迟到首次调用时定 (避 import 时找路径)
+
     # === 传感器矩阵 (28维) ===
     # 窗口与进程
     current_window_stay_seconds = 0.0
@@ -276,6 +287,119 @@ Example: Coding|Working in VS Code on a Python project"""
             cls._llm_classifier_enabled = False
         
         return None, None
+
+    # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24] Gaming auto-detection helpers
+    @classmethod
+    def _get_gaming_vocab_path(cls) -> str:
+        """vocab json 路径. memory_pool/gaming_vocab.json."""
+        if cls._gaming_vocab_path is None:
+            here = os.path.dirname(os.path.abspath(__file__))
+            cls._gaming_vocab_path = os.path.join(here, 'memory_pool', 'gaming_vocab.json')
+        return cls._gaming_vocab_path
+
+    @classmethod
+    def _load_gaming_vocab(cls) -> Optional[Dict[str, Any]]:
+        """读 gaming_vocab.json + mtime cache. 失败返 None (走 fallback seed).
+
+        准则 6.5 持久化: vocab in JSON, py 只用 fallback seed 防文件损坏.
+        """
+        path = cls._get_gaming_vocab_path()
+        try:
+            if not os.path.exists(path):
+                return None
+            mtime = os.path.getmtime(path)
+            if cls._gaming_vocab_cache is not None and mtime == cls._gaming_vocab_mtime:
+                return cls._gaming_vocab_cache
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # 提取 active title_keywords
+            active_titles = []
+            for entry in data.get('title_keywords', []):
+                if isinstance(entry, dict) and entry.get('state') == 'active':
+                    p = str(entry.get('pattern', '')).lower().strip()
+                    if p:
+                        active_titles.append(p)
+            cls._gaming_vocab_cache = {
+                'title_keywords': active_titles,
+                'require_fullscreen': bool(data.get('require_fullscreen', True)),
+                'vad_adaptation': data.get('vad_adaptation', {}),
+            }
+            cls._gaming_vocab_mtime = mtime
+            return cls._gaming_vocab_cache
+        except Exception:
+            return None
+
+    # Sir-real-game seed fallback (vocab JSON 损坏 / 缺失时用)
+    _SEED_GAMING_TITLES = (
+        'league of legends', '英雄联盟', 'age of empires', '帝国时代',
+        'valorant', 'tft', '云顶之弈', 'dota 2', 'csgo', 'cs2',
+    )
+
+    @staticmethod
+    def _is_window_fullscreen(hwnd) -> bool:
+        """判 foreground window 是否全屏. Win32 API: window rect >= screen size.
+
+        Sir 真意: 全屏游戏才阻挡 ASR. 窗口化游戏 Sir 可能边玩边对话.
+        """
+        if not hwnd:
+            return False
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            screen_x = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+            screen_y = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+            return ((rect[2] - rect[0]) >= screen_x and
+                      (rect[3] - rect[1]) >= screen_y)
+        except Exception:
+            return False
+
+    @classmethod
+    def _check_gaming(cls, window_title: str, hwnd) -> bool:
+        """是否处于 Gaming 状态. title 命中 vocab + (require_fullscreen 时) 全屏.
+
+        Returns True iff foreground window 是游戏 + (vocab 配置要求时) 全屏.
+        """
+        if not window_title:
+            return False
+        title_lower = window_title.lower()
+        vocab = cls._load_gaming_vocab()
+        if vocab is not None:
+            patterns = vocab.get('title_keywords', [])
+            require_fs = vocab.get('require_fullscreen', True)
+        else:
+            # fallback seed
+            patterns = list(cls._SEED_GAMING_TITLES)
+            require_fs = True
+        # title 命中
+        title_match = any(p in title_lower for p in patterns)
+        if not title_match:
+            return False
+        # fullscreen check (可选)
+        if require_fs:
+            return cls._is_window_fullscreen(hwnd)
+        return True
+
+    @classmethod
+    def get_gaming_vad_adaptation(cls) -> Tuple[float, float]:
+        """获取 Gaming 状态下 VAD 适应倍数. 返 (volume_multiplier, silence_multiplier).
+
+        默认 (1.0, 1.0) — 即不抬高. 仅 is_gaming_active=True 才返 vocab 配置值.
+        VoiceListenThread 调此方法决定当前实际 VAD threshold + silence_limit.
+        """
+        if not cls.is_gaming_active:
+            return (1.0, 1.0)
+        vocab = cls._load_gaming_vocab()
+        if vocab is None:
+            return (1.8, 1.3)  # fallback hardcoded sane default
+        adapt = vocab.get('vad_adaptation', {}) or {}
+        try:
+            v_mult = float(adapt.get('volume_threshold_multiplier', 1.8))
+            s_mult = float(adapt.get('silence_limit_multiplier', 1.3))
+        except Exception:
+            v_mult, s_mult = 1.8, 1.3
+        # 安全上限
+        v_mult = max(1.0, min(3.0, v_mult))
+        s_mult = max(1.0, min(2.5, s_mult))
+        return (v_mult, s_mult)
 
     @classmethod
     def start_monitoring(cls):
@@ -568,13 +692,29 @@ Example: Coding|Working in VS Code on a Python project"""
                 # === 原有分类逻辑 ===
                 lower_title = window_title.lower()
                 prev_category = cls.current_work_category
-                if idle_time_ms > 300000: 
+                # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24] Gaming fast-path
+                # 优先级: Gaming > AFK > High APM > Media/Coding/General > LLM
+                # 命中 vocab + (require_fs 时) 全屏 → category=Gaming, 不调 LLM
+                # Sir 真意: 全屏 LOL/AOE4 才阻挡 ASR; Steam launcher 在前台不算 Gaming
+                _was_gaming = cls.is_gaming_active
+                _is_gaming_now = cls._check_gaming(window_title, hwnd)
+                if _is_gaming_now:
+                    cls.is_gaming_active = True
+                    cls.current_gaming_title = window_title[:80]
+                    if not _was_gaming:
+                        cls.gaming_started_at = current_time
+                    cls.current_physical_state = f"[Gaming (fullscreen) / {window_title[:30]}]"
+                    cls.current_work_category = "Gaming"
+                elif idle_time_ms > 300000: 
+                    cls.is_gaming_active = False
                     cls.current_physical_state = "[AFK / Away From Keyboard]"
                     cls.current_work_category = "AFK"
                 elif recent_switches >= 12: 
+                    cls.is_gaming_active = False
                     cls.current_physical_state = "[High APM / Intense Coding or Debugging]"
                     cls.current_work_category = "Coding"
                 else:
+                    cls.is_gaming_active = False
                     if any(x in lower_title for x in ["bilibili", "youtube", "爱奇艺", "网易云", "飞车"]):
                         cls.current_physical_state = "[Media Consumption / Relaxing]"
                         cls.current_work_category = "Media"
@@ -589,6 +729,52 @@ Example: Coding|Working in VS Code on a Python project"""
                         if llm_cat:
                             cls.current_work_category = llm_cat
                             cls.current_physical_state = f"[{llm_cat} / {llm_detail[:50]}]"
+                # 🆕 [Sir 真测 BUG-2 治本] Gaming 进/出 publish SWM event (准则 6 数据强耦合)
+                if _is_gaming_now and not _was_gaming:
+                    try:
+                        from jarvis_utils import get_event_bus
+                        _bus = get_event_bus()
+                        if _bus is not None:
+                            _bus.publish(
+                                etype='gaming_mode_activated',
+                                description=(
+                                    f"Sir 进入 Gaming 模式 (foreground 全屏 + title 命中 vocab). "
+                                    f"window='{window_title[:60]}'. VAD 自适应抬高阈值 + 静默时间."
+                                ),
+                                source='PhysicalEnvProbe',
+                                salience=0.75,
+                                metadata={
+                                    'window_title': window_title[:80],
+                                    'process_name': cls.current_process_name,
+                                },
+                            )
+                    except Exception:
+                        pass
+                elif _was_gaming and not _is_gaming_now:
+                    try:
+                        from jarvis_utils import get_event_bus
+                        _bus = get_event_bus()
+                        if _bus is not None:
+                            _duration_min = round(
+                                (current_time - cls.gaming_started_at) / 60, 1) \
+                                if cls.gaming_started_at > 0 else 0
+                            _bus.publish(
+                                etype='gaming_mode_ended',
+                                description=(
+                                    f"Sir 退出 Gaming 模式. duration={_duration_min}min. "
+                                    f"VAD 恢复正常阈值."
+                                ),
+                                source='PhysicalEnvProbe',
+                                salience=0.65,
+                                metadata={
+                                    'duration_minutes': _duration_min,
+                                    'last_gaming_title': cls.current_gaming_title[:80],
+                                },
+                            )
+                    except Exception:
+                        pass
+                    cls.gaming_started_at = 0.0
+                    cls.current_gaming_title = ""
                 
                 if prev_category != cls.current_work_category:
                     cls.work_session_start = current_time
@@ -920,18 +1106,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "version": 2,
+    "created": "2026-05-24",
+    "updated": "2026-05-24 15:59",
+    "purpose": "Sir 玩游戏自动检测 vocab. PhysicalEnvironmentProbe foreground window title 命中 vocab + fullscreen → work_category='Gaming'. VoiceListenThread 看 Gaming → VAD 阈值自适应抬高.",
+    "treatment": "Sir 真测 BUG-2 / 2026-05-24 14:34 治本: 不再手动设 env JARVIS_VAD_VOLUME_THRESHOLD, Jarvis 自动看屏幕识别游戏.",
+    "design_principles": [
+      "ONLY title_keywords (Sir 真痛点: Steam process 一直开但不一定在玩, 不能光看 process_name)",
+      "require_fullscreen=true 是强信号 (Sir 全屏玩游戏才阻挡 ASR, 窗口化游戏可能边玩边对话)",
+      "CLI 可加 (scripts/gaming_vocab_dump.py)",
+      "L7 reflector 可 propose 新 entry 进 review queue (Sir 拍板)",
+      "fail-safe: 文件损坏 → fallback 到 _seed_title_keywords"
+    ],
+    "sir_real_games": [
+      "LOL (英雄联盟) — 全屏",
+      "Age of Empires 4 (帝国时代 4) — 全屏"
+    ]
+  },
+  "require_fullscreen": true,
+  "_require_fullscreen_note": "true = title 命中 + 全屏 才算 Gaming. false = 仅 title 命中即可. Sir 默认 true (Sir 全屏玩游戏).",
+  "title_keywords": [
+    {"pattern": "league of legends", "state": "active", "added": "2026-05-24", "note": "Sir 真测主玩 — 英文 title"},
+    {"pattern": "英雄联盟", "state": "active", "added": "2026-05-24", "note": "Sir 真测主玩 — 中文 title"},
+    {"pattern": "age of empires", "state": "active", "added": "2026-05-24", "note": "Sir 真测主玩 — 帝国时代英文"},
+    {"pattern": "帝国时代", "state": "active", "added": "2026-05-24", "note": "Sir 真测主玩 — 帝国时代中文"},
+    {"pattern": "valorant", "state": "active", "added": "2026-05-24", "note": "Riot 同款 (LoL 玩家可能也玩)"},
+    {"pattern": "无畏契约", "state": "active", "added": "2026-05-24", "note": "Valorant 中文"},
+    {"pattern": "tft", "state": "active", "added": "2026-05-24", "note": "Teamfight Tactics (LoL 同公司)"},
+    {"pattern": "云顶之弈", "state": "active", "added": "2026-05-24", "note": "TFT 中文"},
+    {"pattern": "刀塔", "state": "active", "active_added": "2026-05-24", "note": "Dota 中文 (备)"},
+    {"pattern": "dota 2", "state": "active", "added": "2026-05-24", "note": "Dota 2 英文 (备)"},
+    {"pattern": "counter-strike", "state": "active", "added": "2026-05-24", "note": "CS 系列 (备)"},
+    {"pattern": "csgo", "state": "active", "added": "2026-05-24", "note": "CS:GO 简写"},
+    {"pattern": "cs2", "state": "active", "added": "2026-05-24", "note": "CS2"},
+    {"pattern": "minecraft", "state": "active", "added": "2026-05-24", "note": "我的世界 (备)"},
+    {"pattern": "原神", "state": "active", "added": "2026-05-24", "note": "Genshin 中文 (备)"},
+    {"pattern": "genshin", "state": "active", "added": "2026-05-24", "note": "Genshin 英文 (备)"},
+    {"pattern": "elden ring", "state": "active", "added": "2026-05-24", "note": "艾尔登法环 (备)"},
+    {"pattern": "艾尔登法环", "state": "active", "added": "2026-05-24", "note": "Elden Ring 中文"},
+    {"pattern": "cyberpunk", "state": "active", "added": "2026-05-24", "note": "赛博朋克 (备)"},
+    {"pattern": "赛博朋克", "state": "active", "added": "2026-05-24", "note": "Cyberpunk 中文"}
+  ],
+  "vad_adaptation": {
+    "_meta": "Gaming category 激活时, VAD 参数自动倍增. VoiceListenThread 读这俩.",
+    "volume_threshold_multiplier": 1.8,
+    "silence_limit_multiplier": 1.3,
+    "_note": "倍数适中 — 不影响 Sir 真说话音量 (Sir 说话音量通常 > 300, 1.8x=324 仍可触发), 但能挡背景游戏音效 (~150-280)."
+  },
+  "_review_queue": [],
+  "_review_queue_note": "L7 reflector 提议的新游戏 vocab 写在这, Sir 看 CLI 拍板 activate/reject."
+}

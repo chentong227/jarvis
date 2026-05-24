@@ -500,6 +500,8 @@ def execute_memory_updates(updates: list, source: str = 'llm_tag') -> int:
 
     准则 5: 这是主脑说"已更新"的唯一合法路径. 写完 Sir 在 dashboard 能看到.
     返回成功写入数.
+
+    🆕 [Reshape M8.A / 2026-05-24] 同时 dual-write to mem_audit.jsonl 单源.
     """
     if not updates:
         return 0
@@ -509,6 +511,7 @@ def execute_memory_updates(updates: list, source: str = 'llm_tag') -> int:
     path = _os.path.join("memory_pool", "profile_corrections.jsonl")
     _os.makedirs(_os.path.dirname(path), exist_ok=True)
     n = 0
+    written_records: list = []
     try:
         with open(path, 'a', encoding='utf-8') as f:
             for u in updates:
@@ -523,9 +526,23 @@ def execute_memory_updates(updates: list, source: str = 'llm_tag') -> int:
                     'confidence': 1.0,  # 主脑显式发 tag 高置信
                 }
                 f.write(_json.dumps(record, ensure_ascii=False) + '\n')
+                written_records.append(record)
                 n += 1
     except Exception:
         pass
+    # 🆕 M8.A: dual-write 到 mem_audit.jsonl 单源
+    if written_records:
+        try:
+            from jarvis_mem_audit import write_audit
+            for rec in written_records:
+                write_audit(
+                    record=rec,
+                    kind='correction',
+                    source=source,
+                    dual_write=False,  # 老 file 已写
+                )
+        except Exception:
+            pass
     return n
 
 
@@ -683,18 +700,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

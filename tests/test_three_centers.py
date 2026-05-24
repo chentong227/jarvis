@@ -83,8 +83,17 @@ class TestNudgeGate(unittest.TestCase):
 
     def test_sleep_mode_deactivate(self):
         self.gate.activate_sleep_mode()
-        self.gate.deactivate_sleep_mode()
+        # 🆕 [β.5.46-fix15] deactivate 30s grace 防 spam: test 用 force=True 显式解除
+        self.gate.deactivate_sleep_mode(force=True)
         self.assertTrue(self.gate.can_speak('guardian', nudge_type='hydration'))
+
+    def test_sleep_mode_deactivate_grace_blocks_within_30s(self):
+        """🆕 [Reshape M7 / 2026-05-24] 验证 30s grace 真守门: 非 force 路径 30s 内拒绝解除."""
+        self.gate.activate_sleep_mode()
+        # 不 force → 30s 内被拒绝
+        ret = self.gate.deactivate_sleep_mode(force=False)
+        self.assertFalse(ret)  # 拒绝解除
+        self.assertTrue(self.gate.is_sleep_mode())  # 仍 sleeping
 
     def test_freeze_for_blocks_other_centers(self):
         # 用户手动急停 → freeze_for(180) 后 3 分钟内任何中心都不能抢话

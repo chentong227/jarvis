@@ -53,7 +53,7 @@ class _LineageTestMixin:
 class TestPublishReturnsEvidenceId(_LineageTestMixin, unittest.TestCase):
     def setUp(self):
         self._setup_isolated_tracer()
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)  # M1.2: 干净 deque
 
     def tearDown(self):
         self._teardown_isolated_tracer()
@@ -82,7 +82,7 @@ class TestPublishReturnsEvidenceId(_LineageTestMixin, unittest.TestCase):
 class TestPublishWithEvidenceChain(_LineageTestMixin, unittest.TestCase):
     def setUp(self):
         self._setup_isolated_tracer()
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
 
     def tearDown(self):
         self._teardown_isolated_tracer()
@@ -117,7 +117,7 @@ class TestPublishWithEvidenceChain(_LineageTestMixin, unittest.TestCase):
 class TestPublishLineageRecord(_LineageTestMixin, unittest.TestCase):
     def setUp(self):
         self._setup_isolated_tracer()
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
 
     def tearDown(self):
         self._teardown_isolated_tracer()
@@ -158,7 +158,7 @@ class TestPublishBackwardCompat(_LineageTestMixin, unittest.TestCase):
 
     def setUp(self):
         self._setup_isolated_tracer()
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
 
     def tearDown(self):
         self._teardown_isolated_tracer()
@@ -194,7 +194,7 @@ class TestPublishLineageDegrade(unittest.TestCase):
     """lineage 模块不可用时 publish 仍 work (degrade gracefully)."""
 
     def test_publish_works_when_lineage_import_fails(self):
-        bus = ConversationEventBus()
+        bus = ConversationEventBus(restore=False)
         with mock.patch.dict('sys.modules', {'jarvis_lineage': None}):
             # import 失败应该 catch, publish 不 throw
             try:

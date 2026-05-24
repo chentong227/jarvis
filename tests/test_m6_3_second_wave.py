@@ -24,7 +24,8 @@ class TestInit6Helpers(unittest.TestCase):
     def test_all_methods_exist(self):
         from jarvis_central_nerve import CentralNerve
         methods = [
-            '_init_3_brain_legacy',
+            # 🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] _init_3_brain_legacy 已删除.
+            # 不再 require '_init_3_brain_legacy' (主对话 100% 走 chat_bypass 单脑).
             '_init_stm_persist',
             '_init_event_bus_swm',
             '_init_working_feed',
@@ -34,14 +35,27 @@ class TestInit6Helpers(unittest.TestCase):
         for m in methods:
             self.assertTrue(hasattr(CentralNerve, m), f'missing {m}')
 
-    def test_init_3_brain_legacy_sets_attrs(self):
+    def test_3_brain_method_and_attrs_removed(self):
+        """🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] verify M3.G 真删完成.
+
+        老 _init_3_brain_legacy method + right_brain/left_brain/l5_brain attr 已删除.
+        Sir 真测 SWM deprecated_3_brain_invoked event = 0 → 安全删除.
+        老 test_init_3_brain_legacy_sets_attrs 用例迁到本 test 反向验证 (M3.G 真删).
+        """
         from jarvis_central_nerve import CentralNerve
+        # method 不应再存在
+        self.assertFalse(
+            hasattr(CentralNerve, '_init_3_brain_legacy'),
+            'M3.G 真删未完成: _init_3_brain_legacy method 仍存在'
+        )
+        # 实例化后, 3 个 brain attr 不应存在 (CentralNerve.__new__ 不会 set 它们)
         n = CentralNerve.__new__(CentralNerve)
-        n._init_3_brain_legacy('fake_api_key')
-        # 3 个 attr 都应被设 (instance or None)
-        self.assertTrue(hasattr(n, 'right_brain'))
-        self.assertTrue(hasattr(n, 'left_brain'))
-        self.assertTrue(hasattr(n, 'l5_brain'))
+        self.assertFalse(hasattr(n, 'right_brain'),
+                            'M3.G 真删未完成: right_brain attr 仍存在')
+        self.assertFalse(hasattr(n, 'left_brain'),
+                            'M3.G 真删未完成: left_brain attr 仍存在')
+        self.assertFalse(hasattr(n, 'l5_brain'),
+                            'M3.G 真删未完成: l5_brain attr 仍存在')
 
     def test_init_stm_persist_sets_basic_attrs(self):
         from jarvis_central_nerve import CentralNerve

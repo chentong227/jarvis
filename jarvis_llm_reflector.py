@@ -301,18 +301,6 @@ try:
 except Exception:
     pass
 try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
-except Exception:
-    pass
-try:
     from jarvis_utils import (  # noqa: F401
         bg_log, set_conversation_active, is_conversation_active,
         register_jarvis_tts, is_recent_jarvis_echo, clear_jarvis_tts_ring,

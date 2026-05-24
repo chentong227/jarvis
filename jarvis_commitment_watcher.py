@@ -1358,6 +1358,12 @@ class CommitmentWatcher(threading.Thread):
         # 🩹 [β.5.33 / 2026-05-20] 启动时立刻消费 pending_callbacks (Sir 之前 activate 的)
         self._consume_pending_callbacks()
         _last_callback_check = time.time()
+        # 🆕 [Reshape M4.4 / 2026-05-24] daemon 周期 reload from PromiseLog (单源真理)
+        # 每 5min 拉一次 pending kind=commitment, 让 SQLite/PromiseLog 不一致时 (e.g.
+        # main brain FAST_CALL.complete 标 fulfilled, 但 SQLite 还显示 active) daemon
+        # 不会 stale fire. M4.5.1 dual-write 保证两源数据等价, 这里 reload 只是 catchup.
+        _last_plog_reload = time.time()
+        _PLOG_RELOAD_INTERVAL = 300.0  # 5min
         while True:
             try:
                 if hasattr(self.worker, 'voice_thread') and self.worker.voice_thread.in_active_conversation:
@@ -1437,6 +1443,98 @@ class CommitmentWatcher(threading.Thread):
                                     pass
                             continue
 
+                        # 🆕 [Sir 真测 BUG-3 治本 / 2026-05-24 16:15] 自动 retire 过期承诺
+                        # Sir 痛点: "过期的 commit 就不要存在 commit 了, 存在长期的记忆那边,
+                        # 我不需要他一直拿过期的 commit 骚扰我". 真治本 (准则 6 + 8):
+                        #   deadline 过 _AUTO_RETIRE_HOURS (default 6h) 还没 fulfilled → 自动 retire.
+                        #   - SQLite mark is_deleted=1 (CommitmentWatcher 重启后不再读)
+                        #   - PromiseLog mark state=fulfilled + evidence kind=auto_retire_overdue
+                        #     (历史 evidence 保留, 主脑通过 PromiseLog 看历史)
+                        #   - SWM publish commitment_retired event (主脑下轮看到)
+                        #   - skip nudge (这次不催)
+                        # 这条放在 fulfillment pre-check 前: 6h+ 过期的不需要再 check
+                        # fulfillment, 直接 retire (减 LLM 调用).
+                        _AUTO_RETIRE_HOURS = 6.0
+                        _retire_threshold = c['deadline_ts'] + _AUTO_RETIRE_HOURS * 3600
+                        if now > _retire_threshold and not c.get('nudged') and not c.get('auto_retired'):
+                            c['nudged'] = True
+                            c['auto_retired'] = True
+                            try:
+                                # 1) SQLite mark is_deleted=1
+                                _hippo = self._get_hippo()
+                                _db_id = c.get('db_id', 0)
+                                if _hippo is not None and _db_id and _db_id > 0:
+                                    if hasattr(_hippo, 'soft_delete_commitment'):
+                                        _hippo.soft_delete_commitment(_db_id)
+                                # 2) PromiseLog mark state=fulfilled + evidence
+                                try:
+                                    from jarvis_promise_log import get_default_log
+                                    _plog = get_default_log()
+                                    _pid = c.get('promise_id', '')
+                                    _retire_what = (
+                                        f"Auto-retired by CommitmentWatcher: "
+                                        f"deadline_ts={c['deadline_ts']:.0f}, "
+                                        f"overdue_hours={(now - c['deadline_ts'])/3600:.1f}, "
+                                        f"never fulfilled. 历史 evidence 保留."
+                                    )
+                                    if _pid and hasattr(_plog, 'mark_fulfilled'):
+                                        _plog.mark_fulfilled(
+                                            _pid,
+                                            evidence_kind='auto_retire_overdue',
+                                            evidence_what=_retire_what,
+                                        )
+                                    elif _pid and hasattr(_plog, 'add_evidence_only'):
+                                        _plog.add_evidence_only(
+                                            promise_id=_pid,
+                                            evidence_kind='auto_retire_overdue',
+                                            evidence_what=_retire_what,
+                                        )
+                                except Exception:
+                                    pass
+                                # 3) SWM publish commitment_retired
+                                try:
+                                    from jarvis_utils import get_event_bus
+                                    _bus = get_event_bus()
+                                    if _bus is not None:
+                                        _overdue_h = (now - c['deadline_ts']) / 3600
+                                        _bus.publish(
+                                            etype='commitment_retired',
+                                            description=(
+                                                f"Sir 承诺 '{c.get('description','')[:60]}' "
+                                                f"过期 {_overdue_h:.1f}h 未 fulfilled, 自动 retire 不再骚扰. "
+                                                f"历史在 PromiseLog kind=auto_retire_overdue."
+                                            ),
+                                            source='CommitmentWatcher.auto_retire',
+                                            salience=0.55,
+                                            metadata={
+                                                'description': c.get('description', '')[:200],
+                                                'deadline_ts': c['deadline_ts'],
+                                                'overdue_hours': round(_overdue_h, 2),
+                                                'db_id': c.get('db_id', 0),
+                                                'promise_id': c.get('promise_id', ''),
+                                            },
+                                        )
+                                except Exception:
+                                    pass
+                                # 4) bg_log
+                                try:
+                                    from jarvis_utils import bg_log as _retire_bg
+                                    _retire_bg(
+                                        f"⏳ [CommitmentWatcher/AutoRetire] "
+                                        f"'{c.get('description','')[:50]}' overdue "
+                                        f"{(now - c['deadline_ts'])/3600:.1f}h "
+                                        f"(>{_AUTO_RETIRE_HOURS}h threshold) → retired (no nudge)"
+                                    )
+                                except Exception:
+                                    pass
+                            except Exception as _ar_e:
+                                try:
+                                    from jarvis_utils import bg_log as _ar_bg
+                                    _ar_bg(f"⚠️ [CommitmentWatcher/AutoRetire] {_ar_e}")
+                                except Exception:
+                                    pass
+                            continue  # skip nudge / fulfillment check 路径
+
                         # 🩹 [β.5.39-fix2 / 2026-05-20 15:38] Sir 实测真理:
                         # commitment_check nudge 在 fulfillment 检测**之前** 触发 → Sir 真履行了也催!
                         # 修法: deadline-based nudge 之前先 check fulfillment, fulfilled → skip nudge
@@ -1509,6 +1607,18 @@ class CommitmentWatcher(threading.Thread):
                 if time.time() - _last_callback_check > 300:
                     _last_callback_check = time.time()
                     self._consume_pending_callbacks()
+
+                # 🆕 [Reshape M4.4 / 2026-05-24] 周期 reload from PromiseLog (单源真理)
+                if time.time() - _last_plog_reload > _PLOG_RELOAD_INTERVAL:
+                    _last_plog_reload = time.time()
+                    try:
+                        with self._lock:
+                            _added = self._load_from_promise_log_locked(max_age_hours=48.0)
+                        if _added > 0:
+                            from jarvis_utils import bg_log as _m44_bg
+                            _m44_bg(f"📥 [CommitmentWatcher/M4.4] 周期 reload: +{_added} 条 from PromiseLog")
+                    except Exception:
+                        pass
 
                 time.sleep(30)
             except Exception:
@@ -1909,6 +2019,38 @@ class CommitmentWatcher(threading.Thread):
         if self.gate:
             self.gate.mark_spoke('guardian')
 
+        # 🆕 [Reshape M4.4 / 2026-05-24] dual-emit 'reminder_fired' SWM event.
+        # M5.A SWM-trigger daemon 启用后, 此处 push __NUDGE__ 路径将退化为 publish-only.
+        # 当前两路径并行 (push + publish), 数据强耦合保证主脑看见 evidence.
+        try:
+            from jarvis_utils import get_event_bus as _m44_geb
+            _m44_bus = _m44_geb()
+            if _m44_bus is not None:
+                _m44_bus.publish(
+                    etype='reminder_fired',
+                    description=(
+                        f"commitment overdue by {overdue_minutes}min: "
+                        f"{commitment.get('description','')[:80]}"
+                    ),
+                    source='CommitmentWatcher._dispatch_commitment_nudge',
+                    salience=0.85,
+                    metadata={
+                        'commitment_description': commitment.get('description', '')[:200],
+                        'commitment_source_text': commitment.get('source_text', '')[:200],
+                        'commitment_time': time.strftime("%H:%M", time.localtime(commitment['deadline_ts'])),
+                        'overdue_minutes': overdue_minutes,
+                        'sleep_mode_active': sleep_mode_active,
+                        'sleep_duration_min': sleep_duration_min,
+                        'recent_sleep_min': recent_sleep_min,
+                        'promise_id': commitment.get('promise_id', ''),
+                        'db_id': commitment.get('db_id', 0),
+                        'fired_via': '__NUDGE__',  # current path; M5.A → 'swm_trigger'
+                        'milestone': 'M4.4',
+                    },
+                )
+        except Exception:
+            pass
+
         # 🩹 [P5-fixC] commitment_check 真 fire → publish 让别的 sentinel 让位.
         try:
             from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
@@ -2030,18 +2172,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

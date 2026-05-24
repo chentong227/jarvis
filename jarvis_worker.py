@@ -108,19 +108,11 @@ from jarvis_vocal_cord import VocalCord  # noqa: F401
 from jarvis_blood import JarvisBlood, ExecutionResult, FeedbackSignal  # noqa: F401
 from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401
-# 🆕 [Reshape M6.5.2 / 2026-05-24] 3-brain 即将 git mv 到 _legacy/. try/except 防破.
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    RightBrain = None
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    LeftBrain = None
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
-except Exception:
-    ReflectionBrain = None
+# 🆕 [Reshape M3.F / 2026-05-24] 3-brain 已 mv 到 _legacy/3_brain_attempt/.
+# 顶部 try/except import 全删, 主对话 100% 走 chat_bypass.stream_chat 单脑.
+RightBrain = None  # type: ignore
+LeftBrain = None  # type: ignore
+ReflectionBrain = None  # type: ignore
 
 from jarvis_utils import (  # noqa: F401
     safe_gemini_call, get_local_fallback, safe_openrouter_call,
@@ -1059,8 +1051,18 @@ class VoiceListenThread(QThread):
             print(f"⚠️[AmbientSensor / β.5.40-A1] init 异常不启用: {_as_e}")
             self._ambient_sensor = None
 
-        VOLUME_THRESHOLD = 180
-        SILENCE_LIMIT = 1.8
+        # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24 15:55] 智能 VAD 自适应
+        # Sir 真意 (拒绝手动 env): "并没什么智能方案吗？贾维斯他看我打开游戏就会说一些
+        # 我玩游戏不休息了的话，讲道理他是知道我在玩游戏的吧？"
+        # 治本: PhysicalEnvironmentProbe 看 foreground window title + fullscreen,
+        # 命中 gaming_vocab.json → is_gaming_active=True → VoiceListenThread 自动倍增
+        # VOLUME_THRESHOLD + SILENCE_LIMIT (vocab 配 multiplier).
+        # 不需要 Sir 手动 env. env 仍保留作 fallback (vocab 损坏时).
+        try:
+            VOLUME_THRESHOLD_BASE = int(os.environ.get('JARVIS_VAD_VOLUME_THRESHOLD', '180'))
+        except Exception:
+            VOLUME_THRESHOLD_BASE = 180
+        SILENCE_LIMIT_BASE = 1.8
         # 👇 Bug D 修复：用户实际诉求是"对话完保持 30 秒焦点模式后自动退出"，
         # 原来 60s 太长 + 又被环境噪音不断续命，实际从来不会自动退出。
         ACTIVE_TIMEOUT = 30.0
@@ -1185,7 +1187,18 @@ class VoiceListenThread(QThread):
                 # silence_timer 永远不超时 → ASR 永远不触发。
                 # 修：保持 ENTRY=180 不漏 Sir 真说话，加 EXIT=100 让背景音落到"中间区"，
                 # 中间区帧不刷新 silence_timer，让累积正常超时触发 ASR。
-                SILENCE_THRESHOLD_EXIT = 100  # 真安静阈值（< 100 视为安静）
+                SILENCE_THRESHOLD_EXIT_BASE = 100  # 真安静阈值（< 100 视为安静）
+                # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24 15:55] Gaming 自适应 VAD
+                # PhysicalEnvironmentProbe 每秒检测 foreground window. 命中 vocab + 全屏
+                # → is_gaming_active=True → VOLUME_THRESHOLD *= 1.8, EXIT *= 1.8.
+                # 不影响 Sir 说话 (Sir 通常 > 300, 1.8x=324 仍触发) + 挡背景音效.
+                # 高频 loop 调 cls method (查 cls attr + return tuple, O(1)).
+                try:
+                    _vol_mult, _sil_mult = PhysicalEnvironmentProbe.get_gaming_vad_adaptation()
+                except Exception:
+                    _vol_mult, _sil_mult = 1.0, 1.0
+                VOLUME_THRESHOLD = int(VOLUME_THRESHOLD_BASE * _vol_mult)
+                SILENCE_THRESHOLD_EXIT = int(SILENCE_THRESHOLD_EXIT_BASE * _vol_mult)
                 if volume > VOLUME_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
@@ -1254,6 +1267,10 @@ class VoiceListenThread(QThread):
                             current_silence_limit = 2
                     else:
                         current_silence_limit = 1.5
+                    # 🆕 [Sir 真测 BUG-2 治本 / 2026-05-24 15:55] Gaming 自适应 silence
+                    # Gaming 时游戏背景音常在 EXIT-ENTRY 中间 → silence_timer 难超时.
+                    # 抬高 silence_limit (1.3x) 让累积更稳定到达, 避免 ASR fragment.
+                    current_silence_limit *= _sil_mult
                     
                     max_record_time = 60.0 if self.in_active_conversation else 4.0 
                     
@@ -2441,17 +2458,26 @@ class JarvisWorkerThread(QThread):
                     pass
 
             # event_bus 投递（让主脑下一轮 prompt 能引用）
+            # 🆕 [Reshape 准则 6 / 2026-05-24] description 改成 raw signal 中性表达,
+            # 不用 "rejected"/"refused" 动作命令式动词 (会引导 LLM 用 "step back / stay
+            # out of your way / won't intrude" 等撤退式话术锁 — Sir 12:01 真测痛点).
+            # 主脑看 raw vocab match + Sir 原话自由判, vocab category 在 metadata 里.
             try:
                 bus = getattr(self.jarvis, 'event_bus', None)
                 if bus is not None:
+                    _vocab_cat = ('strong' if is_strong_refusal else
+                                  ('after_nudge' if had_offer_help else 'generic'))
                     bus.publish(
                         etype='help_refused',
-                        description=f"Sir rejected help: '{cmd[:60]}'"
-                                    + (' (STRONG)' if is_strong_refusal else '')
-                                    + (' (after nudge)' if had_offer_help else ''),
+                        description=(
+                            f"Sir said: '{cmd[:80]}' "
+                            f"[refusal vocab match / cat={_vocab_cat}]"
+                        ),
                         source='_detect_help_refusal',
                         metadata={'had_offer_help_in_5': had_offer_help,
-                                  'is_strong': is_strong_refusal},
+                                  'is_strong': is_strong_refusal,
+                                  'vocab_category': _vocab_cat,
+                                  'sir_utterance': cmd[:200]},
                     )
             except Exception:
                 pass
@@ -4042,6 +4068,37 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                         if removed_count == 0:
                                             print(f" └─ ℹ️ [Scheduler Sync] 活跃升级队列中无匹配 (可能尚未触发)")
                                         
+                                        # 🆕 [Sir 真测 BUG-1 fix / 2026-05-24] cancel_res publish SWM,
+                                        # 主脑下轮看到真发生啥 (避免虚构 "我已删 X" 当 cancel fail).
+                                        # Sir 14:34 真测: Sir 说"取消早上活动承诺", cancel 未匹配,
+                                        # 但主脑虚构 "I removed the commitment to rest at 20:30".
+                                        # 治本: SWM publish 让主脑看真实结果.
+                                        try:
+                                            from jarvis_utils import get_event_bus as _cancel_bus_get
+                                            _cancel_bus = _cancel_bus_get()
+                                            if _cancel_bus is not None:
+                                                _cancel_success = '已成功狙击' in cancel_res
+                                                _sal = 0.85 if not _cancel_success else 0.7
+                                                _cancel_bus.publish(
+                                                    etype='reminder_cancel_attempted',
+                                                    description=(
+                                                        f"User intent: '{cancel_old}'. "
+                                                        f"hippocampus result: {cancel_res}. "
+                                                        f"scheduler removed: {removed_count}. "
+                                                        f"FACT: do NOT fabricate specific time/details — "
+                                                        f"if hippocampus says '未找到', tell Sir truthfully."
+                                                    ),
+                                                    source='cancel_future_reminder',
+                                                    salience=_sal,  # >=0.85 高凸 → 主脑必看
+                                                    metadata={
+                                                        'cancel_query': cancel_old,
+                                                        'success': _cancel_success,
+                                                        'scheduler_removed': removed_count,
+                                                    },
+                                                )
+                                        except Exception:
+                                            pass
+                                        
                                 result['gate_data_to_save'] = gate_data_list
                                 
                                 # 🎯 conversation_event 抽取（突破/回调/释压/分享）
@@ -5061,13 +5118,30 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                 # 砍 sub_command hints → ~1200 chars. 节省 ~800 chars.
                 #
                 # 老 [P0+18-d.6] _KEY_SUBCOMMAND_HINTS 删 (主脑动态发现, 不需 prompt 教).
+                #
+                # 🆕 [Reshape M7 Phase 4b / 2026-05-24] Sir 拍板续减:
+                # 砍 description 段 (~1200 chars). 主脑 99% turn 不调工具, 调时 FAST_CALL
+                # fail 返 valid commands + hint, 一轮试错即得. organ name self-documenting
+                # (e.g. clipboard_hands / audio_hands / screenshot_hands).
+                # env JARVIS_TOOL_DESC_FULL=1 可回退含 description (开发/debug 用).
+                _show_full_desc = (os.environ.get('JARVIS_TOOL_DESC_FULL', '').strip()
+                                       in ('1', 'true', 'True', 'yes', 'on'))
                 _tool_lines = []
                 for name, info in self.jarvis.hand_manifests.items():
                     if name in FAST_CALL_BLACKLIST:
                         continue
-                    _tool_lines.append(f"- {name}: {info['description']}")
+                    if _show_full_desc:
+                        _tool_lines.append(f"- {name}: {info['description']}")
+                    else:
+                        # Phase 4b: 只 name, 主脑自动从 organ name 推用途
+                        _tool_lines.append(f"- {name}")
                 tool_instructions = "\n".join(_tool_lines)
                 tool_instructions += "\n- ui_control: subtitle_on/off, orb_on/off"
+                # FAST_CALL 路径: 主脑不知 schema 时 emit 直接 fail 返 hint, 一轮试错即得
+                if not _show_full_desc:
+                    tool_instructions += (
+                        "\nNote: emit FAST_CALL with organ_name; fail returns valid commands."
+                    )
                 chat_organs = tool_instructions
                 
                 # 👇 核心新增：提取系统已知的物理信标（如真实的 D:\桌面），喂给聊天脑！
@@ -5080,49 +5154,10 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             landmarks_str = "\n".join([f"- {k}: {v}" for k, v in lms.items()])
                     except: pass
                     
-                def trigger_routing(task_cmd=clean_cmd, protocol_data=gate_data_to_save):
-                    # 🆕 [Reshape M3.C-trace / 2026-05-24] dual-emit deprecation warning + SWM event.
-                    # Sir Q2 决议: 3-brain 彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑.
-                    # central_nerve.run() 长任务流 (RightBrain/LeftBrain/L5Brain) 是 deprecated.
-                    # 此处仅 log + publish, 老路径仍 work (兜底). M6.5 真删时看此 event 数量决定安全:
-                    #   0 触发 1 周 → 安全删除; 有触发 → 找出主脑 prompt 残留触发源.
-                    try:
-                        from jarvis_utils import bg_log as _3b_bg, get_event_bus as _3b_geb
-                        _3b_bg(
-                            f"⚠️ [Trigger Routing / 3-brain DEPRECATED] task_cmd='{task_cmd[:80]}' "
-                            f"— main-brain 应通过 chat_bypass.stream_chat 单脑路径处理, "
-                            f"不应触发 ENGAGE_PHYSICAL_BODY → central_nerve.run() 长任务流."
-                        )
-                        _3b_bus = _3b_geb()
-                        if _3b_bus is not None:
-                            _3b_bus.publish(
-                                etype='deprecated_3_brain_invoked',
-                                description=(
-                                    f'route_callback triggered 3-brain run(), '
-                                    f'task={task_cmd[:80]} — DEPRECATED M6.5 will remove'
-                                ),
-                                source='worker.trigger_routing',
-                                salience=0.65,
-                                metadata={
-                                    'task_cmd': task_cmd[:200],
-                                    'deprecated': True,
-                                    'milestone': 'M3.C/D/G/F → M6.5',
-                                },
-                            )
-                    except Exception:
-                        pass
-
-                    self.state_changed.emit("THINKING")
-                    try:
-                        import win32gui
-                        hwnd = win32gui.GetForegroundWindow()
-                        active_window_title = win32gui.GetWindowText(hwnd)
-                        env_hint = f" [系统探针：用户当前正在看 '{active_window_title}' 窗口]"
-                    except:
-                        env_hint = ""
-                        
-                    self.jarvis.run(task_cmd + env_hint, memory_protocol=protocol_data)
-                    self.state_changed.emit("IDLE")
+                # 🆕 [Reshape M3.G 真删 / 2026-05-24 17:00] trigger_routing 已彻底删除.
+                # Sir 真测 deprecated_3_brain_invoked SWM event = 0 → 主脑不再 emit
+                # <ENGAGE_PHYSICAL_BODY> token → route_callback 永不触发.
+                # cnerve.run() / 3-brain 物理代码已删除. 主对话 100% chat_bypass.stream_chat.
 
                 # 👇 核心修复 1：不要把 system_alert_text 拼进这里！保持纯净！
                 enriched_cmd = f": {cmd}"
@@ -5243,7 +5278,7 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         clean_intent=clean_intent,
                         stm_context=stm_context,
                         ltm_context=ltm_context,
-                        route_callback=trigger_routing,
+                        route_callback=None,  # M3.G 真删: trigger_routing 已删, cnerve.run() 已删
                         gate_future=gate_future,
                         prompt_tier=prompt_tier,  # [R6/Tier+Screenshot] 把分档结果一路传到截图与流式逻辑
                     )
@@ -5825,18 +5860,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

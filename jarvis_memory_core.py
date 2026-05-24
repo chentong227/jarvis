@@ -228,6 +228,28 @@ class HumorMemory:
             self._topic_cooldown[topic_key] = now
             self._global_joke_cooldown = now
         self._save_state()
+        # 🆕 [Reshape M3.H / 2026-05-24] 准则 6 数据强耦合: publish SWM event
+        # 让主脑下轮 SWM block 看到 "刚 register joke topic=X", 不用主脑猜.
+        # salience=0.5 (中等, 不进 swm_history.jsonl 持久化, 仅 in-deque).
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='joke_fired',
+                    description=(
+                        f"HumorMemory.register_joke topic='{topic_key}' "
+                        f"text='{response_text[:60]}'"
+                    ),
+                    source='HumorMemory',
+                    salience=0.5,
+                    metadata={
+                        'topic_key': topic_key,
+                        'global_cooldown_active': True,
+                    },
+                )
+        except Exception:
+            pass
 
     def get_recent_topics(self, max_age_seconds=7200):
         now = time.time()
@@ -255,6 +277,31 @@ class HumorMemory:
         if not self.can_joke_now(topic_key):
             return True
         return self.get_topic_freshness(topic_key) < 0.2
+
+    def get_state_snapshot(self) -> dict:
+        """🆕 [Reshape M3.H / 2026-05-24] 准则 6 数据强耦合: 公开 inspect API.
+
+        给 scripts/humor_state_dump.py / debug 用. 返当前 cooldown / weights / 笑点池.
+        不影响主脑路径 (只读).
+        """
+        with self._lock:
+            now = time.time()
+            global_cd_remain = max(0.0, 3600 - (now - self._global_joke_cooldown))
+            return {
+                'used_topics_count': len(self._used_topics),
+                'used_topics_recent5': list(self._used_topics)[-5:],
+                'topic_cooldowns': {
+                    k: {
+                        'last_fired_at': v,
+                        'cooldown_remain_s': max(0.0, 7200 - (now - v)),
+                        'freshness': self.get_topic_freshness(k),
+                    }
+                    for k, v in self._topic_cooldown.items()
+                },
+                'topic_weights': dict(self._topic_weights),
+                'global_cooldown_remain_s': global_cd_remain,
+                'profile_keywords_active': list(self._profile_joke_keywords.keys()),
+            }
 
     def extract_topic_key(self, window_title: str, nudge_type: str) -> str:
         title_lower = window_title.lower()
@@ -1409,18 +1456,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

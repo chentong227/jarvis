@@ -205,6 +205,34 @@ class CyclicTaskStore:
             self.tasks[task_id] = ct
         self._save()
 
+        # 🆕 [Reshape M4.5 / 2026-05-24] DUAL-WRITE to PromiseLog (单源准备)
+        # 老 cyclic_task_protocol.json 仍写, 新 PromiseLog kind='cyclic' 也写一份.
+        # M5.A SWM-trigger daemon 切到 PromiseLog 时 0 数据丢失. 失败静默不破老路径.
+        try:
+            from jarvis_memory_hub import get_default_hub
+            _hub = get_default_hub()
+            _hub.write_commitment(
+                description=description[:300],
+                kind='cyclic',
+                who_promised='jarvis',
+                deadline=end_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                trigger_pattern={
+                    'kind': 'cycle_minutes',
+                    'value': float(cycle_minutes),
+                    'start_at': start_dt.strftime('%Y-%m-%d %H:%M'),
+                    'end_at': end_dt.strftime('%Y-%m-%d %H:%M'),
+                    'intent_template': intent_template[:200],
+                    'task_id': task_id,
+                    'kind_inner': kind,
+                    'created_by': created_by,
+                    'n_fires': len(triggers),
+                },
+                source=f'cyclic_task.register/{kind}',
+                jarvis_reply='',
+            )
+        except Exception:
+            pass
+
         # publish SWM (best effort)
         self._publish_swm(
             etype='cyclic_task_registered',

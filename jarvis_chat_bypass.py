@@ -4000,16 +4000,43 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         en = "I attempted several tools but couldn't close the loop, Sir."
                         zh = "Sir，我试过几次但没能收尾。"
                 elif _circuit_broken_reason in ("consecutive_failures", "malformed_calls"):
-                    # 拿最后一条失败信息的"为什么失败"塞进去，比纯模板更有信息量
-                    bad_tail = ""
+                    # 🆕 [Sir 真测 BUG-5 治本 / 2026-05-24 16:34] 不念 raw error tail
+                    # Sir 痛点: 主脑念 "track_id 'hydration_2026-05-24' 不存在 (先 register)"
+                    # 像卡了, 又怪. Sir 真意: "直接说没做完就好了, 不用念事情, 或者翻译成
+                    # '帮您登记喝水情况' 这种自然话".
+                    #
+                    # 治法 (准则 8 优雅 > 简单):
+                    #   1. 不抄 raw tool error tail 进 reply (那是给开发者看的)
+                    #   2. paraphrase by organ.command — 'progress.*'/'concerns.*' → 'register your progress'
+                    #      'reminder.*' → 'schedule the reminder', 'memory.*' → 'note that down', 等
+                    #   3. raw tail 仍进 bg_log (已有 line 4031)
+                    _action_phrase_en = "that"
+                    _action_phrase_zh = "那件事"
                     if last_bad:
-                        bad_tail = last_bad.split(":", 1)[-1].strip()[:80]
-                    if bad_tail:
-                        en = f"I couldn't complete that, Sir — {bad_tail}"
-                        zh = f"Sir，那件事我没能做完：{bad_tail}"
-                    else:
-                        en = "I lacked the right tool to do that cleanly, Sir."
-                        zh = "Sir，那件事没有合适的工具直接完成。"
+                        # 提取 organ.command (last_bad 形如 "❌ progress.set: ...")
+                        try:
+                            _head = last_bad.split(":", 1)[0].strip()  # "❌ progress.set"
+                            _organ_cmd = _head.lstrip('❌🛡️ ').strip()
+                            _organ = _organ_cmd.split('.', 1)[0].lower() if '.' in _organ_cmd else _organ_cmd.lower()
+                        except Exception:
+                            _organ = ''
+                        # organ-specific paraphrase (准则 6 vocab 化可后续抽到 json)
+                        _ACTION_PARAPHRASES = {
+                            'progress':    ("logging your progress",         "登记您的进度"),
+                            'concerns':    ("updating that care item",       "更新那项关心"),
+                            'reminder':    ("scheduling that reminder",      "安排那个提醒"),
+                            'memory':      ("noting that down",              "把那件事记下"),
+                            'profile':     ("updating your profile",         "更新您的资料"),
+                            'cyclic_task': ("setting that recurring task",   "设置那个循环提醒"),
+                            'commitment':  ("recording that commitment",     "登记那个承诺"),
+                            'mutation':    ("applying that change",          "执行那项变更"),
+                            'hippocampus': ("storing that memory",           "封存那段记忆"),
+                            'ui_control':  ("adjusting the UI",              "调整界面"),
+                        }
+                        if _organ in _ACTION_PARAPHRASES:
+                            _action_phrase_en, _action_phrase_zh = _ACTION_PARAPHRASES[_organ]
+                    en = f"I didn't manage {_action_phrase_en}, Sir. I'll need a moment to sort that out."
+                    zh = f"Sir，{_action_phrase_zh}没做成，得稍等再处理。"
                 else:
                     en = "Done, Sir." if last_ok else "I could not complete that, Sir."
                     zh = "已完成。" if last_ok else "Sir，那件事我没完成。"
@@ -5977,18 +6004,6 @@ try:
         SkillRegistry, SkillManifest, OfferGuard, PromiseExecutor, PromiseActivator,
         get_registry,
     )
-except Exception:
-    pass
-try:
-    from l1_right_brain import RightBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l3_left_brain import LeftBrain  # noqa: F401
-except Exception:
-    pass
-try:
-    from l5_reflection_brain import ReflectionBrain  # noqa: F401
 except Exception:
     pass
 try:

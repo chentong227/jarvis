@@ -73,15 +73,26 @@ class WriteReceipt:
 
 
 def _detect_target_layer(field_path: str) -> str:
-    """根据 field_path 前缀路由到正确 layer."""
+    """根据 field_path 前缀路由到正确 layer.
+
+    🆕 [Reshape / 2026-05-24] 准则 8 宽容识别 (Sir 12:14 真测痛点):
+      主脑常误写 'ledger.X' / 裸 'sir_X' 形式 → 原 unknown 失败.
+      新加: 'ledger.' / 'sir_X' (concern_id 直名) → ConcernsLedger.
+    """
     if not field_path:
         return 'unknown'
     fp = field_path.lower()
     if fp.startswith(('biographic.', 'preferences.', 'traits.', 'profile.',
-                       'sir.', 'persona.')):
+                       'persona.')):
         return 'ProfileCard'
-    if fp.startswith(('concern.', 'concerns.', 'sir_concern_')):
+    # 🆕 'concern.' / 'concerns.' / 'ledger.' (老 alias) / 裸 'sir_X' (concern_id)
+    if fp.startswith(('concern.', 'concerns.', 'sir_concern_', 'ledger.')):
         return 'ConcernsLedger'
+    # 裸 concern_id (sir_X 形式, 主脑常写) — 但避免覆盖 'sir.' profile 前缀
+    if fp.startswith('sir_') and not fp.startswith('sir.'):
+        return 'ConcernsLedger'
+    if fp.startswith('sir.'):
+        return 'ProfileCard'
     if fp.startswith(('relationships.', 'inside_joke.', 'protocol.',
                        'unfinished.', 'thread.')):
         return 'RelationalStateStore'
@@ -116,6 +127,19 @@ class MemoryMutationGateway:
             try:
                 from jarvis_jsonl_rotator import maybe_rotate as _mr
                 _mr(self.receipt_path, size_mb_cap=10.0)
+            except Exception:
+                pass
+
+            # 🆕 [Reshape M8.A / 2026-05-24] dual-write to unified mem_audit.jsonl
+            # 让 dashboard / Sir 一处看全 audit (5 老 file 合并). 老 receipt_path 仍写不破.
+            try:
+                from jarvis_mem_audit import write_audit
+                write_audit(
+                    record=receipt.to_dict(),
+                    kind='mutation',
+                    source=receipt.source,
+                    dual_write=False,  # 老 file 已写 (line 113), 不再 dual
+                )
             except Exception:
                 pass
         except Exception:
@@ -275,14 +299,55 @@ class MemoryMutationGateway:
                 if ledger is None:
                     err = 'ConcernsLedger not available'
                 else:
-                    # field_path 形如:
-                    #   'concerns.<cid>.<attr>'  → update_concern_field (P5-fix32-G 深度 update)
-                    #   'concerns.<cid>'         → record_signal (老路, severity_delta)
+                    # field_path 形如 (4 种合法形式, 主脑 LLM 常错写, 都识别):
+                    #   'concerns.<cid>.<attr>'   → update_concern_field
+                    #   'concerns.<cid>'          → record_signal
+                    #   'ledger.<cid>[.<attr>]'   → 同 concerns.*  (主脑常写 alias)
+                    #   'sir_<name>[.<attr>]'     → 裸 concern_id (主脑常写)
+                    # 🆕 [Reshape / 2026-05-24] 准则 8: 宽容 parse, 不让主脑栽 field_path 上.
                     parts = field_path.split('.')
-                    cid = parts[1] if len(parts) >= 2 else ''
-                    attr = parts[2] if len(parts) >= 3 else ''
+                    cid = ''
+                    attr = ''
+                    if parts[0].startswith('sir_'):
+                        # 裸 'sir_X[.<attr>]'
+                        cid = parts[0]
+                        attr = parts[1] if len(parts) >= 2 else ''
+                    elif parts[0] in ('concerns', 'concern', 'ledger'):
+                        cid = parts[1] if len(parts) >= 2 else ''
+                        attr = parts[2] if len(parts) >= 3 else ''
+                    else:
+                        # fallback: 当作 concerns.<cid>.<attr>
+                        cid = parts[1] if len(parts) >= 2 else ''
+                        attr = parts[2] if len(parts) >= 3 else ''
                     if not cid:
-                        err = 'invalid concern field_path (need concerns.<cid>[.<attr>])'
+                        err = ('invalid concern field_path (need '
+                                'concerns.<cid>[.<attr>] / ledger.<cid> / sir_<name>); '
+                                'or use concerns.progress_update tool for habit progress')
+                    elif attr.lower() in ('current', 'current_count', 'progress',
+                                            'count', 'amount', 'done',
+                                            'daily_progress'):
+                        # 🆕 [Reshape / 2026-05-24] 准则 8 智能 dispatch:
+                        # 主脑 emit progress-style field (e.g. 'sir_hydration_habit.current_count')
+                        # → 走 record_user_feedback (调用 daily_progress 写回), 不走 update_concern_field
+                        # 这是 hydration / pomodoro / 任何 habit 的正确路径.
+                        if hasattr(ledger, 'record_user_feedback'):
+                            try:
+                                _judgement = {
+                                    'has_relevance': True,
+                                    'severity_delta': 0.0,
+                                    'progress': {'current': new_value},
+                                }
+                                ok_fb = ledger.record_user_feedback(
+                                    cid, str(new_value)[:120], _judgement)
+                                if ok_fb:
+                                    ok = True
+                                else:
+                                    err = (f'concern {cid} not found '
+                                            f'(use concerns.progress_update for habit progress)')
+                            except Exception as _fe:
+                                err = f'record_user_feedback exception: {_fe}'
+                        else:
+                            err = 'ConcernsLedger has no record_user_feedback'
                     elif attr and hasattr(ledger, 'update_concern_field'):
                         # 🆕 [P5-fix32-G] 深度 update — 改 what_i_watch / severity / triggers_proactive 等
                         try:
@@ -466,7 +531,13 @@ class MemoryMutationGateway:
                     except Exception as _re:
                         err = f'relational mutation exception: {_re}'
             else:
-                err = f'no router for layer={layer} (field={field_path})'
+                # 🆕 [Reshape / 2026-05-24] 准则 8: 加 hint 让主脑下轮自纠
+                _hint = (
+                    "use one of: profile.<field> / concerns.<cid>[.<attr>] / "
+                    "ledger.<cid> / sir_<name> / commitment.<op>.<id> / promise.<op>.<id> / "
+                    "inside_joke.<op>.<id>"
+                )
+                err = (f'no router for layer={layer} (field={field_path}); {_hint}')
         except Exception as e:
             err = f'mutation exception: {e}'
 
