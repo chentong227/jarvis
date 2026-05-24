@@ -1897,9 +1897,26 @@ def _apply_callback_proposal(cb_id: str, on_done=None) -> None:
                         'source_utterance': cb.source_utterance,
                         'activated_at': time.time(),
                     }, ensure_ascii=False) + '\n')
+                # 🆕 [Reshape M4.7 / 2026-05-24] dual-write to PromiseLog (lineage 价值).
+                # jsonl 仍保留兼容老 consumer (commitment_watcher._consume_pending_callbacks).
+                # PromiseLog 让 Sir 跨 source 看到所有 promise (cross_session_callback +
+                # commitment + cyclic + watch + self_promise) 在一处. M5+ daemon 真切
+                # PromiseLog 单源后, 老 jsonl write 可删 (cleanup checklist trigger).
+                try:
+                    from jarvis_promise_log import get_default_log as _m47_gpl
+                    _plog = _m47_gpl()
+                    _plog.register(
+                        description=cb.action[:200],
+                        kind='cross_session_callback',
+                        deadline_str=cb.when_iso or '',
+                        jarvis_reply=cb.source_utterance[:1000] if cb.source_utterance else '',
+                        author='sir',
+                    )
+                except Exception:
+                    pass
                 if on_done:
                     on_done(True,
-                        f'✓ {cb.action[:40]} → 已激活 (主进程 watcher 到 {cb.when_iso} 提醒)')
+                        f'✓ {cb.action[:40]} → 已激活 (主进程 watcher 到 {cb.when_iso} 提醒) + PromiseLog')
             except Exception as e:
                 if on_done:
                     on_done(False, f'写 pending_callbacks.jsonl 失败: {e}')
