@@ -404,224 +404,29 @@ class CentralNerve:
         # [Reshape M6.3 third wave / 2026-05-24] ScreenTeaseReflector L7 init helper. 行为不变.
         self._init_screen_tease_reflector()
 
-        # 🩹 [β.5.35-D / 2026-05-20] StruggleReflector L7 vocab daemon
-        # Sir BUG 2 续: offer_help 触发源重设 (β.5.35-C 加 sir_struggle_vocab + worker detector).
-        # β.5.35-D 加 L7 daemon: 24h 1 跑 LLM 看 STM [src=user_voice] propose 新
-        # struggle phrase 进 review_queue, Sir CLI struggle_vocab_dump.py 拍板.
-        # stm_provider 复用 WeeklyReflector 同款 lambda (line 661 上下文).
-        # doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
-        self.struggle_reflector = None
-        try:
-            from jarvis_struggle_reflector import StruggleReflector
-            def _struggle_stm_provider():
-                return list(getattr(self, 'short_term_memory', []) or [])
-            self.struggle_reflector = StruggleReflector(
-                key_router=self.key_router,
-                stm_provider=_struggle_stm_provider,
-            )
-            if self.struggle_reflector is not None and not self.struggle_reflector.is_alive():
-                self.struggle_reflector.start()
-            try:
-                from jarvis_utils import bg_log as _strr_bg
-                _strr_bg("🪞 [StruggleReflector] L7 vocab daemon ready (β.5.35-D)")
-            except Exception:
-                pass
-        except Exception as _strr_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[StruggleReflector] 初始化失败（非致命）：{_strr_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] StruggleReflector init helper. 行为不变.
+        self._init_struggle_reflector()
 
-        # 🩹 [β.5.44-CD / 2026-05-20 19:02] IntentResolver + TOOL_REGISTRY 挂载
-        # Sir 18:55 真理重构 — 7 个 module publish-only, IntentResolver 集中 LLM judge
-        # 决定调 tool. 主脑看 [INTENT RESOLVED] block 知道哪个 tool 真成功.
-        self.intent_resolver = None
-        try:
-            from jarvis_intent_resolver import IntentResolver, register_intent_resolver
-            from jarvis_tool_registry import get_tool_registry
-            _tools = get_tool_registry()
-            # tools 需 nerve ref, wrap 注入 self
-            _wrapped_tools = {}
-            for _name, _fn in _tools.items():
-                def _make_wrapper(_orig_fn):
-                    def _wrapped(**kw):
-                        kw['nerve'] = self
-                        return _orig_fn(**kw)
-                    _wrapped.__doc__ = (_orig_fn.__doc__ or '')
-                    # 🩹 [P1-Gap8 / 2026-05-20 23:38] __wrapped__ 让 inspect.signature
-                    # 能找回真 function (而非 wrapper 的 **kw), IntentResolver schema 才准
-                    _wrapped.__wrapped__ = _orig_fn
-                    return _wrapped
-                _wrapped_tools[_name] = _make_wrapper(_fn)
-            self.intent_resolver = IntentResolver(
-                key_router=self.key_router,
-                central_nerve=self,
-                tool_registry=_wrapped_tools,
-            )
-            register_intent_resolver(self.intent_resolver)
-            try:
-                from jarvis_utils import bg_log as _ir_bg
-                _ir_bg(f"🧭 [IntentResolver] ready ({len(_wrapped_tools)} tools)")
-            except Exception:
-                pass
-            # 全局 nerve ref 给 tool fn (从 _GLOBAL_NERVE 拿)
-            import jarvis_central_nerve as _self_mod
-            _self_mod._GLOBAL_NERVE = self
-        except Exception as _ir_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[IntentResolver] 初始化失败（非致命）：{_ir_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] IntentResolver init helper. 行为不变.
+        self._init_intent_resolver()
 
-        # 🩹 [Gap 1 / P5-ToM / 2026-05-21 00:55] ToMReflector + SirMentalState 初始化
-        # Sir 22:10 真理: lifetime anchor 不是 commitment, 不要 nudge.
-        # Layer 6 ToM 让主脑读 Sir 言外之意 (surface/deeper/unspoken need 3 层).
-        # ToMReflector daemon 每 turn 后 LLM judge → propose hypothesis update.
-        # 主脑下轮 prompt 看 [SIR'S MIND RIGHT NOW] block 自决 reply 深度.
-        self.tom_reflector = None
-        try:
-            from jarvis_sir_mental_model import ToMReflector, get_default_store
-            # ensure store loaded
-            _ = get_default_store()
-            self.tom_reflector = ToMReflector(key_router=self.key_router)
-            try:
-                from jarvis_utils import bg_log as _tom_bg
-                _tom_bg("🧠 [ToMReflector] Layer 6 — Sir Mental Model ready")
-            except Exception:
-                pass
-        except Exception as _tom_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ToMReflector] 初始化失败（非致命）：{_tom_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] ToMReflector init helper. 行为不变.
+        self._init_tom_reflector()
 
-        # 🩹 [P5-IntegrityWatcher / 2026-05-21 14:15] L4.5 Active Verify+Retry 子层
-        # Sir 14:11 真意: "wachter 负责贾维斯所有行为(除 tool)是否成功的审查机构,
-        #  植入言出必行层级中. 主动 verify + 递归 retry, 真做不到 handoff Sir 手动."
-        # Sir 14:30: vocab + LLM 二维 (3 层 waterfall) — vocab 主路径, LLM 仅边界 case.
-        # 跟 ClaimTracer (L4) 互补 — ClaimTracer 写 audit log, Watcher 主动 retry mutation.
-        # 监督 Jarvis 内部能力 8 类: reminder/commitment/promise/memory/milestone/
-        # profile/concern/relational. 不监督 tool (主脑→工具→主脑路径自带反馈).
-        self.integrity_watcher = None
-        try:
-            from jarvis_integrity_watcher import (
-                IntegrityWatcher, attach_llm_judge_key_router
-            )
-            self.integrity_watcher = IntegrityWatcher(nerve=self)
-            # 注入 key_router 给 Layer 3 LLM judge (vocab miss + suspicious kw 时启)
-            try:
-                attach_llm_judge_key_router(self.key_router)
-            except Exception:
-                pass
-            self.integrity_watcher.start()
-        except Exception as _iw_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[IntegrityWatcher] 初始化失败（非致命）：{_iw_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] IntegrityWatcher init helper. 行为不变.
+        self._init_integrity_watcher()
 
-        # 🆕 [P5-Gap3 / 2026-05-21 18:30] Screen Vision Engine — 屏幕 vision 结构化描述
-        # Sir 22:47 真意: Sir 在 Cursor 写 code, Jarvis 知 process / window 但不知
-        # file / line / error / build status. 加 vision LLM 描述屏幕 → 注入主脑
-        # prompt [WHAT SIR IS LOOKING AT] block + 跨 turn 持久化.
-        # env flag JARVIS_SCREEN_VISION=1 启用 (默认关, Sir gradual opt-in).
-        # 不阻塞 TTFT (后台 daemon fire-and-forget, 旧帧 60s cache).
-        # 详 docs/JARVIS_VISION_INTEGRATION.md
-        self.screen_vision_engine = None
-        try:
-            from jarvis_screen_vision import init_default_engine as _init_vision
-            self.screen_vision_engine = _init_vision(key_router=self.key_router)
-            self.screen_vision_engine.start()
-        except Exception as _sv_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ScreenVision] 初始化失败（非致命）：{_sv_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] ScreenVisionEngine init helper. 行为不变.
+        self._init_screen_vision_engine()
 
-        # 🆕 [Gap 5 / β.5.46-fix10 / 2026-05-22 00:10] L8 Reject Learner
-        # Sir dashboard 评 reply 👎 反馈 → 周期性 LLM judge propose directive 改写
-        # → 写 review queue, Sir CLI 拍板. 闭环演化能力.
-        # 不阻塞 TTFT (daemon 4h 一周期), config 在 memory_pool/reject_learner_config.json.
-        self.reject_learner = None
-        try:
-            from jarvis_reject_learner import (
-                RejectLearner, register_learner, is_enabled as _rl_enabled
-            )
-            self.reject_learner = RejectLearner(key_router=self.key_router)
-            register_learner(self.reject_learner)
-            if _rl_enabled():
-                self.reject_learner.start_daemon()
-                try:
-                    from jarvis_utils import bg_log as _rl_bg
-                    _rl_bg("📊 [RejectLearner] L8 闭环演化 daemon 已启动 (Gap 5)")
-                except Exception:
-                    pass
-        except Exception as _rl_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[RejectLearner] 初始化失败（非致命）：{_rl_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] RejectLearner init helper. 行为不变.
+        self._init_reject_learner()
 
-        # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Reply Summarizer
-        # Sir 23:14 真凶: Jarvis 仅听 wake word "he" 即翻 4% backspace + 0.01%
-        # 老账. concern_reason=silent + directive 反例已删, 仍翻 → 唯一可能:
-        # 主脑读 STM 自身上轮 reply 含具体数字 → RLHF bias 自发 callback.
-        # 治本: post-stream async LLM 压缩 STM 自身 reply, 下轮主脑看 compressed
-        # brief, 无数字诱因 → 不翻. async, 不阻 TTFT. config 在
-        # memory_pool/stm_summarize_config.json (准则 6.5 持久化).
-        self.stm_summarizer = None
-        try:
-            from jarvis_stm_summarizer import STMSummarizer, register_summarizer
-            self.stm_summarizer = STMSummarizer(key_router=self.key_router)
-            register_summarizer(self.stm_summarizer)
-            try:
-                from jarvis_utils import bg_log as _ssum_bg
-                from jarvis_stm_summarizer import is_enabled as _ssum_enabled
-                _en = _ssum_enabled()
-                _ssum_bg(
-                    f"📝 [STMSummarizer] {'enabled (default ON, Gap-Z1 / β.5.46-fix4)' if _en else 'registered (env JARVIS_STM_SUMMARIZE=0, dormant)'}"
-                )
-            except Exception:
-                pass
-        except Exception as _ssum_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[STMSummarizer] 初始化失败（非致命）：{_ssum_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] STMSummarizer init helper. 行为不变.
+        self._init_stm_summarizer()
 
-        # 🩹 [Gap 2 / P5-PreFlight / 2026-05-21 00:35 + P5-fixD / 2026-05-21 10:00 默认开]
-        # Sir 22:04/22:19/23:02/23:43/23:49 反复 5 次 unsolicited apology callback.
-        # Sir 09:05/06/12 又 3 次混合真数据涌现 hallucination (23:59 / Windsurf quota).
-        # P0+P1+P2+P3+P4 修了多层但主脑仍 callback / hallucinate (cluster 淹).
-        # P5-fixD 默认开 — PreFlight 后置审计 + SWM publish → 主脑下轮 [PREFLIGHT FEEDBACK]
-        # 看自纠. Sir 关掉设 JARVIS_PREFLIGHT=0.
-        self.reply_preflight = None
-        try:
-            from jarvis_reply_preflight import ReplyPreFlight, register_preflight
-            self.reply_preflight = ReplyPreFlight(key_router=self.key_router)
-            register_preflight(self.reply_preflight)
-            try:
-                from jarvis_utils import bg_log as _pf_bg
-                from jarvis_reply_preflight import is_enabled as _pf_is_enabled
-                _enabled = _pf_is_enabled()
-                _pf_bg(
-                    f"🛂 [ReplyPreFlight] {'enabled (default ON, P5-fixD)' if _enabled else 'registered (env JARVIS_PREFLIGHT=0, dormant)'}"
-                )
-            except Exception:
-                pass
-        except Exception as _pf_e:
-            try:
-                from jarvis_utils import bg_log as _bg
-                _bg(f"[ReplyPreFlight] 初始化失败（非致命）：{_pf_e}")
-            except Exception:
-                pass
+        # [Reshape M6.3 fourth wave / 2026-05-24] ReplyPreFlight init helper. 行为不变.
+        self._init_reply_preflight()
 
         # 🩹 [β.5.43-fix3-㋭ / 2026-05-20 18:52] SirRequestReflector L7 daemon
         # Sir 18:49 痛点: Sir "下次卡住主动提醒我", Jarvis 答应了 但实际没机制兑现.
@@ -2159,6 +1964,224 @@ User: {user_input}
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[ScreenTeaseReflector] 初始化失败（非致命）：{_str_e}")
+            except Exception:
+                pass
+
+    def _init_struggle_reflector(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] StruggleReflector L7 vocab daemon (β.5.35-D)."""
+        self.struggle_reflector = None
+        try:
+            from jarvis_struggle_reflector import StruggleReflector
+
+            def _struggle_stm_provider():
+                return list(getattr(self, 'short_term_memory', []) or [])
+            self.struggle_reflector = StruggleReflector(
+                key_router=self.key_router,
+                stm_provider=_struggle_stm_provider,
+            )
+            if self.struggle_reflector is not None and not self.struggle_reflector.is_alive():
+                self.struggle_reflector.start()
+            try:
+                from jarvis_utils import bg_log as _strr_bg
+                _strr_bg("🪞 [StruggleReflector] L7 vocab daemon ready (β.5.35-D)")
+            except Exception:
+                pass
+        except Exception as _strr_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[StruggleReflector] 初始化失败（非致命）：{_strr_e}")
+            except Exception:
+                pass
+
+    def _init_intent_resolver(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] IntentResolver + TOOL_REGISTRY 挂载 (β.5.44-CD).
+
+        Sir 18:55 真理重构 — 7 个 module publish-only, IntentResolver 集中 LLM judge
+        决定调 tool. 主脑看 [INTENT RESOLVED] block 知道哪个 tool 真成功.
+        """
+        self.intent_resolver = None
+        try:
+            from jarvis_intent_resolver import IntentResolver, register_intent_resolver
+            from jarvis_tool_registry import get_tool_registry
+            _tools = get_tool_registry()
+            # tools 需 nerve ref, wrap 注入 self
+            _wrapped_tools = {}
+            for _name, _fn in _tools.items():
+                def _make_wrapper(_orig_fn):
+                    def _wrapped(**kw):
+                        kw['nerve'] = self
+                        return _orig_fn(**kw)
+                    _wrapped.__doc__ = (_orig_fn.__doc__ or '')
+                    # 🩹 [P1-Gap8] __wrapped__ 让 inspect.signature 能找回真 function
+                    _wrapped.__wrapped__ = _orig_fn
+                    return _wrapped
+                _wrapped_tools[_name] = _make_wrapper(_fn)
+            self.intent_resolver = IntentResolver(
+                key_router=self.key_router,
+                central_nerve=self,
+                tool_registry=_wrapped_tools,
+            )
+            register_intent_resolver(self.intent_resolver)
+            try:
+                from jarvis_utils import bg_log as _ir_bg
+                _ir_bg(f"🧭 [IntentResolver] ready ({len(_wrapped_tools)} tools)")
+            except Exception:
+                pass
+            # 全局 nerve ref 给 tool fn (从 _GLOBAL_NERVE 拿)
+            import jarvis_central_nerve as _self_mod
+            _self_mod._GLOBAL_NERVE = self
+        except Exception as _ir_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntentResolver] 初始化失败（非致命）：{_ir_e}")
+            except Exception:
+                pass
+
+    def _init_tom_reflector(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] ToMReflector + SirMentalState (P5-ToM, Layer 6).
+
+        Sir 22:10 真理: lifetime anchor 不是 commitment, 不要 nudge.
+        Layer 6 ToM 让主脑读 Sir 言外之意 (surface/deeper/unspoken need 3 层).
+        """
+        self.tom_reflector = None
+        try:
+            from jarvis_sir_mental_model import ToMReflector, get_default_store
+            # ensure store loaded
+            _ = get_default_store()
+            self.tom_reflector = ToMReflector(key_router=self.key_router)
+            try:
+                from jarvis_utils import bg_log as _tom_bg
+                _tom_bg("🧠 [ToMReflector] Layer 6 — Sir Mental Model ready")
+            except Exception:
+                pass
+        except Exception as _tom_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ToMReflector] 初始化失败（非致命）：{_tom_e}")
+            except Exception:
+                pass
+
+    def _init_integrity_watcher(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] IntegrityWatcher L4.5 Active Verify+Retry.
+
+        Sir 14:11 真意 — wachter 主动 verify + 递归 retry, 真做不到 handoff Sir 手动.
+        监督 Jarvis 内部能力 8 类 (reminder/commitment/promise/memory/milestone/
+        profile/concern/relational). 不监督 tool.
+        """
+        self.integrity_watcher = None
+        try:
+            from jarvis_integrity_watcher import (
+                IntegrityWatcher, attach_llm_judge_key_router
+            )
+            self.integrity_watcher = IntegrityWatcher(nerve=self)
+            # 注入 key_router 给 Layer 3 LLM judge
+            try:
+                attach_llm_judge_key_router(self.key_router)
+            except Exception:
+                pass
+            self.integrity_watcher.start()
+        except Exception as _iw_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[IntegrityWatcher] 初始化失败（非致命）：{_iw_e}")
+            except Exception:
+                pass
+
+    def _init_screen_vision_engine(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] ScreenVisionEngine (P5-Gap3).
+
+        屏幕 vision 结构化描述. env flag JARVIS_SCREEN_VISION=1 启用. 不阻 TTFT.
+        """
+        self.screen_vision_engine = None
+        try:
+            from jarvis_screen_vision import init_default_engine as _init_vision
+            self.screen_vision_engine = _init_vision(key_router=self.key_router)
+            self.screen_vision_engine.start()
+        except Exception as _sv_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ScreenVision] 初始化失败（非致命）：{_sv_e}")
+            except Exception:
+                pass
+
+    def _init_reject_learner(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] RejectLearner L8 闭环演化 (Gap 5).
+
+        Sir dashboard 评 reply 👎 → LLM judge propose directive 改写 → review queue.
+        daemon 4h 一周期, config 在 memory_pool/reject_learner_config.json.
+        """
+        self.reject_learner = None
+        try:
+            from jarvis_reject_learner import (
+                RejectLearner, register_learner, is_enabled as _rl_enabled
+            )
+            self.reject_learner = RejectLearner(key_router=self.key_router)
+            register_learner(self.reject_learner)
+            if _rl_enabled():
+                self.reject_learner.start_daemon()
+                try:
+                    from jarvis_utils import bg_log as _rl_bg
+                    _rl_bg("📊 [RejectLearner] L8 闭环演化 daemon 已启动 (Gap 5)")
+                except Exception:
+                    pass
+        except Exception as _rl_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[RejectLearner] 初始化失败（非致命）：{_rl_e}")
+            except Exception:
+                pass
+
+    def _init_stm_summarizer(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] STMSummarizer (Gap-Z1 / β.5.46-fix4).
+
+        post-stream async LLM 压缩 STM 自身 reply, 下轮主脑看 compressed brief.
+        async, 不阻 TTFT. config 在 memory_pool/stm_summarize_config.json.
+        """
+        self.stm_summarizer = None
+        try:
+            from jarvis_stm_summarizer import STMSummarizer, register_summarizer
+            self.stm_summarizer = STMSummarizer(key_router=self.key_router)
+            register_summarizer(self.stm_summarizer)
+            try:
+                from jarvis_utils import bg_log as _ssum_bg
+                from jarvis_stm_summarizer import is_enabled as _ssum_enabled
+                _en = _ssum_enabled()
+                _ssum_bg(
+                    f"📝 [STMSummarizer] {'enabled (default ON, Gap-Z1 / β.5.46-fix4)' if _en else 'registered (env JARVIS_STM_SUMMARIZE=0, dormant)'}"
+                )
+            except Exception:
+                pass
+        except Exception as _ssum_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[STMSummarizer] 初始化失败（非致命）：{_ssum_e}")
+            except Exception:
+                pass
+
+    def _init_reply_preflight(self) -> None:
+        """[Reshape M6.3 fourth wave / 2026-05-24] ReplyPreFlight (P5-fixD, default ON).
+
+        Reply 后置审计 + SWM publish → 主脑下轮 [PREFLIGHT FEEDBACK] 看自纠.
+        Sir 关掉设 JARVIS_PREFLIGHT=0.
+        """
+        self.reply_preflight = None
+        try:
+            from jarvis_reply_preflight import ReplyPreFlight, register_preflight
+            self.reply_preflight = ReplyPreFlight(key_router=self.key_router)
+            register_preflight(self.reply_preflight)
+            try:
+                from jarvis_utils import bg_log as _pf_bg
+                from jarvis_reply_preflight import is_enabled as _pf_is_enabled
+                _enabled = _pf_is_enabled()
+                _pf_bg(
+                    f"🛂 [ReplyPreFlight] {'enabled (default ON, P5-fixD)' if _enabled else 'registered (env JARVIS_PREFLIGHT=0, dormant)'}"
+                )
+            except Exception:
+                pass
+        except Exception as _pf_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"[ReplyPreFlight] 初始化失败（非致命）：{_pf_e}")
             except Exception:
                 pass
 
