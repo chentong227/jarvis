@@ -1423,9 +1423,84 @@ Spoken English:"""
         )
         return '\n'.join(lines) + '\n'
 
+    def _lookup_organ_by_command(self, command):
+        """🆕 [BUG #1 fix / 2026-05-24 19:45] command → organ 反向 vocab.
+
+        主脑幻觉 organ 名 (reminder_hands → memory_hands) 时, 看 command
+        在哪个 hand 的 get_instruction_dict() 里, 自动 alias 过去.
+
+        准则 6 优雅: LLM 负责语义, python 只做反向索引. cache lazy build,
+        instance 内不重复扫. 找不到返 None 不破老路径.
+        """
+        if not command:
+            return None
+        if not hasattr(self, '_command_to_organ_cache'):
+            self._command_to_organ_cache = self._build_command_to_organ_index()
+        return self._command_to_organ_cache.get(command)
+
+    def _build_command_to_organ_index(self):
+        """扫所有 hand_registry 调 get_instruction_dict() regex 提 commands.
+
+        Returns: { command_name: organ_full_name }, 重名时 first-win.
+        """
+        import re as _re_idx
+        cache = {}
+        registry = getattr(getattr(self, 'jarvis', None), 'hand_registry', {}) or {}
+        for organ_name, hand_class in registry.items():
+            try:
+                try:
+                    inst = hand_class(self.jarvis.gemini_key)
+                except TypeError:
+                    inst = hand_class()
+            except Exception:
+                continue
+            if not hasattr(inst, 'get_instruction_dict'):
+                continue
+            try:
+                doc = inst.get_instruction_dict()
+            except Exception:
+                continue
+            # regex 提 "command_name": 模式 (matches l4_memory_hands.py 第 21-26 行)
+            for m in _re_idx.finditer(r'["\'](\w+)["\']\s*:\s*\{', doc):
+                cmd = m.group(1)
+                # 排除明显 param key (intent / query / id 等), 仅取看似 command 的
+                # heuristic: command 一般 verb_xxx (snake_case 含 _ 或 lowercase verb)
+                if cmd in ('intent', 'query', 'id', 'time_range_hours', 'new_intent',
+                           'new_time', 'max_age_hours', 'trigger_time'):
+                    continue
+                if cmd not in cache:
+                    cache[cmd] = organ_name
+        try:
+            from jarvis_utils import bg_log as _build_bg
+            _build_bg(
+                f"📚 [CommandIndex] built — {len(cache)} commands across "
+                f"{len(registry)} hands (reverse vocab cache)"
+            )
+        except Exception:
+            pass
+        return cache
+
     def _execute_fast_call(self, organ_name: str, command: str, params: dict):
         import contextlib
         import re as _re_safety
+
+        # 🆕 [BUG #3 fix / 2026-05-24 19:45] PreFlight None guard:
+        # 主脑偶发 emit malformed FAST_CALL[None/None] (上下文 truncate / 模板错).
+        # 不 crash, 改 fail-soft 返回友善 msg, 让主脑下轮看到 self-correct.
+        if organ_name is None or command is None or not str(organ_name).strip() or not str(command).strip():
+            try:
+                from jarvis_utils import bg_log as _none_bg
+                _none_bg(
+                    f"⚠️ [FastCall/Malformed] 拦截 organ={organ_name!r} cmd={command!r} — "
+                    f"格式不全 fail-soft (主脑下轮看 result 可 self-correct)"
+                )
+            except Exception:
+                pass
+            return (
+                "⚠️ FAST_CALL malformed — organ_name 或 command 为空. "
+                "请重新检查 manifests, 用完整格式 organ_name.command 调用. "
+                "若不确定该用哪个 organ, 不要发 FAST_CALL, 改问 Sir 或用自然语言响应."
+            )
 
         SAFETY_GATE_ORGANS = ["system_hands", "file_operator_hands", "txt_writer_hands_generated"]
         ACKNOWLEDGMENT_PATTERNS = [
@@ -3599,6 +3674,24 @@ Spoken English:"""
                                     except Exception:
                                         pass
                                     organ_name = _aliased  # 后续 log 用全名
+                            # 🆕 [BUG #1 fix / 2026-05-24 19:45] reminder_hands 幻觉治本:
+                            # 主脑凭印象拼"按语义对的 organ 名" (e.g. reminder_hands ≠ memory_hands).
+                            # 治本: command 反向查 — 看 command 在哪个 hand 的 instruction_dict 里 → alias.
+                            # 准则 6 优雅 (LLM 负责语义, python 负责映射, 持久化 cache 不重复扫).
+                            if hand_class is None:
+                                _by_cmd = self._lookup_organ_by_command(command)
+                                if _by_cmd:
+                                    hand_class = self.jarvis.hand_registry.get(_by_cmd)
+                                    if hand_class is not None:
+                                        try:
+                                            from jarvis_utils import bg_log as _cmd_alias_bg
+                                            _cmd_alias_bg(
+                                                f"🔀 [Alias by Command] '{organ_name}.{command}' → "
+                                                f"'{_by_cmd}.{command}' (反向 vocab)"
+                                            )
+                                        except Exception:
+                                            pass
+                                        organ_name = _by_cmd
                             if hand_class:
                                 try:
                                     hand_inst = hand_class(self.jarvis.gemini_key)

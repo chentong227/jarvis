@@ -139,10 +139,29 @@ class Hands:
             elif cmd == "add_reminder":
                 intent = params.get("intent", "")
                 trigger_time_str = params.get("trigger_time", "")
+                # 🆕 [BUG #2 fix / 2026-05-24 19:45] 缺参数 fail-soft msg actionable.
+                # 老 msg "缺少 intent 参数" 主脑看了一脸懵, 不知道怎么 self-correct.
+                # 新 msg 教主脑下轮: 先问 Sir intent, Sir 答了再 emit FAST_CALL, 不抢发.
                 if not intent:
-                    return ExecutionResult(success=False, msg="缺少 intent 参数（提醒内容）。")
+                    return ExecutionResult(
+                        success=False,
+                        msg=(
+                            "❌ add_reminder 缺 intent 参数 (提醒内容). "
+                            "你不该在没问 Sir 提醒内容时就发 FAST_CALL. "
+                            "下一轮: 先用自然语言问 Sir '需要提醒什么', "
+                            "Sir 答了再 emit FAST_CALL[memory_hands/add_reminder] "
+                            "并填 intent='Sir 答的内容'."
+                        ),
+                    )
                 if not trigger_time_str:
-                    return ExecutionResult(success=False, msg="缺少 trigger_time 参数（提醒时间）。")
+                    return ExecutionResult(
+                        success=False,
+                        msg=(
+                            "❌ add_reminder 缺 trigger_time 参数 (提醒时间). "
+                            "下一轮: 先问 Sir 'X 几点提醒', "
+                            "Sir 答了再 emit, 用 trigger_time='YYYY-MM-DD HH:MM:00' 格式."
+                        ),
+                    )
                 try:
                     time_struct = time.strptime(trigger_time_str, "%Y-%m-%d %H:%M:%S")
                     trigger_ts = time.mktime(time_struct)
