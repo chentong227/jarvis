@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "_doc": "Translator L7 reflector daemon config (Phase 4.D / 2026-05-24).",
+  "_purpose": "Sir CLI 可改 reflector tick interval / startup delay / propose threshold / scan window 不重启 Jarvis.",
+  "_grant": "准则 6.5: 持久化 + CLI 可改. reflector daemon 每 cycle reload config, 改了立即生效.",
+  "tick_interval_s": 1800.0,
+  "startup_delay_s": 600,
+  "propose_threshold": 3,
+  "scan_window_s": 7200,
+  "_field_doc": {
+    "tick_interval_s": "daemon cycle 间隔秒数 (默认 1800 = 30min). 调小 = propose 更快.",
+    "startup_delay_s": "daemon 启动延迟秒数 (默认 600 = 10min). 让系统稳定后再 propose.",
+    "propose_threshold": "同 (from, to) by_command alias 重复 N 次才 propose (默认 3).",
+    "scan_window_s": "扫 SWM events 回看窗口秒数 (默认 7200 = 2h)."
+  },
+  "_history": [
+    {
+      "ts": "2026-05-24T22:55:00",
+      "marker": "Translator Phase 4.D",
+      "reason": "Phase 4.D CRON tuning — _TICK_INTERVAL_S 等 const 持久化 + CLI 可改, Sir 不重启 Jarvis 调."
+    },
+    {
+      "ts": "2026-05-24T14:52:05.048978Z",
+      "marker": "Sir-CLI",
+      "reason": "tick_interval_s: 1800 → 60.0 | propose_threshold: 3 → 2"
+    },
+    {
+      "ts": "2026-05-24T14:52:05.155201Z",
+      "marker": "Sir-CLI",
+      "reason": "reset to defaults: tick_interval_s: 60.0 → 1800.0 | propose_threshold: 2 → 3"
+    }
+  ]
+}

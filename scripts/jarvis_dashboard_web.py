@@ -3232,19 +3232,33 @@ def api_translator_action(alias_id: str, action: str):
         if not _os.path.exists(script):
             return jsonify({'ok': False, 'error': 'CLI script not found'}), 500
         # 同步 invoke (浏览器请求会等)
+        # 🆕 [Sir 2026-05-24 22:48 核对] encoding='utf-8' 防 windows GBK 解码 fail.
+        # PYTHONIOENCODING env 让子进程 stdout/stderr 用 utf-8 (即使含中文也不乱).
+        _env = dict(_os.environ)
+        _env['PYTHONIOENCODING'] = 'utf-8'
         result = _sp.run(
             [_sys.executable, script, action, alias_id],
             capture_output=True, text=True, timeout=10,
-            cwd=_here,
+            cwd=_here, env=_env,
+            encoding='utf-8', errors='replace',
         )
         ok = result.returncode == 0
         return jsonify({
             'ok': ok,
             'stdout': (result.stdout or '')[:500],
             'stderr': (result.stderr or '')[:500],
+            'action': action,
+            'alias_id': alias_id,
+            # 中文友好提示, 前端用
+            'message_zh': (
+                f'已激活 alias {alias_id}' if ok and action == 'activate'
+                else f'已拒绝 alias {alias_id}' if ok and action == 'reject'
+                else (result.stdout or result.stderr or '操作失败').strip()[:200]
+            ),
         })
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+        return jsonify({'ok': False, 'error': str(e),
+                        'message_zh': f'调用 CLI 异常: {e}'}), 500
 
 
 _TRANSLATOR_HTML = """<!DOCTYPE html>
@@ -3290,49 +3304,67 @@ body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1
 .action-btn.reject { color: #f85149; border-color: #f85149; }
 .evidence { color: #8b949e; font-size: 11px; max-width: 300px; }
 .arrow { color: #58a6ff; }
+.toast { position: fixed; top: 20px; right: 20px; background: #1f3a26;
+         color: #3fb950; padding: 12px 20px; border-radius: 8px;
+         border: 1px solid #3fb950; z-index: 1000; font-size: 13px;
+         box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
 </style>
 </head>
 <body x-data="trVocab()" x-init="load()">
 <div class="header">
-  <h1>📚 Translator Vocab — alias 健康 / Sir 拍板</h1>
-  <p>L4.6 翻译层 alias vocab (organ/command). reflector 周期 propose → Sir review → activate/reject.</p>
-  <p style="color:#6e7681;font-size:0.83rem;">数据源: <code>memory_pool/translator_alias_vocab.json</code> · L7 reflector daemon 30min cycle · 详 <code>docs/JARVIS_TRANSLATOR_ARCHITECTURE.md</code></p>
+  <h1>📚 翻译层别名总管 — alias 健康 / Sir 拍板</h1>
+  <p>翻译层 (L4.6) 把主脑 emit 的不精确 organ 名修正成实际可执行的. reflector 周期 propose → Sir 一键 启用/拒绝.</p>
+  <p style="color:#6e7681;font-size:0.83rem;">数据源: <code>memory_pool/translator_alias_vocab.json</code> · L7 反思 daemon 30min 一轮 · 设计文档: <code>docs/JARVIS_TRANSLATOR_ARCHITECTURE.md</code></p>
   <div class="nav-links">
-    <a href="/">← 主面板</a>
-    <a href="/main_brain_meta">🧠 主脑 META</a>
-    <a href="/intent_resolved">🎯 IntentResolver</a>
+    <a href="/">← 返回主面板</a>
+    <a href="/main_brain_meta">🧠 主脑思考链</a>
+    <a href="/intent_resolved">🎯 意图解析</a>
     <a href="javascript:void(0)" @click="load()">🔄 刷新</a>
   </div>
 </div>
 
 <div class="stats-grid">
-  <div class="stat-card"><div class="label">总计</div>
+  <div class="stat-card"><div class="label">总条目</div>
     <div class="value" x-text="stats.total || 0"></div></div>
-  <div class="stat-card review"><div class="label">📋 review (待 Sir 拍板)</div>
+  <div class="stat-card review"><div class="label">📋 待审核</div>
     <div class="value" x-text="stats.review || 0"></div></div>
-  <div class="stat-card active"><div class="label">✅ active (在用)</div>
+  <div class="stat-card active"><div class="label">✅ 已启用</div>
     <div class="value" x-text="stats.active || 0"></div></div>
-  <div class="stat-card rejected"><div class="label">❌ rejected (Sir 否决)</div>
+  <div class="stat-card rejected"><div class="label">❌ 已拒绝</div>
     <div class="value" x-text="stats.rejected || 0"></div></div>
-  <div class="stat-card"><div class="label">总命中数</div>
+  <div class="stat-card"><div class="label">总命中次数</div>
     <div class="value" x-text="stats.total_hits || 0"></div></div>
-  <div class="stat-card"><div class="label">Reflector cycles</div>
+  <div class="stat-card"><div class="label">反思器运行轮数</div>
     <div class="value" x-text="(stats.reflector || {}).cycles_run || 0"></div></div>
 </div>
+
+<div x-show="toast" x-transition class="toast" x-text="toast"></div>
 
 <div class="alias-table">
   <table>
     <thead><tr>
-      <th>状态</th><th>ID</th><th>kind</th><th>from</th><th></th><th>to</th>
-      <th>hit_count</th><th>evidence</th><th>操作</th>
+      <th>状态</th>
+      <th>编号</th>
+      <th>类型</th>
+      <th>主脑写的</th>
+      <th></th>
+      <th>翻译层映射到</th>
+      <th>命中次数</th>
+      <th>来源证据</th>
+      <th>Sir 拍板</th>
     </tr></thead>
     <tbody>
+      <template x-if="!aliases || aliases.length === 0">
+        <tr><td colspan="9" style="text-align:center;color:#8b949e;padding:30px;">
+          (vocab 为空 — reflector 还没 propose, 或 Sir 没用过 alias)
+        </td></tr>
+      </template>
       <template x-for="a in aliases" :key="a.id">
         <tr>
           <td><span class="status-badge" :class="'status-' + (a.status || 'review')"
-              x-text="a.status || 'review'"></span></td>
+              x-text="statusZh(a.status)"></span></td>
           <td x-text="a.id"></td>
-          <td x-text="a.kind || 'organ'"></td>
+          <td x-text="kindZh(a.kind)"></td>
           <td><code x-text="a.from"></code></td>
           <td class="arrow">→</td>
           <td><code x-text="a.to"></code></td>
@@ -3341,12 +3373,18 @@ body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1
           <td>
             <template x-if="a.status === 'review'">
               <div>
-                <button class="action-btn activate" @click="act(a.id, 'activate')">✅ 用</button>
-                <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 拒</button>
+                <button class="action-btn activate" @click="act(a.id, 'activate')">✅ 启用</button>
+                <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 拒绝</button>
               </div>
             </template>
             <template x-if="a.status === 'active'">
-              <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 撤</button>
+              <button class="action-btn reject" @click="act(a.id, 'reject')">❌ 撤销</button>
+            </template>
+            <template x-if="a.status === 'rejected'">
+              <span style="color:#6e7681;font-size:11px;">已拒绝</span>
+            </template>
+            <template x-if="a.status === 'archived'">
+              <span style="color:#6e7681;font-size:11px;">已归档</span>
             </template>
           </td>
         </tr>
@@ -3355,22 +3393,51 @@ body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1
   </table>
 </div>
 
+<div style="margin-top:16px;padding:12px;background:#161b22;border-radius:8px;
+            border:1px solid #30363d;font-size:12px;color:#8b949e;">
+  <strong style="color:#c9d1d9;">📖 字段说明:</strong>
+  <ul style="margin:6px 0 0 20px;padding:0;line-height:1.6;">
+    <li><strong>状态</strong> — review: reflector 提案待 Sir 拍板 · active: 已启用 · rejected: Sir 已否决 (不会再提案)</li>
+    <li><strong>主脑写的 → 翻译层映射到</strong> — 主脑 emit FAST_CALL 的 organ 名 → 翻译层修正成的实际 organ 名</li>
+    <li><strong>命中次数</strong> — 此 alias 被实际使用的次数 (Phase 4.A 闭环回写, 60s 落盘一次)</li>
+    <li><strong>Sir 拍板</strong> — 一键操作: ✅ 启用让翻译层用此 alias; ❌ 拒绝防 reflector 重提</li>
+  </ul>
+</div>
+
 <script>
+const STATUS_ZH = {review:'📋 待审核', active:'✅ 已启用', rejected:'❌ 已拒绝', archived:'📦 已归档'};
+const KIND_ZH = {organ:'器官名', command:'命令名'};
+
 function trVocab() {
   return {
-    aliases: [], stats: {},
+    aliases: [], stats: {}, toast: '',
+    statusZh(s) { return STATUS_ZH[s] || s || '待审核'; },
+    kindZh(k) { return KIND_ZH[k] || k || '器官名'; },
+    showToast(msg, ms=2500) {
+      this.toast = msg;
+      setTimeout(() => this.toast = '', ms);
+    },
     async load() {
-      const r = await fetch('/api/translator');
-      const d = await r.json();
-      if (d.ok) { this.aliases = d.aliases || []; this.stats = d.stats || {}; }
+      try {
+        const r = await fetch('/api/translator');
+        const d = await r.json();
+        if (d.ok) { this.aliases = d.aliases || []; this.stats = d.stats || {}; }
+        else { this.showToast('加载失败: ' + (d.error || '')); }
+      } catch (e) { this.showToast('网络异常: ' + e); }
     },
     async act(id, action) {
-      const verb = action === 'activate' ? '激活' : '拒绝';
+      const verb = action === 'activate' ? '启用' : '拒绝';
       if (!confirm(`确定 ${verb} alias ${id}?`)) return;
-      const r = await fetch(`/api/translator/${id}/${action}`, {method:'POST'});
-      const d = await r.json();
-      if (d.ok) { await this.load(); }
-      else { alert('失败: ' + (d.stderr || d.error || '')); }
+      try {
+        const r = await fetch(`/api/translator/${id}/${action}`, {method:'POST'});
+        const d = await r.json();
+        if (d.ok) {
+          this.showToast(d.message_zh || `${verb}成功`);
+          await this.load();
+        } else {
+          this.showToast('失败: ' + (d.message_zh || d.stderr || d.error || ''), 5000);
+        }
+      } catch (e) { this.showToast('网络异常: ' + e, 5000); }
     }
   };
 }
