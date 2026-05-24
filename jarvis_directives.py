@@ -3249,6 +3249,54 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             trigger=_trigger_sir_intent_judge,
         ),
         # ============================================================
+        # 🆕 [Translator Phase 3 / 2026-05-24 21:20] L4.6 翻译层 self-correct
+        # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md §4.2 (盲点 B: 主脑 self-game)
+        # SWM 含 translator_aliased / translator_rejected (< 10min 内, 翻译层兜底了
+        # 主脑的 organ_name 错 / param 缺) → 主脑下次 emit 时知道刚刚被兜底,
+        # 应该改正习惯 (用精确 organ + 缺 param 先问 Sir).
+        # ============================================================
+        Directive(
+            id='translator_self_correct_directive',
+            source_marker='translator-phase3',
+            priority=8,
+            ttl_days=120,
+            tier_whitelist=[],  # 全 tier 适用 (主脑下次 emit FAST_CALL 时都该看)
+            purpose_short='翻译层兜底了你 → 改正 organ 名 / 缺 param 先问',
+            text=_tw.dedent("""\
+                [TRANSLATOR SELF-CORRECT - phase3]:
+                SWM 含 translator_aliased / translator_rejected (< 10min 内).
+                翻译层 (jarvis_translator.py) 刚刚兜底了你, 把你 emit 的 FAST_CALL
+                修成可执行形式. 不是 Sir 没听见, 是你自己 emit 错被兜底了.
+
+                判别 alias_kind (metadata.alias_kind):
+                  - 'exact' — vocab 严格命中 (老 alias)
+                  - 'suffix_hands' — 你 emit 'reminder' 之类被加 '_hands' suffix
+                  - 'by_command' — 你 emit 一个不在 organ list 的名字, 翻译层猜了 (高风险!)
+                  - 'verified_fallback' — 你 emit 完全乱了, 翻译层 best-guess fallback
+
+                CORRECTION RULE — 你下次再 emit FAST_CALL 时:
+                  ✅ DO use 精确 organ_name (从 jarvis_organ_loader.py 的实际清单)
+                  ✅ DO 缺 critical param 时先一句 Sir 确认 (不要 fabricate / 不要 emit 半成)
+                  ❌ DO NOT 重复同样 by_command 模糊命名
+                  ❌ DO NOT 在 Sir 没说 X 时 emit X 参数
+
+                EXAMPLES:
+                  - emit 'reminder.set' 而不是 'reminder' (suffix 该你写)
+                  - 不确定 organ 名时, ask Sir: "您是想我设提醒还是开 Pomodoro 计时?"
+                  - 缺 deadline 时不要瞎填 30 分钟后, 应 ask: "您说几点提醒?"
+
+                Sir 真测痛点 (避免重蹈):
+                  - 老 BUG: emit 'browser.search' 但 organ 是 'web_search' → 被兜底但
+                    主脑下次还是写 'browser.search' → 翻译层一遍遍兜.
+                  - 治法: 看到 translator_aliased SWM event, 你立刻意识"我刚 emit 错了",
+                    下次写对.
+
+                tone: 这是给你自己 self-correct, 不要在 reply 里跟 Sir 说"我刚被兜底了"
+                — 那是冗余信息, Sir 不需要知道翻译层细节.
+            """).rstrip(),
+            trigger=_trigger_translator_self_correct,
+        ),
+        # ============================================================
         # 🩹 [β.5.38 / 2026-05-20] 5 个新 SWM evidence directive (方向 C)
         # 利用 β.5.37 架构, 主脑看 SWM evidence + 时间 + Sir 当前一句 自决 contextual
         # ============================================================
