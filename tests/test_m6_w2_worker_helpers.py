@@ -197,6 +197,41 @@ class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
         self.assertIn('闭嘴', joined)
 
 
+class TestM6W6VocabLoaders(unittest.TestCase):
+    """W6 抽出: load_sleep_cancel_vocab + load_audio_ducking_targets 抽到 helpers."""
+
+    def test_load_sleep_cancel_vocab_export(self):
+        """load_sleep_cancel_vocab module-level fn 可调."""
+        from jarvis_worker_helpers import load_sleep_cancel_vocab
+        out = load_sleep_cancel_vocab()
+        self.assertIsInstance(out, list)
+        # 至少 seed 10 个
+        self.assertGreaterEqual(len(out), 10)
+        # seed 含 'wait' 或 '等等'
+        joined = ' '.join(out)
+        self.assertTrue('等等' in joined or 'wait' in joined)
+
+    def test_load_audio_ducking_targets_export(self):
+        """load_audio_ducking_targets module-level fn 可调."""
+        from jarvis_worker_helpers import load_audio_ducking_targets
+        out = load_audio_ducking_targets()
+        self.assertIsInstance(out, list)
+        # 至少 1 个 (seed = ['WeChat'])
+        self.assertGreaterEqual(len(out), 1)
+
+    def test_worker_method_delegates_to_helpers(self):
+        """JarvisWorkerThread._load_*_vocab method 仍 work (delegate to helpers)."""
+        from jarvis_worker import (
+            load_sleep_cancel_vocab as fn_sleep,
+            load_audio_ducking_targets as fn_audio,
+        )
+        # 仅验 fn 对象可获取 (不需 instantiate worker — 涉及 PyQt thread)
+        self.assertTrue(callable(fn_sleep))
+        self.assertTrue(callable(fn_audio))
+        out_sleep = fn_sleep()
+        self.assertIsInstance(out_sleep, list)
+
+
 class TestM6W5ReflexDict(unittest.TestCase):
     """W5 抽出: REFLEX_DICT 70 行脊髓反射词典抽到 helpers."""
 

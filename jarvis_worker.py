@@ -134,6 +134,7 @@ from jarvis_voice_listen_thread import (  # noqa: F401
 # 🆕 [Reshape M6.W3 / 2026-05-24 18:15] tier keyword lists 也抽到 helpers.
 # 🆕 [Reshape M6.W4 / 2026-05-24 18:30] refusal + sleep intent + time extractor const 也抽到 helpers.
 # 🆕 [Reshape M6.W5 / 2026-05-24 18:40] REFLEX_DICT 70 行脊髓反射词典也抽到 helpers.
+# 🆕 [Reshape M6.W6 / 2026-05-24 19:00] 2 个 vocab loader fn 也抽到 helpers.
 from jarvis_worker_helpers import (  # noqa: F401
     sanitize_trigger_time,
     detect_semantic_category,
@@ -148,6 +149,8 @@ from jarvis_worker_helpers import (  # noqa: F401
     SLEEP_TIME_EXTRACTORS,
     CN_DIGIT_MAP,
     REFLEX_DICT,
+    load_sleep_cancel_vocab,
+    load_audio_ducking_targets,
 )
 
 
@@ -985,23 +988,9 @@ class JarvisWorkerThread(QThread):
     _SLEEP_GRACE_SEC = 900           # 目标时间到了还多给 15 分钟 grace
 
     def _load_audio_ducking_targets(self) -> list:
-        """🩹 [β.3.0-vocab3 / 2026-05-18] Sir 14:00 反馈 WeChat 静音没生效 + 硬
-        编码 'WeChat' 违准则 6.5. 读 memory_pool/audio_ducking_targets.json
-        返 active state 的进程名 list. CLI: scripts/audio_ducking_dump.py.
-        """
-        import json as _json
-        import os as _os
-        path = _os.path.join('memory_pool', 'audio_ducking_targets.json')
-        if not _os.path.exists(path):
-            return ['WeChat']  # fallback seed
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-            return [t['process_name'] for t in data.get('targets', [])
-                    if isinstance(t, dict) and t.get('state') == 'active'
-                    and t.get('process_name')]
-        except Exception:
-            return ['WeChat']
+        """🆕 [Reshape M6.W6 / 2026-05-24 19:00] 抽到 jarvis_worker_helpers.load_audio_ducking_targets.
+        method 留作 backward compat (老 caller self._load_audio_ducking_targets() 仍 work)."""
+        return load_audio_ducking_targets()
 
     SLEEP_ROUTINE_MIN_DELAY_S = 30.0  # 🩹 [β.3.0 BUG#5] Sir 14:00 太快: 强制 30s 缓冲
 
@@ -1569,26 +1558,9 @@ class JarvisWorkerThread(QThread):
         return False
 
     def _load_sleep_cancel_vocab(self) -> list:
-        """🩹 [β.3.0 / 2026-05-18] Sir 准则 6.5: keyword 持久化."""
-        import json as _json
-        import os as _os
-        path = _os.path.join('memory_pool', 'sleep_cancel_vocab.json')
-        seed = ['等等', '不睡了', '取消睡眠', '撤回睡眠', '别睡了', '我不睡了',
-                'wait', 'cancel sleep', "don't sleep", 'no sleep']
-        if not _os.path.exists(path):
-            return seed
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = _json.load(f)
-            out = []
-            for p in data.get('patterns', []):
-                if isinstance(p, dict) and p.get('state') == 'active':
-                    for k in p.get('keywords', []):
-                        if isinstance(k, str):
-                            out.append(k.lower().strip())
-            return out or seed
-        except Exception:
-            return seed
+        """🆕 [Reshape M6.W6 / 2026-05-24 19:00] 抽到 jarvis_worker_helpers.load_sleep_cancel_vocab.
+        method 留作 backward compat."""
+        return load_sleep_cancel_vocab()
 
     # 🩹 [β.5.26 / 2026-05-20 + β.5.26-fix 2026-05-20]
     # wake filler vocab loader 已迁到模块级 (line ~243), 不要再放类里.

@@ -311,6 +311,55 @@ CN_DIGIT_MAP = {
 # 历史: 模糊脊髓反射词典 (巨量扩充版) — 处理英文 ASR 空耳 (jarvis ↔ garbage / charles / java...)
 # + 中文发音容错 (贾维斯 ↔ 假装是 / 夹尾巴) + 唤醒/告退/物理静音 prefix.
 
+# 🆕 [Reshape M6.W6 / 2026-05-24 19:00] vocab loader fn 抽到 helpers
+# `_load_sleep_cancel_vocab` / `_load_audio_ducking_targets` 不依赖 self,
+# 抽 module-level pure fn. worker class method 改 1-line alias 兼容老 caller.
+
+# 🩹 [β.3.0 / 2026-05-18] 准则 6.5 keyword 持久化 — sleep cancel vocab
+def load_sleep_cancel_vocab() -> list:
+    """读 memory_pool/sleep_cancel_vocab.json 返 active keywords list.
+    fallback seed (vocab json 不存在 / 损坏)."""
+    import json as _json
+    import os as _os
+    path = _os.path.join('memory_pool', 'sleep_cancel_vocab.json')
+    seed = ['等等', '不睡了', '取消睡眠', '撤回睡眠', '别睡了', '我不睡了',
+            'wait', 'cancel sleep', "don't sleep", 'no sleep']
+    if not _os.path.exists(path):
+        return seed
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        out = []
+        for p in data.get('patterns', []):
+            if isinstance(p, dict) and p.get('state') == 'active':
+                for k in p.get('keywords', []):
+                    if isinstance(k, str):
+                        out.append(k.lower().strip())
+        return out or seed
+    except Exception:
+        return seed
+
+
+# 🩹 [β.3.0-vocab3 / 2026-05-18] Sir 14:00 反馈 WeChat 静音没生效 +
+# 硬编码 'WeChat' 违准则 6.5. 读 memory_pool/audio_ducking_targets.json
+# 返 active state 的进程名 list. CLI: scripts/audio_ducking_dump.py.
+def load_audio_ducking_targets() -> list:
+    """读 audio_ducking_targets.json 返 active 进程名 list."""
+    import json as _json
+    import os as _os
+    path = _os.path.join('memory_pool', 'audio_ducking_targets.json')
+    if not _os.path.exists(path):
+        return ['WeChat']  # fallback seed
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = _json.load(f)
+        return [t['process_name'] for t in data.get('targets', [])
+                if isinstance(t, dict) and t.get('state') == 'active'
+                and t.get('process_name')]
+    except Exception:
+        return ['WeChat']
+
+
 # ⚡ 模糊脊髓反射词典 (巨量扩充版)
 REFLEX_DICT = {
     # --- 存在性确认 (Are you there?) ---
