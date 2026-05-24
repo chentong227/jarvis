@@ -127,5 +127,47 @@ class TestAnticipatorBlock(unittest.TestCase):
         self.assertIn('anticipator', n._asm_stage_t)
 
 
+class TestProfileBlock(unittest.TestCase):
+    """M6.1 second wave — _build_profile_block_and_cache."""
+
+    def test_builds_and_caches(self):
+        n = _make_minimal_nerve()
+        pc = MagicMock()
+        pc.to_prompt_block = MagicMock(return_value='[PROFILE] Sir loves audio')
+        n.profile_card = pc
+        result = n._build_profile_block_and_cache()
+        self.assertEqual(result, '[PROFILE] Sir loves audio')
+        # 副作用: _pc_block_cached lambda 设
+        self.assertTrue(callable(n._pc_block_cached))
+        self.assertEqual(n._pc_block_cached(), '[PROFILE] Sir loves audio')
+        self.assertIn('profile_block', n._asm_stage_t)
+
+
+class TestHabitClockRefresh(unittest.TestCase):
+    """M6.1 second wave — _refresh_habit_clock_from_probe."""
+
+    def test_calls_update_from_probe(self):
+        n = _make_minimal_nerve()
+        hc = MagicMock()
+        n.habit_clock = hc
+        n._refresh_habit_clock_from_probe()
+        hc.update_from_probe.assert_called_once()
+        self.assertIn('habit_clock_update', n._asm_stage_t)
+
+
+class TestContextRouterStr(unittest.TestCase):
+    """M6.1 second wave — _build_context_router_str."""
+
+    def test_calls_with_hour(self):
+        n = _make_minimal_nerve()
+        cr = MagicMock()
+        cr.assemble = MagicMock(return_value='[CTX] late night')
+        n.context_router = cr
+        result = n._build_context_router_str(23)
+        self.assertEqual(result, '[CTX] late night')
+        cr.assemble.assert_called_once_with(23)
+        self.assertIn('context_router', n._asm_stage_t)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1543,6 +1543,31 @@ class CentralNerve:
         self._asm_stage_t['anticipator'] = (time.time() - _t) * 1000
         return block
 
+    def _build_profile_block_and_cache(self) -> str:
+        """[M6.1 / 2026-05-24] 抽自 _assemble_prompt — ProfileCard.to_prompt_block.
+        🩹 [P0+20-β.1.21 / 2026-05-16] 本轮缓存避免 4 次重复构造.
+        副作用: 设 self._pc_block_cached lambda 让字符串模板的 caller 用.
+        """
+        _t = time.time()
+        block_value = self.profile_card.to_prompt_block()
+        self._asm_stage_t['profile_block'] = (time.time() - _t) * 1000
+        # 暴露给本类方法 + 字符串模板（_pc_block_cached 调用方）
+        self._pc_block_cached = lambda: block_value
+        return block_value
+
+    def _refresh_habit_clock_from_probe(self) -> None:
+        """[M6.1] 抽自 _assemble_prompt — habit_clock 更新 (无返值, 仅副作用)."""
+        _t = time.time()
+        self.habit_clock.update_from_probe()
+        self._asm_stage_t['habit_clock_update'] = (time.time() - _t) * 1000
+
+    def _build_context_router_str(self, current_hour: int) -> str:
+        """[M6.1] 抽自 _assemble_prompt — ContextRouter.assemble(hour) 渲染."""
+        _t = time.time()
+        result = self.context_router.assemble(current_hour)
+        self._asm_stage_t['context_router'] = (time.time() - _t) * 1000
+        return result
+
     def _assemble_prompt(self, user_input: str, stm_context: str = "", ltm_context: str = "",
                         chat_organs: str = "", ledger_data: dict = None, landmarks_str: str = "",
                         system_alert_text: str = "", mode: str = "full",
@@ -2812,21 +2837,10 @@ class CentralNerve:
         if not hasattr(self, '_asm_stage_t') or not isinstance(self._asm_stage_t, dict):
             self._asm_stage_t = {}
 
-        # 🩹 [P0+20-β.1.21 / 2026-05-16] profile_block 本轮缓存（避免 4 次重复构造）
-        _pc_t = time.time()
-        _pc_block_value = self.profile_card.to_prompt_block()
-        self._asm_stage_t['profile_block'] = (time.time() - _pc_t) * 1000
-        # 暴露给本类方法 + 字符串模板（_pc_block_cached 调用方）
-        self._pc_block_cached = lambda: _pc_block_value
-
-        _t_hc = time.time()
-        self.habit_clock.update_from_probe()
-        self._asm_stage_t['habit_clock_update'] = (time.time() - _t_hc) * 1000
-
-        _t_ctx_start = time.time()
-        context_str = self.context_router.assemble(current_hour)
-        _t_ctx_done = time.time()
-        self._asm_stage_t['context_router'] = (_t_ctx_done - _t_ctx_start) * 1000
+        # [Reshape M6.1 / 2026-05-24] 3 stage 抽自 helper. 行为不变.
+        _pc_block_value = self._build_profile_block_and_cache()
+        self._refresh_habit_clock_from_probe()
+        context_str = self._build_context_router_str(current_hour)
 
         hc_prediction = self.habit_clock.predict_current_state()
         if hc_prediction.get('anomaly_detected'):
