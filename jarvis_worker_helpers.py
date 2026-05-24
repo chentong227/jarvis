@@ -210,3 +210,95 @@ TIER_DEEP_KEYWORDS = [
     '看一下', '看看为什么', '看看哪里', '看看是不是',
     '为什么', '怎么回事', '是什么原因', '哪里出了',
 ]
+
+
+# 🆕 [Reshape M6.W4 / 2026-05-24 18:30] Refusal pattern fallback lists
+# (vocab json 不可用时的 fallback, source of truth = memory_pool/refusal_vocab.json,
+# CLI: scripts/refusal_vocab_dump.py). worker class attr 用 alias 指向.
+#
+# 设计 (准则 6 - 持久化硬规): refusal fallback 仅在 vocab json 加载失败时使用,
+# 真 source of truth 在 JSON. 此处保 list 是为了 import-safe default.
+
+# 🩹 [β.5.22-F / 2026-05-19] generic refusal — "不需要 / not now / leave it alone"
+GENERIC_REFUSAL_PATTERNS = [
+    # fallback only — 真 source of truth 在 memory_pool/refusal_vocab.json
+    "no thanks", "no thank you", "thanks but no",
+    "i'm fine", "im fine", "i am fine", "it's fine", "its fine",
+    "i'm ok", "im ok", "i am ok", "it's ok", "its ok",
+    "i'm good", "im good", "i am good",
+    "i got it", "i've got it", "ive got it",
+    "i'll fix", "ill fix", "i will fix", "i can fix",
+    "i'll handle", "ill handle", "i will handle",
+    "not now", "leave it", "let it be", "forget it",
+    "stop offering", "stop suggesting",
+    "不需要", "不用", "不必", "没事", "算了", "不用了",
+    "我自己", "自己来", "自己能", "我可以", "我能",
+    "别再提", "别再说", "够了", "停下", "停止帮助",
+    "不需要你的帮助", "不要你的帮助",
+]
+
+# 🩹 [β.5.22-F] strong refusal — 显式禁止 (闭嘴 / shut up / leave me alone)
+STRONG_REFUSAL_PATTERNS = [
+    # fallback only
+    "不需要你的帮助", "不要你的帮助", "不要再提", "别再提", "别再说", "别再来",
+    "不要打扰", "别打扰", "闭嘴", "安静一下", "停止帮助", "你别说话",
+    "stop offering", "stop suggesting", "stop talking", "stop interrupting",
+    "leave me alone", "i don't need help", "i don't need your help",
+    "i dont need help", "i dont need your help", "shut up", "be quiet",
+]
+
+
+# 🆕 [Reshape M6.W4 / 2026-05-24 18:30] Sleep intent detection patterns
+# 抽自 JarvisWorkerThread class attr.
+
+# [v5.1 / Sir-2026-05-15] Sleep Intent 检测 —— 修"重复催睡"
+# 起因：Sir 说"I will go to sleep. 我马上回去睡觉，再过半小时左右吧"之后，
+# Conductor 仍然在 6 分钟 / 10 分钟 / 14 分钟时连催 late_night / suggest_break 三次。
+# 修法：检测 Sir 的睡眠表态 → 设 worker._sleep_intent_until 窗口 → 两个发送端在窗口内
+# 静默 sleep 相关 nudge。
+SLEEP_INTENT_PATTERNS = [
+    # 英文：i'll/i'm gonna/i'm about to/i will go to + sleep/bed; off to bed; turning in
+    r"(?:i\s*['\u2019]?\s*ll|i\s+will|i\s*['\u2019]?\s*m\s+(?:gonna|going\s+to|about\s+to|heading))\s+(?:go\s+to\s+)?(?:sleep|bed|hit\s+the\s+sack)",
+    r"(?:gonna|going\s+to|off\s+to|heading\s+to|hitting)\s+(?:sleep|bed|the\s+sack)",
+    r"(?:going|turning)\s+in\s+(?:now|soon|in\s+a)?",
+    r"(?:bedtime|nighty[\s-]?night|good\s*night)",
+    # [P0-2 / 2026-05-15] 英文补：i'll sleep at X / i plan to sleep / i'll be in bed by X
+    r"(?:i\s*['\u2019]?\s*ll|i\s+(?:plan\s+to|am\s+planning\s+to|intend\s+to))\s+(?:sleep|hit\s+(?:the\s+)?(?:sheets|bed)|be\s+in\s+bed|crash)",
+    r"(?:by|at|around|near)\s+\d{1,2}\s*(?:o\'?clock|am|pm|:\d{2})?.{0,20}(?:sleep|bed)",
+    # 中文：我...睡 / 我...休息 / 再过...睡 / 准备睡 / 马上去睡 / 我去睡
+    r"我.{0,15}(?:就|快|马上|一会儿|过|过\s*会|分钟后|小时后).{0,15}(?:去\s*睡|睡觉|睡了|休息|睡)",
+    r"我.{0,8}(?:马上|快|准备|要|打算).{0,8}(?:睡|休息|去睡|睡觉|睡了)",
+    r"再过.{0,12}.{0,6}(?:就|).{0,4}(?:睡|休息|睡觉|睡了)",
+    r"(?:我)?\s*(?:马上|立刻|准备|打算).{0,4}(?:去睡|睡觉|睡了|休息)",
+    r"我\s*(?:要|想|打算)?\s*(?:去|回|回去).{0,4}(?:睡|休息)",
+    # [P0-2 / 2026-05-15] 中文补：实测 Sir 说"我会在大概两点的时候睡觉" 未命中。
+    # 补"会在/会/打算/差不多 + 点/时/分 + 睡/休息"自然表述；以及"等下/等一下/晚点/迟点 + 睡"
+    # 🩹 [β.5.38-fix / 2026-05-20 15:18] Sir 实测 BUG: "今天我我晚上会尽量早点睡的"
+    # 老 pattern "点" 误命中"早点睡"的"点". 修法: 排除"早点/晚点/迟点 + 睡" 副词在 (?:点|时|分) 前.
+    r"我.{0,8}(?:会|要|得|该|打算|准备|应该|可能|大概|估计|差不多)(?!.{0,3}(?:早|晚|迟)点).{0,15}(?:点|时|分).{0,12}(?:睡|休息|去睡|睡觉|睡了|关机|下线|歇)",
+    r"我.{0,8}(?:会|要|得|打算).{0,8}(?:在|于|到了).{0,15}(?:睡|休息|睡觉|睡了|关机|下线|歇)",
+    r"(?:等下|等一下|等会|等会儿|晚点|迟点|稍后|过会|过一会|过会儿).{0,10}(?:睡|休息|睡觉|睡了)",
+    r"(?:我)?\s*(?:差不多|大概|应该|估计|可能).{0,10}(?:点|时).{0,12}(?:睡|休息|睡觉|睡了)",
+    # "今晚"/"今天晚上"/"待会儿" + 睡 / "今晚就/今晚要"
+    r"(?:今晚|今天晚上|今夜|待会儿?).{0,10}(?:睡|休息|睡觉|关机|下线|休息)",
+]
+
+# 时间提取：捕获"30 分钟" / "half hour" / "一小时" 等。命中越早越具体优先。
+SLEEP_TIME_EXTRACTORS = [
+    (r"(\d+)\s*(?:分钟|分(?!\w)|min(?:ute)?s?)", lambda m: int(m.group(1)) * 60),
+    (r"(\d+)\s*(?:小时|hour|hr)s?", lambda m: int(m.group(1)) * 3600),
+    (r"半\s*(?:个)?\s*小时|half\s+(?:an?\s+)?hour", lambda m: 1800),
+    (r"一\s*(?:个)?\s*小时|an?\s+hour", lambda m: 3600),
+    (r"几\s*分钟|few\s+(?:more\s+)?minutes?", lambda m: 600),
+    (r"一会儿|一下|in\s+a\s+bit|in\s+a\s+while|shortly", lambda m: 600),
+    (r"马上|立刻|right\s+(?:now|away)|now", lambda m: 300),
+    # [P0-2 / 2026-05-15] 补：明确时间点（"两点睡 / 在 2 点睡"）→ 距现在到那个钟点的秒数。
+    # 优先处理中文数字"两/三/四/五"，再阿拉伯数字。lambda 接收 match 对象自带 self 隐含 - 这里改成
+    # 闭包形式，需要 self 上下文才能调 _to_24h。下方在 _detect_sleep_intent 里单独处理。
+]
+
+# 中文数字到阿拉伯：仅覆盖 0-12（够用）
+CN_DIGIT_MAP = {
+    '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '俩': 2, '三': 3, '四': 4, '五': 5,
+    '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '十一': 11, '十二': 12,
+}

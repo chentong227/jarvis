@@ -132,5 +132,70 @@ class TestM6W3TierKeywordsAlias(unittest.TestCase):
         self.fail('No TIER_CRITICAL pattern matches "remind me ..."')
 
 
+class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
+    """W4 抽出: GENERIC/STRONG_REFUSAL_PATTERNS + SLEEP_INTENT_PATTERNS +
+    SLEEP_TIME_EXTRACTORS + CN_DIGIT_MAP 都抽到 helpers."""
+
+    def test_helpers_const_importable(self):
+        """5 个 const 都从 helpers export."""
+        from jarvis_worker_helpers import (
+            GENERIC_REFUSAL_PATTERNS, STRONG_REFUSAL_PATTERNS,
+            SLEEP_INTENT_PATTERNS, SLEEP_TIME_EXTRACTORS, CN_DIGIT_MAP,
+        )
+        self.assertIsInstance(GENERIC_REFUSAL_PATTERNS, list)
+        self.assertGreater(len(GENERIC_REFUSAL_PATTERNS), 20)
+        self.assertIsInstance(STRONG_REFUSAL_PATTERNS, list)
+        self.assertGreater(len(STRONG_REFUSAL_PATTERNS), 10)
+        self.assertIsInstance(SLEEP_INTENT_PATTERNS, list)
+        self.assertGreater(len(SLEEP_INTENT_PATTERNS), 10)
+        self.assertIsInstance(SLEEP_TIME_EXTRACTORS, list)
+        self.assertGreater(len(SLEEP_TIME_EXTRACTORS), 5)
+        self.assertIsInstance(CN_DIGIT_MAP, dict)
+        # 中文数字 0-12
+        self.assertEqual(CN_DIGIT_MAP['两'], 2)
+        self.assertEqual(CN_DIGIT_MAP['十'], 10)
+
+    def test_worker_class_attr_alias(self):
+        """worker class _GENERIC_/_STRONG_/_SLEEP_*/_CN_DIGIT_MAP 与 helpers 同对象."""
+        from jarvis_worker import JarvisWorkerThread
+        from jarvis_worker_helpers import (
+            GENERIC_REFUSAL_PATTERNS, STRONG_REFUSAL_PATTERNS,
+            SLEEP_INTENT_PATTERNS, SLEEP_TIME_EXTRACTORS, CN_DIGIT_MAP,
+        )
+        self.assertIs(JarvisWorkerThread._GENERIC_REFUSAL_PATTERNS, GENERIC_REFUSAL_PATTERNS)
+        self.assertIs(JarvisWorkerThread._STRONG_REFUSAL_PATTERNS, STRONG_REFUSAL_PATTERNS)
+        self.assertIs(JarvisWorkerThread._SLEEP_INTENT_PATTERNS, SLEEP_INTENT_PATTERNS)
+        self.assertIs(JarvisWorkerThread._SLEEP_TIME_EXTRACTORS, SLEEP_TIME_EXTRACTORS)
+        self.assertIs(JarvisWorkerThread._CN_DIGIT_MAP, CN_DIGIT_MAP)
+
+    def test_sleep_pattern_real_match(self):
+        """sleep intent regex 真能 match 已知 Sir 真测语料."""
+        import re
+        from jarvis_worker_helpers import SLEEP_INTENT_PATTERNS
+        # Sir 实测痛点: "我会在大概两点的时候睡觉"
+        sample = '我会在大概两点的时候睡觉'.lower()
+        hits = [p for p in SLEEP_INTENT_PATTERNS if re.search(p, sample)]
+        self.assertGreater(len(hits), 0, f'no SLEEP pattern matched: {sample}')
+
+    def test_sleep_extractor_real_extract(self):
+        """time extractor 真能算秒数."""
+        import re
+        from jarvis_worker_helpers import SLEEP_TIME_EXTRACTORS
+        # '30 分钟' → 1800s
+        for pat, fn in SLEEP_TIME_EXTRACTORS:
+            m = re.search(pat, '30 分钟后睡觉')
+            if m:
+                self.assertEqual(fn(m), 1800)
+                return
+        self.fail('no extractor matched "30 分钟"')
+
+    def test_refusal_strong_contains_shut_up(self):
+        """STRONG refusal 含 'shut up' / '闭嘴'."""
+        from jarvis_worker_helpers import STRONG_REFUSAL_PATTERNS
+        joined = ' '.join(STRONG_REFUSAL_PATTERNS).lower()
+        self.assertIn('shut up', joined)
+        self.assertIn('闭嘴', joined)
+
+
 if __name__ == '__main__':
     unittest.main()
