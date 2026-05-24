@@ -1770,6 +1770,467 @@ User: {user_input}
         except Exception:
             return ''
 
+    def _build_pending_commitments_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] PENDING COMMITMENTS block.
+
+        🩹 [P4-Case4] 治 23:38 hallucinate "11:59" — 注入真 commitment + promise 数据
+        让主脑 reference. 合并 CW.commitments (hard) + PromiseLog (hard kind).
+        """
+        try:
+            _pc_lines = []
+            # CommitmentWatcher.commitments (hard, with deadline_ts)
+            try:
+                _cw = getattr(self, 'commitment_watcher', None)
+                if _cw is not None:
+                    _cw_list = list(getattr(_cw, 'commitments', []) or [])
+                    _now = time.time()
+                    _active_cw = [
+                        c for c in _cw_list
+                        if not c.get('nudged') and float(c.get('deadline_ts', 0)) > 0
+                    ]
+                    _active_cw = sorted(_active_cw, key=lambda c: float(c.get('deadline_ts', 0)))[:6]
+                    for _c in _active_cw:
+                        _dl_ts = float(_c.get('deadline_ts', 0))
+                        _gap_min = int((_dl_ts - _now) / 60)
+                        _dl_str = time.strftime('%H:%M', time.localtime(_dl_ts))
+                        _gap_str = (
+                            f'{_gap_min}min ago' if _gap_min < 0
+                            else f'in {_gap_min}min' if _gap_min < 60
+                            else f'in {_gap_min // 60}h'
+                        )
+                        _src = _c.get('source', 'sir')
+                        _pc_lines.append(
+                            f"  - [{_src}] '{_c.get('description', '')[:60]}' "
+                            f"@ {_dl_str} ({_gap_str})"
+                        )
+            except Exception:
+                pass
+            # PromiseLog (hard kind, has deadline_str)
+            try:
+                from jarvis_promise_log import get_default_log as _pl_get
+                _plog = _pl_get()
+                # 🩹 [P4-edge-A] Promise 字段是 self.promises 不是 _promises;
+                # Promise 是 dataclass 不是 dict, 用 attr access 而不是 .get()
+                if _plog is not None and hasattr(_plog, 'promises'):
+                    for _pid, _p in (_plog.promises or {}).items():
+                        _state = getattr(_p, 'state', '')
+                        _kind = getattr(_p, 'kind', '')
+                        _dl_s = getattr(_p, 'deadline_str', '')
+                        if _state == 'pending' and _kind == 'hard' and _dl_s:
+                            _desc = (getattr(_p, 'description', '') or '')[:60]
+                            _author = getattr(_p, 'author', '?')
+                            _pc_lines.append(
+                                f"  - [PromiseLog/{_author}] '{_desc}' deadline={_dl_s[:20]}"
+                            )
+            except Exception:
+                pass
+
+            if _pc_lines:
+                _pc_block = [
+                    '[PENDING COMMITMENTS / NEAR DEADLINE — your real data, do not hallucinate]',
+                    '  Use this when Sir asks "what time did I say" / "any commitment now" / etc.',
+                ]
+                _pc_block.extend(_pc_lines[:8])
+                _pc_block.append(
+                    '  [rule] Reference these exactly. Never invent timestamps / quotas / billing.'
+                )
+                return '\n'.join(_pc_block)
+        except Exception:
+            pass
+        return ''
+
+    def _build_sleep_routine_evidence_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [SLEEP ROUTINE EVIDENCE] block.
+
+        🆕 [β.5.46-fix13 Fix-2] routine 完后 publish 'sleep_routine_armed' SWM event 含
+        真实 result. 主脑下轮 prompt 看 evidence, 据实回答 (e.g. "MuteApps 0 hit 因没
+        audio session active" / "DisplaySleep OK"), 不撒谎不否认. 准则 6 三维耦合.
+        """
+        try:
+            _bus_sr = getattr(self, 'event_bus', None)
+            if _bus_sr is None:
+                return ''
+            _sr_events = _bus_sr.recent_events(
+                within_seconds=600.0,  # routine 完成 10min 内有效
+                types={'sleep_routine_armed'},
+            ) or []
+            if not _sr_events:
+                return ''
+            # 取最新 1 条
+            _sr_latest = _sr_events[-1]
+            _sr_meta = _sr_latest.get('metadata') or {}
+            _sr_ma = _sr_meta.get('mute_apps') or {}
+            _sr_sd = _sr_meta.get('sleep_display') or {}
+            _sr_am = _sr_meta.get('asr_mute') or {}
+            _sr_lines = [
+                '[SLEEP ROUTINE EVIDENCE — 你的 sleep routine 真实执行结果]',
+                '  这是 Jarvis 本端 SleepMode routine 在主脑视野外异步执行的'
+                '真实结果. **据此回答, 不撒谎也不否认能力**.',
+                '',
+            ]
+            # MuteApps
+            _ma_hits = _sr_ma.get('hits') or []
+            _ma_ok = _sr_ma.get('success')
+            if _ma_ok:
+                _sr_lines.append(
+                    f"  - MuteApps: hit {len(_ma_hits)} app — "
+                    f"{', '.join(_ma_hits[:5])}{'...' if len(_ma_hits) > 5 else ''}"
+                )
+            elif 'error' in _sr_ma:
+                _sr_lines.append(
+                    f"  - MuteApps: ERROR — {_sr_ma.get('error', '?')[:60]}"
+                )
+            else:
+                _sr_lines.append(
+                    f"  - MuteApps: 0 hit / "
+                    f"{_sr_ma.get('targets_attempted', '?')} attempted — "
+                    f"当前 0 个 app 在播声音 (audio session 空)"
+                )
+            # SleepDisplay
+            if _sr_sd.get('success'):
+                _sr_lines.append(
+                    f"  - DisplaySleep: OK — {(_sr_sd.get('msg') or '')[:60]}"
+                )
+            else:
+                _sr_lines.append(
+                    f"  - DisplaySleep: FAIL — "
+                    f"{(_sr_sd.get('msg') or _sr_sd.get('error') or 'unknown')[:60]}"
+                )
+            # ASR mute
+            if _sr_am.get('success'):
+                _ttl = int(_sr_am.get('ttl_s') or 0)
+                _sr_lines.append(
+                    f"  - ASRMute: muted for {_ttl // 60}min "
+                    f"(防梦话误触, Sir 喊 'Jarvis' 唤醒解除)"
+                )
+            # 🆕 [P5-fix80] 准则 6 句式锁 — 仅留 evidence + forbidden 红线
+            _sr_lines.extend([
+                '',
+                '  ⚠️ 据 evidence 说话, 不夸大不否认. tool 成功 → 可提 '
+                '(主脑自决词); 0 hit / fail → 只说 evidence 上真发生的, '
+                '不在老词套上填空 ("我已 muted" 当 MuteApps 0 hit 是谎言).',
+            ])
+            return '\n'.join(_sr_lines)
+        except Exception:
+            return ''
+
+    def _build_recent_completed_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [RECENT COMPLETED] block.
+
+        🆕 [P5-fix82-X] Hippocampus 抽 'Completed:%' 事件给主脑.
+        主脑 22:05 commitment_check 看到证据不再误报已完成的事.
+        """
+        try:
+            hippo_rce = getattr(self, 'hippocampus', None)
+            if hippo_rce is None or not hasattr(hippo_rce, 'list_recent_completed_events'):
+                return ''
+            _rce_events = hippo_rce.list_recent_completed_events(
+                days_back=7, max_n=15
+            ) or []
+            if not _rce_events:
+                return ''
+            _rce_lines = [
+                '[RECENT COMPLETED — Sir 近 7 天已完成的事 (Hippocampus 抽)]',
+                '  ⚠️ 这些事 Sir 已经做完了. 主脑**不要**再说 "明天 X" / '
+                '"准备 X" / "我帮你提醒 X" (X 在这里). 直接 ack 已完成或转新话题.',
+                '',
+            ]
+            for e in _rce_events[:10]:
+                _rce_lines.append(
+                    f"  ✅ {e.get('intent', '?')[:60]} "
+                    f"({e.get('age', '?')} / {e.get('iso', '?')})"
+                )
+            return '\n'.join(_rce_lines)
+        except Exception:
+            return ''
+
+    def _build_watch_task_fired_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [WATCH TASK FIRED] block.
+
+        🆕 [β.5.46-fix13 Fix-3] WatchTask judge fired 后 publish 'watch_task_fired' SWM,
+        主脑下轮 prompt 看 evidence 主动报告 Sir. 准则 6 三维耦合.
+        """
+        try:
+            _bus_wt = getattr(self, 'event_bus', None)
+            if _bus_wt is None:
+                return ''
+            _wt_fired = _bus_wt.recent_events(
+                within_seconds=600.0,
+                types={'watch_task_fired'},
+            ) or []
+            if not _wt_fired:
+                return ''
+            _wt_lines = [
+                '[WATCH TASK FIRED — Sir 委托等的事件刚刚触发]',
+                '  Jarvis 答应过 Sir 等某事件, 现 ScreenVision 看到屏幕证据'
+                '判定事件触发. **Sir 真需要你主动报告**.',
+                '',
+            ]
+            for _ev_wt in _wt_fired[-3:]:  # 最近 3 条
+                _meta_wt = _ev_wt.get('metadata') or {}
+                _wt_lines.append(
+                    f"  - 任务: {_meta_wt.get('what_to_watch', '?')[:100]}"
+                )
+                _wt_lines.append(
+                    f"    触发: {_meta_wt.get('trigger_evidence', '?')[:100]}"
+                )
+                _wt_lines.append(
+                    f"    证据: {_meta_wt.get('fired_evidence', '?')[:120]}"
+                )
+                _wt_lines.append(
+                    f"    建议措辞 (EN): {_meta_wt.get('notify_msg_en', '?')[:120]}"
+                )
+                _wt_lines.append(
+                    f"    建议措辞 (ZH): {_meta_wt.get('notify_msg_zh', '?')[:120]}"
+                )
+                _wt_lines.append('')
+            _wt_lines.append(
+                '  ⚠️ 这是 Sir 主动委托的事件触发, 不算 unsolicited callback. '
+                '主动报告是 Sir 的 explicit request 的兑现 (准则 5 言出必行).'
+            )
+            return '\n'.join(_wt_lines)
+        except Exception:
+            return ''
+
+    def _build_self_promise_overdue_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [SELF-PROMISE OVERDUE] block.
+
+        🩹 [P5-fixCB-revise] 合法 surface 触发 (b) — Jarvis 自检 promise 没履行
+        (PromiseLog sweep 24h 无 evidence → state UNTRACKED → publish SWM event).
+        主脑下轮看 block → 主动 admit "我之前说 X 没做到".
+        """
+        try:
+            _bus_pop = getattr(self, 'event_bus', None)
+            if _bus_pop is None:
+                return ''
+            _pop_events = _bus_pop.recent_events(
+                within_seconds=3600.0 * 12,  # 12h, sweep 1h tick × 12
+                types={'self_promise_overdue'},
+            ) or []
+            # de-dup by promise_id (同一 promise 多次 overdue 只显 1 次)
+            _seen_pids = set()
+            _shown_promises = []
+            for _e in _pop_events:
+                _meta = _e.get('metadata') or {}
+                _pid = _meta.get('promise_id', '')
+                if not _pid or _pid in _seen_pids:
+                    continue
+                _seen_pids.add(_pid)
+                _shown_promises.append({
+                    'promise_id': _pid,
+                    'description': _meta.get('description', '')[:160],
+                    'age_hours': int(_meta.get('age_hours') or 0),
+                    'kind': _meta.get('kind', 'soft'),
+                    'deadline_str': _meta.get('deadline_str', ''),
+                })
+                if len(_shown_promises) >= 3:
+                    break
+            if not _shown_promises:
+                return ''
+            _pop_lines = [
+                '[SELF-PROMISE OVERDUE — Jarvis 自检发现没履行的 promise]',
+                '  你之前 reply 里许诺过这些 (PromiseLog 自动 register), 现在已 24h+',
+                '  无 evidence 兑现 → 系统标 UNTRACKED. **Sir 真需要你 admit**.',
+                '',
+            ]
+            for _p in _shown_promises:
+                _pop_lines.append(
+                    f"  - \"{_p['description']}\" "
+                    f"(promise_id={_p['promise_id'][:8]}, "
+                    f"{_p['age_hours']}h ago, kind={_p['kind']}"
+                    f"{(', deadline=' + _p['deadline_str']) if _p['deadline_str'] else ''})"
+                )
+            _pop_lines.append('')
+            _pop_lines.append('  **如何 surface 得有意义** (Sir 11:30 真理):')
+            _pop_lines.append(
+                '    ✅ 自然 inline admit: "顺便 Sir, 之前我说会 X — 那事我其实没做到, 想跟您说一声."'
+            )
+            _pop_lines.append(
+                '    ✅ 加 actionable: "...您要不要我现在补上?" / "...或先 mark 取消?"'
+            )
+            _pop_lines.append(
+                '    ❌ 不要堆 ritual ("我必须承认 X 我应当澄清 Y..." 空套话)'
+            )
+            _pop_lines.append('    ❌ 一次 1-2 条最多 (别一口气倒老账)')
+            _pop_lines.append(
+                '    ⚠️ 若 Sir 当前 turn 在做无关事 → 仍可短句插一句 acknowledge,'
+            )
+            _pop_lines.append(
+                '       不强 surface; 等 Sir 主动问"X 怎么样了" 再深入'
+            )
+            return '\n'.join(_pop_lines)
+        except Exception:
+            return ''
+
+    def _build_intent_resolved_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [INTENT RESOLVED THIS TURN] block.
+
+        🩹 [β.5.44-E] IntentResolver publish 'tool_called' + 'intent_resolved' SWM.
+        主脑看 [INTENT RESOLVED THIS TURN] 知道 tool 真成功 / 真失败 — 不再撒谎.
+        """
+        try:
+            _bus = getattr(self, 'event_bus', None)
+            if _bus is None:
+                return ''
+            _ir_events = _bus.recent_events(
+                within_seconds=60.0,
+                types={'intent_resolved'},
+            )
+            if not _ir_events:
+                return ''
+            _ir = _ir_events[-1]  # 最新一条 (本 turn)
+            _meta = _ir.get('metadata') or {}
+            _tcs = _meta.get('tool_calls') or []
+            if not _tcs:
+                return ''
+            _ir_lines = ['[INTENT RESOLVED THIS TURN / 系统真做了什么]']
+            _ir_lines.append('  IntentResolver 看完 Sir utterance + module candidates, 调了下面 tool:')
+            for _tc in _tcs[:6]:
+                _status = '✓ 成功' if _tc.get('ok') else f"✗ 失败 ({_tc.get('error', '?')[:60]})"
+                _ir_lines.append(f"  - {_tc.get('name', '?')}: {_status}")
+            _ir_lines.append(
+                '  ⚠️ Reply 务必 reflect 真实 result: tool ✓ → 可说 "noted/recorded"; '
+                'tool ✗ → 必须说 "I tried but couldn\'t..." / "kept in conversation only"; '
+                '没 tool 调 → 不能说任何 mutation verb (corrected/saved/updated 等).'
+            )
+            return '\n'.join(_ir_lines)
+        except Exception:
+            return ''
+
+    def _build_mood_estimate_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [MOOD ESTIMATE] block.
+
+        🩹 [β.2.9.4] Mood Mirror — 给主脑 5 档 mood 估算. 准则 6: 只给信号让主脑判.
+        """
+        try:
+            from jarvis_env_probe import PhysicalEnvironmentProbe as P
+            _snap = P.get_sensor_snapshot() or {}
+            _br = float(_snap.get('backspace_ratio', 0) or 0)
+            _sw = int(_snap.get('switch_frequency_5min', 0) or 0)
+            _ev = bool(_snap.get('error_visible', False))
+            _undo = int(_snap.get('shortcut_undo_5min', 0) or 0)
+            _dur = float(_snap.get('session_duration_minutes', 0) or 0)
+            _h = time.localtime().tm_hour
+            _mood = 'neutral'
+            if _br > 0.18 or _undo > 5 or (_ev and _sw > 8):
+                _mood = 'frustrated'
+            elif _sw > 12:
+                _mood = 'scattered'
+            elif _dur > 90 and _sw < 4:
+                _mood = 'deep_focus'
+            elif _h >= 23 or _h < 5:
+                _mood = 'late_night_tired'
+            elif _dur > 25 and _sw < 6:
+                _mood = 'engaged'
+            return (
+                f"[MOOD ESTIMATE — Sir 准则 6, hint only]\n"
+                f"  estimated: {_mood} (backspace={_br:.0%}, switches/5min={_sw}, "
+                f"err_visible={_ev}, undo={_undo}, session={_dur:.0f}min, hour={_h})\n"
+                f"  use this to subtly calibrate tone — never mention raw sensor numbers."
+            )
+        except Exception:
+            return ''
+
+    def _build_wake_context_block(self) -> str:
+        """[Reshape M6.1 fourth wave / 2026-05-24] [WAKE CONTEXT] block.
+
+        🩹 [β.2.9.1.2] Wake-time Callback context — Sir 短间隔 (< 30min) wake 注入
+        让主脑知道 "Sir 9min 前说要睡了现在又来了". 不教句式 — 主脑自决 callback.
+        合并 yesterday topics + unverified claim count.
+        """
+        try:
+            _worker = getattr(self, '_worker_ref', None)
+            _vt = getattr(_worker, 'voice_thread', None) if _worker else None
+            if _vt is None:
+                return ''
+            _last_conv_end = float(getattr(_vt, 'last_conversation_end_time', 0) or 0)
+            if _last_conv_end <= 0:
+                return ''
+            _gap_s = time.time() - _last_conv_end
+            # 短间隔 (< 30min) wake 才注入 — 长间隔走 return_greeting 老路径
+            if not (0 < _gap_s < 1800):
+                return ''
+            _gap_min = _gap_s / 60
+            # 最近一条 Sir utterance + 最近 hard promise
+            _last_sir = ''
+            try:
+                _stm = getattr(self, 'short_term_memory', None) or []
+                for _e in reversed(_stm[-5:]):
+                    _u = str(_e.get('user', '') or '').strip()
+                    if _u:
+                        _last_sir = _u[:160]
+                        break
+            except Exception:
+                pass
+            _recent_promise = ''
+            try:
+                from jarvis_promise_log import get_default_log
+                _plog = get_default_log()
+                _pendings = [
+                    p for p in _plog.list_pending()
+                    if (time.time() - p.registered_at) < 1800
+                ]
+                if _pendings:
+                    _pendings.sort(key=lambda p: -p.registered_at)
+                    _recent_promise = (
+                        f"{_pendings[0].description[:100]} (you said this "
+                        f"{int((time.time()-_pendings[0].registered_at)/60)} min ago)"
+                    )
+            except Exception:
+                pass
+            _wake_lines = [
+                f"[WAKE CONTEXT — Sir just re-engaged after a short gap]",
+                f"- gap since last conversation: {_gap_min:.0f} minute(s)",
+            ]
+            if _last_sir:
+                _wake_lines.append(f"- Sir's last words last time: \"{_last_sir}\"")
+            if _recent_promise:
+                _wake_lines.append(f"- pending self-commitment: {_recent_promise}")
+
+            # 🩹 [β.2.9.5] E: Cross-session callback — 加跨天主题
+            try:
+                _yesterday_topics = []
+                _stm = getattr(self, 'short_term_memory', None) or []
+                _yday_start = time.time() - 86400 - 12 * 3600
+                _yday_end = time.time() - 12 * 3600
+                for _e in _stm:
+                    _ts = float(_e.get('when', 0) or 0)
+                    if _yday_start < _ts < _yday_end:
+                        _u = str(_e.get('user', '') or '').strip()
+                        if _u and len(_u) > 8:
+                            _yesterday_topics.append(_u[:80])
+                if _yesterday_topics:
+                    _wake_lines.append(
+                        f"- yesterday-ish topics ({len(_yesterday_topics)} items): "
+                        f"\"{_yesterday_topics[-1][:60]}\""
+                    )
+            except Exception:
+                pass
+
+            # 🩹 [β.2.9.6] F: Self-aware Comeback — 上次 unverified claim
+            try:
+                from jarvis_claim_tracer import get_stats
+                _stats = get_stats()
+                _unv = int(_stats.get('total_unverified', 0))
+                if _unv > 0:
+                    _wake_lines.append(
+                        f"- your last sessions had {_unv} unverified claim(s) "
+                        f"(per ClaimTracer). Be especially careful with specifics "
+                        f"this turn."
+                    )
+            except Exception:
+                pass
+
+            _wake_lines.append(
+                "  → If Sir's current input contradicts what he said before "
+                "(e.g. said sleep but woke up 9 min later), or echoes yesterday's "
+                "thread, you may naturally callback in your own voice. Not "
+                "required — only if real and the moment fits."
+            )
+            return '\n'.join(_wake_lines)
+        except Exception:
+            return ''
+
     def _init_audio_volume_recovery(self) -> None:
         """[Reshape M6.3 / 2026-05-24] 抽自 __init__ — Windows 音量恢复.
 
@@ -2243,71 +2704,10 @@ User: {user_input}
         except Exception:
             pass
 
-        # 🩹 [P4-Case4 / 2026-05-20 23:58] PENDING COMMITMENTS — 治 23:38 hallucinate "11:59"
-        # Sir 23:38 case: Sir 忘了自己说几点睡, 问 Jarvis, 主脑回 "11:59 PM" hallucinate.
-        # Sir 真说 23:30. 主脑没看 commitment 数据自己编 time.
-        # 修: 注入真 commitment + promise 数据 (description + deadline + age) 让主脑 reference.
-        try:
-            _pc_lines = []
-            # CommitmentWatcher.commitments (hard, with deadline_ts)
-            try:
-                _cw = getattr(self, 'commitment_watcher', None)
-                if _cw is not None:
-                    _cw_list = list(getattr(_cw, 'commitments', []) or [])
-                    _now = time.time()
-                    _active_cw = [
-                        c for c in _cw_list
-                        if not c.get('nudged') and float(c.get('deadline_ts', 0)) > 0
-                    ]
-                    _active_cw = sorted(_active_cw, key=lambda c: float(c.get('deadline_ts', 0)))[:6]
-                    for _c in _active_cw:
-                        _dl_ts = float(_c.get('deadline_ts', 0))
-                        _gap_min = int((_dl_ts - _now) / 60)
-                        _dl_str = time.strftime('%H:%M', time.localtime(_dl_ts))
-                        _gap_str = (
-                            f'{_gap_min}min ago' if _gap_min < 0
-                            else f'in {_gap_min}min' if _gap_min < 60
-                            else f'in {_gap_min // 60}h'
-                        )
-                        _src = _c.get('source', 'sir')
-                        _pc_lines.append(
-                            f"  - [{_src}] '{_c.get('description', '')[:60]}' "
-                            f"@ {_dl_str} ({_gap_str})"
-                        )
-            except Exception:
-                pass
-            # PromiseLog (hard kind, has deadline_str)
-            try:
-                from jarvis_promise_log import get_default_log as _pl_get
-                _plog = _pl_get()
-                # 🩹 [P4-edge-A] Promise 字段是 self.promises 不是 _promises;
-                # Promise 是 dataclass 不是 dict, 用 attr access 而不是 .get()
-                if _plog is not None and hasattr(_plog, 'promises'):
-                    for _pid, _p in (_plog.promises or {}).items():
-                        _state = getattr(_p, 'state', '')
-                        _kind = getattr(_p, 'kind', '')
-                        _dl_s = getattr(_p, 'deadline_str', '')
-                        if _state == 'pending' and _kind == 'hard' and _dl_s:
-                            _desc = (getattr(_p, 'description', '') or '')[:60]
-                            _author = getattr(_p, 'author', '?')
-                            _pc_lines.append(
-                                f"  - [PromiseLog/{_author}] '{_desc}' deadline={_dl_s[:20]}"
-                            )
-            except Exception:
-                pass
-
-            if _pc_lines:
-                _pc_block = [
-                    '[PENDING COMMITMENTS / NEAR DEADLINE — your real data, do not hallucinate]',
-                    '  Use this when Sir asks "what time did I say" / "any commitment now" / etc.',
-                ]
-                _pc_block.extend(_pc_lines[:8])
-                _pc_block.append(
-                    '  [rule] Reference these exactly. Never invent timestamps / quotas / billing.'
-                )
-                _parts.append('\n'.join(_pc_block))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] PENDING COMMITMENTS helper. 行为不变.
+        _pc_block_text = self._build_pending_commitments_block()
+        if _pc_block_text:
+            _parts.append(_pc_block_text)
 
         # 🩹 [Gap 1 / P5-ToM / 2026-05-21 01:00] SIR'S MIND RIGHT NOW block (Layer 6)
         # Jarvis 对 Sir 当下心智的 hypothesis (surface/deeper/unspoken need + 
@@ -2445,228 +2845,27 @@ User: {user_input}
         except Exception:
             pass
 
-        # 🆕 [β.5.46-fix13 Fix-2 / 2026-05-22 00:35] [SLEEP ROUTINE EVIDENCE] block
-        # Sir 00:30:23 真测痛点 (B3/B4/B7):
-        #   - "I've muted the audio for you" (假, MuteApps hit=[])
-        #   - "I lack the means to power down display" (冲突, sleep_display 明明有)
-        #   - "I haven't actually muted yet" (自打脸)
-        # 真凶: 主脑不知道 SleepMode routine 真做了啥 + 不知道自己有哪些能力.
-        # 治本: routine 完后 publish 'sleep_routine_armed' SWM event 含真实 result.
-        # 主脑下轮 prompt 看 evidence, 据实回答 (e.g. "MuteApps 0 hit 因没 audio
-        # session active" / "DisplaySleep OK"), 不撒谎不否认.
-        # 准则 6 三维耦合: 数据 publish SWM, 主脑 LLM 据 evidence 自决怎么说.
-        # [Phase 4b.2] light tier 跳 sleep_routine_evidence (~0.5K)
-        try:
-            _bus_sr = getattr(self, 'event_bus', None)
-            if _bus_sr is not None and not _is_light_tier:
-                _sr_events = _bus_sr.recent_events(
-                    within_seconds=600.0,  # routine 完成 10min 内有效
-                    types={'sleep_routine_armed'},
-                ) or []
-                if _sr_events:
-                    # 取最新 1 条 (routine 不可能 10min 内 fire 2 次, 但 defensive)
-                    _sr_latest = _sr_events[-1]
-                    _sr_meta = _sr_latest.get('metadata') or {}
-                    _sr_ma = _sr_meta.get('mute_apps') or {}
-                    _sr_sd = _sr_meta.get('sleep_display') or {}
-                    _sr_am = _sr_meta.get('asr_mute') or {}
-                    _sr_lines = [
-                        '[SLEEP ROUTINE EVIDENCE — 你的 sleep routine 真实执行结果]',
-                        '  这是 Jarvis 本端 SleepMode routine 在主脑视野外异步执行的'
-                        '真实结果. **据此回答, 不撒谎也不否认能力**.',
-                        '',
-                    ]
-                    # MuteApps
-                    _ma_hits = _sr_ma.get('hits') or []
-                    _ma_ok = _sr_ma.get('success')
-                    if _ma_ok:
-                        _sr_lines.append(
-                            f"  - MuteApps: hit {len(_ma_hits)} app — "
-                            f"{', '.join(_ma_hits[:5])}{'...' if len(_ma_hits) > 5 else ''}"
-                        )
-                    elif 'error' in _sr_ma:
-                        _sr_lines.append(
-                            f"  - MuteApps: ERROR — {_sr_ma.get('error', '?')[:60]}"
-                        )
-                    else:
-                        _sr_lines.append(
-                            f"  - MuteApps: 0 hit / "
-                            f"{_sr_ma.get('targets_attempted', '?')} attempted — "
-                            f"当前 0 个 app 在播声音 (audio session 空)"
-                        )
-                    # SleepDisplay
-                    if _sr_sd.get('success'):
-                        _sr_lines.append(
-                            f"  - DisplaySleep: OK — {(_sr_sd.get('msg') or '')[:60]}"
-                        )
-                    else:
-                        _sr_lines.append(
-                            f"  - DisplaySleep: FAIL — "
-                            f"{(_sr_sd.get('msg') or _sr_sd.get('error') or 'unknown')[:60]}"
-                        )
-                    # ASR mute
-                    if _sr_am.get('success'):
-                        _ttl = int(_sr_am.get('ttl_s') or 0)
-                        _sr_lines.append(
-                            f"  - ASRMute: muted for {_ttl // 60}min "
-                            f"(防梦话误触, Sir 喊 'Jarvis' 唤醒解除)"
-                        )
-                    # 🆕 [P5-fix80 / 2026-05-23 21:52] 准则 6 句式锁 — Sir 真意
-                    # 'just give evidence, let LLM emerge'. 删 ✅ 填空例,
-                    # 仅留 evidence + forbidden 红线 + 中性原则.
-                    _sr_lines.extend([
-                        '',
-                        '  ⚠️ 据 evidence 说话, 不夸大不否认. tool 成功 → 可提 '
-                        '(主脑自决词); 0 hit / fail → 只说 evidence 上真发生的, '
-                        '不在老词套上填空 ("我已 muted" 当 MuteApps 0 hit 是谎言).',
-                    ])
-                    _parts.append('\n'.join(_sr_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] SLEEP ROUTINE EVIDENCE helper. 行为不变.
+        # [Phase 4b.2] light tier 跳 sleep_routine_evidence
+        if not _is_light_tier:
+            _sr_block_text = self._build_sleep_routine_evidence_block()
+            if _sr_block_text:
+                _parts.append(_sr_block_text)
 
-        # 🆕 [P5-fix82-X step 2 / 2026-05-23 22:25] [RECENT COMPLETED] block
-        # Sir 真意 "教一次, 多处同步". Hippocampus TaskMemories.user_intent 已抽
-        # 'Completed:%' 事件, 但主脑 prompt 不直接看 (只在 search_memory keyword
-        # 命中时 retrieve). 主脑 22:05 commitment_check 时看不到 → 重复说"明天血压
-        # 咨询" (而实际今天已完成).
-        # 修法: 加 RECENT COMPLETED prompt block 近 7 天 Completed: 事件给主脑.
-        # 主脑下轮看到证据不再误报已完成的事.
-        try:
-            hippo_rce = getattr(self, 'hippocampus', None)
-            if hippo_rce is not None and hasattr(hippo_rce, 'list_recent_completed_events'):
-                _rce_events = hippo_rce.list_recent_completed_events(
-                    days_back=7, max_n=15
-                ) or []
-                if _rce_events:
-                    _rce_lines = [
-                        '[RECENT COMPLETED — Sir 近 7 天已完成的事 (Hippocampus 抽)]',
-                        '  ⚠️ 这些事 Sir 已经做完了. 主脑**不要**再说 "明天 X" / '
-                        '"准备 X" / "我帮你提醒 X" (X 在这里). 直接 ack 已完成或转新话题.',
-                        '',
-                    ]
-                    for e in _rce_events[:10]:
-                        _rce_lines.append(
-                            f"  ✅ {e.get('intent', '?')[:60]} "
-                            f"({e.get('age', '?')} / {e.get('iso', '?')})"
-                        )
-                    _parts.append('\n'.join(_rce_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] RECENT COMPLETED helper. 行为不变.
+        _rce_block_text = self._build_recent_completed_block()
+        if _rce_block_text:
+            _parts.append(_rce_block_text)
 
-        # 🆕 [β.5.46-fix13 Fix-3 / 2026-05-22] [WATCH TASK FIRED] block
-        # Sir 22:18 真测痛点: Sir 说"等导出完成提醒" 但没机制兑现. 治本: WatchTask
-        # 抽象 + ScreenVision daemon judge. judge fired 后 publish 'watch_task_fired'
-        # SWM event, 主脑下轮 prompt 看 evidence, 主动报告 Sir.
-        # 准则 6 三维耦合: 数据 publish SWM, 主脑 LLM 看 evidence 自决怎么说.
-        try:
-            _bus_wt = getattr(self, 'event_bus', None)
-            if _bus_wt is not None:
-                _wt_fired = _bus_wt.recent_events(
-                    within_seconds=600.0,
-                    types={'watch_task_fired'},
-                ) or []
-                if _wt_fired:
-                    _wt_lines = [
-                        '[WATCH TASK FIRED — Sir 委托等的事件刚刚触发]',
-                        '  Jarvis 答应过 Sir 等某事件, 现 ScreenVision 看到屏幕证据'
-                        '判定事件触发. **Sir 真需要你主动报告**.',
-                        '',
-                    ]
-                    for _ev_wt in _wt_fired[-3:]:  # 最近 3 条
-                        _meta_wt = _ev_wt.get('metadata') or {}
-                        _wt_lines.append(
-                            f"  - 任务: {_meta_wt.get('what_to_watch', '?')[:100]}"
-                        )
-                        _wt_lines.append(
-                            f"    触发: {_meta_wt.get('trigger_evidence', '?')[:100]}"
-                        )
-                        _wt_lines.append(
-                            f"    证据: {_meta_wt.get('fired_evidence', '?')[:120]}"
-                        )
-                        _wt_lines.append(
-                            f"    建议措辞 (EN): {_meta_wt.get('notify_msg_en', '?')[:120]}"
-                        )
-                        _wt_lines.append(
-                            f"    建议措辞 (ZH): {_meta_wt.get('notify_msg_zh', '?')[:120]}"
-                        )
-                        _wt_lines.append('')
-                    _wt_lines.append(
-                        '  ⚠️ 这是 Sir 主动委托的事件触发, 不算 unsolicited callback. '
-                        '主动报告是 Sir 的 explicit request 的兑现 (准则 5 言出必行).'
-                    )
-                    _parts.append('\n'.join(_wt_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] WATCH TASK FIRED helper. 行为不变.
+        _wt_block_text = self._build_watch_task_fired_block()
+        if _wt_block_text:
+            _parts.append(_wt_block_text)
 
-        # 🩹 [P5-fixCB-revise / 2026-05-21 11:50] SELF-PROMISE OVERDUE block
-        # 合法 surface 触发 (b) — Jarvis 自检 promise 没履行 (PromiseLog sweep 24h
-        # 无 evidence → state UNTRACKED → publish 'self_promise_overdue' SWM).
-        # 主脑下轮看 [SELF-PROMISE OVERDUE] block → 主动 admit "我之前说 X 没做到".
-        # 这是道歉的"有意义"通道 — Jarvis 自己发现的, Sir 真需要知道.
-        try:
-            _bus_pop = getattr(self, 'event_bus', None)
-            if _bus_pop is not None:
-                _pop_events = _bus_pop.recent_events(
-                    within_seconds=3600.0 * 12,  # 12h, sweep 1h tick × 12
-                    types={'self_promise_overdue'},
-                ) or []
-                # de-dup by promise_id (同一 promise 多次 overdue 只显 1 次)
-                _seen_pids = set()
-                _shown_promises = []
-                for _e in _pop_events:
-                    _meta = _e.get('metadata') or {}
-                    _pid = _meta.get('promise_id', '')
-                    if not _pid or _pid in _seen_pids:
-                        continue
-                    _seen_pids.add(_pid)
-                    _shown_promises.append({
-                        'promise_id': _pid,
-                        'description': _meta.get('description', '')[:160],
-                        'age_hours': int(_meta.get('age_hours') or 0),
-                        'kind': _meta.get('kind', 'soft'),
-                        'deadline_str': _meta.get('deadline_str', ''),
-                    })
-                    if len(_shown_promises) >= 3:
-                        break
-                if _shown_promises:
-                    _pop_lines = [
-                        '[SELF-PROMISE OVERDUE — Jarvis 自检发现没履行的 promise]',
-                        '  你之前 reply 里许诺过这些 (PromiseLog 自动 register), 现在已 24h+',
-                        '  无 evidence 兑现 → 系统标 UNTRACKED. **Sir 真需要你 admit**.',
-                        '',
-                    ]
-                    for _p in _shown_promises:
-                        _pop_lines.append(
-                            f"  - \"{_p['description']}\" "
-                            f"(promise_id={_p['promise_id'][:8]}, "
-                            f"{_p['age_hours']}h ago, kind={_p['kind']}"
-                            f"{(', deadline=' + _p['deadline_str']) if _p['deadline_str'] else ''})"
-                        )
-                    _pop_lines.append('')
-                    _pop_lines.append(
-                        '  **如何 surface 得有意义** (Sir 11:30 真理):'
-                    )
-                    _pop_lines.append(
-                        '    ✅ 自然 inline admit: "顺便 Sir, 之前我说会 X — 那事我其实没做到, 想跟您说一声."'
-                    )
-                    _pop_lines.append(
-                        '    ✅ 加 actionable: "...您要不要我现在补上?" / "...或先 mark 取消?"'
-                    )
-                    _pop_lines.append(
-                        '    ❌ 不要堆 ritual ("我必须承认 X 我应当澄清 Y..." 空套话)'
-                    )
-                    _pop_lines.append(
-                        '    ❌ 一次 1-2 条最多 (别一口气倒老账)'
-                    )
-                    _pop_lines.append(
-                        '    ⚠️ 若 Sir 当前 turn 在做无关事 → 仍可短句插一句 acknowledge,'
-                    )
-                    _pop_lines.append(
-                        '       不强 surface; 等 Sir 主动问"X 怎么样了" 再深入'
-                    )
-                    _parts.append('\n'.join(_pop_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] SELF-PROMISE OVERDUE helper. 行为不变.
+        _spo_block_text = self._build_self_promise_overdue_block()
+        if _spo_block_text:
+            _parts.append(_spo_block_text)
 
         # 🩹 [β.5.43-F / 2026-05-20 19:10] ErrorBus — system error 主动暴露
         # Sir 17:10 真理 (6 缺口 F): '系统出错时主动告诉 Sir, 不装作没事'.
@@ -2700,158 +2899,20 @@ User: {user_input}
         except Exception:
             pass
 
-        # 🩹 [β.5.44-E / 2026-05-20 19:02] IntentResolver 报告 — Sir 18:55 真治本
-        # Sir 痛点: 主脑撒谎 "I've corrected my count" 但本轮零 mutation tool 调用.
-        # 修法: IntentResolver 真调 tool 后 publish 'tool_called' + 'intent_resolved' SWM.
-        # 主脑看 [INTENT RESOLVED THIS TURN] 知道哪个 tool 真成功 / 真失败,
-        # reply 基于真实 mutation result — 不再撒谎.
-        try:
-            _bus = getattr(self, 'event_bus', None)
-            if _bus is not None:
-                _ir_events = _bus.recent_events(
-                    within_seconds=60.0,
-                    types={'intent_resolved'},
-                )
-                if _ir_events:
-                    _ir = _ir_events[-1]  # 最新一条 (本 turn)
-                    _meta = _ir.get('metadata') or {}
-                    _tcs = _meta.get('tool_calls') or []
-                    if _tcs:
-                        _ir_lines = ['[INTENT RESOLVED THIS TURN / 系统真做了什么]']
-                        _ir_lines.append('  IntentResolver 看完 Sir utterance + module candidates, 调了下面 tool:')
-                        for _tc in _tcs[:6]:
-                            _status = '✓ 成功' if _tc.get('ok') else f"✗ 失败 ({_tc.get('error', '?')[:60]})"
-                            _ir_lines.append(f"  - {_tc.get('name', '?')}: {_status}")
-                        _ir_lines.append(
-                            '  ⚠️ Reply 务必 reflect 真实 result: tool ✓ → 可说 "noted/recorded"; '
-                            'tool ✗ → 必须说 "I tried but couldn\'t..." / "kept in conversation only"; '
-                            '没 tool 调 → 不能说任何 mutation verb (corrected/saved/updated 等).'
-                        )
-                        _parts.append('\n'.join(_ir_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] INTENT RESOLVED helper. 行为不变.
+        _ir_block_text = self._build_intent_resolved_block()
+        if _ir_block_text:
+            _parts.append(_ir_block_text)
 
-        # 🩹 [β.2.9.4 / 2026-05-18] Mood Mirror (扩展 C): 给主脑 5 档 mood 估算.
-        # 准则 6: 只给信号让主脑判, 不强制主脑用某 tone.
-        try:
-            from jarvis_env_probe import PhysicalEnvironmentProbe as P
-            _snap = P.get_sensor_snapshot() or {}
-            _br = float(_snap.get('backspace_ratio', 0) or 0)
-            _sw = int(_snap.get('switch_frequency_5min', 0) or 0)
-            _ev = bool(_snap.get('error_visible', False))
-            _undo = int(_snap.get('shortcut_undo_5min', 0) or 0)
-            _dur = float(_snap.get('session_duration_minutes', 0) or 0)
-            _h = time.localtime().tm_hour
-            _mood = 'neutral'
-            if _br > 0.18 or _undo > 5 or (_ev and _sw > 8):
-                _mood = 'frustrated'
-            elif _sw > 12:
-                _mood = 'scattered'
-            elif _dur > 90 and _sw < 4:
-                _mood = 'deep_focus'
-            elif _h >= 23 or _h < 5:
-                _mood = 'late_night_tired'
-            elif _dur > 25 and _sw < 6:
-                _mood = 'engaged'
-            _mood_line = (
-                f"[MOOD ESTIMATE — Sir 准则 6, hint only]\n"
-                f"  estimated: {_mood} (backspace={_br:.0%}, switches/5min={_sw}, "
-                f"err_visible={_ev}, undo={_undo}, session={_dur:.0f}min, hour={_h})\n"
-                f"  use this to subtly calibrate tone — never mention raw sensor numbers."
-            )
-            _parts.append(_mood_line)
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] MOOD ESTIMATE helper. 行为不变.
+        _mood_block_text = self._build_mood_estimate_block()
+        if _mood_block_text:
+            _parts.append(_mood_block_text)
 
-        # 🩹 [β.2.9.1.2 / 2026-05-18] Wake-time Callback context (扩展方向 A 落地):
-        # Sir 例子 00:55 "去睡了" → 01:04 又 wake → 主脑该知道 "Sir 9min 前说要睡了
-        # 现在又来了" 自己决定要不要打趣 (不教句式 — 准则 6, 不强制 callback — 准则 5).
-        try:
-            _worker = getattr(self, '_worker_ref', None)
-            _vt = getattr(_worker, 'voice_thread', None) if _worker else None
-            if _vt is not None:
-                _last_conv_end = float(getattr(_vt, 'last_conversation_end_time', 0) or 0)
-                if _last_conv_end > 0:
-                    _gap_s = time.time() - _last_conv_end
-                    # 短间隔 (< 30min) wake 才注入 — 长间隔走 return_greeting 老路径
-                    if 0 < _gap_s < 1800:
-                        _gap_min = _gap_s / 60
-                        # 最近一条 Sir utterance + 最近 hard promise
-                        _last_sir = ''
-                        try:
-                            _stm = getattr(self, 'short_term_memory', None) or []
-                            for _e in reversed(_stm[-5:]):
-                                _u = str(_e.get('user', '') or '').strip()
-                                if _u:
-                                    _last_sir = _u[:160]
-                                    break
-                        except Exception:
-                            pass
-                        _recent_promise = ''
-                        try:
-                            from jarvis_promise_log import get_default_log
-                            _plog = get_default_log()
-                            _pendings = [
-                                p for p in _plog.list_pending()
-                                if (time.time() - p.registered_at) < 1800
-                            ]
-                            if _pendings:
-                                _pendings.sort(key=lambda p: -p.registered_at)
-                                _recent_promise = f"{_pendings[0].description[:100]} (you said this {int((time.time()-_pendings[0].registered_at)/60)} min ago)"
-                        except Exception:
-                            pass
-                        _wake_lines = [
-                            f"[WAKE CONTEXT — Sir just re-engaged after a short gap]",
-                            f"- gap since last conversation: {_gap_min:.0f} minute(s)",
-                        ]
-                        if _last_sir:
-                            _wake_lines.append(f"- Sir's last words last time: \"{_last_sir}\"")
-                        if _recent_promise:
-                            _wake_lines.append(f"- pending self-commitment: {_recent_promise}")
-
-                        # 🩹 [β.2.9.5 / 2026-05-18] E: Cross-session callback — 加跨天主题
-                        try:
-                            _yesterday_topics = []
-                            _stm = getattr(self, 'short_term_memory', None) or []
-                            _yday_start = time.time() - 86400 - 12 * 3600
-                            _yday_end = time.time() - 12 * 3600
-                            for _e in _stm:
-                                _ts = float(_e.get('when', 0) or 0)
-                                if _yday_start < _ts < _yday_end:
-                                    _u = str(_e.get('user', '') or '').strip()
-                                    if _u and len(_u) > 8:
-                                        _yesterday_topics.append(_u[:80])
-                            if _yesterday_topics:
-                                _wake_lines.append(
-                                    f"- yesterday-ish topics ({len(_yesterday_topics)} items): "
-                                    f"\"{_yesterday_topics[-1][:60]}\""
-                                )
-                        except Exception:
-                            pass
-
-                        # 🩹 [β.2.9.6 / 2026-05-18] F: Self-aware Comeback — 上次 unverified claim
-                        try:
-                            from jarvis_claim_tracer import get_stats
-                            _stats = get_stats()
-                            _unv = int(_stats.get('total_unverified', 0))
-                            if _unv > 0:
-                                _wake_lines.append(
-                                    f"- your last sessions had {_unv} unverified claim(s) "
-                                    f"(per ClaimTracer). Be especially careful with specifics "
-                                    f"this turn."
-                                )
-                        except Exception:
-                            pass
-
-                        _wake_lines.append(
-                            "  → If Sir's current input contradicts what he said before "
-                            "(e.g. said sleep but woke up 9 min later), or echoes yesterday's "
-                            "thread, you may naturally callback in your own voice. Not "
-                            "required — only if real and the moment fits."
-                        )
-                        _parts.append('\n'.join(_wake_lines))
-        except Exception:
-            pass
+        # [Reshape M6.1 fourth wave / 2026-05-24] WAKE CONTEXT helper. 行为不变.
+        _wake_block_text = self._build_wake_context_block()
+        if _wake_block_text:
+            _parts.append(_wake_block_text)
         core_persona = '\n\n'.join(_parts)
         self._asm_stage_t['soul_block'] = (time.time() - _t_soul) * 1000
 
