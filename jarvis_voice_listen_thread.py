@@ -38,6 +38,9 @@ from jarvis_env_probe import PhysicalEnvironmentProbe
 from jarvis_utils import bg_log, set_conversation_active, is_conversation_active
 # 🆕 [Reshape M6.W8 / 2026-05-24 19:20] noise floor helper
 from jarvis_worker_helpers import compute_adaptive_noise_threshold
+# 🚨 [BUG-X HOTFIX / 2026-05-24 19:25] M6.W1 抽 VoiceListenThread 时漏的 import
+# 13 处用 set_browser_ducking 都靠 NameError 失败 → Audio Nerve 断连. 修.
+from jarvis_central_nerve import set_browser_ducking
 
 _WAKE_FILLER_CACHE: list = []
 _WAKE_FILLER_MTIME: float = 0.0
