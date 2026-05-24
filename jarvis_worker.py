@@ -133,6 +133,7 @@ from jarvis_voice_listen_thread import (  # noqa: F401
 # health_check.py / 多个 test / JarvisWorkerThread.run 内部 caller 仍用 `from jarvis_worker import ...`.
 # 🆕 [Reshape M6.W3 / 2026-05-24 18:15] tier keyword lists 也抽到 helpers.
 # 🆕 [Reshape M6.W4 / 2026-05-24 18:30] refusal + sleep intent + time extractor const 也抽到 helpers.
+# 🆕 [Reshape M6.W5 / 2026-05-24 18:40] REFLEX_DICT 70 行脊髓反射词典也抽到 helpers.
 from jarvis_worker_helpers import (  # noqa: F401
     sanitize_trigger_time,
     detect_semantic_category,
@@ -146,6 +147,7 @@ from jarvis_worker_helpers import (  # noqa: F401
     SLEEP_INTENT_PATTERNS,
     SLEEP_TIME_EXTRACTORS,
     CN_DIGIT_MAP,
+    REFLEX_DICT,
 )
 
 
@@ -1600,79 +1602,9 @@ class JarvisWorkerThread(QThread):
         return self._detect_sleep_intent(cmd)
 
     def run(self):
-        # ⚡ 模糊脊髓反射词典 (巨量扩充版)
-        reflex_dict = {
-            # --- 存在性确认 (Are you there?) ---
-            "are you there": "At your service, sir.",
-            "you there": "At your service, sir.",
-            "your there": "At your service, sir.",
-            "you layer": "At your service, sir.",     # 空耳
-            "you bear": "At your service, sir.",      # 空耳
-            "you hair": "At your service, sir.",      # 空耳
-            "all you there": "At your service, sir.", # 空耳
-            "are you dare": "At your service, sir.",  # 空耳
-            "you online": "I am online and ready, sir.",
-            "are you online": "I am online and ready, sir.",
-            "you listening": "Always listening, sir.",
-            
-            # --- 唤醒词 (Wake up / Are you up?) ---
-            "wake up": "At your service, sir.",
-            "are you up": "At your service, sir.",
-            "you up": "At your service, sir.",
-            "awake": "At your service, sir.",
-            "me up": "At your service, sir.",         # 空耳
-            "make up": "At your service, sir.",       # 空耳
-            "wait up": "At your service, sir.",       # 空耳
-            "way cup": "At your service, sir.",       # 空耳
-            "weigh cup": "At your service, sir.",     # 空耳
-            "wake out": "At your service, sir.",      # 空耳
-            "woke up": "At your service, sir.",       # 空耳
-
-            # --- 单呼名字 (Jarvis 英文发音极其容易崩坏) ---
-            "jarvis": "I am here, sir.",
-            "jervis": "I am here, sir.",              # 空耳
-            "travis": "I am here, sir.",              # 空耳
-            "charles": "I am here, sir.",             # 空耳
-            "chavez": "I am here, sir.",              # 空耳
-            "java": "I am here, sir.",                # 空耳
-            "drivers": "I am here, sir.",             # 空耳
-            "joce": "I am here, sir.",                # 空耳
-            "jovis": "I am here, sir.",               # 空耳
-            "just": "I am here, sir.",                # 空耳
-            "garbage": "I am here, sir.",             # 极其常见的英文ASR悲剧空耳...
-            
-            # --- 单呼名字 (中文发音容错) ---
-            "贾维斯": "Yes, sir.",
-            "加维斯": "Yes, sir.",
-            "家维斯": "Yes, sir.",
-            "查维斯": "Yes, sir.",
-            "甲苯斯": "Yes, sir.",                    # 空耳
-            "假维斯": "Yes, sir.",                    # 空耳
-            "假装是": "Yes, sir.",                    # 中文极度离谱空耳
-            "夹尾巴": "Yes, sir.",                    # 甚至这个都有可能
-
-            # --- 告退与物理静音 (Stand down / 退下) ---
-            "stand down": "Entering silent mode, sir.",
-            "stan down": "Entering silent mode, sir.",  # 空耳
-            "sand down": "Entering silent mode, sir.",  # 空耳
-            "send down": "Entering silent mode, sir.",  # 空耳
-            "stamp down": "Entering silent mode, sir.", # 空耳
-            "shut up": "Entering silent mode, sir.",
-            "shut down": "Entering silent mode, sir.",
-            "go to sleep": "Entering silent mode, sir.",
-            "go sleep": "Entering silent mode, sir.",
-            "dismiss": "Entering silent mode, sir.",
-            "dismissed": "Entering silent mode, sir.",
-            "this miss": "Entering silent mode, sir.",  # 空耳
-            "退下": "Entering silent mode, sir.",
-            "推下": "Entering silent mode, sir.",       # 空耳
-            "腿下": "Entering silent mode, sir.",       # 空耳
-            "跪下": "Entering silent mode, sir.",       # 空耳 (退下 容易听成 跪下)
-            "退学": "Entering silent mode, sir.",       # 空耳
-            "休息": "Entering silent mode, sir.",
-            "闭嘴": "Entering silent mode, sir.",
-            "安静": "Entering silent mode, sir."
-        }
+        # 🆕 [Reshape M6.W5 / 2026-05-24 18:40] reflex_dict 70 行抽到
+        # jarvis_worker_helpers.REFLEX_DICT. 这里 reference 不复制 (节约内存).
+        reflex_dict = REFLEX_DICT
         
         if not hasattr(self, "_dream_compressed"):
             self.jarvis.hippocampus.compress_chat_history(self.jarvis.gemini_key, days=7)

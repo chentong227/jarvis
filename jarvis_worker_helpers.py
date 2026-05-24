@@ -302,3 +302,85 @@ CN_DIGIT_MAP = {
     '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '俩': 2, '三': 3, '四': 4, '五': 5,
     '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '十一': 11, '十二': 12,
 }
+
+
+# 🆕 [Reshape M6.W5 / 2026-05-24 18:40] 脊髓反射词典 (REFLEX_DICT) 抽到 helpers.
+# 70 行 dict 在 JarvisWorkerThread.run() 局部 var 占视觉空间. 抽到 module-level const
+# 让 run() body 简洁 + 单元测试 / 修 vocab 不需要进 run().
+#
+# 历史: 模糊脊髓反射词典 (巨量扩充版) — 处理英文 ASR 空耳 (jarvis ↔ garbage / charles / java...)
+# + 中文发音容错 (贾维斯 ↔ 假装是 / 夹尾巴) + 唤醒/告退/物理静音 prefix.
+
+# ⚡ 模糊脊髓反射词典 (巨量扩充版)
+REFLEX_DICT = {
+    # --- 存在性确认 (Are you there?) ---
+    "are you there": "At your service, sir.",
+    "you there": "At your service, sir.",
+    "your there": "At your service, sir.",
+    "you layer": "At your service, sir.",     # 空耳
+    "you bear": "At your service, sir.",      # 空耳
+    "you hair": "At your service, sir.",      # 空耳
+    "all you there": "At your service, sir.", # 空耳
+    "are you dare": "At your service, sir.",  # 空耳
+    "you online": "I am online and ready, sir.",
+    "are you online": "I am online and ready, sir.",
+    "you listening": "Always listening, sir.",
+
+    # --- 唤醒词 (Wake up / Are you up?) ---
+    "wake up": "At your service, sir.",
+    "are you up": "At your service, sir.",
+    "you up": "At your service, sir.",
+    "awake": "At your service, sir.",
+    "me up": "At your service, sir.",         # 空耳
+    "make up": "At your service, sir.",       # 空耳
+    "wait up": "At your service, sir.",       # 空耳
+    "way cup": "At your service, sir.",       # 空耳
+    "weigh cup": "At your service, sir.",     # 空耳
+    "wake out": "At your service, sir.",      # 空耳
+    "woke up": "At your service, sir.",       # 空耳
+
+    # --- 单呼名字 (Jarvis 英文发音极其容易崩坏) ---
+    "jarvis": "I am here, sir.",
+    "jervis": "I am here, sir.",              # 空耳
+    "travis": "I am here, sir.",              # 空耳
+    "charles": "I am here, sir.",             # 空耳
+    "chavez": "I am here, sir.",              # 空耳
+    "java": "I am here, sir.",                # 空耳
+    "drivers": "I am here, sir.",             # 空耳
+    "joce": "I am here, sir.",                # 空耳
+    "jovis": "I am here, sir.",               # 空耳
+    "just": "I am here, sir.",                # 空耳
+    "garbage": "I am here, sir.",             # 极其常见的英文ASR悲剧空耳...
+
+    # --- 单呼名字 (中文发音容错) ---
+    "贾维斯": "Yes, sir.",
+    "加维斯": "Yes, sir.",
+    "家维斯": "Yes, sir.",
+    "查维斯": "Yes, sir.",
+    "甲苯斯": "Yes, sir.",                    # 空耳
+    "假维斯": "Yes, sir.",                    # 空耳
+    "假装是": "Yes, sir.",                    # 中文极度离谱空耳
+    "夹尾巴": "Yes, sir.",                    # 甚至这个都有可能
+
+    # --- 告退与物理静音 (Stand down / 退下) ---
+    "stand down": "Entering silent mode, sir.",
+    "stan down": "Entering silent mode, sir.",  # 空耳
+    "sand down": "Entering silent mode, sir.",  # 空耳
+    "send down": "Entering silent mode, sir.",  # 空耳
+    "stamp down": "Entering silent mode, sir.", # 空耳
+    "shut up": "Entering silent mode, sir.",
+    "shut down": "Entering silent mode, sir.",
+    "go to sleep": "Entering silent mode, sir.",
+    "go sleep": "Entering silent mode, sir.",
+    "dismiss": "Entering silent mode, sir.",
+    "dismissed": "Entering silent mode, sir.",
+    "this miss": "Entering silent mode, sir.",  # 空耳
+    "退下": "Entering silent mode, sir.",
+    "推下": "Entering silent mode, sir.",       # 空耳
+    "腿下": "Entering silent mode, sir.",       # 空耳
+    "跪下": "Entering silent mode, sir.",       # 空耳 (退下 容易听成 跪下)
+    "退学": "Entering silent mode, sir.",       # 空耳
+    "休息": "Entering silent mode, sir.",
+    "闭嘴": "Entering silent mode, sir.",
+    "安静": "Entering silent mode, sir.",
+}

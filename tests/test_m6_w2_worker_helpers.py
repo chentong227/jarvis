@@ -197,5 +197,33 @@ class TestM6W4SleepRefusalConstAlias(unittest.TestCase):
         self.assertIn('闭嘴', joined)
 
 
+class TestM6W5ReflexDict(unittest.TestCase):
+    """W5 抽出: REFLEX_DICT 70 行脊髓反射词典抽到 helpers."""
+
+    def test_helpers_export(self):
+        """REFLEX_DICT 从 helpers export, dict 类型, 60+ key."""
+        from jarvis_worker_helpers import REFLEX_DICT
+        self.assertIsInstance(REFLEX_DICT, dict)
+        self.assertGreater(len(REFLEX_DICT), 60)
+
+    def test_worker_reexport(self):
+        """worker re-export REFLEX_DICT 与 helpers 同对象."""
+        from jarvis_worker import REFLEX_DICT as W_RD
+        from jarvis_worker_helpers import REFLEX_DICT as H_RD
+        self.assertIs(W_RD, H_RD)
+
+    def test_known_reflexes(self):
+        """关键 reflex (jarvis/garbage/closet 空耳/中文 闭嘴) 都在."""
+        from jarvis_worker_helpers import REFLEX_DICT
+        # 唤醒
+        self.assertEqual(REFLEX_DICT['jarvis'], 'I am here, sir.')
+        self.assertEqual(REFLEX_DICT['garbage'], 'I am here, sir.')  # 空耳
+        # 中文唤醒
+        self.assertEqual(REFLEX_DICT['贾维斯'], 'Yes, sir.')
+        # 告退
+        self.assertEqual(REFLEX_DICT['闭嘴'], 'Entering silent mode, sir.')
+        self.assertEqual(REFLEX_DICT['shut up'], 'Entering silent mode, sir.')
+
+
 if __name__ == '__main__':
     unittest.main()
