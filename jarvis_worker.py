@@ -5071,6 +5071,37 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                     except: pass
                     
                 def trigger_routing(task_cmd=clean_cmd, protocol_data=gate_data_to_save):
+                    # 🆕 [Reshape M3.C-trace / 2026-05-24] dual-emit deprecation warning + SWM event.
+                    # Sir Q2 决议: 3-brain 彻底放弃, 主对话 100% 走 chat_bypass.stream_chat 单脑.
+                    # central_nerve.run() 长任务流 (RightBrain/LeftBrain/L5Brain) 是 deprecated.
+                    # 此处仅 log + publish, 老路径仍 work (兜底). M6.5 真删时看此 event 数量决定安全:
+                    #   0 触发 1 周 → 安全删除; 有触发 → 找出主脑 prompt 残留触发源.
+                    try:
+                        from jarvis_utils import bg_log as _3b_bg, get_event_bus as _3b_geb
+                        _3b_bg(
+                            f"⚠️ [Trigger Routing / 3-brain DEPRECATED] task_cmd='{task_cmd[:80]}' "
+                            f"— main-brain 应通过 chat_bypass.stream_chat 单脑路径处理, "
+                            f"不应触发 ENGAGE_PHYSICAL_BODY → central_nerve.run() 长任务流."
+                        )
+                        _3b_bus = _3b_geb()
+                        if _3b_bus is not None:
+                            _3b_bus.publish(
+                                etype='deprecated_3_brain_invoked',
+                                description=(
+                                    f'route_callback triggered 3-brain run(), '
+                                    f'task={task_cmd[:80]} — DEPRECATED M6.5 will remove'
+                                ),
+                                source='worker.trigger_routing',
+                                salience=0.65,
+                                metadata={
+                                    'task_cmd': task_cmd[:200],
+                                    'deprecated': True,
+                                    'milestone': 'M3.C/D/G/F → M6.5',
+                                },
+                            )
+                    except Exception:
+                        pass
+
                     self.state_changed.emit("THINKING")
                     try:
                         import win32gui

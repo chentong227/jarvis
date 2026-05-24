@@ -54,12 +54,28 @@
 
 ---
 
+### 2.5 — `jarvis_enhanced.py` 拆 3 file (M3.E deferred to M6.4)
+
+**当前**: `jarvis_enhanced.py` 739 行 / 3 class (ProactiveShield 294 行 + ProactiveCompanion 119 行 + SkillTreeTracker 263 行).
+
+**audit doc Q1 决议**: 拆 4 file (含 SoulRouter, M3.B 已删).
+
+**Cleanup decision (M3.E / 2026-05-24)**: 跳过单独拆, 合 **M6.4 真 class split** 一起做.
+- 理由: M6.4 是 `central_nerve.py` 真 class split (PromptAssembler / StateRestorer / Lifecycle), 顺手把 enhanced.py 3 class 一起 design 进新架构, 不重复改 import.
+- enhanced.py 739 行 ≪ central_nerve.py 4790, 优先级偏后.
+
+**Cleanup trigger**: M6.4 真 class split 时一起拆.
+
+
+---
+
 ### 3. Dual-write / Dual-emit (老路径 + 新 SWM publish) — 2 项
 
 | Dual-write | 文件 | 行 | Cleanup trigger | 预计 milestone |
 |---|---|---|---|---|
 | `CommitmentWatcher.add_commitment` dual-write to PromiseLog | `jarvis_commitment_watcher.py` | 1020-1039 | M4.5.3 daemon 真切 PromiseLog 后, 老 SQLite write 删 → dual-write 退化为单写 PromiseLog | **M4.5.3** |
 | `Conductor._dispatch_path_a/_execute_path_b` dual-emit `conductor_intent` SWM | `jarvis_conductor.py` | 573-600, 821-847 | M5.3 主脑能从 [CONDUCTOR INTENT] block 自决纳/弃 后, 停 `__NUDGE__` push, 完全靠 SWM | **M5.3** |
+| `worker.trigger_routing` deprecation warn + dual-emit `deprecated_3_brain_invoked` SWM | `jarvis_worker.py` | 5073-5103 | M6.5 真删时看 SWM event 数 (0 触发 1 周 → 安全 git rm 3 file + run() 移 _legacy/) | **M6.5** |
 
 **渐进 cleanup**:
 - **M4.5.1 ✅**: CW dual-write 同时进 PromiseLog + SQLite
