@@ -1,6 +1,66 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:31 Sir — M4 主体全 done + cleanup checklist 立, 等真测** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:40 Sir — M4 主体全 done (7 commit) + bug 记账, 等真测稳定** 🚨🚨🚨
+>
+> Sir 8:35 跑 M4.5.1 真测 OK + 8:36 明确指示 "工具调用 bug 不影响功能, 重构完再修" → 3 个 fast_call 幻觉 bug 已记 TODO. Cascade 继续按顺序推 M4.5.2 daemon dual-source restore.
+>
+> ## ✅ M4 主体全 done (7 commit, ~1500 行 code+test+doc, dual-source ready)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `b39196d` | **M4.1** | PromiseLog schema 扩 4 kind + backfill (9 test) |
+> | `3a48e71` | **M4.3** | Hub.write_commitment 4 kind → PromiseLog (7 test) |
+> | `209a081` + `5afea9c` | **M4.2** | audit + is_deleted filter fix |
+> | `fe4e9b2` | **M4.4** | migration script + 11 test (Sir 真跑 apply OK) |
+> | `0d39e1e` | **M4.5.1** + checklist | CW dual-write to PromiseLog + `docs/JARVIS_LEGACY_CLEANUP_CHECKLIST.md` (4 test) |
+> | `38b4c9a` | **M4.5.2** | CW init 也从 PromiseLog 拉 active (10 test, dual-source restore) |
+> | `bd2e1f5` | bug log | 3 fast_call 幻觉 bug 记账 |
+>
+> ## 📊 当前 PromiseLog 真单源 (90+ 条, dual-write 5 条新)
+>
+> ```
+> PromiseLog: 91+ (commitment kind dual-write 真生效)
+> Commitments SQLite: dual-write 仍写 (备份 + 老 daemon 兼容, M4.5.3 后停)
+> ```
+>
+> ## ⏸ M4 剩余 (推 reshape 稳定 1 周后)
+>
+> | 子项 | risk | 何时做 |
+> |---|---|---|
+> | **M4.5.3** | 中-高 | 停 SQLite 写 + 删 dual-write (需要 PromiseLog 真 nudge mark + 1 周观察期) |
+> | **M4.6** | 中 | 18+ caller grep 替换 `add_commitment` → `hub.write_commitment` (建议合 M6 NERVE_SPLIT 一起做) |
+> | **M4.7** | 低 | dashboard `pending_callbacks.jsonl` 读 PromiseLog (M4.5.3 后) |
+>
+> ## 📋 Sir M4.5.2 真测 (~3 min)
+>
+> ```powershell
+> # 1. 重启 jarvis (CW init 应同时从 SQLite + PromiseLog 拉)
+> # 看 log 含 "[CommitmentWatcher/Persist] 从 SQLite 恢复 X 条" + "[CommitmentWatcher/PromiseLog] 从 PromiseLog 恢复 Y 条"
+>
+> # 2. 加新 commitment 触发 dual-write
+> # 3. 看 PromiseLog 90 → 91+
+> python scripts/audit_promise_sources.py
+> ```
+>
+> ## 🎯 Sir M4.5.2 真测 OK 后 menu
+>
+> 按 Sir 准则 8 (优雅可持续 > 简单), 我建议**暂停 reshape**, 让 Sir 真用 1 周观察:
+> - dual-write 是否稳 (PromiseLog 跟 SQLite 数据一致?)
+> - daemon nudge 行为是否一致 (没漏 fire / 没重复 fire?)
+> - PromiseLog 总数是否合理增长?
+>
+> 稳定后再做 M4.5.3 (停 SQLite 写) + M5 (决策路径整合).
+>
+> ```
+> # 选项 A: 推 M5 (Conductor + IntentResolver + FAST_CALL 整合)
+> Cascade, 推 M5.
+>
+> # 选项 B: 暂停 reshape (推荐)
+> Cascade, M4 主体够了, 我真用 1 周, 稳定后再做 M4.5.3 + M5.
+>
+> # 选项 C: 同时修上面 3 个 fast_call bug (主脑 prompt 工程)
+> Cascade, 跳 reshape, 先修 reminder_hands 幻觉 + add_reminder 缺参数.
+> ```
 >
 > Sir 8:28 跑了 M4.4 `--apply` 真把 1 条 Commitment 迁进 PromiseLog (kind=commitment, pid=p_c69c8325, backup `_legacy/data_migration_backup/20260524_082755/`).
 >
