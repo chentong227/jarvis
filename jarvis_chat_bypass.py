@@ -3974,6 +3974,14 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     or (_circuit_broken_reason.startswith('duplicate_call:')
                         and _any_tool_ok
                         and len(_stripped_full or '') < 30)
+                    # 🆕 [Universal Safety Net / 2026-05-24 19:50] 任何熔断 + reply 极短 (< 20 char):
+                    # P5-fix63 只 cover duplicate_call, 但理论上 max_iterations / gatekeeper_fail /
+                    # consecutive_failures 等其他熔断也可能产出截断 reply (LLM 没说完). 通用兜底:
+                    # _circuit_broken_reason 非空 + reply 极短 → 强制 wrap-up. 不让 Sir 听沉默.
+                    # 阈值 20 char (< P5-fix63 的 30) 避免抢 already-handled cases.
+                    or (_circuit_broken_reason
+                        and not _circuit_broken_reason.startswith('duplicate_call:')
+                        and len(_stripped_full or '') < 20)
                 )
             )
 

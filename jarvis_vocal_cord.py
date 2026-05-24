@@ -155,6 +155,10 @@ class VocalCord:
 
         sentences = self._split_long_sentence(safe_text)
 
+        # 🆕 [BUG-A 治本 / 2026-05-24 19:50] render duration instrumentation +
+        # emergency cleanup. 单次 render > 12s = GPU 内存严重碎片 → 强清 + SWM publish.
+        # Sir 16:23 真测 turn 3 full=16.4s, 老 logic 看不到. 现在主脑能 react.
+        _render_start = time.time()
         all_audio = []
         for sentence in sentences:
             if not sentence.strip():
@@ -213,6 +217,50 @@ class VocalCord:
                 gc.collect()  # 重 GC 每 3 次 (vs 老 10 次)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+
+        # 🆕 [BUG-A 治本 / 2026-05-24 19:50] post-render duration check + emergency cleanup
+        _render_dur = time.time() - _render_start
+        if _render_dur > 12.0:  # Sir 16:23 真测 turn 3 = 16.4s, 阈值 12s 提前报警
+            try:
+                from jarvis_utils import bg_log as _slow_bg
+                _slow_bg(
+                    f"⚠️ [TTS Slow] render took {_render_dur:.1f}s "
+                    f"(threshold 12s) — emergency GPU cleanup. "
+                    f"text='{safe_text[:60]}'"
+                )
+            except Exception:
+                pass
+            # Emergency: 强力 cleanup (gc + empty_cache 2x + ipc_collect)
+            try:
+                import gc as _gc_em
+                _gc_em.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    if hasattr(torch.cuda, 'ipc_collect'):
+                        torch.cuda.ipc_collect()
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+            # SWM publish — 让主脑下轮 prompt 看到 TTS 在卡, 可换轻量 reply / 拒绝复杂 wrap-up
+            try:
+                from jarvis_utils import get_event_bus as _slow_geb
+                _bus_slow = _slow_geb()
+                if _bus_slow is not None:
+                    _bus_slow.publish(
+                        etype='tts_render_slow',
+                        description=f'TTS render slow: {_render_dur:.1f}s (cosyvoice GPU)',
+                        source='vocal_cord',
+                        salience=0.65,
+                        metadata={
+                            'duration_sec': float(_render_dur),
+                            'text_length': len(safe_text),
+                            'text_excerpt': safe_text[:80],
+                            'emergency_cleanup': True,
+                        },
+                        ttl=120.0,
+                    )
+            except Exception:
+                pass
 
         if not all_audio:
             return None
