@@ -1,6 +1,52 @@
 ﻿# Jarvis TODO
 
-> 🚨🚨🚨 **2026-05-24 08:40 Sir — M4 主体全 done (7 commit) + bug 记账, 等真测稳定** 🚨🚨🚨
+> 🚨🚨🚨 **2026-05-24 08:50 Sir — Phase D 阶段性收尾 (M1-M5 全 done, M6 audit 完), 等 Sir 拍 M6 子步** 🚨🚨🚨
+>
+> Sir 8:43 "我觉得还是全部重构完再慢慢测找 bug 比较合适" + 8:44 "继续往下推进, 不需要测试什么" → Cascade 一口气推 M5 + M6 audit.
+>
+> ## ✅ M5 close (M5.1 dual-emit + M5.2 自动 work + M5.3 需 M6 配合)
+>
+> | Commit | Step | 内容 |
+> |---|---|---|
+> | `444f3a4` | **M5.1** | Conductor dual-emit `conductor_intent` SWM (path_a + path_b) + 4 test |
+> | (自动) | **M5.2** | 主脑 prompt SWM block 默认 salience_floor=0.3, Conductor 0.7 自动可见, **0 code change** |
+> | ⏸ | **M5.3** | 停 `__NUDGE__` push (需 M6 主脑被 SWM 主动触发机制配合) |
+>
+> ## 📋 M6 audit 完 — `docs/JARVIS_M6_NERVE_SPLIT_AUDIT.md`
+>
+> central_nerve.py = **4790 行 / 32 method / god class**:
+> - `__init__`: 957 行
+> - **`_assemble_prompt`: 2537 行** ⚠️⚠️⚠️
+> - `run()`: 364 行 (3-brain 长任务流)
+>
+> ## 🎯 M6 子步建议 (按 risk, 每步独立 commit + Sir 真测)
+>
+> | Step | risk | scope | 预计 |
+> |---|---|---|---|
+> | **M6.1** | 低 | `_assemble_prompt` 拆 12 个 `_build_xxx_block` 私有方法 (仍 1 class, 行为不变) | 3 commit, 1 周 |
+> | **M6.2** | 中 | 5 tier 分流抽离 `_assemble_full_prompt` / `_wake_only` / `_factual_recall` / `_short_chat` / `_standard` | 2 commit, 1 周 |
+> | **M6.3** | 中 | `__init__` 957 行拆 `_init_xxx` 6 个方法 | 3 commit, 1 周 |
+> | **M6.5** | 中-高 | 3-brain mv `_legacy/3_brain_attempt/` + run() 移 + worker.trigger_routing 删 | 1 commit, 1 周 |
+> | **M6.4** | 高 | 真 class split — `JarvisCore / PromptAssembler / StateRestorer / Lifecycle` 4 class facade | 2 周 |
+>
+> ## Sir 决定 menu
+>
+> ```
+> # 选项 A: 推 M6.1 (低 risk 拆 _assemble_prompt 子函数化)
+> Cascade, 推 M6.1.
+>
+> # 选项 B: 跳 M6 推 M3.D (3-brain 移 _legacy/)
+> Cascade, 先做 M3.D.
+>
+> # 选项 C: 暂停 reshape 真用一段
+> Cascade, M5 close 够了, 真用 1 周再做 M6.
+> ```
+>
+> 详 `docs/JARVIS_M6_NERVE_SPLIT_AUDIT.md`.
+>
+> ---
+>
+> ## 历史: M4 主体全 done (08:40)
 >
 > Sir 8:35 跑 M4.5.1 真测 OK + 8:36 明确指示 "工具调用 bug 不影响功能, 重构完再修" → 3 个 fast_call 幻觉 bug 已记 TODO. Cascade 继续按顺序推 M4.5.2 daemon dual-source restore.
 >
