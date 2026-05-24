@@ -1654,6 +1654,122 @@ User: {user_input}
 {system_alert_text}
 """
 
+    def _build_layer_0_self_anchor_block(self) -> str:
+        """[Reshape M6.1 third wave / 2026-05-24] Layer 0: SelfAnchor block.
+
+        🩹 [P0+20-β.2.0] Sir 实测 Jarvis 不理解"这个终端就是你"的指代关系 → 缺持续的"我".
+        注入到 core_persona 末尾让 LLM 每次都看到"我是 J.A.R.V.I.S. 的连续主体".
+        """
+        try:
+            if self.self_anchor is not None:
+                return self.self_anchor.build_block(max_chars=900)
+        except Exception:
+            pass
+        return ''
+
+    def _build_layer_1_concerns_block(self, user_input: str) -> str:
+        """[Reshape M6.1 third wave / 2026-05-24] Layer 1: Concerns block.
+
+        🆕 [P5-Gap4-followup-fix2] 三 gating 条件:
+          (a) Sir 召唤 (vocab keyword) — 真问起来才 surface
+          (c) PreFlight 上轮 edit/scrap — Jarvis 真出错保险
+          else → silent (不 inject, 主脑不会翻老账)
+
+        副作用: 设 self._soul_concern_inject_reason ('summon'/'preflight_fail'/'silent'/'error')
+        给 _build_layer_2_relational_block 用.
+        """
+        try:
+            if self.concerns_ledger is None:
+                self._soul_concern_inject_reason = 'silent'
+                return ''
+            # (a) Sir 召唤检测 (准则 6.5 vocab — memory_pool/concern_summon_vocab.json)
+            try:
+                from jarvis_concern_summon import is_summoned as _is_summoned
+                _summoned = _is_summoned(user_input or '')
+            except Exception:
+                # Fallback — vocab loader 失败时硬编码兜底
+                _ui = (user_input or '').lower()
+                _summon_kw = (
+                    'any concern', 'what concerns', 'worried about',
+                    "what's my progress", 'how am i doing',
+                    "what's my status", 'remind me what',
+                    '担心啥', '担心什么', '心事', '我关心的', '我担心的',
+                    '什么进度', '进度怎么样', '我状态如何',
+                    '提醒我啥', '提醒我什么', '啥情况',
+                )
+                _summoned = any(kw in _ui for kw in _summon_kw)
+            # (c) Sir 21:19 保险 — 上轮 PreFlight verdict=edit/scrap → inject 让主脑澄清
+            _preflight_failed = False
+            try:
+                _bus_pf = getattr(self, 'event_bus', None)
+                if _bus_pf is not None:
+                    _pf_events = _bus_pf.recent_events(
+                        within_seconds=300.0,
+                        types={'preflight_verdict'},
+                    )
+                    for _ev in (_pf_events or []):
+                        _meta = _ev.get('metadata') or {}
+                        if _meta.get('verdict') in ('edit', 'scrap'):
+                            _preflight_failed = True
+                            break
+            except Exception:
+                pass
+            # 记录触发原因 (诊断 log)
+            if _summoned:
+                self._soul_concern_inject_reason = 'summon'
+            elif _preflight_failed:
+                self._soul_concern_inject_reason = 'preflight_fail'
+            else:
+                self._soul_concern_inject_reason = 'silent'
+            if _summoned or _preflight_failed:
+                return self.concerns_ledger.to_prompt_block(
+                    top_n=3, max_chars=600)
+        except Exception:
+            self._soul_concern_inject_reason = 'error'
+        return ''
+
+    def _build_layer_2_relational_block(self) -> str:
+        """[Reshape M6.1 third wave / 2026-05-24] Layer 2: RelationalState block.
+
+        🆕 [P5-Gap4-followup-L2] Layer 2 含 4 部分:
+          - inside jokes / protocols → 永远 inject (Jarvis 性格 / STRICT RULES)
+          - unfinished + threads → 潜在心结源, 同 Layer 1 三种条件才 inject
+
+        依赖 self._soul_concern_inject_reason (Layer 1 副作用).
+        """
+        try:
+            if self.relational_state is not None:
+                # 复用 Layer 1 的判断: 只有 summon/preflight_fail 才 inject baggage
+                _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
+                _allow_baggage = _reason in ('summon', 'preflight_fail')
+                return self.relational_state.to_prompt_block(
+                    top_jokes=3,
+                    top_unfinished=2 if _allow_baggage else 0,
+                    top_threads=2 if _allow_baggage else 0,
+                    max_chars=700,
+                )
+        except Exception:
+            pass
+        return ''
+
+    def _build_layer_3_attention_block(self, user_input: str) -> str:
+        """[Reshape M6.1 third wave / 2026-05-24] Layer 3: Attention Allocation.
+
+        基于 user_input 动态构造, 不缓存. current_focus + long_term_watch.
+        """
+        try:
+            from jarvis_attention import build_attention_block as _build_attn
+            return _build_attn(
+                concerns_ledger=self.concerns_ledger,
+                relational_state=self.relational_state,
+                user_input=user_input or '',
+                stm=getattr(self, 'short_term_memory', None) or [],
+                top_concerns=3,
+                max_chars=500,
+            )
+        except Exception:
+            return ''
+
     def _init_audio_volume_recovery(self) -> None:
         """[Reshape M6.3 / 2026-05-24] 抽自 __init__ — Windows 音量恢复.
 
@@ -2027,115 +2143,12 @@ User: {user_input}
         _base_persona = self.prompt_cache.get_or_build(
             'core_persona', lambda: JARVIS_CORE_PERSONA, ttl=86400.0
         )
-        # Layer 0: Self Identity Anchor（"我是谁"的锚点）
-        self_anchor_block = ''
-        try:
-            if self.self_anchor is not None:
-                self_anchor_block = self.self_anchor.build_block(max_chars=900)
-        except Exception:
-            self_anchor_block = ''
-        # Layer 1: Concerns（"我关心什么"）
-        # 🆕 [P5-Gap4-followup-fix2 / 2026-05-21 22:08] Sir 22:05 真测痛点:
-        # >  Sir 问 jiminimany 评价 → Jarvis 仍翻 4% backspace 老账
-        # > concern_reason=urgent (4/7 concerns severity > 0.7 永远命中)
-        #
-        # 删 (b) URGENT bypass — 设计缺陷:
-        #   原以为 severity > 0.7 是 "真 URGENT", 实际 ProactiveCare 把多个
-        #   concern 推到 0.7+, 等于每 turn 都 inject (gating 形同虚设).
-        #   且 concern severity 高不代表跟当前对话相关 (keyrouter 0.94 vs Sir
-        #   问 AI 架构 — 完全无关, 但 inject 触发 → 主脑翻老账).
-        #
-        # 留两条:
-        #   (a) Sir 召唤 (vocab keyword) — 真问起来才 surface
-        #   (c) PreFlight 上轮 edit/scrap — Jarvis 真出错保险
-        #
-        # 不阻塞 ProactiveCare 后台 nudge — 那是独立 prompt 路径
-        # (line 3134 [Nudge SOUL inject]).
-        soul_block = ''
-        try:
-            if self.concerns_ledger is not None:
-                # (a) Sir 召唤检测 (准则 6.5 vocab — memory_pool/concern_summon_vocab.json)
-                try:
-                    from jarvis_concern_summon import is_summoned as _is_summoned
-                    _summoned = _is_summoned(user_input or '')
-                except Exception:
-                    # Fallback — vocab loader 失败时硬编码兜底
-                    _ui = (user_input or '').lower()
-                    _summon_kw = (
-                        'any concern', 'what concerns', 'worried about',
-                        "what's my progress", 'how am i doing',
-                        "what's my status", 'remind me what',
-                        '担心啥', '担心什么', '心事', '我关心的', '我担心的',
-                        '什么进度', '进度怎么样', '我状态如何',
-                        '提醒我啥', '提醒我什么', '啥情况',
-                    )
-                    _summoned = any(kw in _ui for kw in _summon_kw)
-                # (c) Sir 21:19 保险 — 上轮 PreFlight verdict=edit/scrap → inject 让主脑澄清
-                _preflight_failed = False
-                try:
-                    _bus_pf = getattr(self, 'event_bus', None)
-                    if _bus_pf is not None:
-                        _pf_events = _bus_pf.recent_events(
-                            within_seconds=300.0,
-                            types={'preflight_verdict'},
-                        )
-                        for _ev in (_pf_events or []):
-                            _meta = _ev.get('metadata') or {}
-                            if _meta.get('verdict') in ('edit', 'scrap'):
-                                _preflight_failed = True
-                                break
-                except Exception:
-                    pass
-                # 记录触发原因 (诊断 log)
-                if _summoned:
-                    self._soul_concern_inject_reason = 'summon'
-                elif _preflight_failed:
-                    self._soul_concern_inject_reason = 'preflight_fail'
-                else:
-                    self._soul_concern_inject_reason = 'silent'
-                if _summoned or _preflight_failed:
-                    soul_block = self.concerns_ledger.to_prompt_block(
-                        top_n=3, max_chars=600)
-        except Exception:
-            soul_block = ''
-            self._soul_concern_inject_reason = 'error'
-        # Layer 2: RelationalState（"我们之间" — inside jokes / protocols / unfinished / threads）
-        # 🆕 [P5-Gap4-followup-L2 / 2026-05-21 21:25] Layer 2 unfinished+threads 同 gating
-        # Layer 2 含 4 部分:
-        #   - inside jokes / protocols → 永远 inject (Jarvis 性格 / STRICT RULES)
-        #   - unfinished + threads → 潜在心结源, 同 Layer 1 三种条件才 inject
-        # 不影响 jokes/protocols inject — Jarvis 性格语调照常.
-        relational_block = ''
-        try:
-            if self.relational_state is not None:
-                # 复用 Layer 1 的判断: 只有 summon/preflight_fail 才 inject baggage
-                # silent / error / 不存在时 → 沉默 (不 inject unfinished+threads)
-                # [β.5.46-fix2] 删 'urgent' (设计缺陷, 4/7 concern severity > 0.7 永远命中)
-                _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
-                _allow_baggage = _reason in ('summon', 'preflight_fail')
-                relational_block = self.relational_state.to_prompt_block(
-                    top_jokes=3,
-                    top_unfinished=2 if _allow_baggage else 0,
-                    top_threads=2 if _allow_baggage else 0,
-                    max_chars=700,
-                )
-        except Exception:
-            relational_block = ''
-        # Layer 3: Attention Allocation（基于 user_input 动态构造，不缓存）
-        # current_focus + long_term_watch。PENDING FOLLOWUPS 段已删（Layer 2 单源接管）。
-        attention_block = ''
-        try:
-            from jarvis_attention import build_attention_block as _build_attn
-            attention_block = _build_attn(
-                concerns_ledger=self.concerns_ledger,
-                relational_state=self.relational_state,
-                user_input=user_input or '',
-                stm=getattr(self, 'short_term_memory', None) or [],
-                top_concerns=3,
-                max_chars=500,
-            )
-        except Exception:
-            attention_block = ''
+        # [Reshape M6.1 third wave / 2026-05-24] 4 layer 抽自 helper. 行为不变.
+        # 详 docs/JARVIS_SOUL_DRIVE.md §4 注入路径.
+        self_anchor_block = self._build_layer_0_self_anchor_block()
+        soul_block = self._build_layer_1_concerns_block(user_input)
+        relational_block = self._build_layer_2_relational_block()
+        attention_block = self._build_layer_3_attention_block(user_input)
         # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 2 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
