@@ -282,6 +282,19 @@ class TestFEATUREFlag(unittest.TestCase):
         self.assertIn('Translator Phase 1', src,
                       'Phase 1 标识注释必须在 chat_bypass')
 
+    def test_both_paths_covered(self):
+        """Path A (_execute_fast_call 单 call) + Path B (chain 路径) 都该有 translator 灰度切."""
+        with open(os.path.join(ROOT, 'jarvis_chat_bypass.py'), 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 必须出现至少 2 次 'JARVIS_FEATURE_TRANSLATOR' (Path A + Path B 各一次)
+        self.assertGreaterEqual(
+            src.count('JARVIS_FEATURE_TRANSLATOR'), 2,
+            'Path A + Path B 都该 cover, 否则单调用 fast_call 漏 translator'
+        )
+        # Path A 和 Path B 标识都该在
+        self.assertIn('Translator/Path A', src, 'Path A 标识缺')
+        # Path B 不一定显式标 Path B, 但 chain 路径有 'Translator Phase 1' (会重复)
+
 
 class TestCLIScript(unittest.TestCase):
     def test_cli_script_exists(self):

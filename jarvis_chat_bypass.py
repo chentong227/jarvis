@@ -2115,6 +2115,32 @@ Spoken English:"""
                 return (f"❌ progress: 未知指令 {command} "
                           f"(支持 register / update / set / status / cancel / list)")
 
+        # 🆕 [Translator Phase 1 / 2026-05-24 20:42] Path A 同款灰度切 (Self-audit 发现 Path B 已加但 Path A 漏)
+        # 详 docs/JARVIS_TRANSLATOR_ARCHITECTURE.md
+        # FEATURE_TRANSLATOR=1 启用 → 老 fuzzy 退路保留 (Phase 4 才物理删)
+        _translator_pa = getattr(self.jarvis, 'translator', None)
+        _use_translator_pa = (
+            _translator_pa is not None
+            and os.environ.get('JARVIS_FEATURE_TRANSLATOR', '0') == '1'
+        )
+        if _use_translator_pa:
+            _t_result_pa = _translator_pa.translate(organ_name, command, params)
+            if not _t_result_pa.success:
+                # actionable msg → return 给 Path A 调用方 (主脑下轮看)
+                try:
+                    from jarvis_utils import bg_log as _t_bg_pa
+                    _t_bg_pa(
+                        f"❌ [Translator/Path A] reject {organ_name}.{command} "
+                        f"({_t_result_pa.error_kind}): "
+                        f"{(_t_result_pa.actionable_msg or '')[:80]}"
+                    )
+                except Exception:
+                    pass
+                return f"❌ {_t_result_pa.actionable_msg}"
+            organ_name = _t_result_pa.organ_name
+            command = _t_result_pa.command
+            params = _t_result_pa.params
+
         # 🆕 [P5-fix77-Q / 2026-05-23 19:11] BUG-Q: fuzzy alias (同 Path B)
         hand_class = self.jarvis.hand_registry.get(organ_name)
         if hand_class is None and not organ_name.endswith('_hands'):
