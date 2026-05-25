@@ -510,5 +510,70 @@ class TestL8KeyRouterCaller(unittest.TestCase):
             'LlmReflector 必须单例 (__new__ pattern)')
 
 
+# ==========================================================================
+# L9: Dashboard 集成 (Sir 22:52 真意: 都集成到 dashboard 直观)
+# ==========================================================================
+class TestL9DashboardIntegration(unittest.TestCase):
+    """Sir 22:52 真意 — '都集成到 dashboard 直观一点, 英文翻译成中文, 带图文'.
+
+    纯源码 anchor 测试 (不 import dashboard_web 避免 sys.stdout reassign 跟 pytest
+    capture 冲突, 这是老 jarvis_dashboard 的 pre-existing pattern, β.5.41 之前 test
+    都中过这个雷). 真功能验证靠运行时跑 'python scripts/jarvis_dashboard_web.py'.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        scripts_path = os.path.join(ROOT, 'scripts', 'jarvis_dashboard_web.py')
+        with open(scripts_path, 'r', encoding='utf-8') as f:
+            cls.dashboard_src = f.read()
+
+    def test_dashboard_has_inner_thoughts_page_route(self):
+        self.assertIn("@app.route('/inner_thoughts')", self.dashboard_src,
+            "dashboard 必须有 @app.route('/inner_thoughts') (Sir 22:52)")
+        self.assertIn('def page_inner_thoughts', self.dashboard_src)
+
+    def test_dashboard_has_api_inner_thoughts_route(self):
+        self.assertIn("@app.route('/api/inner_thoughts')", self.dashboard_src,
+            "dashboard 必须有 /api/inner_thoughts API (Sir 22:52)")
+        self.assertIn('def api_inner_thoughts', self.dashboard_src)
+
+    def test_dashboard_translates_5_categories_to_chinese(self):
+        """5 类必须翻译成中文 + 含 icon (Sir 22:52 真要求)."""
+        for cat_zh in ('观察', '自我反思', '关怀演化', '主动想法', '关系维系'):
+            self.assertIn(cat_zh, self.dashboard_src,
+                f'5 类必须翻译: 缺 "{cat_zh}"')
+        for icon in ('👁️', '🪞', '🎯', '🌱', '💝'):
+            self.assertIn(icon, self.dashboard_src,
+                f'5 类 icon 必须含 {icon}')
+
+    def test_dashboard_translates_actionable_to_chinese(self):
+        """actionable 4 档英文 → 中文人话 (translate function 含 4 个分支)."""
+        self.assertIn('def _translate_inner_actionable', self.dashboard_src)
+        for phrase in ('无后续操作', '调整关怀', '通知主脑事件', '提议 inside joke'):
+            self.assertIn(phrase, self.dashboard_src,
+                f'actionable 翻译必须含 "{phrase}"')
+
+    def test_dashboard_header_has_inner_thoughts_button(self):
+        """dashboard header 必须有 💭 思考层 入口按钮."""
+        self.assertIn('💭 思考层', self.dashboard_src,
+            "header 必须有 '💭 思考层' 按钮 (Sir 22:52)")
+        self.assertIn('href="/inner_thoughts"', self.dashboard_src,
+            'header 按钮必须链到 /inner_thoughts')
+
+    def test_dashboard_page_has_chinese_ui_labels(self):
+        """page HTML 模板必须含中文 UI 标签 (Sir 22:52 真意)."""
+        for needle in ('思考层', '关注度', '当前思考间隔',
+                        '观察', '自我反思', '关怀演化',
+                        '真做了', '主脑会看到'):
+            self.assertIn(needle, self.dashboard_src,
+                f'page UI 必须含中文 "{needle}"')
+
+    def test_dashboard_5_sir_state_translations(self):
+        """Sir 4 个 state (active/afk_short/afk_deep/sleep) 必须翻译."""
+        for label in ('活跃', '短暂离开', '深度离开', '睡眠'):
+            self.assertIn(label, self.dashboard_src,
+                f'Sir state 必须翻译: 缺 "{label}"')
+
+
 if __name__ == '__main__':
     unittest.main()

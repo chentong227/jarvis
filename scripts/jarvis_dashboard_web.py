@@ -113,6 +113,12 @@ HTML_TEMPLATE = r"""
          title="主脑每轮 thinking pass META 自检 (evidence/reaction/skip_alert) - 看贾维斯为什么这样说">
         🧠 思考链
       </a>
+      <!-- 🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] Inner Thought 入口 -->
+      <a href="/inner_thoughts"
+         class="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 transition text-sm font-medium"
+         title="贾维斯持续后台思考 (adaptive 60s-30min tick, 5 类思考池) - 看他独自一人时想什么">
+        💭 思考层
+      </a>
       <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] intent log 入口 (老的没显示) -->
       <a href="/intent_resolved"
          class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 transition text-sm font-medium"
@@ -3465,6 +3471,625 @@ def page_translator():
     """🆕 [Translator Phase 4.C / 2026-05-24 23:00] /translator dashboard page."""
     from flask import make_response
     resp = make_response(render_template_string(_TRANSLATOR_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# ============================================================
+# 🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] /inner_thoughts dashboard
+# Sir 22:52 真意: "都集成到 dashboard 直观 / 英文翻译成中文 / 带图文".
+# 主脑碎碎念 (灵魂工程 Layer 1.5) — 5 类思考 + 4 actionable.
+# 数据源: memory_pool/inner_thoughts.jsonl
+# ============================================================
+
+# 5 类英文 → 中文 + icon
+_INNER_THOUGHT_CATEGORY_ZH = {
+    'A': {'icon': '👁️', 'label': '观察', 'desc': 'Sir 当前外部状态',
+            'color': '#58a6ff'},
+    'B': {'icon': '🪞', 'label': '自我反思', 'desc': '看自己最近 reply',
+            'color': '#a78bfa'},
+    'C': {'icon': '🎯', 'label': '关怀演化', 'desc': '关怀重要度自评',
+            'color': '#3fb950'},
+    'D': {'icon': '🌱', 'label': '主动想法', 'desc': '下次该 silently 做什么',
+            'color': '#d29922'},
+    'E': {'icon': '💝', 'label': '关系维系', 'desc': 'inside joke / 心情笔记',
+            'color': '#f78166'},
+}
+
+_INNER_THOUGHT_STATE_ZH = {
+    'active': {'icon': '🟢', 'label': '活跃'},
+    'afk_short': {'icon': '🟡', 'label': '短暂离开'},
+    'afk_deep': {'icon': '🟠', 'label': '深度离开'},
+    'sleep': {'icon': '🌙', 'label': '睡眠'},
+    'unknown': {'icon': '⚪', 'label': '未知'},
+}
+
+
+def _translate_inner_actionable(action: str) -> str:
+    """actionable 英文 → 中文人话."""
+    if not action or action.lower() == 'none':
+        return '无后续操作'
+    if action.startswith('update_concern_severity:'):
+        parts = action.split(':', 2)
+        if len(parts) >= 3:
+            return f"调整关怀「{parts[1]}」重要度 {parts[2]}"
+        return '调整关怀重要度'
+    if action.startswith('publish_swm:'):
+        parts = action.split(':', 2)
+        if len(parts) >= 3:
+            return f"通知主脑事件「{parts[1]}」: {parts[2][:60]}"
+        return '通知主脑事件'
+    if action.startswith('suggest_inside_joke:'):
+        parts = action.split(':', 1)
+        if len(parts) >= 2:
+            return f"提议 inside joke: 「{parts[1][:60]}」"
+        return '提议 inside joke'
+    return action[:80]
+
+
+@app.route('/api/inner_thoughts')
+def api_inner_thoughts():
+    """🆕 [P1 / Sir 2026-05-25 22:52] InnerThoughtDaemon dashboard data.
+
+    Query params:
+      hours: 只看最近 N 小时 (default 24)
+      limit: 最多返 N 条 (default 100)
+      category: 只看某类 A/B/C/D/E (default all)
+      min_salience: 只看 sal >= X (default 0.0)
+      actionable_only: 1 = 只看 actionable != none
+
+    Returns:
+      {ok, total, stats: {count, avg_salience, category_breakdown,
+                          actionable_done, actionable_total, current_state, current_interval},
+       records: [...]}
+    """
+    try:
+        hours = float(request.args.get('hours', 24))
+        limit = int(request.args.get('limit', 100))
+        category_filter = (request.args.get('category', '') or '').upper()
+        min_sal = float(request.args.get('min_salience', 0.0))
+        actionable_only = request.args.get('actionable_only', '0') == '1'
+
+        persist_path = os.path.join(ROOT, 'memory_pool',
+                                       'inner_thoughts.jsonl')
+        if not os.path.exists(persist_path):
+            return jsonify({
+                'ok': True, 'total': 0, 'records': [],
+                'stats': {
+                    'count': 0, 'avg_salience': 0.0,
+                    'category_breakdown': {c: 0 for c in 'ABCDE'},
+                    'actionable_done': 0, 'actionable_total': 0,
+                    'current_state': 'unknown', 'current_interval_s': 0,
+                },
+                'health': 'empty',
+                'health_msg': "Jarvis 还没产生思考 — 启动后 30s 才有第一波. "
+                              "如果一直没, 检查 daemon 是否启动 (log: '💭 [InnerThought] daemon active'). ",
+            })
+
+        cutoff = time.time() - hours * 3600.0
+        all_thoughts = []
+        with open(persist_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    if d.get('ts', 0) >= cutoff:
+                        all_thoughts.append(d)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        # 全期 stats (filter 前)
+        cat_count = {c: 0 for c in 'ABCDE'}
+        sum_sal = 0.0
+        action_done = 0
+        action_total = 0
+        for t in all_thoughts:
+            cat_count[t.get('category', '?')] = \
+                cat_count.get(t.get('category', '?'), 0) + 1
+            sum_sal += t.get('salience', 0.0)
+            if (t.get('actionable') or 'none').lower() != 'none':
+                action_total += 1
+                if t.get('actionable_done'):
+                    action_done += 1
+
+        # filter
+        filtered = list(all_thoughts)
+        if category_filter and category_filter in 'ABCDE':
+            filtered = [t for t in filtered
+                         if t.get('category') == category_filter]
+        if min_sal > 0:
+            filtered = [t for t in filtered
+                         if t.get('salience', 0) >= min_sal]
+        if actionable_only:
+            filtered = [t for t in filtered
+                         if (t.get('actionable') or 'none').lower() != 'none']
+
+        # sort 新→旧, limit
+        filtered.sort(key=lambda t: -t.get('ts', 0))
+        records_out = []
+        for t in filtered[:limit]:
+            cat = t.get('category', '?')
+            cat_meta = _INNER_THOUGHT_CATEGORY_ZH.get(
+                cat, {'icon': '💭', 'label': '其它',
+                       'desc': '', 'color': '#8b949e'}
+            )
+            sir_state = t.get('sir_state', 'unknown')
+            state_meta = _INNER_THOUGHT_STATE_ZH.get(
+                sir_state, _INNER_THOUGHT_STATE_ZH['unknown']
+            )
+            records_out.append({
+                'id': t.get('id'),
+                'ts': t.get('ts'),
+                'ts_iso': t.get('ts_iso'),
+                'category': cat,
+                'category_zh': cat_meta['label'],
+                'category_icon': cat_meta['icon'],
+                'category_desc': cat_meta['desc'],
+                'category_color': cat_meta['color'],
+                'thought': t.get('thought', ''),
+                'salience': t.get('salience', 0.0),
+                'actionable': t.get('actionable', 'none'),
+                'actionable_zh': _translate_inner_actionable(
+                    t.get('actionable', 'none')
+                ),
+                'actionable_done': bool(t.get('actionable_done')),
+                'actionable_result': t.get('actionable_result', ''),
+                'sir_state': sir_state,
+                'sir_state_icon': state_meta['icon'],
+                'sir_state_zh': state_meta['label'],
+                'tick_interval_s': t.get('tick_interval_s', 0),
+            })
+
+        # 试拿 daemon 实时状态 (current_state / interval) — 主进程内才有
+        cur_state = 'unknown'
+        cur_interval = 0
+        try:
+            from jarvis_inner_thought_daemon import get_default_daemon
+            daemon = get_default_daemon()
+            if daemon is not None:
+                stats = daemon.get_stats()
+                cur_state = stats.get('current_sir_state', 'unknown')
+                cur_interval = stats.get('current_interval_s', 0)
+        except Exception:
+            pass
+
+        n = len(all_thoughts)
+        avg_sal = sum_sal / n if n > 0 else 0.0
+
+        # 健康度判断
+        if n == 0:
+            health = 'empty'
+            health_msg = "最近 24h 没新思考. daemon 可能没启动."
+        elif n < 5:
+            health = 'warn'
+            health_msg = (f"最近 24h 只 {n} 条思考 — daemon 可能 LLM 调用频繁失败. "
+                            f"检查 jarvis 启动 log 看 '⚠️ [InnerThought]' 异常.")
+        elif n > 200:
+            health = 'warn'
+            health_msg = (f"最近 24h {n} 条思考 — 偏多, 频率可能没正确 adaptive. "
+                            f"看 'tick_interval_s' 字段是否真按 sir_state 调.")
+        else:
+            health = 'ok'
+            health_msg = (f"最近 24h {n} 条思考, 5 类分布健康. "
+                            f"actionable 完成 {action_done}/{action_total}.")
+
+        return jsonify({
+            'ok': True,
+            'total': len(filtered),
+            'records': records_out,
+            'stats': {
+                'count': n,
+                'avg_salience': round(avg_sal, 2),
+                'category_breakdown': cat_count,
+                'actionable_done': action_done,
+                'actionable_total': action_total,
+                'current_state': cur_state,
+                'current_interval_s': cur_interval,
+            },
+            'health': health,
+            'health_msg': health_msg,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+_INNER_THOUGHTS_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Jarvis · 思考层 (Inner Thoughts)</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+            background: #0e1116; color: #d1d5db; margin: 0; padding: 1rem; }
+    .header { background: #161b22; padding: 1rem 1.2rem; border-radius: 8px;
+              border: 1px solid #30363d; margin-bottom: 1rem; }
+    .header h1 { margin: 0 0 0.4rem 0; color: #ec4899; font-size: 1.4rem; }
+    .header p { margin: 0.2rem 0; color: #8b949e; font-size: 0.9rem;
+                line-height: 1.5; }
+    .header .nav-links { margin-top: 0.6rem; }
+    .header .nav-links a { color: #58a6ff; text-decoration: none;
+                            margin-right: 1rem; font-size: 0.9rem; }
+    .header .nav-links a:hover { text-decoration: underline; }
+
+    /* 5 类色卡 */
+    .legend { display: flex; gap: 0.6rem; margin-top: 0.6rem; flex-wrap: wrap;
+              font-size: 0.82rem; }
+    .legend-item { padding: 0.2rem 0.6rem; border-radius: 12px;
+                    border: 1px solid #30363d; background: #0d1117; }
+
+    /* controls */
+    .controls { display: flex; gap: 0.8rem; align-items: center; margin-bottom: 1rem;
+                flex-wrap: wrap; }
+    .controls label { color: #8b949e; font-size: 0.88rem; }
+    .controls select, .controls input[type=checkbox] {
+      background: #21262d; color: #c9d1d9;
+      border: 1px solid #30363d; padding: 0.4rem 0.6rem;
+      border-radius: 4px; font-size: 0.9rem; cursor: pointer;
+    }
+    .refresh-btn { background: #ec4899; color: white; border: none; padding: 0.5rem 1rem;
+                    border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+                    font-weight: bold; }
+    .refresh-btn:hover { background: #f472b6; }
+    .status-text { color: #8b949e; font-size: 0.85rem; }
+
+    /* stats */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+              gap: 0.8rem; margin: 1rem 0 1.2rem 0; }
+    .stat-box { background: #161b22; padding: 0.9rem; border-radius: 6px;
+                border: 1px solid #30363d; text-align: center; }
+    .stat-box .num { font-size: 1.8rem; font-weight: bold; color: #ec4899; }
+    .stat-box .label { font-size: 0.83rem; color: #8b949e; margin-top: 0.3rem;
+                        line-height: 1.3; }
+    .stat-box.live .num { color: #3fb950; }
+
+    /* 5 类小柱状图 */
+    .cat-bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.6rem;
+                margin: 0.8rem 0 1.2rem 0; }
+    .cat-bar { background: #161b22; padding: 0.7rem; border-radius: 6px;
+                border: 1px solid #30363d; text-align: center; }
+    .cat-bar .ic { font-size: 1.6rem; margin-bottom: 0.2rem; }
+    .cat-bar .lbl { font-size: 0.85rem; color: #c9d1d9; font-weight: bold; }
+    .cat-bar .cnt { font-size: 1.3rem; color: #ec4899; margin-top: 0.2rem;
+                      font-weight: bold; }
+    .cat-bar .desc { font-size: 0.72rem; color: #6e7681; margin-top: 0.2rem; }
+
+    /* 健康 banner */
+    .health-banner { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem;
+                      font-size: 0.92rem; line-height: 1.5; }
+    .health-banner.ok { background: #1a2e22; border: 1px solid #3fb950; color: #7ee787; }
+    .health-banner.warn { background: #332b00; border: 1px solid #d29922; color: #f1c969; }
+    .health-banner.empty { background: #1c1d24; border: 1px solid #30363d; color: #8b949e; }
+
+    /* records (thoughts) */
+    .records { display: grid; gap: 0.8rem; }
+    .thought-card { background: #161b22; padding: 1rem 1.2rem; border-radius: 8px;
+                      border: 1px solid #30363d; border-left: 4px solid #ec4899;
+                      transition: border-color 0.2s; }
+    .thought-card:hover { border-color: #ec4899; }
+
+    .card-head { display: flex; justify-content: space-between; align-items: center;
+                  margin-bottom: 0.6rem; flex-wrap: wrap; gap: 0.4rem; }
+    .card-head-left { display: flex; align-items: center; gap: 0.6rem;
+                        font-size: 0.92rem; }
+    .cat-badge { padding: 0.2rem 0.7rem; border-radius: 14px; font-weight: bold;
+                  font-size: 0.85rem; background: #21262d; }
+    .card-head-right { color: #8b949e; font-size: 0.82rem; }
+
+    /* 关注度星条 */
+    .salience { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .salience .stars { color: #fbbf24; letter-spacing: 1px; }
+    .salience .val { color: #8b949e; font-family: monospace; font-size: 0.85rem; }
+
+    /* 思考正文 */
+    .thought-body { font-size: 1.02rem; color: #e2e8f0; line-height: 1.55;
+                      margin: 0.4rem 0; padding: 0.6rem 0.9rem;
+                      background: #0d1117; border-radius: 4px;
+                      border-left: 3px solid #475569; font-style: italic; }
+    .thought-body::before { content: '"'; color: #6e7681; font-size: 1.5rem;
+                              margin-right: 0.2rem; }
+    .thought-body::after { content: '"'; color: #6e7681; font-size: 1.5rem;
+                            margin-left: 0.2rem; }
+
+    /* actionable */
+    .actionable { margin-top: 0.5rem; padding: 0.5rem 0.8rem; background: #0d1117;
+                    border-radius: 4px; font-size: 0.88rem; display: flex;
+                    align-items: center; gap: 0.5rem; }
+    .actionable.done { border-left: 3px solid #3fb950; }
+    .actionable.pending { border-left: 3px solid #d29922; }
+    .actionable .lbl { color: #8b949e; font-size: 0.78rem; }
+    .actionable .txt { color: #c9d1d9; }
+    .actionable .res { margin-left: auto; color: #6e7681; font-family: monospace;
+                        font-size: 0.8rem; }
+
+    /* Sir 状态 mini badge */
+    .sir-badge { font-size: 0.78rem; color: #8b949e;
+                  padding: 0.15rem 0.5rem; border-radius: 10px;
+                  background: #0d1117; border: 1px solid #30363d; }
+
+    .empty-state { color: #6e7681; text-align: center; padding: 3rem;
+                    font-size: 0.95rem; line-height: 1.7;
+                    background: #161b22; border-radius: 8px; border: 1px dashed #30363d; }
+    .empty-state .hint { font-size: 0.82rem; color: #484f58; margin-top: 0.4rem; }
+
+    /* current state badge top-right */
+    .current-state { display: inline-block; padding: 0.3rem 0.7rem;
+                      border-radius: 16px; font-size: 0.85rem;
+                      background: #21262d; border: 1px solid #30363d;
+                      margin-left: 0.6rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>💭 贾维斯的思考层 <span class="current-state" id="cur-state-badge">⏳ 加载...</span></h1>
+    <p>贾维斯独自一人时, 他在想什么? 后台 daemon 每 60s-30min 自适应思考一次 (按 Sir 真物理 idle 调频率), 主脑自选 5 类思考池产 1 条 inner thought, 高关注度的会进下一轮主脑 prompt — 让他记得"我刚才想过什么"形成 identity 连续性。</p>
+    <p style="color:#6e7681; font-size:0.83rem;">数据源: <code>memory_pool/inner_thoughts.jsonl</code> · CLI: <code>python scripts/inner_thoughts_dump.py</code> · daemon log grep '💭 [InnerThought]'</p>
+    <div class="legend">
+      <span class="legend-item">👁️ A 观察 - Sir 当前状态</span>
+      <span class="legend-item">🪞 B 自我反思 - 看自己 reply</span>
+      <span class="legend-item">🎯 C 关怀演化 - severity 自评</span>
+      <span class="legend-item">🌱 D 主动想法 - 下次该做啥</span>
+      <span class="legend-item">💝 E 关系维系 - inside joke / mood</span>
+    </div>
+    <div class="nav-links">
+      <a href="/">← 主面板</a>
+      <a href="/main_brain_meta">🧠 思考链</a>
+      <a href="/intent_resolved">🧭 Intent</a>
+      <a href="/items">💡 我们的事</a>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label>时间范围:
+      <select id="hours-sel" onchange="loadRecords()">
+        <option value="3">最近 3h</option>
+        <option value="6">最近 6h</option>
+        <option value="24" selected>最近 24h</option>
+        <option value="72">最近 3 天</option>
+      </select>
+    </label>
+    <label>显示数:
+      <select id="limit-sel" onchange="loadRecords()">
+        <option value="30">最多 30</option>
+        <option value="50" selected>最多 50</option>
+        <option value="100">最多 100</option>
+        <option value="500">最多 500</option>
+      </select>
+    </label>
+    <label>类型:
+      <select id="cat-sel" onchange="loadRecords()">
+        <option value="" selected>全部</option>
+        <option value="A">👁️ A 观察</option>
+        <option value="B">🪞 B 自我反思</option>
+        <option value="C">🎯 C 关怀演化</option>
+        <option value="D">🌱 D 主动想法</option>
+        <option value="E">💝 E 关系维系</option>
+      </select>
+    </label>
+    <label>关注度:
+      <select id="sal-sel" onchange="loadRecords()">
+        <option value="0" selected>全部</option>
+        <option value="0.3">≥ 0.3 (中)</option>
+        <option value="0.5">≥ 0.5 (高)</option>
+        <option value="0.7">≥ 0.7 (主脑会看到)</option>
+      </select>
+    </label>
+    <label>
+      <input type="checkbox" id="action-only" onchange="loadRecords()"/>
+      仅看真做了的
+    </label>
+    <button class="refresh-btn" onclick="loadRecords()">🔄 刷新</button>
+    <span id="status" class="status-text"></span>
+  </div>
+
+  <div id="health-banner"></div>
+
+  <div class="stats" id="stats-box">
+    <div class="stat-box"><div class="num" id="n-total">-</div>
+      <div class="label">最近 24h 思考数</div></div>
+    <div class="stat-box"><div class="num" id="avg-sal">-</div>
+      <div class="label">平均关注度</div></div>
+    <div class="stat-box"><div class="num" id="n-action-done">-</div>
+      <div class="label">真做了 / 总数</div></div>
+    <div class="stat-box live"><div class="num" id="cur-interval">-</div>
+      <div class="label">当前思考间隔</div></div>
+  </div>
+
+  <div class="cat-bars" id="cat-bars">
+    <div class="cat-bar"><div class="ic">👁️</div><div class="lbl">A 观察</div>
+      <div class="cnt" id="cat-A">-</div><div class="desc">Sir 状态</div></div>
+    <div class="cat-bar"><div class="ic">🪞</div><div class="lbl">B 自反思</div>
+      <div class="cnt" id="cat-B">-</div><div class="desc">看自己 reply</div></div>
+    <div class="cat-bar"><div class="ic">🎯</div><div class="lbl">C 关怀演化</div>
+      <div class="cnt" id="cat-C">-</div><div class="desc">severity 自评</div></div>
+    <div class="cat-bar"><div class="ic">🌱</div><div class="lbl">D 主动想法</div>
+      <div class="cnt" id="cat-D">-</div><div class="desc">下次该做啥</div></div>
+    <div class="cat-bar"><div class="ic">💝</div><div class="lbl">E 关系维系</div>
+      <div class="cnt" id="cat-E">-</div><div class="desc">inside joke</div></div>
+  </div>
+
+  <div class="records" id="records">
+    <div class="empty-state">loading...</div>
+  </div>
+
+  <script>
+    function fmtTs(ts) {
+      if (!ts) return '?';
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const diffMin = Math.floor((now - d) / 60000);
+      let ageStr;
+      if (diffMin < 1) ageStr = '刚刚';
+      else if (diffMin < 60) ageStr = diffMin + '分钟前';
+      else if (diffMin < 1440) ageStr = (diffMin / 60).toFixed(1) + '小时前';
+      else ageStr = (diffMin / 1440).toFixed(1) + '天前';
+      const tStr = d.toLocaleTimeString('zh-CN', {hour12: false});
+      return ageStr + ' · ' + tStr;
+    }
+    function escapeHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function fmtSalience(s) {
+      if (s == null) return '';
+      const stars = Math.round(s * 5);
+      const starStr = '★'.repeat(stars) + '☆'.repeat(5 - stars);
+      return `<span class="salience"><span class="stars">${starStr}</span><span class="val">${s.toFixed(2)}</span></span>`;
+    }
+    function fmtInterval(s) {
+      if (!s) return '-';
+      if (s < 60) return s + 's';
+      if (s < 3600) return Math.round(s / 60) + 'min';
+      return (s / 3600).toFixed(1) + 'h';
+    }
+
+    function loadRecords() {
+      const hours = document.getElementById('hours-sel').value;
+      const limit = document.getElementById('limit-sel').value;
+      const cat = document.getElementById('cat-sel').value;
+      const sal = document.getElementById('sal-sel').value;
+      const actionOnly = document.getElementById('action-only').checked ? 1 : 0;
+      document.getElementById('status').textContent = '⏳ loading...';
+      const url = `/api/inner_thoughts?hours=${hours}&limit=${limit}` +
+                   `&category=${cat}&min_salience=${sal}&actionable_only=${actionOnly}`;
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.ok) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty-state">⚠️ 错误: ${escapeHtml(data.error || 'unknown')}</div>`;
+            document.getElementById('status').textContent = '';
+            return;
+          }
+          const s = data.stats || {};
+          document.getElementById('n-total').textContent = s.count || 0;
+          document.getElementById('avg-sal').textContent =
+            (s.avg_salience || 0).toFixed(2);
+          document.getElementById('n-action-done').textContent =
+            `${s.actionable_done || 0}/${s.actionable_total || 0}`;
+          document.getElementById('cur-interval').textContent =
+            fmtInterval(s.current_interval_s);
+
+          // Sir 状态 badge in title
+          const stateBadge = document.getElementById('cur-state-badge');
+          if (s.current_state && s.current_state !== 'unknown') {
+            const stateMap = {
+              active: '🟢 Sir 活跃 / 60s tick',
+              afk_short: '🟡 Sir 短暂离开 / 3min tick',
+              afk_deep: '🟠 Sir 深度离开 / 10min tick',
+              sleep: '🌙 Sir 睡眠 / 30min tick',
+            };
+            stateBadge.textContent = stateMap[s.current_state] || s.current_state;
+          } else {
+            stateBadge.textContent = '⚪ daemon 离线';
+          }
+
+          // 5 类柱状图
+          const cb = s.category_breakdown || {};
+          ['A','B','C','D','E'].forEach(c => {
+            document.getElementById('cat-' + c).textContent = cb[c] || 0;
+          });
+
+          // 健康 banner
+          const hb = document.getElementById('health-banner');
+          const healthClass = {empty: 'empty', warn: 'warn',
+                                 ok: 'ok'}[data.health] || '';
+          if (data.health === 'empty') {
+            hb.className = 'health-banner empty';
+            hb.textContent = 'ℹ️ ' + (data.health_msg || '');
+          } else if (data.health === 'warn') {
+            hb.className = 'health-banner warn';
+            hb.textContent = '⚠️ ' + (data.health_msg || '');
+          } else if (data.health_msg) {
+            hb.className = 'health-banner ok';
+            hb.textContent = '✅ ' + data.health_msg;
+          } else {
+            hb.className = 'health-banner';
+            hb.textContent = '';
+          }
+
+          // records
+          const records = data.records || [];
+          if (records.length === 0) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty-state">这个 filter 下还没有思考<div class="hint">尝试: 换 filter, 或等 daemon 多产几条 (60s 一波最快).</div></div>`;
+            document.getElementById('status').textContent =
+              '✓ ' + new Date().toLocaleTimeString('zh-CN', {hour12: false});
+            return;
+          }
+
+          let html = '';
+          records.forEach(t => {
+            const catColor = t.category_color || '#ec4899';
+            const actionDone = t.actionable_done;
+            const actionStr = t.actionable_zh || t.actionable;
+            const hasAction = (t.actionable || 'none').toLowerCase() !== 'none';
+
+            html += `<div class="thought-card" style="border-left-color:${catColor}">`;
+            html += `<div class="card-head">`;
+            html += `<div class="card-head-left">`;
+            html += `<span class="cat-badge" style="color:${catColor}">`;
+            html += `${t.category_icon} ${t.category} ${t.category_zh}`;
+            html += `</span>`;
+            html += `<span style="color:#6e7681; font-size:0.8rem;">${escapeHtml(t.category_desc)}</span>`;
+            html += `</div>`;
+            html += `<div class="card-head-right">`;
+            html += fmtSalience(t.salience);
+            html += `</div>`;
+            html += `</div>`;  // card-head
+
+            // 思考正文
+            html += `<div class="thought-body">${escapeHtml(t.thought)}</div>`;
+
+            // actionable
+            if (hasAction) {
+              html += `<div class="actionable ${actionDone ? 'done' : 'pending'}">`;
+              html += `<span>${actionDone ? '✅' : '⏳'}</span>`;
+              html += `<span class="lbl">真做了:</span>`;
+              html += `<span class="txt">${escapeHtml(actionStr)}</span>`;
+              if (t.actionable_result && t.actionable_result !== 'pending') {
+                html += `<span class="res">→ ${escapeHtml(t.actionable_result)}</span>`;
+              }
+              html += `</div>`;
+            }
+
+            // meta footer (sir state + tick)
+            html += `<div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; font-size:0.78rem; color:#6e7681;">`;
+            html += `<span class="sir-badge">${t.sir_state_icon} ${t.sir_state_zh}</span>`;
+            html += `<span>·</span><span>tick ${t.tick_interval_s}s</span>`;
+            html += `<span>·</span><span>${fmtTs(t.ts)}</span>`;
+            html += `</div>`;
+
+            html += `</div>`;  // thought-card
+          });
+          document.getElementById('records').innerHTML = html;
+          document.getElementById('status').textContent =
+            `✓ ${records.length}/${data.total} · ` +
+            new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        })
+        .catch(err => {
+          document.getElementById('records').innerHTML =
+            `<div class="empty-state">⚠️ fetch 错: ${escapeHtml(err.message)}</div>`;
+          document.getElementById('status').textContent = '';
+        });
+    }
+    loadRecords();
+    setInterval(loadRecords, 30000);  // 30s 自动刷新
+  </script>
+</body>
+</html>
+"""
+
+
+@app.route('/inner_thoughts')
+def page_inner_thoughts():
+    """🆕 [P1 / Sir 2026-05-25 22:52] /inner_thoughts dashboard page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_INNER_THOUGHTS_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
