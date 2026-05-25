@@ -4538,7 +4538,13 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                     "<ZH>...COMPLETE Chinese translation of "
                                     "(EN + EN continuation); always fully translate, "
                                     "never leave ZH mid-sentence</ZH>\n"
-                                    "Keep butler style: factual, concise, no emojis."
+                                    "Keep butler style: factual, concise, no emojis.\n"
+                                    "🚨 INTEGRITY RED LINE (准则 5): "
+                                    "DO NOT invent facts/numbers/data. "
+                                    "If EN is cut mid-sentence and you don't know the missing "
+                                    "info (e.g. 'updated total intake to ___'), use a vague "
+                                    "graceful close like 'reflect your recent input' or "
+                                    "'the new value'. NEVER fabricate specific numbers/units."
                                 )
                                 _user_prompt = (
                                     f"EN (may be complete or truncated):\n"
@@ -4576,6 +4582,24 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                         )
                                     except Exception as _e_sub:
                                         _tr_bg(f"⚠️ [Truncate/Cont] subtitle.put fail: {_e_sub}")
+                                # 🆕 [Sir 2026-05-25 21:38 真测追根] EN cont 进 TTS 队列
+                                # =====================================================
+                                # Sir 真痛点: 续写只补 ZH 字幕, EN reply 半截 TTS 已说完
+                                # → Sir 听到 'Noted, Sir. I have updated your total intake to'
+                                # 卡在 'to' 没下文. 治本: EN cont 也走 _put_audio → TTS
+                                # 续播下半句. 有 ~1s audio gap (续写延迟) 但比卡死好.
+                                # 准则 5 言出必行 + 准则 8 优雅 (1 次 LLM 双用).
+                                # =====================================================
+                                if _en_cont and len(_en_cont) >= 2:
+                                    try:
+                                        # _en_cont 已是英文续写, 不要再加 ---ZH--- (避免再触发 truncate 检)
+                                        self._put_audio(_en_cont, is_response=True)
+                                        _tr_bg(
+                                            f"✅ [Truncate/Cont] EN 续 TTS ({len(_en_cont)}ch): "
+                                            f"'{_en_cont[:60]}...'"
+                                        )
+                                    except Exception as _e_au:
+                                        _tr_bg(f"⚠️ [Truncate/Cont] EN put_audio fail: {_e_au}")
                             except Exception as _e_tr:
                                 try:
                                     from jarvis_utils import bg_log as _tr_bg2

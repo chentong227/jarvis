@@ -123,7 +123,7 @@ class TestT1ChatBypassTruncateContinuation(unittest.TestCase):
         # 找 truncate 区段
         idx = src.find('_truncate_continuation_worker')
         self.assertGreater(idx, 0)
-        block = src[idx:idx + 2500]
+        block = src[idx:idx + 10000]
         self.assertIn('force=True', block, '续写不走 cache')
 
 
