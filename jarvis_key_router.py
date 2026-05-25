@@ -51,6 +51,46 @@ import threading
 import hashlib  # noqa: F401 — 内部函数 _cache_key 用
 
 
+# 🆕 [P2 / Sir 2026-05-25 21:47] Token bucket — LOW priority 限速保护
+class _TokenBucket:
+    """简易 token bucket. capacity 个 token 容量, refill_per_sec 速率补 token.
+    acquire(wait_max_s) 尝试取 1 token, 成功 True / timeout False.
+    用于 KeyRouter LOW priority caller 限速, 防 daemon 失控压主流量.
+    """
+
+    def __init__(self, capacity: int, refill_per_sec: float):
+        self.capacity = float(capacity)
+        self.tokens = float(capacity)
+        self.refill_per_sec = float(refill_per_sec)
+        self.last_refill = time.time()
+        self._lock = threading.Lock()
+
+    def acquire(self, wait_max_s: float = 5.0) -> bool:
+        deadline = time.time() + max(0.0, wait_max_s)
+        while True:
+            with self._lock:
+                now = time.time()
+                elapsed = now - self.last_refill
+                if elapsed > 0:
+                    self.tokens = min(self.capacity,
+                                       self.tokens + elapsed * self.refill_per_sec)
+                    self.last_refill = now
+                if self.tokens >= 1.0:
+                    self.tokens -= 1.0
+                    return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.1)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                'tokens': round(self.tokens, 2),
+                'capacity': self.capacity,
+                'refill_per_sec': self.refill_per_sec,
+            }
+
+
 class KeyRouter:
     """API Key 智能路由器：主脑隔离 + Google/OpenRouter 双通道独立随机池
     
@@ -68,9 +108,37 @@ class KeyRouter:
     CALLER_HIPPOCAMPUS = 'hippocampus'
     CALLER_HANDS = 'hands'
     CALLER_GATEKEEPER = 'gatekeeper'
-    
+
     PROVIDER_GOOGLE = 'google'
     PROVIDER_OPENROUTER = 'openrouter'
+
+    # 🆕 [P2 / Sir 2026-05-25 21:47 真测追根] Priority + OpenRouter Fallback + 限速
+    # Sir 真痛点 (jarvis_20260525_*.log): google_1 SSL EOF (代理流量超) +
+    # OpenRouter pool 4 key 闲置. 后台 daemon 失控可能压垮主对话 TTFT.
+    # P2 治本: priority 分级 + 真 fallback + token bucket 限速 (准则 6/8).
+    # 路线: P2 → P1 inner_thought daemon (Sir 数字生命 5min tick 真陪伴感).
+    PRIORITY_HIGH = 'high'      # 主脑 / turn-time critical, 不限速, 优先 fallback
+    PRIORITY_MEDIUM = 'medium'  # turn-time but tolerable, 不限速, 后置 fallback
+    PRIORITY_LOW = 'low'        # 后台 daemon, 限速 30/min default, 不挤主流量
+
+    # caller → 默认 priority 映射. 老 caller 不传 priority 即按此映射.
+    # 不在表里的 caller 默认 LOW (后台 daemon / reflector 全 LOW).
+    _PRIORITY_HIGH_CALLERS = frozenset({
+        'main_brain',
+        'gatekeeper',
+        'reply_preflight',
+    })
+    _PRIORITY_MEDIUM_CALLERS = frozenset({
+        'sentinel',
+        'hippocampus',
+        'predicate_parser',
+        'soul_evaluator',
+    })
+
+    # LOW priority token bucket — 30 calls/min default. inner_thought 5min tick
+    # 远低于这个 cap. ProactiveCare / L4-L7 reflector 周期 tick 加起来也不会超.
+    _LOW_PRIORITY_RATE_PER_MIN = 30
+    _LOW_PRIORITY_WAIT_TIMEOUT_S = 5.0
     
     def __init__(self, main_brain_key: str, google_keys: list, openrouter_keys: list):
         self._main_brain_key = main_brain_key
@@ -101,6 +169,21 @@ class KeyRouter:
         self._openrouter_alert_date = ''
         self._openrouter_call_count_today = 0
         self._daily_reset_day = time.strftime('%Y-%m-%d')
+
+        # 🆕 [P2 / Sir 2026-05-25 21:47] LOW priority token bucket — 30 calls/min
+        # refill_per_sec = 30/60 = 0.5. capacity = 30 burst (短时允许 30 个并发后限速)
+        self._low_priority_bucket = _TokenBucket(
+            capacity=self._LOW_PRIORITY_RATE_PER_MIN,
+            refill_per_sec=self._LOW_PRIORITY_RATE_PER_MIN / 60.0,
+        )
+
+        # 🆕 [P2 / Sir 2026-05-25 21:47] Fallback 统计 — Sir dashboard 看 fallback 真实生效情况
+        self._fallback_stats = {
+            'google_to_openrouter': 0,
+            'openrouter_to_google': 0,
+            'low_priority_rate_limited': 0,
+            'low_priority_acquired': 0,
+        }
 
         # 🩹 [P0+20-β.1.5 / 2026-05-16] 永久剔除持久化（治 B7）：
         # 旧版 α.2 只在内存里标 permanently_dead → 进程重启后又开始尝试 google_1，
@@ -181,19 +264,75 @@ class KeyRouter:
             return key, key_name
         raise RuntimeError(f"[KeyRouter] 所有 Google Key 均不可用 (caller={caller})。")
     
-    def get_openrouter_key(self, caller: str) -> tuple:
-        """从 OpenRouter Key 池随机抽一个。返回 (key, key_name)。失败抛异常。"""
+    def get_openrouter_key(self, caller: str,
+                            priority: Optional[str] = None) -> tuple:
+        """从 OpenRouter Key 池随机抽一个。返回 (key, key_name)。失败抛异常。
+
+        🆕 [P2 / Sir 2026-05-25 21:47] LOW priority 限速 (默认按 caller 推断).
+        后台 daemon (reflector / inner_thought) 走此路径也限速 30/min, 不挤主流量.
+        显式传 priority=PRIORITY_HIGH 可跳过限速.
+        """
         self._reset_daily_counters()
+
+        if priority is None:
+            priority = self._default_priority(caller)
+
+        # LOW priority 限速 — 后台 daemon 不挤主流量
+        if priority == self.PRIORITY_LOW:
+            if not self._low_priority_bucket.acquire(
+                    wait_max_s=self._LOW_PRIORITY_WAIT_TIMEOUT_S):
+                self._fallback_stats['low_priority_rate_limited'] += 1
+                raise RuntimeError(
+                    f"[KeyRouter] LOW priority 限速命中 (caller={caller}, "
+                    f"{self._LOW_PRIORITY_RATE_PER_MIN}/min 上限)."
+                )
+            self._fallback_stats['low_priority_acquired'] += 1
+
         key, key_name = self._pick_from_pool(self._openrouter_pool, self.PROVIDER_OPENROUTER)
         if key:
             return key, key_name
         raise RuntimeError(f"[KeyRouter] 所有 OpenRouter Key 均不可用 (caller={caller})。")
     
+    def _default_priority(self, caller: str) -> str:
+        """🆕 [P2 / Sir 2026-05-25 21:47] caller → 默认 priority 推断.
+
+        老 caller 不传 priority 即按此函数推断 (向后兼容, 不破现有调用).
+        - 主脑 / Gatekeeper / reply_preflight → HIGH
+        - Sentinel / Hippocampus / predicate / soul_evaluator → MEDIUM
+        - 其他 (后台 reflector / inner_thought 等) → LOW (默认限速 30/min)
+        """
+        c = (caller or '').strip()
+        if c in self._PRIORITY_HIGH_CALLERS:
+            return self.PRIORITY_HIGH
+        if c in self._PRIORITY_MEDIUM_CALLERS:
+            return self.PRIORITY_MEDIUM
+        return self.PRIORITY_LOW
+
     def get_key(self, caller: str, model_tier: str = 'flash_lite',
-                allow_openrouter_fallback: bool = True) -> tuple:
-        """兼容旧接口：主脑 → 锁死主脑Key；其他 → Google Key 池"""
+                allow_openrouter_fallback: bool = True,
+                priority: Optional[str] = None) -> tuple:
+        """🆕 [P2 / Sir 2026-05-25 21:47] 路由 + Priority + OpenRouter Fallback + 限速.
+
+        参数:
+          caller: 调用方标识 (e.g. CALLER_MAIN_BRAIN / CALLER_GATEKEEPER / 'reply_preflight').
+          model_tier: 模型档 ('flash_lite' / 'flash' / 'pro').
+          allow_openrouter_fallback: Google pool 全不可用时是否 fallback OpenRouter (P2 真启用).
+          priority: 显式覆盖 priority. None 时按 caller 自动推断.
+            - HIGH:  不限速, google → openrouter fallback 立即.
+            - MEDIUM: 不限速, fallback 但后置.
+            - LOW:   限速 30/min token bucket. 超 → wait 5s 仍无 token raise.
+
+        返回 (key, key_name, provider). 失败抛 RuntimeError.
+
+        ⚠️ 主脑 (CALLER_MAIN_BRAIN) 永远锁死 main_brain_key, 不受 priority 影响.
+        """
         self._reset_daily_counters()
-        
+
+        # 推断 priority (老 caller 不传时)
+        if priority is None:
+            priority = self._default_priority(caller)
+
+        # 主脑路径 — 锁死 main_brain_key, priority 永远 HIGH 不限速
         if caller == self.CALLER_MAIN_BRAIN:
             if self._key_status[self._main_brain_key]['healthy']:
                 if self._try_acquire(self._main_brain_key):
@@ -203,11 +342,45 @@ class KeyRouter:
                 f"healthy={self._key_status[self._main_brain_key]['healthy']}, "
                 f"并发={self._active_calls[self._main_brain_key]}/{self._max_concurrent[self._main_brain_key]}"
             )
-        
+
+        # LOW priority 限速 — 后台 daemon 不挤主流量
+        if priority == self.PRIORITY_LOW:
+            if not self._low_priority_bucket.acquire(
+                    wait_max_s=self._LOW_PRIORITY_WAIT_TIMEOUT_S):
+                self._fallback_stats['low_priority_rate_limited'] += 1
+                raise RuntimeError(
+                    f"[KeyRouter] LOW priority 限速命中 (caller={caller}, "
+                    f"{self._LOW_PRIORITY_RATE_PER_MIN}/min 上限). "
+                    f"等 {self._LOW_PRIORITY_WAIT_TIMEOUT_S}s 仍无 token. "
+                    f"后台 daemon 频率过高?"
+                )
+            self._fallback_stats['low_priority_acquired'] += 1
+
+        # 优先池: Google
         key, key_name = self._pick_from_pool(self._google_pool, self.PROVIDER_GOOGLE)
         if key:
             return key, key_name, self.PROVIDER_GOOGLE
-        raise RuntimeError(f"[KeyRouter] 所有 Google Key 均不可用 (caller={caller})。")
+
+        # 🆕 [P2] Fallback OpenRouter pool (真启用! 老逻辑 allow_openrouter_fallback 参数没真用)
+        if allow_openrouter_fallback and self._openrouter_pool:
+            key, key_name = self._pick_from_pool(
+                self._openrouter_pool, self.PROVIDER_OPENROUTER)
+            if key:
+                self._fallback_stats['google_to_openrouter'] += 1
+                try:
+                    from jarvis_utils import bg_log as _kr_bg
+                    _kr_bg(
+                        f"♻️ [KeyRouter/Fallback] {caller} (priority={priority}) "
+                        f"Google 全挂 → OpenRouter {key_name}"
+                    )
+                except Exception:
+                    pass
+                return key, key_name, self.PROVIDER_OPENROUTER
+
+        raise RuntimeError(
+            f"[KeyRouter] 所有 key 池均不可用 (caller={caller}, priority={priority}, "
+            f"allow_or_fallback={allow_openrouter_fallback})."
+        )
     
     def _try_acquire(self, key: str) -> bool:
         with self._lock:
@@ -383,9 +556,11 @@ class KeyRouter:
                        f"(error_count 不累加 unhealthy): {error_msg[:80]}")
             except Exception:
                 pass
-            # 仍 spawn _auto_recover 让 short cooldown 走一遍, 但 healthy=True 不变
-            if status['provider'] == self.PROVIDER_GOOGLE:
-                threading.Thread(target=self._auto_recover, args=(key,), daemon=True).start()
+            # 🆕 [P2 / Sir 2026-05-25 21:47] 仍 spawn _auto_recover 让 short cooldown
+            # 走一遍, 但 healthy=True 不变. P2 修法: OpenRouter pool 也走 auto_recover
+            # (老逻辑仅 google, OpenRouter SSL EOF 后没 cooldown 重试 → fallback 路径
+            # 反复 retry 同一坏 key 浪费 quota).
+            threading.Thread(target=self._auto_recover, args=(key,), daemon=True).start()
             return
 
         if is_billing_error or is_permission_error or status['error_count'] >= 3:
@@ -402,7 +577,9 @@ class KeyRouter:
                     pass  # 不再 print 污染对话框
 
             # 永久死亡的 key 不 spawn _auto_recover（避免死循环）
-            if status['provider'] == self.PROVIDER_GOOGLE and not status['permanently_dead']:
+            # 🆕 [P2 / Sir 2026-05-25 21:47] OpenRouter pool 也走 auto_recover
+            # (老逻辑仅 google, OpenRouter 标 unhealthy 后永远不恢复).
+            if not status['permanently_dead']:
                 threading.Thread(target=self._auto_recover, args=(key,), daemon=True).start()
     
     def _auto_recover(self, key: str):
@@ -629,6 +806,9 @@ class KeyRouter:
             },
             'pools': pools,
             'overall_health': overall,
+            # 🆕 [P2 / Sir 2026-05-25 21:47] Priority + Fallback 真实生效统计
+            'priority_stats': dict(self._fallback_stats),
+            'low_priority_bucket': self._low_priority_bucket.snapshot(),
         }
 
     def reset_cooldown(self, label: str) -> bool:
