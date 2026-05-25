@@ -108,6 +108,9 @@ class KeyRouter:
     CALLER_HIPPOCAMPUS = 'hippocampus'
     CALLER_HANDS = 'hands'
     CALLER_GATEKEEPER = 'gatekeeper'
+    # 🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] InnerThoughtDaemon caller
+    # 不在 HIGH/MEDIUM 列表 → 自动 LOW priority + 30/min 限速 (P2 保护).
+    CALLER_INNER_THOUGHT = 'inner_thought'
 
     PROVIDER_GOOGLE = 'google'
     PROVIDER_OPENROUTER = 'openrouter'

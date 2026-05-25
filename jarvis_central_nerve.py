@@ -367,6 +367,17 @@ class CentralNerve:
         # [Reshape M6.3 third wave / 2026-05-24] Attention Layer 3 init helper. 行为不变.
         self._init_attention_layer3()
 
+        # 🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] Inner Thought Daemon —
+        # 灵魂工程 Layer 1.5 (sit between Concerns + Relational).
+        # Adaptive tick (60s active / 3min afk / 10min deep / 30min sleep), Flash-Lite.
+        # 5 类思考池 (A obs / B self-reflect / C concern-evo / D proactive / E relational).
+        # 4 actionable (全可逆: none / update_concern_severity / publish_swm /
+        #               suggest_inside_joke).
+        # SOUL inject top 3 by salience in last 24h → 主脑下次 turn prompt.
+        # caller='inner_thought' → 自动 LOW priority (P2 KeyRouter 保护主流量).
+        # 详 jarvis_inner_thought_daemon.py 顶部 docstring.
+        self._init_inner_thought_daemon()
+
         # [Reshape M6.3 third wave / 2026-05-24] SoulEvaluator Layer 5 init helper. 行为不变.
         self._init_soul_evaluator()
 
@@ -1620,6 +1631,46 @@ User: {user_input}
             except Exception:
                 pass
 
+    def _init_inner_thought_daemon(self) -> None:
+        """🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] InnerThoughtDaemon — 灵魂工程 Layer 1.5.
+
+        Adaptive tick (60s active / 3min afk_short / 10min afk_deep / 30min sleep).
+        Flash-Lite call (caller='inner_thought' → P2 LOW priority 自动限速 + fallback).
+        5 类思考 (A obs / B self-reflect / C concern-evo / D proactive-seed / E relational).
+        4 actionable (none / update_concern_severity / publish_swm / suggest_inside_joke).
+        SOUL inject top 3 by salience in last 24h → 主脑下次 turn prompt.
+
+        启动条件: key_router 必须就绪 (调 LLM 用). concerns_ledger / relational_state
+        可选 (None 也 work, 只是 C/E 类 actionable 无效).
+        """
+        self.inner_thought_daemon = None
+        try:
+            from jarvis_inner_thought_daemon import (
+                InnerThoughtDaemon, set_default_daemon
+            )
+            self.inner_thought_daemon = InnerThoughtDaemon(
+                key_router=self.key_router,
+                concerns_ledger=getattr(self, 'concerns_ledger', None),
+                relational_state=getattr(self, 'relational_state', None),
+                central_nerve=self,
+            )
+            self.inner_thought_daemon.start()
+            set_default_daemon(self.inner_thought_daemon)
+            try:
+                from jarvis_utils import bg_log as _it_bg
+                _it_bg(
+                    f"💭 [InnerThought] daemon active (灵魂工程 Layer 1.5 — "
+                    f"adaptive tick 60s/3min/10min/30min, 5 类思考 + 4 actionable)"
+                )
+            except Exception:
+                pass
+        except Exception as _it_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [InnerThought] init fail (非致命): {_it_e}")
+            except Exception:
+                pass
+
     def _init_stand_down(self) -> None:
         """[Reshape M6.3 third wave / 2026-05-24] Stand Down hotkey daemon (Ctrl+Alt+J)."""
         try:
@@ -2295,6 +2346,25 @@ User: {user_input}
         except Exception:
             self._soul_concern_inject_reason = 'error'
         return ''
+
+    def _build_layer_1b_inner_thoughts_block(self) -> str:
+        """🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] Layer 1.5: Inner Thoughts block.
+
+        从 InnerThoughtDaemon 拿 top 3 by salience in last 24h, 注入到主脑 prompt.
+        让主脑看到"我刚才/几小时前想过什么" → 真涌现 identity 连续性.
+
+        位置: 拼接在 Layer 1 (Concerns) 之后, Layer 2 (Relational) 之前.
+        max_chars: 500 (~ 主脑 token 不膨胀太多, 准则 1 高效).
+
+        返回 '' 表示未启用或无 recent thoughts (不影响老路径).
+        """
+        try:
+            daemon = getattr(self, 'inner_thought_daemon', None)
+            if daemon is None:
+                return ''
+            return daemon.build_soul_block(max_chars=500)
+        except Exception:
+            return ''
 
     def _build_layer_2_relational_block(self) -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 2: RelationalState block.
@@ -3176,14 +3246,18 @@ User: {user_input}
         # 详 docs/JARVIS_SOUL_DRIVE.md §4 注入路径.
         self_anchor_block = self._build_layer_0_self_anchor_block()
         soul_block = self._build_layer_1_concerns_block(user_input)
+        # 🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5 — Inner Thoughts (主脑碎碎念)
+        inner_thoughts_block = self._build_layer_1b_inner_thoughts_block()
         relational_block = self._build_layer_2_relational_block()
         attention_block = self._build_layer_3_attention_block(user_input)
-        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 2 → Layer 3
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 2 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
         if soul_block:
             _parts.append(soul_block)
+        if inner_thoughts_block:
+            _parts.append(inner_thoughts_block)
         if relational_block:
             _parts.append(relational_block)
         if attention_block:
@@ -3524,15 +3598,18 @@ User: {user_input}
             from jarvis_utils import bg_log as _bg_soul
             _L0c = len(self_anchor_block)
             _L1c = len(soul_block)
+            # 🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5 Inner Thoughts (主脑碎碎念)
+            _L1bc = len(inner_thoughts_block)
             _L2c = len(relational_block)
             _L3c = len(attention_block)
-            _total_soul = _L0c + _L1c + _L2c + _L3c
+            _total_soul = _L0c + _L1c + _L1bc + _L2c + _L3c
             # 🆕 [P5-Gap4-followup / 2026-05-21 21:20] 加 concern_reason 标记
             # silent / summon / urgent / preflight_fail 让 Sir grep 看 concern 注入原因
             _concern_reason = getattr(self, '_soul_concern_inject_reason', '?')
             _bg_soul(
-                f"🪞 [SOUL inject] L0={_L0c}c L1={_L1c}c L2={_L2c}c L3={_L3c}c "
-                f"total={_total_soul}c concern_reason={_concern_reason} | "
+                f"🪞 [SOUL inject] L0={_L0c}c L1={_L1c}c L1.5={_L1bc}c "
+                f"L2={_L2c}c L3={_L3c}c total={_total_soul}c "
+                f"concern_reason={_concern_reason} | "
                 f"jokes={_picked_jokes} "
                 f"concerns={_picked_concerns} unf={_picked_unfinished} "
                 f"proto={_picked_protocols} threads={_picked_threads}"

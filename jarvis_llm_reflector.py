@@ -107,7 +107,8 @@ class LlmReflector:
         return hashlib.md5(raw.encode('utf-8')).hexdigest()
     
     def reflect(self, model: str, system_prompt: str, user_prompt: str,
-                force: bool = False, cache_ttl: int = 1800) -> dict:
+                force: bool = False, cache_ttl: int = 1800,
+                caller: str = None) -> dict:
         """统一 LLM 反思接口
         
         Args:
@@ -116,6 +117,9 @@ class LlmReflector:
             user_prompt: 用户数据
             force: 是否强制忽略缓存
             cache_ttl: 缓存有效期（秒）
+            caller: KeyRouter caller name. None 默认 CALLER_REFLECTOR (MEDIUM).
+                    🆕 [P1 / Sir 2026-05-25 22:10] InnerThoughtDaemon 传
+                    KeyRouter.CALLER_INNER_THOUGHT → 自动 LOW priority + 30/min 限速.
         
         Returns:
             {'success': bool, 'result': dict|None, 'raw_text': str, 'cached': bool}
@@ -142,8 +146,9 @@ class LlmReflector:
                     contents=f"{system_prompt}\n\n{user_prompt}"
                 )
             
+            _caller_resolved = caller or KeyRouter.CALLER_REFLECTOR
             res, _key_name, _client = safe_gemini_call(
-                self.key_router, KeyRouter.CALLER_REFLECTOR, model, _call,
+                self.key_router, _caller_resolved, model, _call,
                 max_retries=3, base_delay=1.5,
                 model_name=model_name, contents_text=f"{system_prompt}\n\n{user_prompt}"
             )
