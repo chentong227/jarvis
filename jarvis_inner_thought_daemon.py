@@ -142,9 +142,20 @@ class InnerThoughtDaemon:
             daemon=True,
         )
         self._thread.start()
+        # 🆕 [Sir 2026-05-26 00:20 真问"显示在想什么"] 启动 cooldown snapshot
+        # 让 Sir 一眼看见: 5 类都 free → daemon 60s 后真出 thought
+        # (修配套 _load_persist 不再恢复 cooldown ts).
+        free_now = self._compute_free_categories()
+        cooldown_status = (
+            f"all 5 categories FREE (60s 后真出新 thought)"
+            if len(free_now) == 5
+            else f"{len(free_now)}/5 free: {','.join(free_now)} | "
+                 f"cooldown: {','.join(c for c in 'ABCDE' if c not in free_now)}"
+        )
         self._bg_log(
             f"💭 [InnerThought] daemon started "
-            f"(loaded {len(self._thoughts)} thoughts from last 24h)"
+            f"(loaded {len(self._thoughts)} thoughts from last 24h, "
+            f"{cooldown_status})"
         )
 
     def stop(self) -> None:
@@ -845,11 +856,12 @@ class InnerThoughtDaemon:
                         self._thoughts.append(InnerThought(**d))
                     except (json.JSONDecodeError, TypeError):
                         continue
-            # rebuild _last_category_ts from loaded
-            for t in self._thoughts:
-                cat_ts = self._last_category_ts.get(t.category, 0.0)
-                if t.ts > cat_ts:
-                    self._last_category_ts[t.category] = t.ts
+            # 🆕 [Sir 2026-05-26 00:20 真问"为什么不显示在想什么了"] 治本:
+            # 不再从 persist 重建 _last_category_ts. 重启 = 新 session,
+            # cooldown 全 reset 让 daemon 第一个 tick (60s) 真出新 thought.
+            # SOUL inject 仍读 self._thoughts (给主脑 24h 历史连续性), 不丢.
+            # 老 BUG: load 14 旧 thought → 5 类全 in cooldown → 23min 不动 →
+            # Sir 终端零新 thought 显示, 误以为 daemon dead.
         except Exception as e:
             self._bg_log(f"⚠️ [InnerThought] load persist fail: {e}")
 
