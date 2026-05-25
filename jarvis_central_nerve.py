@@ -394,6 +394,12 @@ class CentralNerve:
         # Sir 不用跑 CLI, 不用每周 dump 看. 详 jarvis_daemon_health_monitor.py.
         self._init_daemon_health_monitor()
 
+        # 🆕 [WRC / Sir 2026-05-25 23:52 真问 "3 也做"] WeeklyReflectionConsolidator
+        # 灵魂工程 Layer 4.5 — 周反思合并器. 周日 03:xx 提 7d hippocampus
+        # self_reflection events 的 pattern, propose Sir 升级到 long-term store
+        # (sir_profile / unspoken_protocols / etc). 准则 7 Sir 元否决 (不直接 mutate).
+        self._init_weekly_reflection_consolidator()
+
         # [Reshape M6.3 third wave / 2026-05-24] SoulEvaluator Layer 5 init helper. 行为不变.
         self._init_soul_evaluator()
 
@@ -1674,6 +1680,34 @@ User: {user_input}
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"⚠️ [DaemonHealthMonitor] init fail (非致命): {_hm_e}")
+            except Exception:
+                pass
+
+    def _init_weekly_reflection_consolidator(self) -> None:
+        """🆕 [WRC / Sir 2026-05-25 23:52 真问 "3 也做"] WeeklyReflectionConsolidator — 灵魂工程 Layer 4.5.
+
+        每周日 03:xx fire 一次, 提 7d hippocampus self_reflection event 的
+        recurring pattern, propose 到 review queue (memory_pool/long_term_insights.jsonl)
+        + publish 'weekly_insight_proposed' SWM 让 Sir dashboard 看 + 一键 accept/reject.
+        不直接 mutate sir_profile (准则 7 Sir 元否决).
+
+        启动条件: key_router + hippocampus 可选 (None 时模块自身 silent skip).
+        """
+        self.weekly_reflection_consolidator = None
+        try:
+            from jarvis_weekly_reflection_consolidator import (
+                WeeklyReflectionConsolidator, set_default_consolidator
+            )
+            self.weekly_reflection_consolidator = WeeklyReflectionConsolidator(
+                key_router=self.key_router,
+                central_nerve=self,
+            )
+            self.weekly_reflection_consolidator.start()
+            set_default_consolidator(self.weekly_reflection_consolidator)
+        except Exception as _wrc_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [WeeklyReflectionConsolidator] init fail (非致命): {_wrc_e}")
             except Exception:
                 pass
 

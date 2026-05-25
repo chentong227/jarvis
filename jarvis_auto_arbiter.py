@@ -894,6 +894,12 @@ class AutoArbiterDaemon:
             os.makedirs(os.path.dirname(self.PERSIST_PATH), exist_ok=True)
             with open(self.PERSIST_PATH, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(asdict(d), ensure_ascii=False) + '\n')
+            # 🆕 [Sir 2026-05-25 23:50 "防爆"] every 10 writes cheap rotate check
+            try:
+                from jarvis_jsonl_rotator import maybe_rotate
+                maybe_rotate(self.PERSIST_PATH, check_every_n_writes=10)
+            except Exception:
+                pass
         except Exception as e:
             self._bg_log(f"⚠️ [AutoArbiter] persist fail: {e}")
 

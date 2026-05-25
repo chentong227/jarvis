@@ -125,6 +125,12 @@ HTML_TEMPLATE = r"""
          title="贾维斯自己拍板 review queue (低风险真自决, 中风险给建议) - Sir 一键撤销 + 每日反思迭代准确性">
         🤖 自决
       </a>
+      <!-- 🆕 [WRC / Sir 2026-05-25 23:52 真问 "3 也做"] WeeklyReflectionConsolidator 入口 -->
+      <a href="/weekly_insights"
+         class="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 transition text-sm font-medium"
+         title="贾维斯每周日 03:xx 自合并 7d self_reflection 提 long-term insight - Sir 一键 accept/reject (不直接 mutate sir_profile)">
+        🪞 周反思
+      </a>
       <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] intent log 入口 (老的没显示) -->
       <a href="/intent_resolved"
          class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 transition text-sm font-medium"
@@ -4734,6 +4740,346 @@ def page_auto_arbiter():
     """🆕 [AA / Sir 2026-05-25 22:58] /auto_arbiter dashboard page."""
     from flask import make_response
     resp = make_response(render_template_string(_AUTO_ARBITER_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# ============================================================
+# 🆕 [WRC / Sir 2026-05-25 23:52 真问 "3 也做"] /weekly_insights dashboard
+# 灵魂工程 Layer 4.5 — 周反思合并器. Sir 一键 accept/reject 长期 insight.
+# 数据源: memory_pool/long_term_insights.jsonl
+# 准则 7 Sir 元否决 — accept 也不直接 mutate sir_profile (Sir 手工升级)
+# ============================================================
+
+_WRC_STATE_ZH = {
+    'review': '🪞 待审',
+    'accepted': '✅ Sir 已通过',
+    'rejected': '❌ Sir 已拒',
+}
+
+
+@app.route('/api/weekly_insights')
+def api_weekly_insights():
+    """🆕 [WRC] List weekly insights.
+
+    Query params:
+      state: 'review' / 'accepted' / 'rejected' / 'all' (default all)
+      limit: max records (default 100)
+    """
+    try:
+        state_filter = (request.args.get('state', 'all') or 'all').lower()
+        limit = int(request.args.get('limit', 100) or 100)
+
+        persist_path = os.path.join(ROOT, 'memory_pool',
+                                       'long_term_insights.jsonl')
+        if not os.path.exists(persist_path):
+            return jsonify({
+                'ok': True, 'insights': [], 'stats': {
+                    'total': 0, 'by_state': {}, 'last_fired_week_key': '',
+                },
+                'note': 'no insights yet (周日 03:xx 才 fire)',
+            })
+
+        # 读最新 by id (last-write-wins, 同模块 _load_persist 逻辑)
+        latest_by_id = {}
+        with open(persist_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    if d.get('id'):
+                        latest_by_id[d['id']] = d
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        records = sorted(latest_by_id.values(),
+                            key=lambda r: -float(r.get('ts', 0)))
+        if state_filter != 'all':
+            records = [r for r in records
+                          if r.get('state', 'review') == state_filter]
+        records = records[:limit]
+
+        # 加 zh state label
+        for r in records:
+            r['_state_zh'] = _WRC_STATE_ZH.get(
+                r.get('state', 'review'), r.get('state', ''))
+
+        # stats
+        by_state = {}
+        for d in latest_by_id.values():
+            s = d.get('state', 'review')
+            by_state[s] = by_state.get(s, 0) + 1
+
+        live_last_week = ''
+        try:
+            from jarvis_weekly_reflection_consolidator import (
+                get_default_consolidator
+            )
+            c = get_default_consolidator()
+            if c is not None:
+                live_last_week = c.get_stats().get('last_fired_week_key', '')
+        except Exception:
+            pass
+
+        return jsonify({
+            'ok': True,
+            'insights': records,
+            'stats': {
+                'total': len(latest_by_id),
+                'by_state': by_state,
+                'last_fired_week_key': live_last_week,
+            },
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/weekly_insights/decide', methods=['POST'])
+def api_weekly_insights_decide():
+    """🆕 [WRC] Sir 一键 accept/reject 一条 insight.
+
+    POST body: {"insight_id": "wi_...", "decision": "accept"|"reject",
+                 "reason": "optional"}
+    """
+    data = request.get_json(silent=True) or {}
+    insight_id = (data.get('insight_id') or '').strip()
+    decision = (data.get('decision') or '').strip().lower()
+    reason = (data.get('reason') or '').strip()[:200]
+    if not insight_id or decision not in ('accept', 'reject'):
+        return jsonify({
+            'ok': False,
+            'error': 'insight_id + decision (accept|reject) required',
+        }), 400
+    try:
+        from jarvis_weekly_reflection_consolidator import (
+            get_default_consolidator
+        )
+        c = get_default_consolidator()
+        if c is None:
+            return jsonify({
+                'ok': False,
+                'error': 'WeeklyReflectionConsolidator daemon not active',
+            }), 503
+        if decision == 'accept':
+            ok = c.sir_accept(insight_id, reason)
+        else:
+            ok = c.sir_reject(insight_id, reason)
+        if not ok:
+            return jsonify({
+                'ok': False, 'error': f'insight {insight_id} not found',
+            }), 404
+        return jsonify({'ok': True, 'insight_id': insight_id,
+                          'new_state': 'accepted' if decision == 'accept'
+                          else 'rejected'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+_WEEKLY_INSIGHTS_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>🪞 周反思 (WeeklyReflectionConsolidator)</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,'Segoe UI',sans-serif;
+          background:#0d1117;color:#c9d1d9;line-height:1.5}
+    .header{padding:1.2rem 1.8rem;background:#161b22;border-bottom:1px solid #30363d}
+    .header h1{margin:0;font-size:1.5rem;color:#9ad1be}
+    .header p{margin:.4rem 0 0;color:#8b949e;font-size:.92rem}
+    .legend{margin-top:.4rem;color:#6e7681;font-size:.83rem}
+    .legend code{background:#161b22;padding:.1rem .3rem;border-radius:3px}
+    .controls{padding:1rem 1.8rem;background:#0d1117;border-bottom:1px solid #30363d;
+                display:flex;gap:1rem;flex-wrap:wrap;align-items:center}
+    .controls label{font-size:.88rem;color:#8b949e}
+    .controls select,.controls input[type=number]{
+        background:#161b22;color:#c9d1d9;border:1px solid #30363d;
+        padding:.3rem .6rem;border-radius:5px;font-size:.88rem}
+    .controls button{background:#238636;color:#fff;border:0;
+        padding:.4rem .9rem;border-radius:5px;cursor:pointer;font-size:.88rem}
+    .controls button:hover{background:#2ea043}
+    .status{margin-left:auto;color:#9ad1be;font-size:.85rem}
+    .container{padding:1.5rem 1.8rem}
+    .stats{display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+    .stat{background:#161b22;border:1px solid #30363d;border-radius:6px;
+            padding:.7rem 1.2rem;flex:1;min-width:160px}
+    .stat-label{color:#6e7681;font-size:.78rem;text-transform:uppercase}
+    .stat-value{color:#c9d1d9;font-size:1.4rem;font-weight:600;margin-top:.2rem}
+    .insight{background:#161b22;border:1px solid #30363d;border-radius:6px;
+               padding:1rem 1.2rem;margin-bottom:.8rem}
+    .insight-head{display:flex;justify-content:space-between;
+                   align-items:start;flex-wrap:wrap;gap:.5rem}
+    .insight-state{padding:.18rem .55rem;border-radius:4px;
+                    font-size:.78rem;font-weight:600}
+    .state-review{background:#1f6feb33;color:#79c0ff}
+    .state-accepted{background:#23863633;color:#7ee787}
+    .state-rejected{background:#da363322;color:#ff7b72}
+    .insight-ts{color:#6e7681;font-size:.78rem}
+    .insight-pattern{color:#9ad1be;font-size:1rem;margin-top:.5rem;
+                     font-weight:500}
+    .insight-action{color:#c9d1d9;font-size:.92rem;margin-top:.4rem}
+    .insight-meta{color:#6e7681;font-size:.78rem;margin-top:.5rem}
+    .insight-excerpts{margin-top:.5rem;background:#0d1117;
+                       padding:.5rem .8rem;border-radius:4px;
+                       border:1px solid #21262d}
+    .insight-excerpts ul{margin:.2rem 0;padding-left:1.2rem;font-size:.85rem;
+                          color:#8b949e}
+    .actions{margin-top:.7rem;display:flex;gap:.5rem}
+    .btn{padding:.35rem .8rem;border-radius:4px;cursor:pointer;
+          font-size:.85rem;border:0;font-weight:500}
+    .btn-accept{background:#238636;color:#fff}
+    .btn-accept:hover{background:#2ea043}
+    .btn-reject{background:#6e7681;color:#fff}
+    .btn-reject:hover{background:#8b949e}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .empty-state{padding:2rem;text-align:center;color:#6e7681}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🪞 周反思 (WeeklyReflectionConsolidator)</h1>
+    <p>每周日 03:xx 自动 fire 一次. 从 Hippocampus 提 7d <code>self_reflection</code> events, LLM (Flash-Lite) 找 recurring pattern, propose long-term insight 给 Sir. 准则 7 Sir 元否决: accept 不直接 mutate <code>sir_profile</code>, Sir 手动决定升级.</p>
+    <p class="legend">数据源: <code>memory_pool/long_term_insights.jsonl</code> · 灵魂工程 Layer 4.5 · 成本 ~$0.001/周</p>
+  </div>
+  <div class="controls">
+    <label>状态: <select id="state-sel">
+      <option value="all">全部</option>
+      <option value="review" selected>🪞 待审</option>
+      <option value="accepted">✅ 已通过</option>
+      <option value="rejected">❌ 已拒</option>
+    </select></label>
+    <label>限制: <input type="number" id="limit-input" value="100"
+                          min="1" max="500" style="width:80px"></label>
+    <button onclick="loadInsights()">🔄 刷新</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="container">
+    <div class="stats" id="stats-box"></div>
+    <div id="insights-box"></div>
+  </div>
+  <script>
+    function escapeHtml(s){
+      if(!s) return '';
+      return String(s).replace(/[&<>"']/g, function(m){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+      });
+    }
+    async function decideInsight(insightId, decision){
+      const reason = prompt(
+        decision==='accept'
+          ? 'Sir 通过这个 insight 的原因 (选填):'
+          : 'Sir 拒绝这个 insight 的原因 (选填):'
+      );
+      if(reason===null) return;
+      const btns = document.querySelectorAll(`[data-iid="${insightId}"]`);
+      btns.forEach(b=>b.disabled=true);
+      try{
+        const r = await fetch('/api/weekly_insights/decide', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({insight_id:insightId, decision:decision,
+                                 reason:reason||''}),
+        });
+        const data = await r.json();
+        if(data.ok){
+          loadInsights();
+        } else {
+          alert('失败: ' + (data.error||'unknown'));
+          btns.forEach(b=>b.disabled=false);
+        }
+      } catch(e){
+        alert('网络错: ' + e.message);
+        btns.forEach(b=>b.disabled=false);
+      }
+    }
+    function loadInsights(){
+      const state = document.getElementById('state-sel').value;
+      const limit = document.getElementById('limit-input').value || 100;
+      document.getElementById('status').textContent = '⏳ loading...';
+      fetch(`/api/weekly_insights?state=${state}&limit=${limit}`)
+        .then(r=>r.json())
+        .then(data=>{
+          if(!data.ok){
+            document.getElementById('insights-box').innerHTML =
+              `<div class="empty-state">⚠️ ${escapeHtml(data.error||'unknown')}</div>`;
+            document.getElementById('status').textContent = '';
+            return;
+          }
+          const s = data.stats || {};
+          const by = s.by_state || {};
+          document.getElementById('stats-box').innerHTML = `
+            <div class="stat"><div class="stat-label">总 insight 数</div>
+              <div class="stat-value">${s.total||0}</div></div>
+            <div class="stat"><div class="stat-label">🪞 待审</div>
+              <div class="stat-value">${by.review||0}</div></div>
+            <div class="stat"><div class="stat-label">✅ 已通过</div>
+              <div class="stat-value">${by.accepted||0}</div></div>
+            <div class="stat"><div class="stat-label">❌ 已拒</div>
+              <div class="stat-value">${by.rejected||0}</div></div>
+            <div class="stat"><div class="stat-label">上次 fire 周</div>
+              <div class="stat-value" style="font-size:1rem">
+                ${escapeHtml(s.last_fired_week_key||'尚未')}</div></div>
+          `;
+          const list = data.insights || [];
+          if(list.length === 0){
+            document.getElementById('insights-box').innerHTML =
+              `<div class="empty-state">📭 无 insight (${escapeHtml(data.note||'当前筛选条件下无记录')})</div>`;
+          } else {
+            document.getElementById('insights-box').innerHTML = list.map(r=>{
+              const stateCls = `state-${r.state||'review'}`;
+              const stateLabel = r._state_zh || r.state;
+              const conf = r.confidence ? (r.confidence*100).toFixed(0)+'%' : '?';
+              const excerpts = (r.evidence_excerpts||[]).map(e=>
+                `<li>${escapeHtml(e)}</li>`).join('');
+              const actionsHtml = r.state==='review' ? `
+                <div class="actions">
+                  <button class="btn btn-accept" data-iid="${r.id}"
+                    onclick="decideInsight('${r.id}','accept')">✅ Sir 通过</button>
+                  <button class="btn btn-reject" data-iid="${r.id}"
+                    onclick="decideInsight('${r.id}','reject')">❌ Sir 拒</button>
+                </div>` : (r.sir_decision_reason ? `
+                <div class="insight-meta">Sir 理由: ${escapeHtml(r.sir_decision_reason)}</div>`
+                : '');
+              return `
+                <div class="insight">
+                  <div class="insight-head">
+                    <span class="insight-state ${stateCls}">${stateLabel}</span>
+                    <span class="insight-ts">${escapeHtml(r.ts_iso||'')} · ${escapeHtml(r.week_range_iso||'')}</span>
+                  </div>
+                  <div class="insight-pattern">${escapeHtml(r.pattern_summary||'')}</div>
+                  <div class="insight-action">💡 ${escapeHtml(r.suggested_action||'')}</div>
+                  <div class="insight-meta">置信度 ${conf} · evidence ${r.evidence_count||0} 条</div>
+                  ${excerpts ? `<div class="insight-excerpts">证据节选:<ul>${excerpts}</ul></div>` : ''}
+                  ${actionsHtml}
+                </div>`;
+            }).join('');
+          }
+          document.getElementById('status').textContent =
+            `✓ ${list.length} 条 @ ${new Date().toLocaleTimeString()}`;
+        })
+        .catch(err=>{
+          document.getElementById('insights-box').innerHTML =
+            `<div class="empty-state">⚠️ fetch 错: ${escapeHtml(err.message)}</div>`;
+          document.getElementById('status').textContent = '';
+        });
+    }
+    loadInsights();
+    setInterval(loadInsights, 30000);
+  </script>
+</body>
+</html>
+"""
+
+
+@app.route('/weekly_insights')
+def page_weekly_insights():
+    """🆕 [WRC / Sir 2026-05-25 23:52] /weekly_insights dashboard page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_WEEKLY_INSIGHTS_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp

@@ -164,7 +164,14 @@ class TestL3HealthMonitorBasic(unittest.TestCase):
 
     def test_init_does_not_crash(self):
         from jarvis_daemon_health_monitor import DaemonHealthMonitor
-        m = DaemonHealthMonitor()
+        # 用临时不存在 path 确保 _load_persist 不读生产环境已有 daemon_health.json
+        # (准则 8 优雅: test isolation, 不依赖生产 state)
+        tmp_path = os.path.join(
+            tempfile.gettempdir(),
+            f'health_isolated_{time.time()}.json',
+        )
+        with patch.object(DaemonHealthMonitor, 'PERSIST_PATH', tmp_path):
+            m = DaemonHealthMonitor()
         self.assertIsNotNone(m)
         self.assertEqual(m._history, [])
 

@@ -214,6 +214,21 @@ class InnerThoughtDaemon:
         if not free_categories:
             # 所有 5 类都 cooldown — skip 不调 LLM (节省 + 准则 1 高效)
             self._cooldown_skip_count += 1
+            # 🆕 [Sir 2026-05-25 23:52 真问"为什么不反思了"] 每 5 tick log 1 次
+            # 让 Sir 看见 daemon 真 alive 不是 dead. 算"下次 free" 时间帮诊断.
+            if self._cooldown_skip_count % 5 == 1:
+                now = time.time()
+                next_free_s = min(
+                    (self.SAME_CATEGORY_COOLDOWN_S - (now - ts))
+                    for ts in self._last_category_ts.values()
+                    if ts > 0
+                )
+                self._bg_log(
+                    f"💭 [InnerThought] all 5 categories in cooldown "
+                    f"(skip count {self._cooldown_skip_count}), "
+                    f"next free in {int(next_free_s / 60)}min — daemon alive, "
+                    f"awaiting free slot."
+                )
             return
 
         # collect evidence
@@ -749,8 +764,69 @@ class InnerThoughtDaemon:
             os.makedirs(os.path.dirname(self.PERSIST_PATH), exist_ok=True)
             with open(self.PERSIST_PATH, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(asdict(thought), ensure_ascii=False) + '\n')
+            # 🆕 [Sir 2026-05-25 23:50 "防爆"] every 10 writes cheap stat check
+            try:
+                from jarvis_jsonl_rotator import maybe_rotate
+                maybe_rotate(self.PERSIST_PATH, check_every_n_writes=10)
+            except Exception:
+                pass
+            # 🆕 [Sir 2026-05-25 23:50 真问] B 类高 salience self-reflection
+            # 真存 Hippocampus (长期 self-knowledge, 跨 24h jsonl cutoff 仍存)
+            self._maybe_archive_to_hippocampus(thought)
         except Exception as e:
             self._bg_log(f"⚠️ [InnerThought] persist fail: {e}")
+
+    # 🆕 [Sir 2026-05-25 23:50 真问 "反思要不要拿额外的记忆来存"]
+    # B 类 sal >= 0.8 self-reflection (深刻自反思) → 真存 Hippocampus.
+    # 设计 (准则 1 高效 + 6 evidence + 8 优雅):
+    #   - 不每条 thought 都存 (cost 爆 + noise). 只存高 sal B 类 (真深刻反思).
+    #   - 预计 ~5-20 条/月 (cost 极低, $0.001-$0.005/月)
+    #   - 跨 24h jsonl cutoff 仍能 search (Hippocampus decay 30 天 halflife)
+    #   - 长期演化基础: 几个月后 Sir 问 "你以前对自己有什么反思过?"
+    #     Hippocampus 真能召回历史 self_reflection events
+    HIPPOCAMPUS_ARCHIVE_THRESHOLD = 0.8
+
+    def _maybe_archive_to_hippocampus(self, thought) -> None:
+        """高 salience B 类反思 → Hippocampus 长期存."""
+        if thought.category != 'B':
+            return
+        if thought.salience < self.HIPPOCAMPUS_ARCHIVE_THRESHOLD:
+            return
+        try:
+            # 直接走 Hippocampus.add_memory (走 MemoryHub 太绕)
+            hc = None
+            if self.nerve:
+                hc = getattr(self.nerve, 'hippocampus', None)
+            if hc is None or not hasattr(hc, 'add_memory'):
+                return
+            # cost-light: 不抢 LLM caller 流量
+            summary = (
+                f"[Self-Reflection / sal={thought.salience:.2f}] "
+                f"{thought.thought}"
+            )
+            try:
+                hc.add_memory(
+                    intent='self_reflection',
+                    summary=summary,
+                    entities=[{
+                        'type': 'self_reflection',
+                        'category': 'B',
+                        'thought_id': thought.id,
+                        'salience': thought.salience,
+                        'sir_state': thought.sir_state,
+                    }],
+                    gemini_key='',  # add_memory 会自己经 key_router 拿 key
+                )
+                self._bg_log(
+                    f"🧬 [InnerThought→Hippocampus] B-thought "
+                    f"(sal={thought.salience:.2f}) archived to long-term memory"
+                )
+            except Exception as e:
+                self._bg_log(
+                    f"⚠️ [InnerThought→Hippocampus] archive fail (非致命): {e}"
+                )
+        except Exception:
+            pass
 
     def _load_persist(self) -> None:
         if not os.path.exists(self.PERSIST_PATH):

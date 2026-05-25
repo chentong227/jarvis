@@ -43,6 +43,10 @@ KNOWN_JSONL_FILES = [
     'memory_pool/skill_registry.jsonl',
     'memory_pool/pending_callbacks.jsonl',
     'memory_pool/lineage.jsonl',          # [Reshape M1.6 / 2026-05-24] Lineage trace evidence + decision records
+    # 🆕 [Sir 2026-05-25 23:50 真问"防爆"] 新 daemon 加入防爆 list
+    'memory_pool/inner_thoughts.jsonl',         # P1 InnerThought daemon (50-200/day)
+    'memory_pool/auto_arbiter_log.jsonl',       # AA AutoArbiter (~10/day)
+    'memory_pool/long_term_insights.jsonl',     # WRC Weekly insights (~1/week)
 ]
 
 
