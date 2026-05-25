@@ -318,6 +318,133 @@ class CommitmentWatcher(threading.Thread):
             except Exception:
                 pass
 
+    # 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] forget commitment 路径
+    # =========================================================
+    # 源 BUG: Sir 让"忘记 8 点休息承诺", 主脑 emit `mutation.update params={'all'}` fail
+    # 或撒谎 "I have removed the 20:30 rest commitment". 没真删 — 因为
+    # CommitmentWatcher 没暴露 forget/delete API 给 FAST_CALL.
+    # 治本: 加 forget_commitment(hint), 支持模糊匹配 desc / db_id, 真删 + persist.
+    # FAST_CALL handler 配套 (chat_bypass commitment_watcher.forget).
+    # =========================================================
+    def forget_commitment(self, hint: str = '', db_id: int = 0,
+                          all_active: bool = False) -> dict:
+        """删除 commitment. 支持: 模糊匹配 desc / db_id 精确 / all_active.
+
+        Args:
+            hint: 模糊匹配 desc (substring 或 含数字时间). 优先 db_id.
+            db_id: SQLite Commitments.id 精确匹配.
+            all_active: True → 清所有 active (nudged=False) commitment (Sir 极端 reset 用).
+
+        Returns:
+            {'success': bool, 'deleted_count': int, 'deleted_desc': [str],
+             'msg': str}
+        """
+        result = {'success': False, 'deleted_count': 0,
+                  'deleted_desc': [], 'msg': ''}
+        if not hint and not db_id and not all_active:
+            result['msg'] = "缺参数: 需 hint / db_id / all_active 至少一个"
+            return result
+        with self._lock:
+            to_delete = []
+            for c in self.commitments:
+                if all_active and not c.get('nudged'):
+                    to_delete.append(c)
+                    continue
+                if db_id and c.get('db_id') == db_id:
+                    to_delete.append(c)
+                    continue
+                if hint:
+                    desc = (c.get('description') or '') + ' ' + (c.get('source_text') or '')
+                    # 简单模糊: hint 任何 token 在 desc 出现
+                    hint_lower = hint.lower().strip()
+                    desc_lower = desc.lower()
+                    # 提 hint 关键 token (中文按字 + 英文按词)
+                    matched = False
+                    if hint_lower in desc_lower:
+                        matched = True
+                    else:
+                        # 提数字/时间 token
+                        import re as _re_h
+                        nums = _re_h.findall(r'\d+(?::\d+)?', hint)
+                        for n in nums:
+                            if n in desc:
+                                matched = True
+                                break
+                        # 提关键词 (休息/rest/stretch/活动/sleep/hydrate/water)
+                        for kw in ('休息', 'rest', 'sleep', '睡', 'stretch',
+                                    '活动', 'hydrate', '喝水', 'water',
+                                    '锻炼', 'exercise', 'walk'):
+                            if kw in hint_lower and kw in desc_lower:
+                                matched = True
+                                break
+                    if matched:
+                        to_delete.append(c)
+
+            for c in to_delete:
+                try:
+                    self.commitments.remove(c)
+                    result['deleted_desc'].append(c.get('description', '')[:80])
+                except ValueError:
+                    pass
+
+            result['deleted_count'] = len(to_delete)
+
+        # 持久化: SQLite Commitments (soft delete) + PromiseLog
+        if to_delete:
+            try:
+                hippo = self._get_hippo()
+                if hippo is not None and hasattr(hippo, 'soft_delete_commitment'):
+                    for c in to_delete:
+                        if c.get('db_id'):
+                            try:
+                                hippo.soft_delete_commitment(c['db_id'])
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        result['success'] = (result['deleted_count'] > 0)
+        if result['success']:
+            result['msg'] = (
+                f"✅ commitment_watcher.forget: 删除 {result['deleted_count']} 条: "
+                + '; '.join(result['deleted_desc'][:3])
+            )
+        else:
+            result['msg'] = (
+                f"❌ commitment_watcher.forget: 未找到匹配 (hint='{hint}' "
+                f"db_id={db_id} all={all_active}). 当前 active commitment: "
+                + str([c.get('description', '')[:40]
+                       for c in self.commitments
+                       if not c.get('nudged')][:5])
+            )
+
+        # publish SWM event 让主脑下轮看 evidence
+        try:
+            from jarvis_utils import get_event_bus as _geb_fc
+            _bus_fc = _geb_fc()
+            if _bus_fc is not None:
+                _bus_fc.publish(
+                    etype='commitment_forgotten',
+                    description=(
+                        f"forget hint='{hint[:60]}' → deleted "
+                        f"{result['deleted_count']} commitment(s)"
+                    ),
+                    source='CommitmentWatcher.forget',
+                    salience=0.75,
+                    metadata={
+                        'hint': hint[:120],
+                        'db_id': db_id,
+                        'all_active': all_active,
+                        'deleted_count': result['deleted_count'],
+                        'deleted_desc': result['deleted_desc'][:5],
+                        'success': result['success'],
+                    },
+                )
+        except Exception:
+            pass
+
+        return result
+
     def _load_from_promise_log_locked(self, max_age_hours: float = 48.0) -> int:
         """[M4.5.2] 从 PromiseLog 拉 pending kind=commitment 进 self.commitments.
 
@@ -1896,6 +2023,51 @@ class CommitmentWatcher(threading.Thread):
         return ctx
 
     def _dispatch_commitment_nudge(self, commitment):
+        # 🆕 [Sir 2026-05-25 07:30 真测追根 BUG 治本] AFK skip 路径
+        # =====================================================================
+        # 源 BUG: Sir 不在电脑前 (AFK 5min+), commitment_check 仍推 — Sir 根本不在.
+        # 治本: 主动查 win32api idle_ms, AFK ≥ 5min → publish 'commitment_nudge_skipped'
+        # SWM evidence + skip dispatch. commitment 不退栈 (nudged=False), Sir 回来
+        # 下个 tick 再 evaluate.
+        # =====================================================================
+        try:
+            import win32api as _wapi_cw
+            _idle_ms_cw = _wapi_cw.GetTickCount() - _wapi_cw.GetLastInputInfo()
+            _idle_s_cw = _idle_ms_cw / 1000.0
+            if _idle_s_cw >= 300.0:  # 5min+ AFK
+                try:
+                    from jarvis_utils import bg_log as _afk_cw_bg
+                    _afk_cw_bg(
+                        f"📭 [CommitmentWatcher/AFK] skip — Sir AFK {int(_idle_s_cw / 60)}min "
+                        f"(commit='{commitment.get('description', '')[:50]}')"
+                    )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import get_event_bus as _geb_cw_afk
+                    _bus_cw_afk = _geb_cw_afk()
+                    if _bus_cw_afk is not None:
+                        _bus_cw_afk.publish(
+                            etype='commitment_nudge_skipped',
+                            description=(
+                                f"AFK skip: '{commitment.get('description', '')[:60]}' "
+                                f"(idle={int(_idle_s_cw)}s)"
+                            ),
+                            source='CommitmentWatcher',
+                            salience=0.55,
+                            metadata={
+                                'reason': 'afk',
+                                'idle_seconds': int(_idle_s_cw),
+                                'commitment_desc': commitment.get('description', '')[:120],
+                            },
+                            ttl=300.0,
+                        )
+                except Exception:
+                    pass
+                return  # skip dispatch — commitment 不 mark nudged, 回来 evaluate
+        except Exception:
+            pass
+
         # 🆕 [P5-fix72 / 2026-05-23 17:11] BUG-F: Sir 17:01 ack reminder 后,
         # 17:03 commitment_check 又 fire "stand up and stretch" (同事). 根因:
         # commitment_watcher 不知 reminder_acknowledged. 修法 (准则 6 数据强耦合):

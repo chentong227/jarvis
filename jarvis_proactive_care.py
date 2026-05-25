@@ -1658,6 +1658,52 @@ class ProactiveCareEngine(threading.Thread):
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-25 07:30 真测追根 BUG 治本] AFK skip 路径
+        # =====================================================================
+        # 源 BUG: Sir 不在电脑前 (AFK), proactive_care 仍推 "您已盯日志半小时"
+        # — 但 Sir 根本不在! 数据基础是错的 (sensor 抓 "聚焦时长" 没扣 AFK).
+        # 治本: 主动查当前 idle_ms, AFK ≥ 5min → publish 'proactive_care_skipped'
+        # SWM evidence + skip 本 tick. 主脑/sensor 仍跑, 只是不主动 push __NUDGE__.
+        # =====================================================================
+        try:
+            from jarvis_utils import bg_log as _afk_bg
+            try:
+                import win32api as _wapi_pc
+                _idle_ms_pc = _wapi_pc.GetTickCount() - _wapi_pc.GetLastInputInfo()
+                _idle_s_pc = _idle_ms_pc / 1000.0
+            except Exception:
+                _idle_s_pc = 0.0
+            if _idle_s_pc >= 300.0:  # 5min+ AFK
+                # 节流 log: 10 min 一次防刷屏
+                if now_ts - getattr(self, '_afk_skip_log_at', 0) > 600:
+                    _afk_bg(
+                        f"📭 [ProactiveCare/AFK] skip — Sir AFK {int(_idle_s_pc / 60)}min, "
+                        f"不主动推 nudge (sensor/SWM 仍跑)"
+                    )
+                    self._afk_skip_log_at = now_ts
+                # publish SWM evidence
+                try:
+                    from jarvis_utils import get_event_bus as _geb_afk
+                    _bus_afk = _geb_afk()
+                    if _bus_afk is not None:
+                        _bus_afk.publish(
+                            etype='proactive_care_skipped',
+                            description=f"AFK skip (idle={int(_idle_s_pc)}s)",
+                            source='ProactiveCare',
+                            salience=0.55,
+                            metadata={
+                                'reason': 'afk',
+                                'idle_seconds': int(_idle_s_pc),
+                                'idle_minutes': int(_idle_s_pc / 60),
+                            },
+                            ttl=300.0,
+                        )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         # 1.5. [β-2.5] 跑 sensor → 让 sensor 派生 signal 喂给 concern
         # 不依赖 Sir 主动开口才知道关心啥
         # 🩹 [β.5.27 / 2026-05-20] Sir 02:13 log: 'NoneType object has no attribute tick'.

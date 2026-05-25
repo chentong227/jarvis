@@ -2819,6 +2819,58 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             """).rstrip(),
             trigger=_trigger_correction_dispatcher,
         ),
+        # 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] forget commitment 路径
+        # =====================================================================
+        # 源 BUG: Sir "忘记 8 点休息承诺", 主脑撒谎"removed 20:30 rest commitment".
+        # 主脑 emit `mutation.update params={'all'}` 或 `mutation.delete` 都不对 —
+        # commitment 不在 mutation source schema. 主脑根本不知道走哪个 organ.
+        # 治本: 教 commitment_watcher.forget organ + 强约束"不撒谎已删, 等 tool ack".
+        Directive(
+            id='commitment_forget_routing',
+            source_marker='Sir-2026-05-24-23:41-真测追根',
+            priority=13,  # 与 habit_progress_routing 同级
+            ttl_days=365,
+            tier_whitelist=[],
+            purpose_short='Sir 让 forget commitment → MUST emit FAST_CALL commitment_watcher.forget',
+            text=_tw.dedent("""\
+                [COMMITMENT FORGET ROUTING — Sir 让 forget commitment — MANDATORY]:
+                Sir 说 "忘记 X 承诺" / "取消 X 那个 commitment" / "别催了 X" / "drop the X commitment" →
+                MUST emit FAST_CALL `commitment_watcher.forget` organ.
+
+                ⛔ FORBIDDEN — 这些会让你失败 + 撒谎:
+                   ❌ <FAST_CALL>{"organ":"mutation","command":"update","params":{"field_path":"all"}}</FAST_CALL>
+                      — commitment 不在 mutation source schema, mutation 是 profile/concerns
+                   ❌ <FAST_CALL>{"organ":"mutation","command":"delete"}</FAST_CALL>
+                      — mutation 没 delete 命令
+                   ❌ 主脑只说 "Understood, I've removed it" 没 emit 任何 FAST_CALL
+                      — Integrity Check 会拦 no_tool_called + 撒谎
+                   ❌ 主脑 hallucinate 具体时间 e.g. Sir 说"8 点" 主脑改"20:30"
+                      — 让 tool 用 Sir 原话 hint, 由 forget_commitment 模糊匹配
+
+                ✅ CANONICAL EXAMPLES:
+                   Sir: "忘记 8 点休息的承诺吧"
+                     <FAST_CALL>{"organ":"commitment_watcher","command":"forget",
+                                  "params":{"hint":"8点休息"}}</FAST_CALL>
+                     → tool 模糊匹配 desc 含 "8 点 / 8:00 / 20:00 / 休息 / rest" → 真删
+
+                   Sir: "把所有 active commitment 都清了"
+                     <FAST_CALL>{"organ":"commitment_watcher","command":"forget",
+                                  "params":{"all_active":true}}</FAST_CALL>
+
+                   Sir: "取消 ID:12 那条" (Sir 显式给 db_id)
+                     <FAST_CALL>{"organ":"commitment_watcher","command":"forget",
+                                  "params":{"db_id":12}}</FAST_CALL>
+
+                STEP 1. emit FAST_CALL 不嘴上承诺 ("已删") 之前.
+                STEP 2. 看 tool result (✅ 删了 N 条 / ❌ 未找到匹配).
+                STEP 3. 用 tool result 真话 ack Sir: 成功说 "好的, 已删 X 条";
+                        失败说 "未找到对应 commitment, Sir 想删的是哪条? "
+
+                ⚠️ INTEGRITY: ClaimTracer 会抓 "I have removed / cleared / deleted"
+                  类 claim — 没 commitment_forgotten SWM evidence → unverified → INTEGRITY.
+                """),
+            trigger=lambda **kw: True,  # 任何 turn inject — Sir 随时可能让 forget
+        ),
         # 🆕 [Sir 2026-05-24 23:24 真测追根 BUG 治本] Channel Boundary
         # ============================================================
         # 源 BUG (turn_20260524_232427): Sir "早上7点叫我" → 主脑 emit

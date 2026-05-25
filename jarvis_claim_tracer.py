@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -889,9 +890,47 @@ def build_integrity_alert(current_turn_id: str = '',
     )
     if n > 3:
         examples += f" / ... (+{n - 3} more)"
+    # 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] mark turn as INTEGRITY-injected
+    # 给 PreFlight 看 — INTEGRITY 教主脑承认上轮错, 道歉是合规不是 unsolicited.
+    try:
+        _mark_alert_injected(current_turn_id)
+    except Exception:
+        pass
     return (
         f"[INTEGRITY ALERT] Your previous turn ({latest_turn}) had {n} "
         f"unverified factual claim(s): {examples}. In THIS reply, either "
         f"acknowledge and withdraw plainly, or supply the missing evidence. "
         f"Do not pretend it was never said. (准则 5 言出必行)"
     )
+
+
+# ============================================================
+# 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] alert_injected tracker
+# ============================================================
+# 防 INTEGRITY (教主脑承认上轮错) vs PreFlight (Q1 unsolicited callback) 两防线打架.
+# build_integrity_alert 返非空时 mark turn → PreFlight check 时豁免 Q1.
+# 60s TTL rolling, 防内存泄漏.
+# ============================================================
+_ALERT_INJECTED_TURNS: Dict[str, float] = {}
+_ALERT_INJECTED_LOCK = threading.Lock()
+
+
+def _mark_alert_injected(turn_id: str) -> None:
+    """build_integrity_alert 返非空时调."""
+    if not turn_id:
+        return
+    with _ALERT_INJECTED_LOCK:
+        _ALERT_INJECTED_TURNS[turn_id] = time.time()
+        # GC: 60s 前的清掉
+        _now = time.time()
+        _stale = [k for k, v in _ALERT_INJECTED_TURNS.items() if _now - v > 60]
+        for k in _stale:
+            _ALERT_INJECTED_TURNS.pop(k, None)
+
+
+def was_alert_injected_this_turn(turn_id: str) -> bool:
+    """PreFlight 查 — 本轮 INTEGRITY/Alert 已 inject → 豁免 Q1 unsolicited callback."""
+    if not turn_id:
+        return False
+    with _ALERT_INJECTED_LOCK:
+        return turn_id in _ALERT_INJECTED_TURNS

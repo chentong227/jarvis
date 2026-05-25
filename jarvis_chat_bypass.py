@@ -1763,6 +1763,36 @@ Spoken English:"""
             return (f"❌ concerns: 未知指令 {command} "
                     f"(支持 dismiss/reactivate/progress_update)")
 
+        # 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] commitment_watcher.forget
+        # =====================================================================
+        # 源 BUG: Sir 让"忘记 8 点休息承诺", 主脑 emit `mutation.update params='all'`
+        # fail / 撒谎"removed 20:30". 没真删 — 因为之前没 organ 路径 forget commitment.
+        # 治本: CommitmentWatcher.forget_commitment(hint/db_id/all_active) 模糊匹配
+        # 真删 + persist + publish SWM 'commitment_forgotten' 让主脑下轮看 evidence.
+        if organ_name == "commitment_watcher":
+            try:
+                cw = getattr(self.jarvis, 'commitment_watcher', None) if hasattr(self, 'jarvis') else None
+                if cw is None or not hasattr(cw, 'forget_commitment'):
+                    return ("❌ commitment_watcher.forget: CommitmentWatcher 未初始化 "
+                            "或缺 forget_commitment 方法")
+                if command == "forget":
+                    hint = (params.get('hint', '') or params.get('description', '')
+                            or params.get('match', '') or '').strip()
+                    db_id = 0
+                    try:
+                        db_id = int(params.get('db_id', 0) or 0)
+                    except Exception:
+                        db_id = 0
+                    all_active = bool(params.get('all_active', False)
+                                       or params.get('all', False))
+                    r = cw.forget_commitment(hint=hint, db_id=db_id,
+                                              all_active=all_active)
+                    return r.get('msg', '? unknown result')
+                return (f"❌ commitment_watcher: 未知指令 {command} "
+                        f"(支持 forget {{hint|db_id|all_active}})")
+            except Exception as _cwe:
+                return f"❌ commitment_watcher.{command}: {_cwe}"
+
         # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式
         # ============================================================
         # Sir 痛点: 玩游戏 / 接电话 / 和爸妈说话时, Jarvis 一直回复尴尬.
@@ -3713,6 +3743,8 @@ Spoken English:"""
                         _FAST_CALL_ONLY_ORGANS = (
                             'concerns', 'stand_down', 'promises', 'mutation',
                             'cyclic_task', 'progress',
+                            # 🆕 [Sir 2026-05-24 23:41 真测追根] commitment_watcher.forget
+                            'commitment_watcher',
                         )
                         # 🆕 [P5-fix79 BUG-W / 2026-05-23 21:48] Sir 21:43 真测痛点:
                         # progress.set 成功 → fast-path break → 罐头 "Done, Sir." 替主脑.
@@ -4984,6 +5016,19 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                             if _stm:
                                 _state_lines.append(
                                     f"recent STM: {len(_stm)} turns, last_sir='{(_stm[-1].get('user') or '')[:60]}'"
+                                )
+                        except Exception:
+                            pass
+                        # 🆕 [Sir 2026-05-24 23:41 真测追根 BUG 治本] defense 协调:
+                        # PreFlight 看到 INTEGRITY/Alert 已 inject 这轮 prompt →
+                        # 主脑被强教导承认上轮错, 道歉是合规不是 unsolicited callback.
+                        # 防 INTEGRITY (教承认) vs PreFlight (拦道歉) 两防线打架.
+                        try:
+                            from jarvis_claim_tracer import was_alert_injected_this_turn
+                            if was_alert_injected_this_turn(_turn_id_pf):
+                                _state_lines.append(
+                                    "INTEGRITY_ALERT_INJECTED=true (主脑被教导承认上轮错误, "
+                                    "本轮道歉 / 修正声明是合规的, 不应判 Q1 unsolicited callback)"
                                 )
                         except Exception:
                             pass

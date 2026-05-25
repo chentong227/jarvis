@@ -3851,10 +3851,20 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         except Exception:
                             pass
                         # 立刻 update STM (用当前最佳 clean_intent / cmd, 后台 collect 后覆盖)
+                        # 🆕 [Sir 2026-05-24 23:38 真测追根 BUG 治本] tool_summary 注入 STM
+                        # 防主脑下轮看 STM 撒谎"failed internally" (其实第一轮 tool 成功了).
+                        _tool_sum_stm = ''
+                        try:
+                            _tr = getattr(self.chat_bypass, '_last_tool_results', []) or []
+                            if _tr:
+                                _tool_sum_stm = ' | '.join(str(x)[:120] for x in _tr[:5])
+                        except Exception:
+                            pass
                         self.jarvis.short_term_memory.append({
                             "time": time.strftime("%H:%M:%S"),
                             "user": clean_intent,
-                            "jarvis": filtered_reply + _integrity_note + _capability_note
+                            "jarvis": filtered_reply + _integrity_note + _capability_note,
+                            "tool_summary": _tool_sum_stm,
                         })
                         # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
                         # 治本 — Sir 23:14 真凶: 主脑读 STM 自身 reply 含数字 → RLHF 自发 callback
@@ -3964,10 +3974,19 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                 except Exception:
                                     print(f"⚠️ [Gatekeeper Slow] 结果收集异常: {e}", file=sys.stderr)
                             
+                            # 🆕 [Sir 2026-05-24 23:38 真测追根 治本] tool_summary 注入 STM
+                            _tool_sum_stm_b = ''
+                            try:
+                                _tr_b = getattr(self.chat_bypass, '_last_tool_results', []) or []
+                                if _tr_b:
+                                    _tool_sum_stm_b = ' | '.join(str(x)[:120] for x in _tr_b[:5])
+                            except Exception:
+                                pass
                             self.jarvis.short_term_memory.append({
                                 "time": time.strftime("%H:%M:%S"),
                                 "user": clean_intent,
-                                "jarvis": filtered_reply + _integrity_note + _capability_note
+                                "jarvis": filtered_reply + _integrity_note + _capability_note,
+                                "tool_summary": _tool_sum_stm_b,
                             })
                             # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
                             try:
@@ -4011,10 +4030,19 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                         _gate_data = self.chat_bypass._gate_data_to_save
                     if hasattr(self.chat_bypass, '_gate_clean_intent') and self.chat_bypass._gate_clean_intent:
                         _gate_intent = self.chat_bypass._gate_clean_intent
+                    # 🆕 [Sir 2026-05-24 23:38 真测追根 治本] tool_summary 注入 STM
+                    _tool_sum_stm_c = ''
+                    try:
+                        _tr_c = getattr(self.chat_bypass, '_last_tool_results', []) or []
+                        if _tr_c:
+                            _tool_sum_stm_c = ' | '.join(str(x)[:120] for x in _tr_c[:5])
+                    except Exception:
+                        pass
                     self.jarvis.short_term_memory.append({
                         "time": time.strftime("%H:%M:%S"),
                         "user": _gate_intent,
-                        "jarvis": filtered_reply + _integrity_note + _capability_note
+                        "jarvis": filtered_reply + _integrity_note + _capability_note,
+                        "tool_summary": _tool_sum_stm_c,
                     })
                     # 🆕 [Gap-Z1 / β.5.46-fix4 / 2026-05-21 23:15] STM Summarize async
                     try:

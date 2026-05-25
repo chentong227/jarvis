@@ -893,6 +893,13 @@ def format_stm_for_prompt(stm: list, take_last: int = 6, max_chars: int = 2000,
             lines.append(f"{time_prefix}[JARVIS] {jarvis_part}")
         elif user_part:
             lines.append(f"{time_prefix}{tag} {user_part}")
+        # 🆕 [Sir 2026-05-24 23:38 真测追根 BUG 治本] tool_summary 注入
+        # 源 BUG: 主脑下轮看 STM 只见自己 reply 文本"已设置", 不见 tool_result.
+        # → Sir 问"确定吗", 主脑结合 PreFlight 怀疑撒谎"failed internally".
+        # 修法: STM record 时存 tool_summary, 这里渲染让主脑下轮看 evidence.
+        tool_sum = (m.get('tool_summary', '') or '').strip()
+        if tool_sum:
+            lines.append(f"    [TOOL EVIDENCE] {tool_sum[:240]}")
     text = "\n".join(lines)
     if len(text) > max_chars:
         text = "..." + text[-max_chars:]

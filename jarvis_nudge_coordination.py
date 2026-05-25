@@ -115,15 +115,14 @@ def publish_proactive_nudge_fired(
                 m = e.get('metadata') or {}
                 if m.get('kind') == kind:
                     boost_count += 1
-            if boost_count >= 3:
-                salience = max(salience, 0.98)
-                boost_note = f' [{boost_count + 1}th fire in 60s — DEFAULT [SILENCE]]'
-            elif boost_count >= 2:
-                salience = max(salience, 0.92)
-                boost_note = f' [{boost_count + 1}rd fire in 60s — reconsider [SILENCE]]'
+            # Sir 真测 2026-05-24 23:40 boost 0.85 不够 — 主脑仍 voice.
+            # 加强: N=1 即 0.95 critical, evidence 突出. directive [SILENCE] 教导.
+            if boost_count >= 2:
+                salience = max(salience, 0.99)
+                boost_note = f' [REDUNDANT NUDGE — {boost_count + 1}th fire in 60s — REPLY MUST BE [SILENCE]]'
             elif boost_count >= 1:
-                salience = max(salience, 0.85)
-                boost_note = f' [{boost_count + 1}nd fire in 60s]'
+                salience = max(salience, 0.95)
+                boost_note = f' [REDUNDANT NUDGE — {boost_count + 1}nd fire in 60s — strongly prefer [SILENCE]]'
         except Exception:
             pass
 
@@ -142,6 +141,17 @@ def publish_proactive_nudge_fired(
             salience=salience,
             metadata=meta,
         )
+        # 🆕 Sir 23:40 真测 — 加 bg_log 让 Sir 能在 terminal 验证 boost 真触发
+        try:
+            if boost_count >= 1:
+                from jarvis_utils import bg_log as _bn_bg
+                _bn_bg(
+                    f"🔁 [NudgeCoord/SalienceBoost] {kind}/{sentinel} "
+                    f"60s 内第 {boost_count + 1} 次 fire → salience {salience:.2f} "
+                    f"(主脑 SWM 必看, 应自决 [SILENCE])"
+                )
+        except Exception:
+            pass
         return True
     except Exception:
         return False

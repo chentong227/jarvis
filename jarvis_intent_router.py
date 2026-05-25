@@ -59,6 +59,58 @@ class IntentParser:
             return False
         return bool(_TOOL_CALL_TAG_RE.search(text))
 
+    # 🆕 [Sir 2026-05-24 23:38 真测追根 BUG 治本] 参数 alias 表
+    # =====================================================================
+    # 源 BUG: Sir 让设 reminder, 主脑 emit:
+    #   <TOOL_CALL>{"intent":"set_reminder","trigger_time":"...","intent_detail":"Wake up Sir"}</TOOL_CALL>
+    # 因 outer `intent` 字段名跟 add_reminder 的 `intent` param 冲突, LLM 自作聪明
+    # 改成 `intent_detail` → IntentParser 平铺进 args 但 add_reminder fail "缺 intent".
+    # 优雅修法 (准则 6 容错, 不靠 LLM 学规则): 加 alias 表把常见 LLM rename 翻回标准.
+    # 表持久化到 vocab JSON (准则 6.5), 这里只 cache.
+    # =====================================================================
+    _PARAM_ALIAS = {
+        # add_reminder.intent: LLM 名字冲突时改用的 alias
+        'intent_detail': 'intent',
+        'intent_content': 'intent',
+        'intent_text': 'intent',
+        'reminder_intent': 'intent',
+        'reminder_content': 'intent',
+        'reminder_text': 'intent',
+        'reminder': 'intent',
+        'task_content': 'intent',
+        'task_text': 'intent',
+        'content': 'intent',
+        'description': 'intent',
+        'detail': 'intent',
+        'text': 'intent',
+        # add_reminder.trigger_time 常见 alias
+        'time': 'trigger_time',
+        'datetime': 'trigger_time',
+        'when': 'trigger_time',
+        'at': 'trigger_time',
+        'schedule_time': 'trigger_time',
+        # concerns.progress_update.concern_id 常见 alias
+        'id': 'concern_id',
+        'cid': 'concern_id',
+        # concerns.progress_update.current 常见 alias
+        'value': 'current',
+        'count': 'current',
+        'amount': 'current',
+    }
+
+    @classmethod
+    def _apply_param_aliases(cls, args: Dict) -> Dict:
+        """alias 翻译: e.g. intent_detail → intent (LLM 改名时容错)."""
+        if not args or not isinstance(args, dict):
+            return args
+        out = {}
+        for k, v in args.items():
+            canonical = cls._PARAM_ALIAS.get(k, k)
+            # canonical 已存在则 keep 原值 (显式 canonical 优先)
+            if canonical not in out:
+                out[canonical] = v
+        return out
+
     @classmethod
     def extract_all(cls, text: Optional[str]) -> List[IntentCall]:
         """提取所有 <TOOL_CALL>...</TOOL_CALL> 的 IntentCall.
@@ -70,6 +122,10 @@ class IntentParser:
           - args 顶层平铺 (LLM 喜欢把 trigger_time 放外层不在 args 子 dict)
             → 自动把顶层非 reserved key 收进 args
           - intent='organ.command' (点号) 也接受 (转 slash 风格)
+
+        🆕 [Sir 2026-05-24 23:38 真测追根 BUG 治本] 参数 alias:
+          - args 字段名误改 (e.g. intent_detail → intent) 自动翻译
+          - 治 LLM 因 outer `intent` 跟 args.intent 名字冲突自作聪明改名
         """
         if not text:
             return []
@@ -102,6 +158,8 @@ class IntentParser:
                     continue
                 if k not in args:  # args 已显式给的 key 优先
                     args[k] = v
+            # 🆕 容错 3: alias 翻译 (intent_detail → intent etc)
+            args = cls._apply_param_aliases(args)
             calls.append(IntentCall(
                 intent_id=intent_id,
                 args=args,
