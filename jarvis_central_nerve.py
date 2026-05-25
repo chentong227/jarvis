@@ -378,6 +378,16 @@ class CentralNerve:
         # 详 jarvis_inner_thought_daemon.py 顶部 docstring.
         self._init_inner_thought_daemon()
 
+        # 🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiter Daemon —
+        # 灵魂工程 Layer 2.5 (sit between Relational + Reflectors).
+        # tick 30min, 拉 review queue (inside_joke + thread) 自决.
+        # 低风险 (joke/thread): confidence > threshold → 真 activate/reject.
+        # 中风险 (concern/directive): 全 defer_to_sir, dashboard 显示 '🤖 建议'.
+        # Daily reflection 03:xx fire 看 24h Sir revert rate 自调阈值.
+        # Sir 一键 revert: 反向 archive/active + 标 sir_reverted=True.
+        # 详 jarvis_auto_arbiter.py 顶部 docstring.
+        self._init_auto_arbiter()
+
         # [Reshape M6.3 third wave / 2026-05-24] SoulEvaluator Layer 5 init helper. 行为不变.
         self._init_soul_evaluator()
 
@@ -1628,6 +1638,46 @@ User: {user_input}
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[ConcernsLedger] 初始化失败（非致命）：{_cl_e}")
+            except Exception:
+                pass
+
+    def _init_auto_arbiter(self) -> None:
+        """🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiterDaemon — 灵魂工程 Layer 2.5.
+
+        tick 30min, 拉 review queues (inside_joke + thread) 自动评估 + 决策.
+        低风险 (joke/thread): confidence > per-category threshold → 真 activate/reject.
+        中风险 (concern/directive): 全 defer_to_sir, dashboard '🤖 建议' badge.
+        Daily reflection 03:xx 看 24h revert_rate 自调 threshold.
+        Sir 一键 revert: 反向 active/archived + 标 sir_reverted=True.
+
+        启动条件: relational_state 必须就绪. concerns_ledger 可选.
+        """
+        self.auto_arbiter_daemon = None
+        try:
+            from jarvis_auto_arbiter import (
+                AutoArbiterDaemon, set_default_daemon
+            )
+            self.auto_arbiter_daemon = AutoArbiterDaemon(
+                key_router=self.key_router,
+                relational_state=getattr(self, 'relational_state', None),
+                concerns_ledger=getattr(self, 'concerns_ledger', None),
+                central_nerve=self,
+            )
+            self.auto_arbiter_daemon.start()
+            set_default_daemon(self.auto_arbiter_daemon)
+            try:
+                from jarvis_utils import bg_log as _aa_bg
+                _aa_bg(
+                    f"🤖 [AutoArbiter] daemon active "
+                    f"(灵魂工程 Layer 2.5 — 30min tick, 2 类自决 + 2 类建议, "
+                    f"Daily 03:xx self-calibrate)"
+                )
+            except Exception:
+                pass
+        except Exception as _aa_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [AutoArbiter] init fail (非致命): {_aa_e}")
             except Exception:
                 pass
 

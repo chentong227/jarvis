@@ -111,6 +111,9 @@ class KeyRouter:
     # 🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] InnerThoughtDaemon caller
     # 不在 HIGH/MEDIUM 列表 → 自动 LOW priority + 30/min 限速 (P2 保护).
     CALLER_INNER_THOUGHT = 'inner_thought'
+    # 🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiterDaemon caller
+    # 同 LOW priority + 30/min 限速 (后台 daemon, 不挤主流量).
+    CALLER_AUTO_ARBITER = 'auto_arbiter'
 
     PROVIDER_GOOGLE = 'google'
     PROVIDER_OPENROUTER = 'openrouter'

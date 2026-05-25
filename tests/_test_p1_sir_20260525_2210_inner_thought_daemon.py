@@ -304,12 +304,14 @@ class TestL5SoulInjectBlock(unittest.TestCase):
     def _daemon_with_thoughts(self, thoughts_data):
         from jarvis_inner_thought_daemon import InnerThoughtDaemon, InnerThought
         d = InnerThoughtDaemon(key_router=MagicMock())
+        # __init__ 已 _load_persist 真 default jsonl, test 必须清
         d._thoughts = [InnerThought(**td) for td in thoughts_data]
         return d
 
     def test_empty_returns_empty_string(self):
         from jarvis_inner_thought_daemon import InnerThoughtDaemon
         d = InnerThoughtDaemon(key_router=MagicMock())
+        d._thoughts = []  # 清掉 default jsonl 真 thoughts (Sir 重启后有)
         self.assertEqual(d.build_soul_block(), '')
 
     def test_top_3_by_salience(self):
@@ -371,22 +373,21 @@ class TestL6CooldownAndPersist(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             persist_path = os.path.join(tmpdir, 'thoughts.jsonl')
-            d = InnerThoughtDaemon(key_router=MagicMock())
-            d.PERSIST_PATH = persist_path
-            # persist 3 thoughts
-            for i in range(3):
-                t = InnerThought(
-                    id=f't{i}', ts=time.time(), ts_iso='?',
-                    category='A', thought=f'th{i}',
-                    salience=0.5, actionable='none',
-                )
-                d._persist_thought(t)
-            # load
-            d2 = InnerThoughtDaemon(key_router=MagicMock())
-            d2.PERSIST_PATH = persist_path
-            d2._load_persist()
-            self.assertEqual(len(d2._thoughts), 3)
-            self.assertEqual(d2._thoughts[0].id, 't0')
+            # patch class attr 在 __init__ 前 → _load_persist 读 empty path
+            with patch.object(InnerThoughtDaemon, 'PERSIST_PATH', persist_path):
+                d = InnerThoughtDaemon(key_router=MagicMock())
+                # persist 3 thoughts
+                for i in range(3):
+                    t = InnerThought(
+                        id=f't{i}', ts=time.time(), ts_iso='?',
+                        category='A', thought=f'th{i}',
+                        salience=0.5, actionable='none',
+                    )
+                    d._persist_thought(t)
+                # load
+                d2 = InnerThoughtDaemon(key_router=MagicMock())
+                self.assertEqual(len(d2._thoughts), 3)
+                self.assertEqual(d2._thoughts[0].id, 't0')
 
     def test_load_skips_old_thoughts(self):
         from jarvis_inner_thought_daemon import (
@@ -394,24 +395,22 @@ class TestL6CooldownAndPersist(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             persist_path = os.path.join(tmpdir, 'thoughts.jsonl')
-            d = InnerThoughtDaemon(key_router=MagicMock())
-            d.PERSIST_PATH = persist_path
-            now = time.time()
-            t_old = InnerThought(
-                id='old', ts=now - 86400 * 2, ts_iso='?',
-                category='A', thought='old', salience=0.5, actionable='none',
-            )
-            t_new = InnerThought(
-                id='new', ts=now - 60, ts_iso='?',
-                category='B', thought='new', salience=0.5, actionable='none',
-            )
-            d._persist_thought(t_old)
-            d._persist_thought(t_new)
-            d2 = InnerThoughtDaemon(key_router=MagicMock())
-            d2.PERSIST_PATH = persist_path
-            d2._load_persist()
-            self.assertEqual(len(d2._thoughts), 1)
-            self.assertEqual(d2._thoughts[0].id, 'new')
+            with patch.object(InnerThoughtDaemon, 'PERSIST_PATH', persist_path):
+                d = InnerThoughtDaemon(key_router=MagicMock())
+                now = time.time()
+                t_old = InnerThought(
+                    id='old', ts=now - 86400 * 2, ts_iso='?',
+                    category='A', thought='old', salience=0.5, actionable='none',
+                )
+                t_new = InnerThought(
+                    id='new', ts=now - 60, ts_iso='?',
+                    category='B', thought='new', salience=0.5, actionable='none',
+                )
+                d._persist_thought(t_old)
+                d._persist_thought(t_new)
+                d2 = InnerThoughtDaemon(key_router=MagicMock())
+                self.assertEqual(len(d2._thoughts), 1)
+                self.assertEqual(d2._thoughts[0].id, 'new')
 
 
 # ==========================================================================

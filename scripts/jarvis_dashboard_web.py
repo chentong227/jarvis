@@ -119,6 +119,12 @@ HTML_TEMPLATE = r"""
          title="贾维斯持续后台思考 (adaptive 60s-30min tick, 5 类思考池) - 看他独自一人时想什么">
         💭 思考层
       </a>
+      <!-- 🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiter 入口 -->
+      <a href="/auto_arbiter"
+         class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition text-sm font-medium"
+         title="贾维斯自己拍板 review queue (低风险真自决, 中风险给建议) - Sir 一键撤销 + 每日反思迭代准确性">
+        🤖 自决
+      </a>
       <!-- 🆕 [P5-Layer1-fix19-dashboard / 2026-05-22] intent log 入口 (老的没显示) -->
       <a href="/intent_resolved"
          class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 transition text-sm font-medium"
@@ -4090,6 +4096,644 @@ def page_inner_thoughts():
     """🆕 [P1 / Sir 2026-05-25 22:52] /inner_thoughts dashboard page."""
     from flask import make_response
     resp = make_response(render_template_string(_INNER_THOUGHTS_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# ============================================================
+# 🆕 [AA / Sir 2026-05-25 22:58 自决] /auto_arbiter dashboard
+# Sir 真意: 让贾维斯自己拍板 review queue + Sir 一键撤销 + 每日反思迭代准确性.
+# 数据源: memory_pool/auto_arbiter_log.jsonl + auto_arbiter_calibration.json
+# ============================================================
+
+_AA_KIND_ZH = {
+    'inside_joke': {'icon': '🃏', 'label': '内梗', 'color': '#ec4899'},
+    'thread':      {'icon': '🧵', 'label': '历史线', 'color': '#a78bfa'},
+    'concern':     {'icon': '🎯', 'label': '关怀', 'color': '#3fb950'},
+    'directive':   {'icon': '📜', 'label': '指令', 'color': '#d29922'},
+}
+
+_AA_DECISION_ZH = {
+    'activate':     {'icon': '✅', 'label': '通过', 'color': '#3fb950'},
+    'reject':       {'icon': '❌', 'label': '拒绝', 'color': '#f85149'},
+    'defer_to_sir': {'icon': '🙋', 'label': '建议 Sir 看', 'color': '#d29922'},
+    'noop':         {'icon': '➖', 'label': '不动', 'color': '#6e7681'},
+}
+
+_AA_RISK_ZH = {
+    'low':    {'icon': '🟢', 'label': '低风险'},
+    'medium': {'icon': '🟡', 'label': '中风险'},
+    'high':   {'icon': '🔴', 'label': '高风险'},
+}
+
+
+@app.route('/api/auto_arbiter')
+def api_auto_arbiter():
+    """🆕 [AA / Sir 22:58] AutoArbiter dashboard data.
+
+    Query params:
+      hours: 24/72/168 (default 24)
+      limit: max records (default 50)
+      kind: filter by kind (default all)
+      decision: filter (activate/reject/defer_to_sir/noop, default all)
+      reverted_only: 1 to show only Sir-reverted (default 0)
+    """
+    try:
+        hours = float(request.args.get('hours', 24))
+        limit = int(request.args.get('limit', 50))
+        kind_filter = (request.args.get('kind', '') or '').strip()
+        dec_filter = (request.args.get('decision', '') or '').strip()
+        reverted_only = request.args.get('reverted_only', '0') == '1'
+
+        persist_path = os.path.join(ROOT, 'memory_pool',
+                                       'auto_arbiter_log.jsonl')
+        cal_path = os.path.join(ROOT, 'memory_pool',
+                                  'auto_arbiter_calibration.json')
+
+        if not os.path.exists(persist_path):
+            return jsonify({
+                'ok': True, 'total': 0, 'records': [],
+                'stats': {
+                    'decisions_24h': 0, 'per_kind': {},
+                    'thresholds': {}, 'current_state': 'idle',
+                },
+                'health': 'empty',
+                'health_msg': ("贾维斯还没自决 — daemon 启动 60s 后第一波 tick. "
+                                 "如果 review queue 是空的, 也不会产生 decision. "
+                                 "等 reflector 提案累积后再看."),
+            })
+
+        cutoff = time.time() - hours * 3600.0
+        latest_by_id = {}
+        with open(persist_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get('ts', 0) < cutoff:
+                        continue
+                    latest_by_id[rec.get('id')] = rec
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+        all_recent = list(latest_by_id.values())
+
+        # 全期 stats
+        per_kind = {}
+        decisions_count = 0
+        reverted_count = 0
+        defer_count = 0
+        for r in all_recent:
+            k = r.get('kind', '?')
+            dec = r.get('decision', '?')
+            if k not in per_kind:
+                per_kind[k] = {'total': 0, 'activate': 0, 'reject': 0,
+                                 'defer_to_sir': 0, 'noop': 0, 'reverted': 0}
+            per_kind[k]['total'] += 1
+            per_kind[k][dec] = per_kind[k].get(dec, 0) + 1
+            if dec in ('activate', 'reject'):
+                decisions_count += 1
+            if r.get('sir_reverted'):
+                reverted_count += 1
+                per_kind[k]['reverted'] += 1
+            if dec == 'defer_to_sir':
+                defer_count += 1
+
+        # filter
+        filtered = list(all_recent)
+        if kind_filter:
+            filtered = [r for r in filtered if r.get('kind') == kind_filter]
+        if dec_filter:
+            filtered = [r for r in filtered
+                         if r.get('decision') == dec_filter]
+        if reverted_only:
+            filtered = [r for r in filtered if r.get('sir_reverted')]
+
+        # sort 新→旧, limit
+        filtered.sort(key=lambda r: -r.get('ts', 0))
+        records_out = []
+        for r in filtered[:limit]:
+            k = r.get('kind', '?')
+            dec = r.get('decision', '?')
+            risk = r.get('risk_level', 'low')
+            k_meta = _AA_KIND_ZH.get(k, {'icon': '?', 'label': k,
+                                            'color': '#8b949e'})
+            d_meta = _AA_DECISION_ZH.get(dec, {'icon': '?', 'label': dec,
+                                                  'color': '#8b949e'})
+            r_meta = _AA_RISK_ZH.get(risk, {'icon': '⚪', 'label': risk})
+            records_out.append({
+                'id': r.get('id'),
+                'ts': r.get('ts'),
+                'ts_iso': r.get('ts_iso'),
+                'kind': k,
+                'kind_zh': k_meta['label'],
+                'kind_icon': k_meta['icon'],
+                'kind_color': k_meta['color'],
+                'item_id': r.get('item_id'),
+                'item_preview': r.get('item_preview', ''),
+                'risk_level': risk,
+                'risk_zh': r_meta['label'],
+                'risk_icon': r_meta['icon'],
+                'decision': dec,
+                'decision_zh': d_meta['label'],
+                'decision_icon': d_meta['icon'],
+                'decision_color': d_meta['color'],
+                'confidence': r.get('confidence', 0.0),
+                'threshold': r.get('threshold_at_decision', 0.0),
+                'reason': r.get('reason', ''),
+                'executed_ok': r.get('executed_ok'),
+                'execution_msg': r.get('execution_msg', ''),
+                'sir_reverted': r.get('sir_reverted'),
+                'sir_reverted_at': r.get('sir_reverted_at'),
+                'sir_revert_reason': r.get('sir_revert_reason', ''),
+            })
+
+        # 拿 calibration
+        cal = {}
+        if os.path.exists(cal_path):
+            try:
+                with open(cal_path, 'r', encoding='utf-8') as f:
+                    cal = json.load(f) or {}
+            except Exception:
+                pass
+        thresholds = (cal.get('thresholds') or {})
+
+        # 试拿实时 daemon stats
+        live_stats = {}
+        try:
+            from jarvis_auto_arbiter import get_default_daemon
+            daemon = get_default_daemon()
+            if daemon is not None:
+                live_stats = daemon.get_stats()
+        except Exception:
+            pass
+
+        # 健康度
+        n = len(all_recent)
+        if n == 0:
+            health = 'empty'
+            health_msg = f"最近 {int(hours)}h 没自决记录. daemon 启动 60s 后才 fire."
+        else:
+            revert_rate = reverted_count / max(1, decisions_count)
+            if revert_rate > 0.30:
+                health = 'warn'
+                health_msg = (f"最近 {int(hours)}h Sir 撤销率 {revert_rate:.0%} > 30% "
+                                f"— 贾维斯过于激进, 03:xx daily reflection 会自动升高阈值.")
+            else:
+                health = 'ok'
+                health_msg = (f"最近 {int(hours)}h 自决 {decisions_count} 条 "
+                                f"(通过/拒), 建议 Sir 看 {defer_count} 条, "
+                                f"Sir 撤销 {reverted_count} 条 ({revert_rate:.0%}).")
+
+        return jsonify({
+            'ok': True,
+            'total': len(filtered),
+            'records': records_out,
+            'stats': {
+                'decisions_24h': decisions_count,
+                'reverted_count': reverted_count,
+                'defer_count': defer_count,
+                'per_kind': per_kind,
+                'thresholds': thresholds,
+                'last_calibrated_iso': cal.get('last_calibrated_iso', ''),
+                'live_tick_count': live_stats.get('tick_count', 0),
+                'live_llm_call_count': live_stats.get('llm_call_count', 0),
+            },
+            'health': health,
+            'health_msg': health_msg,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/auto_arbiter/revert', methods=['POST'])
+def api_auto_arbiter_revert():
+    """🆕 [AA / Sir 22:58] Sir 一键撤销一条 auto_arbiter decision.
+
+    POST body: {"decision_id": "aa_...", "reason": "Sir 不喜欢这个 joke"}
+    """
+    payload = request.get_json(silent=True) or {}
+    decision_id = (payload.get('decision_id') or '').strip()
+    reason = (payload.get('reason') or '').strip()
+    if not decision_id:
+        return jsonify({'ok': False, 'error': 'decision_id required'}), 400
+    try:
+        from jarvis_auto_arbiter import get_default_daemon
+        daemon = get_default_daemon()
+        if daemon is None:
+            return jsonify({
+                'ok': False,
+                'error': 'AutoArbiterDaemon not active (主进程未启动 或 init fail). '
+                          '看 Jarvis 启动 log 是否有 [AutoArbiter] daemon active.',
+            }), 503
+        ok, msg = daemon.sir_revert(decision_id, reason)
+        return jsonify({'ok': ok, 'detail': msg})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+_AUTO_ARBITER_HTML = r"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Jarvis · 自决 (AutoArbiter)</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+            background: #0e1116; color: #d1d5db; margin: 0; padding: 1rem; }
+    .header { background: #161b22; padding: 1rem 1.2rem; border-radius: 8px;
+              border: 1px solid #30363d; margin-bottom: 1rem; }
+    .header h1 { margin: 0 0 0.4rem 0; color: #10b981; font-size: 1.4rem; }
+    .header p { margin: 0.2rem 0; color: #8b949e; font-size: 0.9rem;
+                line-height: 1.5; }
+    .header .nav-links { margin-top: 0.6rem; }
+    .header .nav-links a { color: #58a6ff; text-decoration: none;
+                            margin-right: 1rem; font-size: 0.9rem; }
+    .header .nav-links a:hover { text-decoration: underline; }
+    .legend { display: flex; gap: 0.6rem; margin-top: 0.6rem; flex-wrap: wrap;
+              font-size: 0.82rem; }
+    .legend-item { padding: 0.2rem 0.6rem; border-radius: 12px;
+                    border: 1px solid #30363d; background: #0d1117; }
+
+    .controls { display: flex; gap: 0.8rem; align-items: center; margin-bottom: 1rem;
+                flex-wrap: wrap; }
+    .controls label { color: #8b949e; font-size: 0.88rem; }
+    .controls select, .controls input[type=checkbox] {
+      background: #21262d; color: #c9d1d9;
+      border: 1px solid #30363d; padding: 0.4rem 0.6rem;
+      border-radius: 4px; font-size: 0.9rem; cursor: pointer;
+    }
+    .refresh-btn { background: #10b981; color: white; border: none; padding: 0.5rem 1rem;
+                    border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+                    font-weight: bold; }
+    .refresh-btn:hover { background: #34d399; }
+    .status-text { color: #8b949e; font-size: 0.85rem; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+              gap: 0.8rem; margin: 1rem 0 1.2rem 0; }
+    .stat-box { background: #161b22; padding: 0.9rem; border-radius: 6px;
+                border: 1px solid #30363d; text-align: center; }
+    .stat-box .num { font-size: 1.8rem; font-weight: bold; color: #10b981; }
+    .stat-box .label { font-size: 0.83rem; color: #8b949e; margin-top: 0.3rem;
+                        line-height: 1.3; }
+    .stat-box.ok .num { color: #3fb950; }
+    .stat-box.warn .num { color: #d29922; }
+    .stat-box.crit .num { color: #f85149; }
+
+    .thresholds { background: #161b22; padding: 0.9rem 1rem; border-radius: 6px;
+                    border: 1px solid #30363d; margin-bottom: 1rem; }
+    .thresholds h3 { margin: 0 0 0.5rem 0; color: #10b981; font-size: 1rem; }
+    .thresholds .row { display: flex; gap: 0.6rem; flex-wrap: wrap;
+                        font-size: 0.88rem; }
+    .thresholds .item { padding: 0.3rem 0.7rem; border-radius: 12px;
+                          background: #0d1117; border: 1px solid #30363d; }
+    .thresholds .item .v { color: #10b981; font-weight: bold; margin-left: 0.4rem; }
+    .thresholds .note { color: #6e7681; font-size: 0.78rem; margin-top: 0.4rem; }
+
+    .health-banner { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem;
+                      font-size: 0.92rem; line-height: 1.5; }
+    .health-banner.ok { background: #1a2e22; border: 1px solid #3fb950; color: #7ee787; }
+    .health-banner.warn { background: #332b00; border: 1px solid #d29922; color: #f1c969; }
+    .health-banner.empty { background: #1c1d24; border: 1px solid #30363d; color: #8b949e; }
+
+    .records { display: grid; gap: 0.8rem; }
+    .decision-card { background: #161b22; padding: 1rem 1.2rem; border-radius: 8px;
+                      border: 1px solid #30363d; border-left: 4px solid #10b981;
+                      transition: border-color 0.2s; }
+    .decision-card.reverted { opacity: 0.65; border-left-color: #f85149; }
+    .decision-card.executed-fail { border-left-color: #d29922; }
+
+    .card-head { display: flex; justify-content: space-between; align-items: flex-start;
+                  margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.4rem; }
+    .card-head-left { display: flex; align-items: center; gap: 0.6rem;
+                        flex-wrap: wrap; }
+    .kind-badge { padding: 0.2rem 0.7rem; border-radius: 14px; font-weight: bold;
+                  font-size: 0.85rem; background: #21262d; }
+    .decision-badge { padding: 0.2rem 0.7rem; border-radius: 14px; font-weight: bold;
+                       font-size: 0.85rem; }
+    .risk-badge { padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.78rem;
+                   background: #0d1117; border: 1px solid #30363d; }
+
+    .conf-bar { display: inline-flex; align-items: center; gap: 0.3rem;
+                  font-size: 0.85rem; }
+    .conf-bar .bar { width: 60px; height: 6px; background: #30363d; border-radius: 3px;
+                      overflow: hidden; display: inline-block; }
+    .conf-bar .bar-fill { height: 100%; background: #10b981; }
+    .conf-bar .val { color: #8b949e; font-family: monospace; }
+    .conf-bar .thr { color: #6e7681; font-size: 0.75rem; }
+
+    .item-preview { font-size: 0.98rem; color: #e2e8f0; margin: 0.3rem 0 0.5rem 0;
+                      padding: 0.5rem 0.8rem; background: #0d1117; border-radius: 4px;
+                      border-left: 3px solid #475569; font-style: italic; }
+    .reason-line { font-size: 0.85rem; color: #79c0ff; margin-bottom: 0.4rem;
+                     padding-left: 0.5rem; border-left: 2px solid #58a6ff; }
+
+    .exec-row { margin-top: 0.4rem; font-size: 0.82rem; color: #6e7681;
+                  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .exec-row .ok { color: #3fb950; }
+    .exec-row .fail { color: #f85149; }
+    .exec-row .defer { color: #d29922; }
+
+    .revert-row { margin-top: 0.6rem; padding: 0.5rem 0.7rem; background: #0d1117;
+                    border-radius: 4px; border-left: 3px solid #f85149;
+                    font-size: 0.85rem; }
+    .revert-row .lbl { color: #f85149; font-weight: bold; }
+
+    .revert-btn { padding: 0.3rem 0.8rem; border-radius: 4px;
+                    background: #4b1d1d; color: #f85149; border: 1px solid #6e2c2c;
+                    cursor: pointer; font-size: 0.82rem; transition: background 0.2s; }
+    .revert-btn:hover { background: #6e2c2c; }
+    .revert-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .empty-state { color: #6e7681; text-align: center; padding: 3rem;
+                    font-size: 0.95rem; line-height: 1.7;
+                    background: #161b22; border-radius: 8px; border: 1px dashed #30363d; }
+    .empty-state .hint { font-size: 0.82rem; color: #484f58; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🤖 贾维斯自决 (AutoArbiter)</h1>
+    <p>贾维斯独立审 review queue 提案 + 自己拍板. 低风险 (内梗/历史线) 真自决 (通过/拒绝), 中风险 (关怀/指令) 只建议 Sir 看. 每天 03:xx 反思 24h Sir 撤销率 → 自动调阈值. Sir 一键撤销任何决定.</p>
+    <p style="color:#6e7681; font-size:0.83rem;">数据源: <code>memory_pool/auto_arbiter_log.jsonl</code> · 阈值: <code>memory_pool/auto_arbiter_calibration.json</code> · CLI: <code>python scripts/auto_arbiter_dump.py</code></p>
+    <div class="legend">
+      <span class="legend-item">🃏 内梗 / 🧵 历史线 (低风险, 真自决)</span>
+      <span class="legend-item">🎯 关怀 / 📜 指令 (中风险, 只建议)</span>
+      <span class="legend-item">✅ 通过 / ❌ 拒绝 / 🙋 建议 Sir 看 / ➖ 不动</span>
+    </div>
+    <div class="nav-links">
+      <a href="/">← 主面板</a>
+      <a href="/inner_thoughts">💭 思考层</a>
+      <a href="/main_brain_meta">🧠 思考链</a>
+      <a href="/items">💡 我们的事</a>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label>时间范围:
+      <select id="hours-sel" onchange="loadRecords()">
+        <option value="24" selected>最近 24h</option>
+        <option value="72">最近 3 天</option>
+        <option value="168">最近 7 天</option>
+      </select>
+    </label>
+    <label>显示数:
+      <select id="limit-sel" onchange="loadRecords()">
+        <option value="30">最多 30</option>
+        <option value="50" selected>最多 50</option>
+        <option value="200">最多 200</option>
+      </select>
+    </label>
+    <label>类型:
+      <select id="kind-sel" onchange="loadRecords()">
+        <option value="" selected>全部</option>
+        <option value="inside_joke">🃏 内梗</option>
+        <option value="thread">🧵 历史线</option>
+        <option value="concern">🎯 关怀</option>
+        <option value="directive">📜 指令</option>
+      </select>
+    </label>
+    <label>决策:
+      <select id="dec-sel" onchange="loadRecords()">
+        <option value="" selected>全部</option>
+        <option value="activate">✅ 通过</option>
+        <option value="reject">❌ 拒绝</option>
+        <option value="defer_to_sir">🙋 建议 Sir 看</option>
+        <option value="noop">➖ 不动</option>
+      </select>
+    </label>
+    <label>
+      <input type="checkbox" id="reverted-only" onchange="loadRecords()"/>
+      仅看 Sir 撤销的
+    </label>
+    <button class="refresh-btn" onclick="loadRecords()">🔄 刷新</button>
+    <span id="status" class="status-text"></span>
+  </div>
+
+  <div id="health-banner"></div>
+
+  <div class="stats" id="stats-box">
+    <div class="stat-box ok"><div class="num" id="n-decisions">-</div>
+      <div class="label">24h 真拍板数 (通过+拒)</div></div>
+    <div class="stat-box warn"><div class="num" id="n-defer">-</div>
+      <div class="label">建议 Sir 看 (中风险)</div></div>
+    <div class="stat-box crit"><div class="num" id="n-reverted">-</div>
+      <div class="label">Sir 撤销数 (反馈)</div></div>
+    <div class="stat-box"><div class="num" id="n-llm">-</div>
+      <div class="label">LLM 调用次数</div></div>
+  </div>
+
+  <div class="thresholds" id="thresholds-box">
+    <h3>📊 当前 confidence 阈值 (Daily 03:xx 自动调整)</h3>
+    <div class="row" id="thr-list"></div>
+    <div class="note" id="thr-note"></div>
+  </div>
+
+  <div class="records" id="records">
+    <div class="empty-state">loading...</div>
+  </div>
+
+  <script>
+    function fmtTs(ts) {
+      if (!ts) return '?';
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const diffMin = Math.floor((now - d) / 60000);
+      let ageStr;
+      if (diffMin < 1) ageStr = '刚刚';
+      else if (diffMin < 60) ageStr = diffMin + '分钟前';
+      else if (diffMin < 1440) ageStr = (diffMin / 60).toFixed(1) + '小时前';
+      else ageStr = (diffMin / 1440).toFixed(1) + '天前';
+      const tStr = d.toLocaleTimeString('zh-CN', {hour12: false});
+      return ageStr + ' · ' + tStr;
+    }
+    function escapeHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function fmtConf(c, t) {
+      const pct = Math.round((c || 0) * 100);
+      const pctVal = (c || 0).toFixed(2);
+      const thrVal = (t || 0).toFixed(2);
+      return `<span class="conf-bar"><span class="bar"><span class="bar-fill" style="width:${pct}%"></span></span><span class="val">${pctVal}</span><span class="thr">(阈值 ${thrVal})</span></span>`;
+    }
+
+    async function doRevert(decisionId) {
+      const reason = prompt('Sir 撤销原因 (短句, 帮贾维斯下次更准):', '');
+      if (reason === null) return;
+      const btn = document.querySelector(`[data-rev-id="${decisionId}"]`);
+      if (btn) btn.disabled = true;
+      try {
+        const r = await fetch('/api/auto_arbiter/revert', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({decision_id: decisionId, reason: reason || ''}),
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          alert('撤销失败: ' + (j.detail || j.error || 'unknown'));
+          if (btn) btn.disabled = false;
+          return;
+        }
+        loadRecords();
+      } catch (e) {
+        alert('请求失败: ' + e.message);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function loadRecords() {
+      const hours = document.getElementById('hours-sel').value;
+      const limit = document.getElementById('limit-sel').value;
+      const kind = document.getElementById('kind-sel').value;
+      const dec = document.getElementById('dec-sel').value;
+      const revOnly = document.getElementById('reverted-only').checked ? 1 : 0;
+      document.getElementById('status').textContent = '⏳ loading...';
+      const url = `/api/auto_arbiter?hours=${hours}&limit=${limit}` +
+                   `&kind=${kind}&decision=${dec}&reverted_only=${revOnly}`;
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.ok) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty-state">⚠️ 错误: ${escapeHtml(data.error || 'unknown')}</div>`;
+            document.getElementById('status').textContent = '';
+            return;
+          }
+          const s = data.stats || {};
+          document.getElementById('n-decisions').textContent = s.decisions_24h || 0;
+          document.getElementById('n-defer').textContent = s.defer_count || 0;
+          document.getElementById('n-reverted').textContent = s.reverted_count || 0;
+          document.getElementById('n-llm').textContent = s.live_llm_call_count || 0;
+
+          // thresholds
+          const thr = s.thresholds || {};
+          const KIND_ZH = {inside_joke: '🃏 内梗', thread: '🧵 历史线',
+                            concern: '🎯 关怀', directive: '📜 指令'};
+          const thrList = document.getElementById('thr-list');
+          if (Object.keys(thr).length === 0) {
+            thrList.innerHTML = '<span style="color:#6e7681">还没 calibrate (用默认值)</span>';
+          } else {
+            thrList.innerHTML = Object.entries(thr).map(([k, v]) =>
+              `<span class="item">${KIND_ZH[k] || k}<span class="v">${(v || 0).toFixed(2)}</span></span>`
+            ).join('');
+          }
+          const thrNote = document.getElementById('thr-note');
+          if (s.last_calibrated_iso) {
+            thrNote.textContent = `上次自调整: ${s.last_calibrated_iso} (Sir 撤销率 > 30% 升, < 10% 降)`;
+          } else {
+            thrNote.textContent = '还没 daily reflection 跑过 (03:xx fire)';
+          }
+
+          // 健康
+          const hb = document.getElementById('health-banner');
+          if (data.health === 'empty') {
+            hb.className = 'health-banner empty';
+            hb.textContent = 'ℹ️ ' + (data.health_msg || '');
+          } else if (data.health === 'warn') {
+            hb.className = 'health-banner warn';
+            hb.textContent = '⚠️ ' + (data.health_msg || '');
+          } else if (data.health_msg) {
+            hb.className = 'health-banner ok';
+            hb.textContent = '✅ ' + data.health_msg;
+          } else {
+            hb.className = 'health-banner';
+            hb.textContent = '';
+          }
+
+          // records
+          const records = data.records || [];
+          if (records.length === 0) {
+            document.getElementById('records').innerHTML =
+              `<div class="empty-state">这个 filter 下没自决记录<div class="hint">换 filter, 或等 daemon 多产几条 (30min tick 一次).</div></div>`;
+            document.getElementById('status').textContent =
+              '✓ ' + new Date().toLocaleTimeString('zh-CN', {hour12: false});
+            return;
+          }
+
+          let html = '';
+          records.forEach(r => {
+            const reverted = !!r.sir_reverted;
+            const execFail = (r.decision === 'activate' || r.decision === 'reject') && !r.executed_ok;
+            let cls = '';
+            if (reverted) cls = 'reverted';
+            else if (execFail) cls = 'executed-fail';
+
+            html += `<div class="decision-card ${cls}" style="border-left-color:${reverted ? '#f85149' : r.decision_color}">`;
+            // head
+            html += `<div class="card-head">`;
+            html += `<div class="card-head-left">`;
+            html += `<span class="kind-badge" style="color:${r.kind_color}">${r.kind_icon} ${r.kind_zh}</span>`;
+            html += `<span class="decision-badge" style="color:${r.decision_color}; background:${r.decision_color}22">${r.decision_icon} ${r.decision_zh}</span>`;
+            html += `<span class="risk-badge">${r.risk_icon} ${r.risk_zh}</span>`;
+            html += `<span style="color:#6e7681; font-size:0.78rem">${fmtTs(r.ts)}</span>`;
+            html += `</div>`;
+            html += `<div>${fmtConf(r.confidence, r.threshold)}</div>`;
+            html += `</div>`;
+
+            // item preview
+            if (r.item_preview) {
+              html += `<div class="item-preview">${escapeHtml(r.item_preview)}</div>`;
+            }
+            // reason
+            if (r.reason) {
+              html += `<div class="reason-line">🤖 ${escapeHtml(r.reason)}</div>`;
+            }
+            // exec
+            const execIcon = r.executed_ok ? '✅ 真执行' :
+                              (r.decision === 'defer_to_sir' ? '🙋 留给 Sir' :
+                                r.decision === 'noop' ? '➖ 不动' : '⚠️ 执行失败');
+            const execCls = r.executed_ok ? 'ok' :
+                             (r.decision === 'defer_to_sir' || r.decision === 'noop' ? 'defer' : 'fail');
+            html += `<div class="exec-row"><span class="${execCls}">${execIcon}</span>`;
+            if (r.execution_msg) {
+              html += `<span style="color:#6e7681">${escapeHtml(r.execution_msg)}</span>`;
+            }
+            // revert button (只对真 activate/reject 显示, 不对 defer/noop)
+            if (!reverted && r.executed_ok && (r.decision === 'activate' || r.decision === 'reject')) {
+              html += `<button class="revert-btn" data-rev-id="${r.id}" onclick="doRevert('${r.id}')" title="Sir 撤销这条决定 + 给原因, 贾维斯下次会更准">↩ Sir 撤销</button>`;
+            }
+            html += `</div>`;
+
+            // reverted row
+            if (reverted) {
+              html += `<div class="revert-row">`;
+              html += `<span class="lbl">↩ Sir 已撤销</span>`;
+              if (r.sir_revert_reason) {
+                html += ` — ${escapeHtml(r.sir_revert_reason)}`;
+              }
+              html += `</div>`;
+            }
+            html += `</div>`;
+          });
+          document.getElementById('records').innerHTML = html;
+          document.getElementById('status').textContent =
+            `✓ ${records.length}/${data.total} · ` +
+            new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        })
+        .catch(err => {
+          document.getElementById('records').innerHTML =
+            `<div class="empty-state">⚠️ fetch 错: ${escapeHtml(err.message)}</div>`;
+          document.getElementById('status').textContent = '';
+        });
+    }
+    loadRecords();
+    setInterval(loadRecords, 30000);
+  </script>
+</body>
+</html>
+"""
+
+
+@app.route('/auto_arbiter')
+def page_auto_arbiter():
+    """🆕 [AA / Sir 2026-05-25 22:58] /auto_arbiter dashboard page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_AUTO_ARBITER_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
