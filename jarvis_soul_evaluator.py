@@ -463,6 +463,39 @@ class SoulAlignmentEvaluator:
         result.what_aligned = parsed.get('what_aligned', '')[:80]
         result.what_missed = parsed.get('what_missed', '')[:80]
         result.elapsed_ms = int((time.time() - t0) * 1000)
+        # 🆕 [Sir 2026-05-25 20:23 真测追根 BUG 治本 #3] truncate 强 downgrade
+        # =====================================================================
+        # Sir 选 '3 者都上' 治 truncate. 此处实施 #3 — SoulEvaluator override:
+        # reply 含 >= 30ch English 但缺 ---ZH--- 翻译 → 强 alignment='no',
+        # 不管 LLM 怎么评. Sir log 真证据: Turn 1 reply '...That puts you at' (64ch)
+        # 没 ZH, LLM eval 给 'yes' (score=1) 漏抓. 准则 6 evidence-driven 红线.
+        # =====================================================================
+        try:
+            _reply_for_chk = (getattr(self, '_last_reply_for_truncate_chk', None)
+                               or jarvis_reply or '')
+            _en_only_chk = _reply_for_chk.split('---ZH---')[0] if '---ZH---' in _reply_for_chk else _reply_for_chk
+            _en_clean_chk = re.sub(r'<[^>]+>', '', _en_only_chk or '').strip()
+            _has_zh_marker = '---ZH---' in (_reply_for_chk or '')
+            if (len(_en_clean_chk) >= 30 and not _has_zh_marker
+                    and result.alignment != 'no'):
+                _orig_alignment = result.alignment
+                result.alignment = 'no'
+                _trunc_note = (
+                    f"[TRUNCATE-OVERRIDE: en={len(_en_clean_chk)}ch no-ZH] "
+                    f"(was '{_orig_alignment}')"
+                )
+                result.what_missed = (_trunc_note + (result.what_missed or ''))[:80]
+                try:
+                    from jarvis_utils import bg_log as _trunc_bg
+                    _trunc_bg(
+                        f"⚠️ [SoulEvaluator/TruncateOverride] {result.turn_id} "
+                        f"alignment '{_orig_alignment}' → 'no' "
+                        f"(en={len(_en_clean_chk)}ch + 缺 ---ZH---)"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
         self._record_completion(result)
         self._apply_to_ledger(result)
         return result

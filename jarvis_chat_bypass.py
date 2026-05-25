@@ -4492,6 +4492,77 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                             )
                     except Exception:
                         pass
+
+                    # 🆕 [Sir 2026-05-25 20:23 真测追根 BUG 治本 #2] truncate fallback 续写
+                    # =====================================================================
+                    # Sir 选 '3 者都上' 治 truncate. 此处实施 #2 — chat_bypass 检到
+                    # truncate → spawn thread 调 flash_lite 续写完整 reply + ZH 翻译,
+                    # 主响应路径不阻塞. 续写完通过 subtitle_queue 补 ZH 字幕给 Sir.
+                    # 准则 8 优雅高效可持续: 1 次轻量 LLM 调用 ~1s, Sir 体验提升明显.
+                    # =====================================================================
+                    try:
+                        import threading as _th_tr
+                        def _truncate_continuation_worker(snippet: str):
+                            try:
+                                from jarvis_llm_reflector import LlmReflector as _LR
+                                from jarvis_utils import bg_log as _tr_bg
+                                _refl = _LR.get_instance(
+                                    key_router=self.key_router
+                                ) if hasattr(_LR, 'get_instance') else None
+                                if _refl is None:
+                                    _refl = _LR(key_router=self.key_router)
+                                _sys_prompt = (
+                                    "You are completing Jarvis's truncated butler reply. "
+                                    "Output ONLY in this exact format:\n"
+                                    "<EN>...continuation of English (<= 25 words)</EN>\n"
+                                    "<ZH>...full Chinese translation of (original + continuation)</ZH>\n"
+                                    "Keep butler style: factual, concise, no emojis."
+                                )
+                                _user_prompt = (
+                                    f"Original truncated reply:\n```\n{snippet}\n```\n\n"
+                                    f"Complete the cut-off sentence naturally then output ZH."
+                                )
+                                _res = _refl.reflect(
+                                    model='flash_lite',
+                                    system_prompt=_sys_prompt,
+                                    user_prompt=_user_prompt,
+                                    force=True,  # 不走 cache
+                                )
+                                if not _res.get('success'):
+                                    _tr_bg(f"⚠️ [Truncate/Cont] reflector fail, skip")
+                                    return
+                                _raw = _res.get('raw_text', '') or ''
+                                _en_cont = ''
+                                _zh_full = ''
+                                _m_en = re.search(r'<EN>(.*?)</EN>', _raw, re.DOTALL)
+                                _m_zh = re.search(r'<ZH>(.*?)</ZH>', _raw, re.DOTALL)
+                                if _m_en:
+                                    _en_cont = _m_en.group(1).strip()
+                                if _m_zh:
+                                    _zh_full = _m_zh.group(1).strip()
+                                if _zh_full:
+                                    try:
+                                        self.subtitle_queue.put(("zh", _zh_full))
+                                        _tr_bg(
+                                            f"✅ [Truncate/Cont] ZH 补字幕 ({len(_zh_full)}ch): "
+                                            f"'{_zh_full[:60]}...'"
+                                        )
+                                    except Exception as _e_sub:
+                                        _tr_bg(f"⚠️ [Truncate/Cont] subtitle.put fail: {_e_sub}")
+                            except Exception as _e_tr:
+                                try:
+                                    from jarvis_utils import bg_log as _tr_bg2
+                                    _tr_bg2(f"⚠️ [Truncate/Cont] worker exception: {_e_tr}")
+                                except Exception:
+                                    pass
+                        _th_tr.Thread(
+                            target=_truncate_continuation_worker,
+                            args=(_en_net,),
+                            daemon=True,
+                            name='TruncateContinuation',
+                        ).start()
+                    except Exception:
+                        pass
             except Exception:
                 pass
 

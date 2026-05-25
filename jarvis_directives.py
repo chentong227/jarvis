@@ -1749,6 +1749,15 @@ def _trigger_thinking_pause_aware_judge(ctx: DirectiveContext) -> bool:
     return _swm_has_recent('sir_thinking_pause', max_age_s=60.0)
 
 
+def _trigger_bilingual_truncated_recover(ctx: DirectiveContext) -> bool:
+    """🆕 [Sir 2026-05-25 20:23 真测追根 BUG 治本 #1] truncate recover trigger.
+
+    SWM 近 120s 内含 'bilingual_truncated' event → fire directive.
+    主脑下轮看 directive 自决复述完整答 + 出 ZH.
+    """
+    return _swm_has_recent('bilingual_truncated', max_age_s=120.0)
+
+
 def _trigger_no_hallucinated_tool_use_judge(ctx: DirectiveContext) -> bool:
     """β.5.43-fix4 / 2026-05-20 18:55 Sir 真理 — 主脑撒谎 'I've corrected'.
     
@@ -2153,6 +2162,36 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 MANDATORY for every response, even short acknowledgments.
             """).rstrip(),
             trigger=_trigger_bilingual_always,
+        ),
+        # 🆕 [Sir 2026-05-25 20:23 真测追根 BUG 治本 #1] truncate recover
+        # =============================================================
+        # 源 BUG: 主脑上轮 reply 半截 + 缺 ---ZH--- 翻译 (LLM 自然 stop).
+        # SWM 已 publish 'bilingual_truncated' event, 主脑下轮看到该
+        # evidence 自决: 道歉 + 复述完整答 + 出 ZH. 准则 6 evidence-only,
+        # 不教句式. 主脑参考 SWM "reply 缺 ---ZH--- (en=Nch)" 自然涌现修复.
+        # =============================================================
+        Directive(
+            id='bilingual_truncated_recover',
+            source_marker='Sir-2026-05-25-20:23',
+            priority=11,  # 高于 bilingual_directive (10), 优先看
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short='上轮 reply 被 LLM 自然 stop 截断 → 复述完整答',
+            text=_tw.dedent("""\
+                [BILINGUAL TRUNCATE RECOVER — Sir 准则 6 evidence]:
+                If SWM contains a recent 'bilingual_truncated' event (your previous
+                reply ended mid-sentence and lacked the ---ZH--- translation), your
+                response THIS TURN must:
+                  1. Briefly acknowledge the gap (one phrase, e.g. 'My apologies — my
+                     last reply was cut short, Sir.').
+                  2. Re-state the COMPLETE answer that was truncated, using the SWM
+                     'en_snippet' metadata as anchor.
+                  3. Always emit the ---ZH--- translation block at the end.
+                Do NOT pretend the truncation didn't happen. Do NOT skip ZH again.
+                If Sir's current input is a new topic, integrate the recovery briefly
+                then address the new topic.
+            """).rstrip(),
+            trigger=_trigger_bilingual_truncated_recover,
         ),
         # 🆕 [P5-Layer1 / 2026-05-22] Sir 13:13 立 — 主脑最小 thinking pass.
         # Sir 真测 fix16/17/18 都是主脑被外部信号 (dismissal/IntegrityAlert/silence) 推

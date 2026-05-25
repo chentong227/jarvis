@@ -811,6 +811,37 @@ class ConcernsLedger:
             if c.why_i_care:
                 why = _emphasize_facts(c.why_i_care[:80])
                 lines.append(f"      why: {why}"[:160])
+            # 🆕 [Sir 2026-05-25 20:23 真测 log 追根 BUG 治本] daily_progress 注入
+            # =====================================================================
+            # 源 BUG: Sir Turn 1 (concerns.progress_update sir_hydration_habit=1100) 后,
+            # Turn 2 问"还差多少水", 主脑 prompt 看不到 current/target/unit → 去调
+            # progress.status track_id='hydration_2026-05-25' (silo 错) → not found
+            # → 迷茫输出 '---'. 真因: to_prompt_block 漏 daily_progress 注入.
+            # 治本: 把 LLM 已写的 daily_progress (current/target/unit) 注入主脑 prompt,
+            # 主脑直接答"还差 1900ml", 不需杀 tool. 准则 6 evidence-driven.
+            # =====================================================================
+            try:
+                dp = getattr(c, 'daily_progress', {}) or {}
+                if dp:
+                    today_iso = time.strftime('%Y-%m-%d', time.localtime())
+                    if dp.get('iso_date') == today_iso:
+                        _cur = dp.get('current', '?')
+                        _tgt = dp.get('target', '?')
+                        _unit = dp.get('unit', '')
+                        # remaining (主脑可直接答, 不用算) — current 是数才 derive
+                        _rem_str = ''
+                        try:
+                            _rem = float(_tgt) - float(_cur)
+                            if _rem > 0:
+                                _rem_str = f", remaining 「{_rem:g} {_unit}」"
+                        except (TypeError, ValueError):
+                            pass
+                        lines.append(
+                            f"      today progress: 「{_cur}/{_tgt} {_unit}」{_rem_str}"
+                            [:200]
+                        )
+            except Exception:
+                pass
             if c.recent_signals:
                 last = c.recent_signals[-1]
                 what = _emphasize_facts(last.get('what', '')[:80])
