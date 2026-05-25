@@ -59,6 +59,26 @@ _PAT_MULTIPLIER = re.compile(r'\b\d+(?:\.\d+)?\s*[倍]')
 _PAT_ZH_COUNT = re.compile(r'(\d+)\s*(次|个|条|遍|回|篇|份|张|项)')
 _PAT_EN_COUNT = re.compile(r'\b(\d+)\s+(times|days|weeks|months|hours|minutes)\b',
                              re.IGNORECASE)
+# 🆕 [Sir 2026-05-25 20:01 真测 log 追根 BUG 治本] 英文单词数字也算 specific claim
+# =====================================================================
+# 源 BUG: ReturnSentinel 真传 afk_minutes=96 (1.6h) 给主脑, 主脑撒 "eight-hour
+# rest" — Sir 真理"我大概离开了一个多小时". ClaimTracer 老 _PAT_EN_COUNT 只抓
+# 阿拉伯 \d+, "eight" 单词绕过 regex 没 trace. 准则 5 言出必行底线漏.
+# 治本: 加 _PAT_EN_WORD_COUNT 抓英文单词数字 one~twenty + ten 倍数 +
+# hyphenated "eight-hour / two-day / three-week" 形式.
+# =====================================================================
+# 单词数字 + 时间/计数单位 (含 hyphen 形式)
+_PAT_EN_WORD_COUNT = re.compile(
+    r'\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|'
+    r'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|'
+    r'twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|'
+    r'a|an|several|few|couple)'
+    r'[-\s]+'
+    r'(hour|hours|minute|minutes|day|days|week|weeks|month|months|year|years|'
+    r'time|times|second|seconds|night|nights|morning|mornings|'
+    r'session|sessions)s?\b',
+    re.IGNORECASE,
+)
 
 # 显式 quote attribution ("you said X" / "Sir 说 X" / 直引)
 _PAT_QUOTE_ATTR_EN = re.compile(r'\byou (?:said|told me|mentioned|noted)\s+[\'"](.{5,80})[\'"]',
@@ -160,6 +180,9 @@ def extract_claims(text: str) -> List[Claim]:
     for m in _PAT_ZH_COUNT.finditer(text):
         claims.append(Claim('count', m.group(0), m.span()))
     for m in _PAT_EN_COUNT.finditer(text):
+        claims.append(Claim('count', m.group(0), m.span()))
+    # 🆕 [Sir 2026-05-25 20:01] 英文单词数字 + duration unit (eight-hour rest 等)
+    for m in _PAT_EN_WORD_COUNT.finditer(text):
         claims.append(Claim('count', m.group(0), m.span()))
 
     # Quote attribution (Sir 说...)

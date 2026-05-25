@@ -58,6 +58,30 @@ class TestExtractClaims(unittest.TestCase):
         kinds = [c.kind for c in claims]
         self.assertIn('count', kinds)
 
+    def test_extract_count_en_word_hyphenated(self):
+        """🆕 [Sir 2026-05-25 20:01 真测追根] 'eight-hour rest' 必须抓
+        — 老 _PAT_EN_COUNT 只抓 \\d+, 主脑用 'eight' 单词绕过 → 撒"8 小时"谎漏 trace."""
+        from jarvis_claim_tracer import extract_claims
+        claims = extract_claims(
+            "I trust your eight-hour rest was restorative."
+        )
+        kinds = [c.kind for c in claims]
+        self.assertIn('count', kinds,
+                       "eight-hour 必须被抓 count claim (准则 5 言出必行底线)")
+
+    def test_extract_count_en_word_space(self):
+        """英文单词数字 + 空格 + 单位也算 count (one hour / three days)."""
+        from jarvis_claim_tracer import extract_claims
+        for text in (
+            "we worked for three hours",
+            "you've been away for two days",
+            "she texted five times this morning",
+        ):
+            claims = extract_claims(text)
+            kinds = [c.kind for c in claims]
+            self.assertIn('count', kinds,
+                          f"'{text}' 应抓 count claim")
+
     def test_extract_quote_attr_en(self):
         from jarvis_claim_tracer import extract_claims
         claims = extract_claims('you said "I want to retire by 11"')

@@ -313,6 +313,33 @@ class KeyRouter:
             'project has been denied', 'project_denied',
             '403', '401', 'unauthorized', 'forbidden',
         ])
+        # 🆕 [Sir 2026-05-25 19:57 真测追根 BUG 治本] 网络层 vs key 级错误隔离
+        # =====================================================================
+        # 源 BUG: Sir 真测 'EOF occurred in violation of protocol (_ssl.c:1129)'
+        # 不是 key 失效, 是网络层 TLS 错误 (Sir 后确认: 代理流量超). 老逻辑
+        # error_count >= 3 即标 unhealthy → 网络抖动 3 次冤枉 key. Sir 真问
+        # 'key 全炸是 Sir 问题还是代码问题' — 答 = Sir 代理 + 代码也该区分.
+        # 治本: 识别网络层错误, 不计入 unhealthy 阈值, 短期 cooldown 重试即可.
+        # 准则 6 evidence-driven: key 级 (401/403/billing) vs 网络级独立计数.
+        # =====================================================================
+        is_network_error = any(kw in err_lower for kw in [
+            'eof occurred in violation of protocol',  # SSL handshake 中断
+            '_ssl.c:',                                 # OpenSSL 错误层
+            'ssl: ',                                   # 通用 SSL 错误前缀
+            'connection reset', 'connection aborted',  # TCP RST/abort
+            'connection refused', 'connection error',  # TCP 拒绝 / 通用
+            'broken pipe', 'remote end closed',        # socket EPIPE / 远端断
+            'read timed out', 'write timed out',       # socket 读写超时
+            'apitimeouterror', 'request timed out',    # OpenAI/Anthropic SDK
+            'temporary failure in name resolution',    # DNS 临时失败
+            'name or service not known',               # DNS 解析失败
+            'getaddrinfo failed',                      # DNS 解析失败 (Windows)
+            'network is unreachable',                  # 网络不可达
+            'no route to host',                        # 无路由
+            'max retries exceeded',                    # urllib3 重试耗尽
+            'proxyerror', 'proxy error',               # 代理错误 (Sir 真因)
+            'tunnel connection failed',                # 代理隧道失败
+        ])
 
         # [P0+20-α.2 / 2026-05-16] 永久死亡判定：项目级错误累计 3 次 → 不再 auto_recover
         # 解决 jarvis_20260516_092307.log 中 google_1 PROJECT_DENIED 每轮对话刷屏问题：
@@ -343,6 +370,23 @@ class KeyRouter:
                     self._save_permanent_death_state()
                 except Exception:
                     pass
+
+        # 🆕 [Sir 2026-05-25 19:57] 网络层错误回退 error_count, 不冤枉 key
+        # 网络抖动 (SSL EOF / proxy / DNS / timeout) 不该累计为"key 失效"证据.
+        # 仍 spawn short cooldown 短期重试 (60s), 但 healthy=True 不变, key 不退役.
+        if is_network_error and not is_billing_error and not is_permission_error:
+            # 网络错误回退本次 +1, 让 error_count 净增 0
+            status['error_count'] = max(0, status['error_count'] - 1)
+            try:
+                from jarvis_utils import bg_log
+                bg_log(f"🌐 [KeyRouter/Network] {status['label']} 网络层错误 "
+                       f"(error_count 不累加 unhealthy): {error_msg[:80]}")
+            except Exception:
+                pass
+            # 仍 spawn _auto_recover 让 short cooldown 走一遍, 但 healthy=True 不变
+            if status['provider'] == self.PROVIDER_GOOGLE:
+                threading.Thread(target=self._auto_recover, args=(key,), daemon=True).start()
+            return
 
         if is_billing_error or is_permission_error or status['error_count'] >= 3:
             status['healthy'] = False
