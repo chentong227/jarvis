@@ -40,6 +40,16 @@ _TOOL_CALL_TAG_RE = re.compile(
     r'<TOOL_CALL>(.*?)</TOOL_CALL>',
     re.IGNORECASE | re.DOTALL,
 )
+# 🆕 [Sir 2026-05-25 23:14 真泄漏 BUG] 裸 inline intent JSON regex
+# 主脑可能 emit `{"intent":"dashboard_open"}` 不包 <TOOL_CALL> tag (Sir 截图
+# 真发生过, raw JSON 泄 TTS+字幕). 准则 6 容错: 真识别裸 JSON 也路由 intent
+# 让 Sir 真能开 dashboard, 不光防 leak.
+# 严格限 prefix `{"intent"` 避免误伤合法文本含 {.
+_STRAY_INTENT_JSON_RE = re.compile(
+    r'\{\s*"intent"\s*:\s*"[^"]+"\s*'
+    r'(?:,\s*"[^"]+"\s*:\s*(?:"[^"]*"|\{[^{}]*\}|\[[^\[\]]*\]|[^,}]+)\s*)*\}',
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -55,9 +65,17 @@ class IntentParser:
 
     @classmethod
     def has_tool_call_tag(cls, text: Optional[str]) -> bool:
+        """有 <TOOL_CALL> tag OR 裸 `{"intent":"X"}` 都返 True (Sir 2026-05-25 23:14).
+
+        主脑可能省略 tag 直接 emit 裸 JSON — 兼容容错让 IntentRouter 真路由.
+        """
         if not text:
             return False
-        return bool(_TOOL_CALL_TAG_RE.search(text))
+        if _TOOL_CALL_TAG_RE.search(text):
+            return True
+        if _STRAY_INTENT_JSON_RE.search(text):
+            return True
+        return False
 
     # 🆕 [Sir 2026-05-24 23:38 真测追根 BUG 治本] 参数 alias 表
     # =====================================================================
@@ -132,10 +150,25 @@ class IntentParser:
         # 顶层 reserved keys 不进 args (其他全进)
         _RESERVED_TOP = {'intent', 'args'}
         calls: List[IntentCall] = []
+        # 步 1: 收集所有 tag 包装的 raw JSON 块
+        raw_blocks: List[str] = []
         for m in _TOOL_CALL_TAG_RE.finditer(text):
-            raw = (m.group(1) or '').strip()
-            if not raw:
-                continue
+            r = (m.group(1) or '').strip()
+            if r:
+                raw_blocks.append(r)
+        # 🆕 [Sir 2026-05-25 23:14 真泄漏 BUG] 步 2: 兼容裸 `{"intent":"X"}`
+        # 主脑可能省 tag, 真识别 + 真路由 (而不只是 leak prevent).
+        # 排除已被 tag 包过的 (避免双计).
+        try:
+            stripped = _TOOL_CALL_TAG_RE.sub('', text)
+            for m in _STRAY_INTENT_JSON_RE.finditer(stripped):
+                r = (m.group(0) or '').strip()
+                if r:
+                    raw_blocks.append(r)
+        except Exception:
+            pass
+
+        for raw in raw_blocks:
             try:
                 data = json.loads(raw)
             except Exception:
@@ -169,13 +202,16 @@ class IntentParser:
 
     @classmethod
     def strip_tags(cls, text: Optional[str]) -> str:
-        """从 LLM 输出剥掉 <TOOL_CALL> tag, 返 cleaned 文本 (TTS / subtitle 用).
+        """从 LLM 输出剥掉 <TOOL_CALL> tag + 裸 `{"intent":"X"}`, 返 cleaned 文本.
 
         即便 LLM 同时说人话 + 发 tag, TTS 不应该读出 tag 内容.
+        🆕 [Sir 2026-05-25 23:14] 也剥裸 JSON intent (主脑可能省 tag).
         """
         if not text:
             return ''
-        return _TOOL_CALL_TAG_RE.sub('', text)
+        text = _TOOL_CALL_TAG_RE.sub('', text)
+        text = _STRAY_INTENT_JSON_RE.sub('', text)
+        return text
 
 
 class IntentRouter:

@@ -441,15 +441,21 @@ def _box_newline(text: str) -> str:
 # Jarvis 用 <MEMORY_UPDATE field="X" old="..." new="..."> 真做记录写盘 (而非空
 # 头话 "I've updated"). 见 jarvis_directives.py:memory_update_honesty.
 # MEMORY_UPDATE 是 self-closing tag (无 children) — block_re 也匹配单标签.
+# 🆕 [Sir 2026-05-25 23:14 真泄漏 BUG] 加 TOOL_CALL — 主脑 emit
+# <TOOL_CALL>{"intent":"X"}</TOOL_CALL> 也必须被 strip (Sir 截图看到 raw JSON
+# 泄 TTS+字幕). IntentRouter strip_tags() 只在 router 内调, TTS path 不调 →
+# 启用 _strip_structural_tag_blocks 统一 strip.
 _STRUCTURAL_TAGS = ('FAST_CALL', 'PROMISE', 'ACTIVATE_PLAN', 'CANCEL_PLAN',
-                     'RESUME_PLAN', 'MEMORY_UPDATE', 'CONCERN_DAMPEN')
+                     'RESUME_PLAN', 'MEMORY_UPDATE', 'CONCERN_DAMPEN',
+                     'TOOL_CALL')
 # 🩹 [β.2.9.9] paired tags (必须闭合才剥, 半成态保留在 buffer 等下一 token)
 # 🆕 [P5-fix45 / 2026-05-23 14:55] 加 CONCERN_DAMPEN (主脑自决削 concern severity)
+# 🆕 [Sir 2026-05-25 23:14] 加 TOOL_CALL (intent dispatch JSON, 不能泄 TTS)
 # self-closing or paired 都允许.
 _STRUCTURAL_TAG_BLOCK_RE = re.compile(
-    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)\b[^>]*>'
+    r'<(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN|TOOL_CALL)\b[^>]*>'
     r'.*?'
-    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)>',
+    r'</(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN|TOOL_CALL)>',
     re.DOTALL,
 )
 # 🩹 [β.2.9.9] MEMORY_UPDATE 单独支持 self-closing 形式 (<MEMORY_UPDATE attrs/>)
@@ -463,7 +469,16 @@ _CONCERN_DAMPEN_SELF_CLOSING_RE = re.compile(
     re.IGNORECASE,
 )
 _STRUCTURAL_TAG_ANY_RE = re.compile(
-    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN)\b[^>]*/?>'
+    r'</?(?:FAST_CALL|PROMISE|ACTIVATE_PLAN|CANCEL_PLAN|RESUME_PLAN|MEMORY_UPDATE|CONCERN_DAMPEN|TOOL_CALL)\b[^>]*/?>'
+)
+# 🆕 [Sir 2026-05-25 23:14 真泄漏 BUG] stray bare intent JSON regex
+# 主脑可能 emit 裸 `{"intent":"dashboard_open"}` (不带 <TOOL_CALL> tag) —
+# Sir 截图真发生过. 下面 regex 剩裸中剩裸 JSON 防 TTS+字幕 泄.
+# 严格限 prefix 必须是 `{"intent"` 避免误伤合法文本包含 {.
+_STRAY_INTENT_JSON_RE = re.compile(
+    r'\{\s*"intent"\s*:\s*"[^"]+"\s*'
+    r'(?:,\s*"[^"]+"\s*:\s*(?:"[^"]*"|\{[^{}]*\}|\[[^\[\]]*\]|[^,}]+)\s*)*\}',
+    re.DOTALL,
 )
 # 🩹 [β.2.9.9] MEMORY_UPDATE 单独 regex (self-closing 形式 + 含 attributes)
 _MEMORY_UPDATE_RE = re.compile(
@@ -553,10 +568,13 @@ def _strip_structural_tag_blocks(text: str) -> str:
     🆕 [P5-fix45 / 2026-05-23] 加 CONCERN_DAMPEN self-closing form 剥离.
     🩹 [β.2.9.9] MEMORY_UPDATE 还可以是 self-closing 形式 (<MEMORY_UPDATE attrs/>),
     单独跑一次自闭合 regex 也剥掉.
+    🆕 [Sir 2026-05-25 23:14] 增 stray bare intent JSON 剥离 (主脑可能不包
+    <TOOL_CALL> tag emit 裸 `{"intent":"X"}` — Sir 截图真发生过泄 TTS).
     """
     text = _STRUCTURAL_TAG_BLOCK_RE.sub('', text)
     text = _MEMORY_UPDATE_SELF_CLOSING_RE.sub('', text)
     text = _CONCERN_DAMPEN_SELF_CLOSING_RE.sub('', text)
+    text = _STRAY_INTENT_JSON_RE.sub('', text)
     return text
 
 

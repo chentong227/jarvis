@@ -206,6 +206,16 @@ class InnerThoughtDaemon:
         sir_state = self._classify_sir_state()
         tick_interval = self._compute_adaptive_interval()
 
+        # 🆕 [Sir 2026-05-25 23:18 真痛] cooldown 预选 — 不再 tick 后 cooldown 才发现
+        # 老 BUG: tick 调 LLM → LLM 选 cooldown 中 category → skip → 浪费 LLM call.
+        # 治本: tick 开头算 free categories, 全 cooldown 则 skip 不调 LLM.
+        # 否则把 free list 给 LLM prompt, 让 LLM 只能选 free 中的.
+        free_categories = self._compute_free_categories()
+        if not free_categories:
+            # 所有 5 类都 cooldown — skip 不调 LLM (节省 + 准则 1 高效)
+            self._cooldown_skip_count += 1
+            return
+
         # collect evidence
         evidence = self._collect_evidence(
             sir_state=sir_state,
@@ -213,7 +223,9 @@ class InnerThoughtDaemon:
         )
 
         # LLM call (Flash-Lite, caller='inner_thought' → P2 LOW priority)
-        prompt_sys, prompt_user = self._build_prompt(sir_state, evidence)
+        prompt_sys, prompt_user = self._build_prompt(
+            sir_state, evidence, free_categories=free_categories
+        )
         raw = self._call_llm(prompt_sys, prompt_user)
         if not raw:
             self._llm_fail_count += 1
@@ -223,13 +235,15 @@ class InnerThoughtDaemon:
         if thought is None:
             return
 
-        # cooldown check (同 category 30min)
+        # cooldown 二道防御 (LLM 没听 prompt 选了 cooldown 中 → 再 skip)
         last_ts = self._last_category_ts.get(thought.category, 0.0)
         if time.time() - last_ts < self.SAME_CATEGORY_COOLDOWN_S:
             self._cooldown_skip_count += 1
             self._bg_log(
-                f"💭 [InnerThought] category {thought.category} cooldown "
-                f"({int(time.time() - last_ts)}s < {self.SAME_CATEGORY_COOLDOWN_S}s), skip"
+                f"💭 [InnerThought] LLM ignored free_categories prompt, "
+                f"chose cooldown category {thought.category} "
+                f"({int(time.time() - last_ts)}s < {self.SAME_CATEGORY_COOLDOWN_S}s), "
+                f"skip"
             )
             return
 
@@ -244,6 +258,17 @@ class InnerThoughtDaemon:
         thought.actionable_done = ok
         thought.actionable_result = result
 
+        # 🆕 [Sir 2026-05-25 23:18 真痛-3] actionable fail → publish SWM
+        # 让主脑下轮 prompt 看到自己上轮失败, 改进选 concern_id.
+        if not ok and thought.actionable and \
+                thought.actionable.lower() != 'none':
+            self._publish_actionable_failure(thought, result)
+
+        # 🆕 [Sir 2026-05-25 23:18 真痛-4] B 类 self-correction 闭环:
+        # 主脑自己识别 "I keep repeating X" 类 → publish stop_repeating_topic
+        # 让 SOUL inject 下轮主脑 prompt 真看到 → 真不重复.
+        self._maybe_publish_self_correction(thought)
+
         # persist + publish SWM
         self._persist_thought(thought)
         self._publish_swm(thought)
@@ -257,6 +282,102 @@ class InnerThoughtDaemon:
             f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
             f"{action_str}"
         )
+
+    def _compute_free_categories(self) -> List[str]:
+        """🆕 [Sir 2026-05-25 23:18] 算当前可用 categories (不在 cooldown).
+
+        准则 1 高效 + 8 优雅: 让 LLM 不浪费 token 选 cooldown 类.
+        """
+        now = time.time()
+        free = []
+        for cat in 'ABCDE':
+            last_ts = self._last_category_ts.get(cat, 0.0)
+            if now - last_ts >= self.SAME_CATEGORY_COOLDOWN_S:
+                free.append(cat)
+        return free
+
+    def _publish_actionable_failure(self, thought, result: str) -> None:
+        """🆕 [Sir 2026-05-25 23:18] actionable 失败 → SWM event.
+
+        让主脑下轮 prompt 看到自己上轮选错 concern_id / hallucinate id,
+        改进下次选择 (准则 6 evidence + 8 优雅).
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            bus.publish(
+                etype='inner_thought_actionable_failed',
+                description=(
+                    f"My last {thought.category}-thought tried "
+                    f"`{thought.actionable[:60]}` but failed: {result[:80]}. "
+                    f"Don't pick wrong concern_id again."
+                ),
+                source='inner_thought_daemon',
+                salience=0.6,
+                metadata={
+                    'thought_id': thought.id,
+                    'category': thought.category,
+                    'actionable': thought.actionable[:120],
+                    'failure_reason': result[:120],
+                },
+                ttl=86400.0,
+            )
+        except Exception:
+            pass
+
+    # 准则 6 — keyword 检测 self-correction 模式 (vocab 持久化后续)
+    _SELF_CORRECTION_PATTERNS = (
+        'i keep repeating', 'i keep saying', 'embarrassing pattern',
+        'circular logic', 'shouldn\'t bring up', 'i should stop',
+        '我反复', '我又说', '我不该再', '我不应该再',
+    )
+
+    def _maybe_publish_self_correction(self, thought) -> None:
+        """🆕 [Sir 2026-05-25 23:18] B 类自反思闭环.
+
+        看到 'i keep repeating X' 类 thought → publish SWM 让主脑下轮真看到.
+        准则 6: keyword 持久化是后续 (现在 inline list, 等 reflector L7 propose 迁 vocab).
+        """
+        if thought.category != 'B':
+            return
+        thought_lower = (thought.thought or '').lower()
+        hit_pattern = None
+        for p in self._SELF_CORRECTION_PATTERNS:
+            if p in thought_lower:
+                hit_pattern = p
+                break
+        if not hit_pattern:
+            return
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            bus.publish(
+                etype='self_correction_noted',
+                description=(
+                    f"I just noticed myself: {thought.thought[:140]}. "
+                    f"Next reply: don't repeat this pattern."
+                ),
+                source='inner_thought_daemon',
+                salience=0.85,  # 高 salience 让 SOUL 真 inject
+                metadata={
+                    'thought_id': thought.id,
+                    'category': 'B',
+                    'hit_pattern': hit_pattern,
+                    'thought_excerpt': thought.thought[:200],
+                },
+                ttl=3600.0 * 6,  # 6h ttl — 短期纠正足够
+            )
+            self._bg_log(
+                f"🪞 [InnerThought/self-correction] B-thought matched "
+                f"'{hit_pattern}' → publish self_correction_noted SWM "
+                f"(主脑下轮 SOUL inject 真看到)"
+            )
+        except Exception:
+            pass
 
     # ----------------------------------------------------------
     # Evidence collection
@@ -302,7 +423,10 @@ class InnerThoughtDaemon:
             ev['stm'] = stm
         except Exception:
             pass
-        # concerns top 3 by severity
+        # 🆕 [Sir 2026-05-25 23:18 真痛-2] concerns 给全 active id list 防 LLM hallucinate
+        # 老 BUG: 只 top 3 → LLM 想改第 4+ concern (e.g. sir_interview_prep_balance
+        # severity 极低), 没在 prompt 列 → LLM hallucinate id (e.g. jarvis_internal_health).
+        # 治本: concerns top 5 by severity (含 detail) + all_active_ids 给 LLM 选.
         try:
             if self.concerns_ledger and hasattr(self.concerns_ledger, 'list_active'):
                 active = self.concerns_ledger.list_active() or []
@@ -313,8 +437,10 @@ class InnerThoughtDaemon:
                         'what': (c.what_i_watch or '')[:80],
                         'severity': round(c.severity, 2),
                     }
-                    for c in active_sorted[:3]
+                    for c in active_sorted[:5]
                 ]
+                # 全 active id list (let LLM 见全, 不光 top 5)
+                ev['all_active_concern_ids'] = [c.id for c in active_sorted]
         except Exception:
             pass
         return ev
@@ -322,12 +448,17 @@ class InnerThoughtDaemon:
     # ----------------------------------------------------------
     # Prompt
     # ----------------------------------------------------------
-    def _build_prompt(self, sir_state: str, evidence: dict) -> Tuple[str, str]:
+    def _build_prompt(self, sir_state: str, evidence: dict,
+                        free_categories: Optional[List[str]] = None) -> Tuple[str, str]:
+        free_str = (
+            ''.join(free_categories) if free_categories else 'ABCDE'
+        )
         system = (
             "You are J.A.R.V.I.S., generating ONE brief inner thought during a "
             "quiet moment. This is your private mental note — not addressed to Sir.\n\n"
             "Output FORMAT (strict, all 4 tags required):\n"
-            "<CATEGORY>A|B|C|D|E</CATEGORY>\n"
+            f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
+            "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
             "<THOUGHT>1-2 sentences, first-person ('I noticed...', 'I'm thinking...'), "
             "casual self-talk, NOT formal speech to Sir.</THOUGHT>\n"
             "<SALIENCE>0.0-1.0 (0.7+ = worth bringing up later; 0.3- = passing)</SALIENCE>\n"
@@ -384,7 +515,7 @@ class InnerThoughtDaemon:
             lines.append("  (no recent turns this session)")
         lines.append("")
 
-        lines.append("[YOUR ACTIVE CONCERNS (top 3 by severity)]")
+        lines.append("[YOUR ACTIVE CONCERNS (top 5 by severity)]")
         cc = evidence.get('concerns') or []
         if cc:
             for c in cc:
@@ -393,7 +524,26 @@ class InnerThoughtDaemon:
                 )
         else:
             lines.append("  (none active)")
+        # 🆕 [Sir 2026-05-25 23:18 真痛-2] 给全 active id list 防 hallucinate
+        all_ids = evidence.get('all_active_concern_ids') or []
+        if all_ids:
+            lines.append(
+                f"  ⚠️ ALL VALID concern_ids ({len(all_ids)}): "
+                f"{', '.join(all_ids)}"
+            )
+            lines.append(
+                "  ⚠️ For update_concern_severity, ONLY use IDs from above. "
+                "Inventing IDs will fail."
+            )
         lines.append("")
+
+        if free_categories and len(free_categories) < 5:
+            lines.append(
+                f"[COOLDOWN] {free_str} are the ONLY non-cooldown categories. "
+                f"Cooldown: {[c for c in 'ABCDE' if c not in free_categories]} "
+                f"— pick from {free_str} only."
+            )
+            lines.append("")
 
         lines.append("Now generate ONE inner thought (4 tags strict).")
         return system, '\n'.join(lines)
