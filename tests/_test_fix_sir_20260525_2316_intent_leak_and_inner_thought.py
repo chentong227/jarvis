@@ -298,7 +298,11 @@ class TestL6BCategorySelfCorrectionLoop(unittest.TestCase):
         return d
 
     def test_b_self_correction_publishes_swm(self):
-        """B 类 + 'i keep repeating' → publish self_correction_noted."""
+        """B 类 sal >= 0.5 → publish self_reflection_noted.
+
+        🆕 [fix2 Sir 23:38] etype 改 self_correction_noted → self_reflection_noted
+        + 删 keyword hardcode (sal 阈值替).
+        """
         from jarvis_inner_thought_daemon import InnerThought
         d = self._empty_daemon()
         thought = InnerThought(
@@ -313,21 +317,26 @@ class TestL6BCategorySelfCorrectionLoop(unittest.TestCase):
         with patch('jarvis_utils.get_event_bus', return_value=mock_bus):
             d._maybe_publish_self_correction(thought)
         self.assertTrue(mock_bus.publish.called,
-            'B 类 self-correction 必须 publish SWM')
+            'B 类 sal=0.8 必须 publish SWM')
         kw = mock_bus.publish.call_args.kwargs
-        self.assertEqual(kw['etype'], 'self_correction_noted')
+        self.assertEqual(kw['etype'], 'self_reflection_noted',
+            'fix2 改 etype 为 self_reflection_noted')
         # high salience (主脑下轮真 inject)
         self.assertGreaterEqual(kw['salience'], 0.8)
 
-    def test_b_without_pattern_no_publish(self):
-        """B 类没匹配 keyword 不 publish."""
+    def test_b_low_sal_no_publish(self):
+        """B 类 sal < 0.5 → 不 publish (noise level).
+
+        🆕 [fix2 Sir 23:38] 原 test_b_without_pattern_no_publish — 现在
+        keyword 删了 (准则 6), 改用 sal 阈值. sal < 0.5 当 noise 不 publish.
+        """
         from jarvis_inner_thought_daemon import InnerThought
         d = self._empty_daemon()
         thought = InnerThought(
             id='t', ts=time.time(), ts_iso='?',
             category='B',
             thought='My tone was a bit dry just now.',
-            salience=0.5, actionable='none',
+            salience=0.3, actionable='none',  # sal < 0.5
         )
         mock_bus = MagicMock()
         with patch('jarvis_utils.get_event_bus', return_value=mock_bus):

@@ -327,28 +327,24 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
-    # 准则 6 — keyword 检测 self-correction 模式 (vocab 持久化后续)
-    _SELF_CORRECTION_PATTERNS = (
-        'i keep repeating', 'i keep saying', 'embarrassing pattern',
-        'circular logic', 'shouldn\'t bring up', 'i should stop',
-        '我反复', '我又说', '我不该再', '我不应该再',
-    )
+    # 🆕 [Sir 2026-05-25 23:38 真测优化] B 类 self-reflection 闭环阈值
+    # 老 fix#5 用 keyword hardcode list 限制 cover — Sir 真测 B 类 "caught myself
+    # being slightly too reactive" 没 match 任何 keyword → 没触发 publish. 准则 6
+    # 反对硬编码 list. 治本: B 类高 salience 全 publish, 让主脑下轮自己决定.
+    SELF_REFLECTION_SALIENCE_THRESHOLD = 0.5
 
     def _maybe_publish_self_correction(self, thought) -> None:
-        """🆕 [Sir 2026-05-25 23:18] B 类自反思闭环.
+        """🆕 [Sir 2026-05-25 23:38] B 类自反思闭环 — 优雅版.
 
-        看到 'i keep repeating X' 类 thought → publish SWM 让主脑下轮真看到.
-        准则 6: keyword 持久化是后续 (现在 inline list, 等 reflector L7 propose 迁 vocab).
+        删 keyword hardcode (准则 6 反硬编码). 任何 B 类 + sal ≥ 0.5 → publish
+        self_reflection_noted SWM. 主脑下轮 SOUL inject 真看到, 自己决定是否
+        纠正 — 不靠 daemon 预判 keyword.
+
+        salience 透传 (主脑能区分 sal=0.5 轻反思 vs sal=0.9 强烈反思).
         """
         if thought.category != 'B':
             return
-        thought_lower = (thought.thought or '').lower()
-        hit_pattern = None
-        for p in self._SELF_CORRECTION_PATTERNS:
-            if p in thought_lower:
-                hit_pattern = p
-                break
-        if not hit_pattern:
+        if thought.salience < self.SELF_REFLECTION_SALIENCE_THRESHOLD:
             return
         try:
             from jarvis_utils import get_event_bus
@@ -356,25 +352,26 @@ class InnerThoughtDaemon:
             if bus is None:
                 return
             bus.publish(
-                etype='self_correction_noted',
+                etype='self_reflection_noted',
                 description=(
-                    f"I just noticed myself: {thought.thought[:140]}. "
-                    f"Next reply: don't repeat this pattern."
+                    f"I just self-reflected: {thought.thought[:140]}. "
+                    f"Next reply: consider whether to adjust."
                 ),
                 source='inner_thought_daemon',
-                salience=0.85,  # 高 salience 让 SOUL 真 inject
+                # salience 透传: 让 SOUL inject 按强度排序
+                salience=max(0.7, thought.salience),
                 metadata={
                     'thought_id': thought.id,
                     'category': 'B',
-                    'hit_pattern': hit_pattern,
+                    'original_salience': thought.salience,
                     'thought_excerpt': thought.thought[:200],
                 },
-                ttl=3600.0 * 6,  # 6h ttl — 短期纠正足够
+                ttl=3600.0 * 6,  # 6h
             )
             self._bg_log(
-                f"🪞 [InnerThought/self-correction] B-thought matched "
-                f"'{hit_pattern}' → publish self_correction_noted SWM "
-                f"(主脑下轮 SOUL inject 真看到)"
+                f"🪞 [InnerThought/self-reflection] B-thought "
+                f"(sal={thought.salience:.2f}) → publish self_reflection_noted "
+                f"SWM (主脑下轮 SOUL inject 真看到)"
             )
         except Exception:
             pass

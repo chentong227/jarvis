@@ -516,13 +516,21 @@ class AutoArbiterDaemon:
         )
         if kind == 'inside_joke':
             system += (
-                "  ACTIVATE if: phrase is genuinely callback-worthy, fits "
-                "Sir's casual tone, NOT redundant with existing active jokes, "
-                "has real evidence in Sir's recent STM.\n"
-                "  REJECT if: dry / forced / one-off / overlaps with existing "
-                "joke / no STM evidence / Sir would find it cringey.\n"
-                "  CONFIDENCE high (0.8+) only when 2+ STM hits OR very clean "
-                "callback. Otherwise <0.7.\n"
+                "  ACTIVATE if: phrase is genuinely Sir-specific callback, NOT a\n"
+                "    generic butler stock phrase any AI would say.\n"
+                "    Must fit Sir's casual tone + have real evidence in STM (≥2 hits).\n"
+                "  REJECT if: dry / forced / one-off / overlaps with existing joke /\n"
+                "    no STM evidence / Sir would find it cringey / **GENERIC BUTLER\n"
+                "    STOCK PHRASE** like 'I stand corrected, Sir' / 'As you wish' /\n"
+                "    'Indeed, Sir' / 'Of course, Sir' / 'Understood, Sir' — these\n"
+                "    are not inside jokes, they're hospitality clichés.\n"
+                "  STOCK PHRASE TEST: Would any butler AI say this exact phrase\n"
+                "    given similar context? If YES → REJECT (it's not Sir-specific).\n"
+                "    Real inside joke = phrase that only makes sense to Sir+me\n"
+                "    given our specific shared history (e.g. callback to a\n"
+                "    specific incident, Sir's specific word choice, etc).\n"
+                "  CONFIDENCE high (0.8+) only when 2+ STM hits + clearly Sir-\n"
+                "    specific (not stock). Otherwise <0.7.\n"
             )
         elif kind == 'thread':
             system += (

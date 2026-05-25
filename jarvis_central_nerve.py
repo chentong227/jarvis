@@ -388,6 +388,12 @@ class CentralNerve:
         # 详 jarvis_auto_arbiter.py 顶部 docstring.
         self._init_auto_arbiter()
 
+        # 🆕 [HM / Sir 2026-05-25 23:38 真意 "我就是想少干点活"] DaemonHealthMonitor
+        # 灵魂工程 Layer 6 — 守护层. 每 6h 自动检 InnerThought + AutoArbiter 4 项
+        # 健康, 异常 publish 'daemon_health_warning' SWM 让 Sir 主面板看红条.
+        # Sir 不用跑 CLI, 不用每周 dump 看. 详 jarvis_daemon_health_monitor.py.
+        self._init_daemon_health_monitor()
+
         # [Reshape M6.3 third wave / 2026-05-24] SoulEvaluator Layer 5 init helper. 行为不变.
         self._init_soul_evaluator()
 
@@ -1638,6 +1644,36 @@ User: {user_input}
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"[ConcernsLedger] 初始化失败（非致命）：{_cl_e}")
+            except Exception:
+                pass
+
+    def _init_daemon_health_monitor(self) -> None:
+        """🆕 [HM / Sir 2026-05-25 23:38] DaemonHealthMonitor — 守护层 Layer 6.
+
+        Sir 真意: "我就是想少干点活, 别又给我多一项工作".
+        每 6h 自动检 InnerThought + AutoArbiter 4 项健康:
+          1. InnerThought thoughts/24h 区间 30-200
+          2. InnerThought 5 类分布无一类 > 70%
+          3. AutoArbiter calibration 阈值 ≥ 0.55
+          4. InnerThought actionable fail rate ≤ 30%
+        异常 publish 'daemon_health_warning' SWM (salience 0.75) →
+        SOUL inject 进主脑 prompt + dashboard 主面板自动看到红条.
+        Sir 真无需跑任何 CLI.
+        """
+        self.daemon_health_monitor = None
+        try:
+            from jarvis_daemon_health_monitor import (
+                DaemonHealthMonitor, set_default_monitor
+            )
+            self.daemon_health_monitor = DaemonHealthMonitor(
+                central_nerve=self,
+            )
+            self.daemon_health_monitor.start()
+            set_default_monitor(self.daemon_health_monitor)
+        except Exception as _hm_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [DaemonHealthMonitor] init fail (非致命): {_hm_e}")
             except Exception:
                 pass
 
