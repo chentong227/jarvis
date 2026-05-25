@@ -65,6 +65,11 @@ class InnerThought:
     actionable_result: str = 'pending'
     sir_state: str = 'unknown'     # 'active' / 'afk_short' / 'afk_deep' / 'sleep'
     tick_interval_s: int = 60
+    # 🆕 [Sir 2026-05-26 00:25 真痛"地基没打牢"] evidence linking 防 LLM 拍脑袋
+    # actionable != none 时 LLM 必须 cite THOUGHT 中真实出现的 1-5 词字串证明
+    # thought → actionable 真有 trace. Python 校验 cite 在 thought 里, 否则
+    # 降级 actionable='none' (无 evidence 不执行, 准则 5 言出必行 + 6 evidence).
+    evidence_link: str = ''
 
 
 # ==========================================================================
@@ -303,10 +308,15 @@ class InnerThoughtDaemon:
         action_str = ''
         if thought.actionable and thought.actionable.lower() != 'none':
             action_str = f" | actionable={thought.actionable[:40]} → {result}"
+        # 🆕 [Sir 2026-05-26 00:25 真痛"地基"] 显示 evidence_link (LLM cite 啥)
+        # actionable=none 但 evidence_link 非空 → 也展示 (rejected case Sir 真看)
+        ev_str = ''
+        if thought.evidence_link and thought.evidence_link.lower() != 'none':
+            ev_str = f" | cite=\"{thought.evidence_link[:40]}\""
         self._bg_log(
             f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
             f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
-            f"{action_str}"
+            f"{action_str}{ev_str}"
         )
 
     def _compute_free_categories(self) -> List[str]:
@@ -479,7 +489,7 @@ class InnerThoughtDaemon:
         system = (
             "You are J.A.R.V.I.S., generating ONE brief inner thought during a "
             "quiet moment. This is your private mental note — not addressed to Sir.\n\n"
-            "Output FORMAT (strict, all 4 tags required):\n"
+            "Output FORMAT (strict, all 5 tags required):\n"
             f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
             "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
             "<THOUGHT>1-2 sentences, first-person ('I noticed...', 'I'm thinking...'), "
@@ -488,7 +498,10 @@ class InnerThoughtDaemon:
             "<ACTIONABLE>one of: none | "
             "update_concern_severity:<concern_id>:<+/-delta> | "
             "publish_swm:<etype>:<short_desc> | "
-            "suggest_inside_joke:<phrase></ACTIONABLE>\n\n"
+            "suggest_inside_joke:<phrase></ACTIONABLE>\n"
+            "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
+            "own THOUGHT above that justify this actionable (Python will verify the "
+            "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern).\n"
@@ -504,9 +517,24 @@ class InnerThoughtDaemon:
             "  - update_concern_severity delta capped ±0.2 per thought.\n"
             "  - publish_swm etype: short snake_case (e.g. 'sir_seems_tired').\n"
             "  - If nothing meaningful comes, output <THOUGHT>(quiet)</THOUGHT> "
-            "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> — "
-            "and that's perfectly fine.\n"
-            "  - Keep first-person, brief, like genuine self-talk."
+            "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> "
+            "<EVIDENCE_LINK>none</EVIDENCE_LINK> — and that's perfectly fine.\n"
+            "  - Keep first-person, brief, like genuine self-talk.\n\n"
+            "🆕 [Sir 2026-05-26 真痛 \"地基要打牢\"] EVIDENCE LINKING RULE (HARD):\n"
+            "  ACTIONABLE must be traceable to THOUGHT content. The EVIDENCE_LINK\n"
+            "  word(s) MUST appear verbatim in your THOUGHT. Examples:\n"
+            "  ❌ BAD: <THOUGHT>Sir is toggling general and coding rapidly</THOUGHT>\n"
+            "         <ACTIONABLE>update_concern_severity:sir_interview_pr:+0.1</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>toggling</EVIDENCE_LINK>\n"
+            "         → wrong concern: 'toggling general/coding' does NOT trace to interview prep.\n"
+            "  ✅ GOOD: <THOUGHT>Sir is toggling general and coding rapidly without rest</THOUGHT>\n"
+            "         <ACTIONABLE>update_concern_severity:sir_pomodoro_compliance:+0.1</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>without rest</EVIDENCE_LINK>\n"
+            "         → 'without rest' traces to pomodoro work-rest concern, AND 'without rest'\n"
+            "         actually appears in THOUGHT.\n"
+            "  ✅ ALSO OK: <THOUGHT>Quiet moment, nothing notable</THOUGHT>\n"
+            "         <ACTIONABLE>none</ACTIONABLE> <EVIDENCE_LINK>none</EVIDENCE_LINK>\n"
+            "         → ACTIONABLE=none ALWAYS preferred over forced un-grounded action."
         )
 
         # User block — give LLM evidence to ground thought
@@ -603,6 +631,10 @@ class InnerThoughtDaemon:
         thought_m = re.search(r'<THOUGHT>(.*?)</THOUGHT>', raw, re.DOTALL)
         sal_m = re.search(r'<SALIENCE>\s*([0-9.]+)\s*</SALIENCE>', raw)
         action_m = re.search(r'<ACTIONABLE>(.*?)</ACTIONABLE>', raw, re.DOTALL)
+        # 🆕 [Sir 2026-05-26 00:25 真痛"地基"] evidence link 解析
+        ev_link_m = re.search(
+            r'<EVIDENCE_LINK>(.*?)</EVIDENCE_LINK>', raw, re.DOTALL
+        )
         if not (cat_m and thought_m and sal_m):
             return None
         thought_text = (thought_m.group(1) or '').strip()
@@ -615,6 +647,9 @@ class InnerThoughtDaemon:
         actionable = (action_m.group(1).strip() if action_m else 'none')[:200]
         if not actionable:
             actionable = 'none'
+        evidence_link = (
+            (ev_link_m.group(1) or '').strip() if ev_link_m else ''
+        )[:120]
         now = time.time()
         return InnerThought(
             id=f"thought_{time.strftime('%Y%m%d_%H%M%S')}_{int(now * 1000) % 10000:04x}",
@@ -628,6 +663,7 @@ class InnerThoughtDaemon:
             actionable_result='pending',
             sir_state=sir_state,
             tick_interval_s=tick_interval,
+            evidence_link=evidence_link,
         )
 
     # ----------------------------------------------------------
@@ -638,9 +674,24 @@ class InnerThoughtDaemon:
         if not a or a.lower() == 'none':
             return True, 'none'
 
+        # 🆕 [Sir 2026-05-26 00:25 真痛"地基没打牢"] EVIDENCE LINK 校验 (HARD GATE)
+        # actionable != none 时, LLM 必须 cite THOUGHT 中真实出现的字串证明 trace.
+        # 缺 EVIDENCE_LINK 或 cite 字串不在 thought 里 → 降级 actionable=none.
+        # 准则 5 言出必行 + 6 evidence: 无 evidence 不执行.
+        gate_ok, gate_reason = self._validate_evidence_link(thought)
+        if not gate_ok:
+            # 降级: 不真执行 actionable, 标记 rejected (Sir 看 log 真知道原因)
+            thought.actionable = 'none'  # 防 SOUL inject 误以为有 action
+            return False, f'rejected_no_evidence_link:{gate_reason}'
+
         try:
             if a.startswith('update_concern_severity:'):
-                return self._do_update_concern_severity(thought, a)
+                ok, result = self._do_update_concern_severity(thought, a)
+                # 🆕 [Sir 真痛 anchor] 二层 fail (cite ↔ concern wrong) →
+                # 降级 thought.actionable=none 防 SOUL inject 误导主脑
+                if not ok and 'evidence_link_wrong_concern' in result:
+                    thought.actionable = 'none'
+                return ok, result
             if a.startswith('publish_swm:'):
                 return self._do_publish_swm_actionable(thought, a)
             if a.startswith('suggest_inside_joke:'):
@@ -648,6 +699,104 @@ class InnerThoughtDaemon:
             return False, f'unknown_actionable:{a[:40]}'
         except Exception as e:
             return False, f'exception:{str(e)[:80]}'
+
+    def _validate_evidence_link(self, thought: InnerThought
+                                    ) -> Tuple[bool, str]:
+        """🆕 [Sir 2026-05-26 00:25 真痛"地基没打牢"] 校验 evidence link.
+
+        actionable != none 时, thought.evidence_link 必须:
+          1. 非空 (LLM 真给了 cite)
+          2. cite 字串 (lower, strip 标点) 真出现在 thought.thought (lower) 里
+            (LLM 不能 cite thought 之外的词 — 防 hallucinate trace)
+
+        返回:
+          (True, '') — 通过校验, 真执行 actionable
+          (False, reason) — 降级 actionable=none, log reason
+
+        准则 6 evidence-driven + 5 言出必行: 无 evidence 不执行.
+        """
+        cite = (thought.evidence_link or '').strip()
+        if not cite or cite.lower() in ('none', '(none)', '-'):
+            return False, 'no_cite (LLM 没给 EVIDENCE_LINK)'
+
+        # 归一化: lower + 去标点 (' " . , ! ? ; :)
+        def _normalize(s: str) -> str:
+            return re.sub(r'[\'".,!?;:\-]', '', s.lower()).strip()
+
+        cite_norm = _normalize(cite)
+        thought_norm = _normalize(thought.thought or '')
+        if not cite_norm:
+            return False, 'cite_empty_after_normalize'
+
+        if cite_norm not in thought_norm:
+            # 兜底: 拆词 (LLM 可能 cite "without rest" 而 thought 有 "needing rest"
+            # → 分别 check "without" + "rest", 至少 50% words 命中也算)
+            cite_words = [w for w in cite_norm.split() if len(w) > 2]
+            if not cite_words:
+                return False, f'cite_not_in_thought:"{cite[:40]}"'
+            hits = sum(1 for w in cite_words if w in thought_norm)
+            if hits < max(1, len(cite_words) // 2):
+                return False, (
+                    f'cite_not_in_thought:"{cite[:40]}" '
+                    f'({hits}/{len(cite_words)} words match)'
+                )
+        return True, ''
+
+    # 🆕 [Sir 2026-05-26 00:25 真痛 anchor] generic stopwords 防 token overlap 噪音
+    # ("sir/i/my" 这种词所有 concern/thought 都有, 不能算 meaningful link)
+    _GENERIC_STOPWORDS = frozenset({
+        'sir', 'jarvis', 'i', 'me', 'my', 'you', 'your', 'we', 'us', 'our',
+        'the', 'a', 'an', 'and', 'or', 'but', 'on', 'in', 'at', 'of', 'to',
+        'for', 'with', 'is', 'are', 'was', 'were', 'has', 'have', 'had',
+        'be', 'been', 'do', 'does', 'did', 'this', 'that', 'these', 'those',
+        'it', 'its', 'his', 'her', 'them', 'their', 'as', 'so', 'if', 'than',
+        'thought', 'noticed', 'thinking', 'wondering', 'just', 'now',
+        'really', 'should', 'would', 'could', 'might', 'may', 'will',
+        'shall', 'about', 'over', 'between', 'from', 'into', 'after',
+        'before', 'still', 'also', 'very', 'quite',
+    })
+
+    def _meaningful_tokens(self, s: str) -> set:
+        """拆词去 stopword + 短词 — 留 meaningful evidence tokens."""
+        if not s:
+            return set()
+        words = re.findall(r'\w+', s.lower())
+        return {
+            w for w in words
+            if len(w) > 2 and w not in self._GENERIC_STOPWORDS
+        }
+
+    def _evidence_links_to_concern(self, evidence_link: str,
+                                       concern) -> Tuple[bool, str]:
+        """🆕 [Sir 真痛 anchor 治本] cite 是否真 link 到 concern.
+
+        cite 词跟 concern (id 拆 underscore + what_i_watch) 至少 1 个
+        meaningful token 重合. 防"cite 真在 thought 但是 wrong concern"
+        (Sir 真测 evidence: thought 提 toggling general/coding → cite=toggling →
+         target=sir_interview_pr → 应 reject, toggling 跟 interview 无关).
+
+        Returns: (ok, overlap_word_or_reason).
+        """
+        cite_tokens = self._meaningful_tokens(evidence_link)
+        concern_id_tokens = self._meaningful_tokens(
+            (getattr(concern, 'id', '') or '').replace('_', ' ')
+        )
+        concern_what_tokens = self._meaningful_tokens(
+            getattr(concern, 'what_i_watch', '') or ''
+        )
+        concern_tokens = concern_id_tokens | concern_what_tokens
+        if not cite_tokens:
+            # cite 全 stopword 或空 — 不严判, LLM 不严就让过 (准则 6 信任 LLM)
+            return True, '(no meaningful cite tokens — trust LLM)'
+        if not concern_tokens:
+            return True, '(concern has no meaningful tokens — trust LLM)'
+        overlap = cite_tokens & concern_tokens
+        if overlap:
+            return True, f'overlap:{next(iter(overlap))}'
+        return False, (
+            f'no_token_overlap (cite:{sorted(cite_tokens)[:3]} vs '
+            f'concern:{sorted(concern_tokens)[:3]})'
+        )
 
     def _do_update_concern_severity(self, thought: InnerThought,
                                        a: str) -> Tuple[bool, str]:
@@ -671,6 +820,14 @@ class InnerThoughtDaemon:
         ) else self.concerns_ledger.concerns.get(cid)
         if c is None:
             return False, f'concern_not_found:{cid}'
+        # 🆕 [Sir 2026-05-26 00:25 真痛 anchor 治本] 二层校验: cite ↔ concern overlap
+        # 真痛: cite 真在 thought 但 wrong concern (toggling → interview_pr).
+        # 此处校验 cite 词跟 concern 至少 1 个 meaningful token 重合.
+        link_ok, link_msg = self._evidence_links_to_concern(
+            thought.evidence_link, c
+        )
+        if not link_ok:
+            return False, f'evidence_link_wrong_concern:{cid}:{link_msg}'
         new_sev = max(0.0, min(1.0, c.severity + delta))
         if abs(new_sev - c.severity) < 1e-3:
             return True, f'no-op (already {c.severity:.2f})'
