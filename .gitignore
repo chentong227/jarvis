@@ -77,6 +77,10 @@ memory_pool/sir_status.json
 memory_pool/sir_acked_state.json
 # [P5-Gap3 / 2026-05-21] ScreenVisionEngine 屏幕快照: runtime
 memory_pool/screen_snapshot.json
+# 🆕 [HM / Sir 2026-05-25 23:38] DaemonHealthMonitor history snapshot: runtime
+memory_pool/daemon_health.json
+# 🆕 [phrase_lock / 2026-05] sentinel runtime review queue
+memory_pool/phrase_lock_review.json
 # memory_pool 下的 .bak 文件 (jsonl tainted 备份 / promise_log 归档备份等 runtime 残留)
 memory_pool/*.bak
 # [Reshape M3.A / 2026-05-24] 扩 glob: conftest fix backup 等
