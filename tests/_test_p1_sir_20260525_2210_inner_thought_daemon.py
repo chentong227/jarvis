@@ -486,6 +486,29 @@ class TestL8KeyRouterCaller(unittest.TestCase):
         self.assertIn('CALLER_INNER_THOUGHT', src,
             'daemon 必须传 CALLER_INNER_THOUGHT 给 LlmReflector')
 
+    def test_daemon_uses_correct_llm_reflector_singleton_api(self):
+        """🩹 [P1-fix1 / Sir 22:48 真测 BUG] daemon 必须用 LlmReflector(key_router=...)
+        构造单例 (它 __new__ 单例), 不能用 .get_instance() (不存在的 API).
+
+        Sir 22:48 真测 log: '⚠️ [InnerThought] LLM call exception:
+        type object LlmReflector has no attribute get_instance' — 首波 thought 即 fail.
+        """
+        src_path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(src_path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        self.assertIn('LlmReflector(key_router=', src,
+            'daemon 必须用 LlmReflector(key_router=...) 单例构造')
+        self.assertNotIn('LlmReflector.get_instance', src,
+            'daemon 不应用错误的 .get_instance() (Sir 22:48 真测 BUG)')
+
+    def test_llm_reflector_is_actual_singleton(self):
+        """anti-regression: LlmReflector 必须保持单例 (__new__ pattern)."""
+        from jarvis_llm_reflector import LlmReflector
+        r1 = LlmReflector(key_router=None)
+        r2 = LlmReflector(key_router=None)
+        self.assertIs(r1, r2,
+            'LlmReflector 必须单例 (__new__ pattern)')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -405,7 +405,8 @@ class InnerThoughtDaemon:
         try:
             from jarvis_llm_reflector import LlmReflector
             from jarvis_key_router import KeyRouter
-            reflector = LlmReflector.get_instance(key_router=self.key_router)
+            # LlmReflector 用 __new__ 单例 — 直接构造即拿已有实例
+            reflector = LlmReflector(key_router=self.key_router)
             res = reflector.reflect(
                 model='flash_lite',
                 system_prompt=system_prompt,
