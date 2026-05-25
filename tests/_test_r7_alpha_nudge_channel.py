@@ -43,15 +43,52 @@ class TestResolveChannel(unittest.TestCase):
                              f"{t} 应当走 VOICE")
 
     def test_trivia_types_route_to_silent_text(self):
-        for t in ('screen_tease', 'atmosphere', 'afternoon',
-                  'hydration', 'stretch', 'flow_end'):
-            self.assertEqual(resolve_nudge_channel(t), NUDGE_CHANNEL_SILENT_TEXT,
-                             f"{t} 应当走 SILENT_TEXT")
+        # 🆕 [Sir 2026-05-25 18:05] env=1 默认全升 voice 让主脑接管.
+        # 老行为只在 env=0 显式 opt-out 时生效. 测保留 env=0 老映射不变.
+        import os as _os_t
+        _old = _os_t.environ.get('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS')
+        _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = '0'
+        try:
+            for t in ('screen_tease', 'atmosphere', 'afternoon',
+                      'hydration', 'stretch', 'flow_end'):
+                self.assertEqual(resolve_nudge_channel(t), NUDGE_CHANNEL_SILENT_TEXT,
+                                 f"{t} 应当走 SILENT_TEXT (env=0 老映射)")
+        finally:
+            if _old is None:
+                _os_t.environ.pop('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS', None)
+            else:
+                _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = _old
 
     def test_brief_types_route_to_visual_pulse(self):
-        for t in ('background_brief', 'task_handoff_ready'):
-            self.assertEqual(resolve_nudge_channel(t), NUDGE_CHANNEL_VISUAL_PULSE,
-                             f"{t} 应当走 VISUAL_PULSE")
+        # 🆕 [Sir 2026-05-25 18:05] 同上 — env=0 才走老映射 visual_pulse.
+        import os as _os_t
+        _old = _os_t.environ.get('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS')
+        _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = '0'
+        try:
+            for t in ('background_brief', 'task_handoff_ready'):
+                self.assertEqual(resolve_nudge_channel(t), NUDGE_CHANNEL_VISUAL_PULSE,
+                                 f"{t} 应当走 VISUAL_PULSE (env=0 老映射)")
+        finally:
+            if _old is None:
+                _os_t.environ.pop('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS', None)
+            else:
+                _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = _old
+
+    def test_env_1_default_all_voice(self):
+        """🆕 [Sir 2026-05-25 18:05] env=1 默认 → 所有原 silent_text/visual_pulse 升 voice."""
+        import os as _os_t
+        _old = _os_t.environ.get('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS')
+        _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = '1'
+        try:
+            for t in ('screen_tease', 'dormant_project', 'atmosphere',
+                       'background_brief', 'hydration'):
+                self.assertEqual(resolve_nudge_channel(t), NUDGE_CHANNEL_VOICE,
+                                 f"{t} env=1 默认应升 voice 让主脑决策")
+        finally:
+            if _old is None:
+                _os_t.environ.pop('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS', None)
+            else:
+                _os_t.environ['JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS'] = _old
 
     def test_unknown_type_defaults_to_voice(self):
         self.assertEqual(resolve_nudge_channel('unknown_xxx'), NUDGE_CHANNEL_VOICE)

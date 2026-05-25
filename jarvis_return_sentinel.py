@@ -361,10 +361,40 @@ class ReturnSentinel(threading.Thread):
                 return
             if vt.last_conversation_end_time > 0 and (time.time() - vt.last_conversation_end_time) < 120:
                 gap = int(time.time() - vt.last_conversation_end_time)
-                _log(f"📞 [ReturnSentinel/Skip] 距上轮对话结束 < 120s，避免立刻再问候")
-                _publish_skip(f'last_conv_end_{gap}s_ago',
-                              {'last_conv_end_age_s': gap})
-                return
+                # 🆕 [Sir 2026-05-25 13:32 真测追根 BUG 治本] reminder fire 豁免
+                # =====================================================================
+                # 源 BUG: 闹钟 13:30 fire 走 chat_bypass.stream_chat → vt.last_conversation
+                # _end_time 被设. ReturnSentinel _on_return (Sir 真敲键鼠) 看到
+                # "距上轮对话 < 120s" → skip morning greeting. 但闹钟不是 Sir 主动对话!
+                # 治本: 看 SWM 近 conv_end_age_s + 30s 内是否有 reminder_fired event
+                # → 是 = 上轮 conv 被闹钟占, 豁免 skip 仍 greet.
+                # =====================================================================
+                _is_reminder_occupied = False
+                try:
+                    from jarvis_utils import get_event_bus as _geb_rs
+                    _bus_rs = _geb_rs()
+                    if _bus_rs is not None:
+                        _recent_reminders = _bus_rs.recent_events(
+                            within_seconds=float(gap + 30),
+                            types={'reminder_fired'},
+                        )
+                        # 任何 reminder_fired 在 conv_end 前后 ±15s 窗口 → 是闹钟占用
+                        _conv_end_ts = vt.last_conversation_end_time
+                        for _ev in _recent_reminders:
+                            _ev_ts = float(_ev.get('ts', 0) or 0)
+                            if abs(_ev_ts - _conv_end_ts) < 15.0:
+                                _is_reminder_occupied = True
+                                break
+                except Exception:
+                    pass
+                if _is_reminder_occupied:
+                    _log(f"📞 [ReturnSentinel/Bypass] 上轮 conv 是闹钟 fire 占用 (非 Sir 主动对话), "
+                         f"豁免 < 120s skip, 继续 morning greeting")
+                else:
+                    _log(f"📞 [ReturnSentinel/Skip] 距上轮对话结束 < 120s，避免立刻再问候")
+                    _publish_skip(f'last_conv_end_{gap}s_ago',
+                                  {'last_conv_end_age_s': gap})
+                    return
 
         try:
             import win32gui
@@ -378,10 +408,23 @@ class ReturnSentinel(threading.Thread):
                           "movie", "film", "tv", "anime", "动漫", "综艺", "剧",
                           "potplayer", "vlc", "mpv", "kmplayer", "暴风", "迅雷"]
         if any(kw in fg_title for kw in media_keywords):
-            _log(f"📞 [ReturnSentinel/Skip] 前台是媒体窗口（{fg_title[:40]}），不打扰")
-            _publish_skip('media_window_foreground',
-                          {'fg_title_prefix': fg_title[:40]})
-            return
+            # 🆕 [Sir 2026-05-25 18:04 真测追根 BUG 治本] 残留窗口 ≠ Sir 在看
+            # =====================================================================
+            # 源 BUG: Sir 出门 262min AFK, 前台 bilibili 视频残留 (Sir 走前没关).
+            # ReturnSentinel 看到媒体窗口 → skip greeting. 但 Sir 不在看视频!
+            # 残留窗口仅在**短 AFK** (Sir 真在看) 才该 skip. 长 AFK 必是出门.
+            # 治本: AFK >= 30min → 媒体窗口豁免 (残留). < 30min 才信任窗口.
+            # 准则 6 evidence-driven: AFK 时长 = 真证据, 残留窗口不是.
+            # =====================================================================
+            if afk_duration >= 1800:  # 30min+ AFK = 出门, 残留窗口不可信
+                _log(f"📞 [ReturnSentinel/Bypass] 前台是媒体窗口（{fg_title[:40]}）"
+                     f"但 AFK {int(afk_duration/60)}min 太长 = 残留, 仍 greet")
+            else:
+                _log(f"📞 [ReturnSentinel/Skip] 前台是媒体窗口（{fg_title[:40]}），不打扰")
+                _publish_skip('media_window_foreground',
+                              {'fg_title_prefix': fg_title[:40],
+                               'afk_minutes': int(afk_duration/60)})
+                return
 
         current_hour = int(time.strftime("%H"))
         work_category = PhysicalEnvironmentProbe.current_work_category

@@ -2685,9 +2685,24 @@ DEFAULT_NUDGE_CHANNEL_MAP = {
 
 def resolve_nudge_channel(nudge_type: str, override: str = None) -> str:
     """根据 nudge_type 决定走哪条通道。override 优先于默认映射。
-    未知类型默认走 VOICE（最安全 / 跟原行为一致）。"""
+    未知类型默认走 VOICE（最安全 / 跟原行为一致）。
+
+    🆕 [Sir 2026-05-25 18:05 真测追根 BUG 治本] 准则 6 信任 LLM 决策
+    =====================================================================
+    源 BUG: Sir 真测看到 🤫 [SilentNudge/dormant_project] 字幕飘过没发声.
+    Sir 真意 "不发声的可以调整成发声, 智能决策, 不好的体验我会跟你说" —
+    DEFAULT_NUDGE_CHANNEL_MAP 把 silent_text 类硬编码绕过主脑决策,
+    违反准则 6 (信任 LLM 自决反应空间).
+    治本: env JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS=1 (默认) → 全走 voice,
+    主脑 stream_nudge 看 SWM 自决 ([SILENCE] / voice 升级). env=0 走老逻辑
+    (实机有问题秒退). 准则 6 同 ProactiveCare β.5.13 同款.
+    """
     if override in NUDGE_CHANNELS:
         return override
+    _llm_all = os.environ.get('JARVIS_SMART_NUDGE_LLM_ALL_CHANNELS', '1').strip()
+    if _llm_all not in ('0', 'false', 'no', 'off'):
+        # 默认: 全走 voice 让主脑接管. 主脑 directive 可输出 [SILENCE] 自决静默.
+        return NUDGE_CHANNEL_VOICE
     return DEFAULT_NUDGE_CHANNEL_MAP.get(nudge_type, NUDGE_CHANNEL_VOICE)
 
 

@@ -744,13 +744,21 @@ Answer ONLY the nudge type name, nothing else."""
 
         # [R7-α/NudgeChannel] 决定走哪条通道：voice / silent_text / visual_pulse
         # SmartNudge 调用方可以显式 context['channel_override']，否则按默认映射
+        # 🆕 [Sir 2026-05-25 18:05] resolve_nudge_channel env=1 默认全走 voice
+        # 让主脑接管决策. 记 legacy_hint 给主脑参考 (准则 6 同 ProactiveCare β.5.13).
         try:
-            from jarvis_utils import resolve_nudge_channel
+            from jarvis_utils import (resolve_nudge_channel,
+                                       DEFAULT_NUDGE_CHANNEL_MAP)
             context['channel'] = resolve_nudge_channel(
                 nudge_type, override=context.get('channel_override')
             )
+            # legacy_hint = 老硬编码映射, 给主脑作 "原本会怎么选" 参考
+            context['original_channel_hint'] = DEFAULT_NUDGE_CHANNEL_MAP.get(
+                nudge_type, 'voice'
+            )
         except Exception:
             context['channel'] = 'voice'
+            context['original_channel_hint'] = 'voice'
 
         cmd = f"__NUDGE__:{json.dumps(context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
