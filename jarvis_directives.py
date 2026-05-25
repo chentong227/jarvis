@@ -1754,8 +1754,40 @@ def _trigger_bilingual_truncated_recover(ctx: DirectiveContext) -> bool:
 
     SWM 近 120s 内含 'bilingual_truncated' event → fire directive.
     主脑下轮看 directive 自决复述完整答 + 出 ZH.
+
+    🆕 [Sir 2026-05-25 22:01 真测追根 BUG 治本] paired event 检查:
+      Sir 真测 turn 1 truncate → worker 补 ZH 字幕成功 →
+      但 turn 2 主脑仍道歉重复说一遍. 根因: trigger 只看 'truncated',
+      不看 'recovered'. 修法 (准则 6 evidence-driven): truncate worker
+      补完会 publish 'bilingual_truncate_recovered'. 如 SWM 含 paired
+      recovered event (比 truncated 更晚) → 字幕已补, 主脑无需复述, 不 fire.
     """
-    return _swm_has_recent('bilingual_truncated', max_age_s=120.0)
+    if not _swm_has_recent('bilingual_truncated', max_age_s=120.0):
+        return False
+    # paired event 检查: 看是否有 recovered event 配对 (worker 已补字幕)
+    try:
+        from jarvis_utils import get_event_bus as _geb
+        _bus = _geb()
+        if _bus is None:
+            return True  # 没 bus 信息, 保守 fire
+        top = _bus.top_n(n=30)
+        # 找最近 truncated + recovered 各一, 比较时间 (epoch 单调)
+        last_truncated_age = 9999
+        last_recovered_age = 9999
+        for e in top:
+            etype = e.get('type')
+            age = e.get('_age_s', 9999)
+            if etype == 'bilingual_truncated' and age < last_truncated_age:
+                last_truncated_age = age
+            elif etype == 'bilingual_truncate_recovered' and age < last_recovered_age:
+                last_recovered_age = age
+        # recovered 比 truncated 更新 (age 更小) → 字幕已补 → 不 fire
+        if (last_recovered_age < 120.0
+                and last_recovered_age <= last_truncated_age):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _trigger_no_hallucinated_tool_use_judge(ctx: DirectiveContext) -> bool:
@@ -2179,17 +2211,27 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             purpose_short='上轮 reply 被 LLM 自然 stop 截断 → 复述完整答',
             text=_tw.dedent("""\
                 [BILINGUAL TRUNCATE RECOVER — Sir 准则 6 evidence]:
-                If SWM contains a recent 'bilingual_truncated' event (your previous
-                reply ended mid-sentence and lacked the ---ZH--- translation), your
-                response THIS TURN must:
-                  1. Briefly acknowledge the gap (one phrase, e.g. 'My apologies — my
-                     last reply was cut short, Sir.').
-                  2. Re-state the COMPLETE answer that was truncated, using the SWM
-                     'en_snippet' metadata as anchor.
+                SWM contains a 'bilingual_truncated' event (your previous reply ended
+                mid-sentence and lacked the ---ZH--- translation).
+
+                🆕 [Sir 2026-05-25 22:01] CHECK PAIRED 'bilingual_truncate_recovered'
+                EVENT FIRST:
+                  - If SWM also has 'bilingual_truncate_recovered' AFTER the
+                    'bilingual_truncated' event → the ZH subtitle was already auto-fixed
+                    by the truncate_cont_worker (Sir already saw the complete ZH).
+                  - In that case: DO NOT apologize, DO NOT re-state the truncated answer.
+                    Just respond naturally to Sir's CURRENT input as if the previous
+                    answer was complete. Keep ---ZH--- block at the end as always.
+
+                Only if there is NO 'bilingual_truncate_recovered' event (worker failed
+                / didn't run), then:
+                  1. Briefly acknowledge the gap (e.g. 'My apologies — my last reply
+                     was cut short, Sir.').
+                  2. Re-state the COMPLETE answer using SWM 'en_snippet' metadata.
                   3. Always emit the ---ZH--- translation block at the end.
-                Do NOT pretend the truncation didn't happen. Do NOT skip ZH again.
-                If Sir's current input is a new topic, integrate the recovery briefly
-                then address the new topic.
+
+                If Sir's current input is a new topic, address the new topic naturally
+                (with brief recovery only if recovered event is missing).
             """).rstrip(),
             trigger=_trigger_bilingual_truncated_recover,
         ),

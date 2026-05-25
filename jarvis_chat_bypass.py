@@ -4475,6 +4475,26 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 # =====================================================================
                 _zh_str = (zh_subtitle_text or '').strip()
                 _zh_clean = re.sub(r'<[^>]+>', '', _zh_str).strip()
+                # 🆕 [Sir 2026-05-25 22:01 真测追根 BUG 治本] strip [META] 行!
+                # =====================================================================
+                # Sir 真理 (22:04): "贾维斯主脑一般只有调用工具才会截断输出. 为什么加了
+                # 这个 (truncate 检) 功能以后, 随便聊天也截断了? 是不是没截断, 代码逻辑
+                # 出错导致?"
+                # 真根因: final_clean 在此处 detection 时仍含 [META] 行 (parse_meta 在
+                #   line 4697 才裁). zh_subtitle_text = split('---ZH---')[1] →
+                #   含 "ZH...冷幽默。\n\n[META] ...|skip_alert=none". _zh_clean[-1]
+                #   = 'e' (none 末尾字母) → ends_ok=False → 误判 truncated.
+                #   len(_zh_clean)=175ch (含 META~100ch + 真 ZH~75ch), 真 ZH 短 →
+                #   len(_zh_clean)<len(EN)*0.4 也命中 → 双重误报.
+                # 修法 (准则 8 优雅单点): detection 前 strip [META] block, 让 _zh_clean
+                #   只含真 ZH translation. 既治 BUG 又不破老 META 链 (parse_meta line
+                #   4697 仍按原逻辑跑).
+                # =====================================================================
+                _META_DETECT_RE = re.compile(
+                    r'[\[【]\s*meta\s*[\]】].*$',
+                    re.IGNORECASE | re.DOTALL,
+                )
+                _zh_clean = _META_DETECT_RE.sub('', _zh_clean).strip()
                 _zh_endings = set('.?!。？！…')
                 _zh_truncated = False
                 if _en_net and len(_en_net) >= 30:
@@ -4582,6 +4602,44 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                         )
                                     except Exception as _e_sub:
                                         _tr_bg(f"⚠️ [Truncate/Cont] subtitle.put fail: {_e_sub}")
+                                    # 🆕 [Sir 2026-05-25 22:01 真测追根 BUG 治本]
+                                    # ============================================
+                                    # Sir 真痛点 (turn 21:58:13 + 21:58:49):
+                                    #   - Turn 1 ZH truncate → worker 补 67ch ZH 字幕成功
+                                    #   - Turn 2 主脑仍道歉 "previous response was cut short.
+                                    #     To complete my thought: ..." 重复复述全文
+                                    # 根因: worker 补完只 subtitle.put + bg_log, 没 publish
+                                    #   'bilingual_truncate_recovered' SWM event.
+                                    #   _trigger_bilingual_truncated_recover 只看
+                                    #   'bilingual_truncated' 120s 内 → 永远 fire →
+                                    #   directive 永远教主脑道歉 + 复述.
+                                    # 修法 (准则 6 evidence-driven):
+                                    #   publish 'bilingual_truncate_recovered' 让 directive
+                                    #   trigger 看到 paired event 不 fire (字幕已补).
+                                    # ============================================
+                                    try:
+                                        from jarvis_utils import get_event_bus as _geb_rc
+                                        _bus_rc = _geb_rc()
+                                        if _bus_rc is not None:
+                                            _bus_rc.publish(
+                                                etype='bilingual_truncate_recovered',
+                                                description=(
+                                                    f"ZH 字幕已补 ({len(_zh_full)}ch) — "
+                                                    f"主脑下轮不必道歉/复述"
+                                                ),
+                                                source='chat_bypass.truncate_cont_worker',
+                                                metadata={
+                                                    'recovered_zh_length': len(_zh_full),
+                                                    'recovered_zh_snippet': _zh_full[:200],
+                                                    'original_en_length': len(en_snippet),
+                                                    'en_cont_emitted': bool(
+                                                        _en_cont and len(_en_cont) >= 2
+                                                    ),
+                                                },
+                                                salience=0.5,
+                                            )
+                                    except Exception:
+                                        pass
                                 # 🆕 [Sir 2026-05-25 21:38 真测追根] EN cont 进 TTS 队列
                                 # =====================================================
                                 # Sir 真痛点: 续写只补 ZH 字幕, EN reply 半截 TTS 已说完
