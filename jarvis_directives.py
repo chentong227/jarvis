@@ -2824,6 +2824,26 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                     "new_text": "[REDACTED Sir 23:14 教正: 95% 是我幻觉, 实际无数据]"
                   }}</FAST_CALL>
 
+                例 6: PRIORITY CORRECTION — Sir 说 "我们要把 X 提到最重要" /
+                  "其实 X 才是最重要" / "你忘了 X 才是 priority" (intent=revise, layer=A)
+                  ⚠️ Sir 2026-05-25 21:32 真测痛点: 主脑只 ack 没 emit, INTEGRITY 抓
+                  no_tool_called. Sir 真理 "我说一次, 你应该学会" — 必须 mutation:
+                  → MUST emit 2 FAST_CALL:
+                  (a) 主脑认知更新 (current_priority 字段):
+                  <FAST_CALL>{"organ":"mutation","command":"update","params":{
+                    "field_path": "profile.current_priority",
+                    "new_value": "Interview preparation (Sir 2026-05-25 priority correction)",
+                    "intent": "revise",
+                    "confidence": 0.95,
+                    "reason": "Sir 21:32 priority correction: 把面试提到最重要"
+                  }}</FAST_CALL>
+                  (b) 如果被降级的 Y 是 concern → 同时 dismiss/降权:
+                  <FAST_CALL>{"organ":"concerns","command":"dismiss","params":{
+                    "concern_id":"unfinished_jiazhao_ke1",
+                    "reason":"Sir 显式降级 (面试 first)"
+                  }}</FAST_CALL>
+                  ⚠️ 嘴上说 "已调整优先级" 但**没 emit (a)** → INTEGRITY 抓 no_tool_called.
+
                 何时用 mutation organ vs 专用 organ:
                   - profile / milestones / relational / 复杂字段 → mutation organ
                   - concerns dismiss / promises fulfill / stand_down → 专用 organ (更短)
