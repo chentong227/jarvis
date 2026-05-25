@@ -768,6 +768,15 @@ class ProfileCard:
         # 治本: health_goals 是 dict, Sir 教任何 daily target 都进这个 dict.
         # 同 unit_preferences 范式. Sir CLI 可改 jarvis_config/sir_profile.json 直接看.
         'health_goals',
+        # 🆕 [Sir 2026-05-25 20:31 真测追根 priority_correction] BUG 治本
+        # Sir 真测 (jarvis_20260525_200517.log Turn 4): Sir '其实最重要是面试',
+        # 主脑 emit FAST_CALL field_path='profile.current_priority'
+        # new='Government career-entry interview preparation' → top field
+        # 'current_priority' not in allowed list → fallback audit-only →
+        # sir_profile.json 没真改, Sir 重启主脑仍认为驾照是 priority.
+        # 治本: 加入白名单 (string 字段, 主脑识别 Sir priority correction 后 mutate).
+        # 同 work_category / professional_role 范式 (string 字段).
+        'current_priority',
     })
 
     def overwrite_field(self, field: str, new_value, source: str = 'fast_call_mutation',

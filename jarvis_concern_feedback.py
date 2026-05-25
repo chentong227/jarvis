@@ -179,9 +179,39 @@ class ConcernFeedbackJudge:
 
         return None
 
+    def _load_priority_correction_vocab(self) -> str:
+        """🆕 [Sir 2026-05-25 20:31 真测追根 准则 6.5 持久化] 从 vocab JSON 读 priority
+        correction phrases inject 进 prompt. Sir CLI 加 phrase 不需改源码.
+
+        Returns: 多行 phrases block 字符串 (内嵌 prompt), 或 '' (vocab 缺/损).
+        """
+        try:
+            import os as _os_pc
+            vocab_path = _os_pc.path.join('memory_pool', 'priority_correction_vocab.json')
+            if not _os_pc.path.exists(vocab_path):
+                return ''
+            with open(vocab_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            lines = []
+            for pat in data.get('patterns', []):
+                if pat.get('state') != 'active':
+                    continue
+                phrases = pat.get('phrases', [])[:8]  # 每组取前 8 防 prompt 膨胀
+                if not phrases:
+                    continue
+                cat = pat.get('category', 'priority_correction')
+                lines.append(f"    [{cat}]: " + " | ".join(f"'{p}'" for p in phrases))
+            if not lines:
+                return ''
+            return "\n".join(lines)
+        except Exception:
+            return ''
+
     def _build_prompt(self, user_input: str, actives_brief: list) -> str:
         now_iso = time.strftime('%Y-%m-%d %H:%M', time.localtime())
         actives_json = json.dumps(actives_brief, ensure_ascii=False, indent=2)
+        # 🆕 [Sir 2026-05-25 20:31] 动态注入 priority correction vocab phrases
+        pc_vocab_block = self._load_priority_correction_vocab()
         return (
             "你是 Jarvis 内部的 concern feedback judge. Sir 刚说了一句话, "
             "判断这句话是否反映了任一 active concern 的进度, 输出 JSON.\n\n"
@@ -210,6 +240,19 @@ class ConcernFeedbackJudge:
             "  - Sir 谈话题 X (e.g. 重构/coding) ≠ Sir 没做话题 Y (e.g. 驾照)\n"
             "  - 仅 Sir 原话直接提到 concern 主题/关键词时 has_relevance=true\n"
             "  - 不要因 'Sir 谈 A → 推断 B 没做' 降 B 的 severity. 严格 evidence.\n"
+            "- 🆕 [Sir 2026-05-25 20:31 真测追根 准则 6 学习机制] PRIORITY CORRECTION 信号\n"
+            "  ⚠️ Sir 真理: '我说一次, 你应该学会, 权重应该被我回应动态变化'.\n"
+            "  Sir 显式纠正 priority 排序 → 强 severity 调整 (准则 6 evidence-driven).\n"
+            "  vocab phrases (memory_pool/priority_correction_vocab.json 持久化):\n"
+            f"{pc_vocab_block if pc_vocab_block else '    (vocab 缺, fallback: 看 Sir 是否用 最重要/其实是/才是/你忘了 等显式 priority 句式)'}\n"
+            "  命中 → 主脑判:\n"
+            "    a) X 对应 concern (e.g. 面试 → sir_interview_prep_balance):\n"
+            "       severity_delta = +0.6 (强升权), has_relevance=true\n"
+            "    b) 被对比/降级的 Y (e.g. 驾照 → unfinished_jiazhao_ke1):\n"
+            "       severity_delta = -0.4 (降权), has_relevance=true\n"
+            "    c) 其他无关 concern: 不动 severity, has_relevance=false\n"
+            "  ⚠️ 严格 evidence: 仅 Sir 真用 priority correction 句式时触发,\n"
+            "    不要因 Sir 谈 X 就推断 X 是 priority (区分'谈话题' vs '声明优先').\n"
             "- 严格 JSON, 不要 markdown code fence, 不要解释\n\n"
             "[输出]\n"
         )

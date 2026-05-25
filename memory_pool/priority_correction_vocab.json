@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-25T20:31:00",
+    "purpose": "Sir 真测追根 (Sir 真理: '我说一次, 你应该学会, 权重应该被我回应动态变化'). priority correction = Sir 显式纠正 concern 优先级排序时的 phrases. ConcernFeedback LLM 看 vocab 命中即推强 severity_delta (准则 6 evidence-driven).",
+    "source_origin": "Sir 2026-05-25 20:31 真测痛点 (jarvis_20260525_200517.log Turn 3): Sir '你忘记我们现在最重要的任务是什么了' + '其实我们现在最重要的任务是面试'. 主脑没识别为 priority correction → sir_interview_prep_balance severity 未升, SOUL inject 仍排 keyrouter/水/番茄钟",
+    "edit_via": "scripts/priority_correction_vocab_dump.py --add/--activate/--reject/--delete (TODO 下个 session 加)",
+    "auto_propose": "TODO L7 PriorityCorrectionReflector LLM-propose 新 phrases (准则 6.5)",
+    "consumer": "jarvis_concern_feedback.py ConcernFeedbackJudge._build_prompt → 主脑 LLM 看 prompt 自然涌现判定",
+    "schema_note": "patterns 列表每个 entry = 一组同义 phrase. ConcernFeedback inject 入 prompt 让 LLM evidence-driven 自决",
+    "fallback_behavior": "vocab 文件缺失 → ConcernFeedback prompt 仍含 inline 示例 (jarvis_concern_feedback.py:213+), 仅效果略减",
+    "severity_delta_strong_up": 0.6,
+    "severity_delta_demote": -0.4
+  },
+  "patterns": [
+    {
+      "id": "explicit_priority_declaration_zh",
+      "category": "priority_correction",
+      "phrases": [
+        "最重要的是",
+        "最重要的任务是",
+        "其实是",
+        "其实我们最重要的",
+        "X 才是 priority",
+        "X 才是最重要",
+        "你忘了",
+        "你忘记了",
+        "X 比 Y 更重要",
+        "X 比 Y 重要",
+        "X 优先于 Y",
+        "先做 X 再做 Y",
+        "X 先 Y 后"
+      ],
+      "state": "active",
+      "source": "seeded_sir_2026_05_25",
+      "note": "Sir 中文 priority correction 句式. 命中 → 主脑识别 priority correction signal."
+    },
+    {
+      "id": "explicit_priority_declaration_en",
+      "category": "priority_correction",
+      "phrases": [
+        "the most important is",
+        "the priority is",
+        "X is the priority",
+        "X is most important",
+        "X is more important than Y",
+        "X comes first",
+        "X first, Y later",
+        "I told you X is the priority",
+        "X takes precedence",
+        "you forgot X",
+        "you forgot that X is",
+        "remember X is"
+      ],
+      "state": "active",
+      "source": "seeded_sir_2026_05_25",
+      "note": "Sir 英文 priority correction 句式."
+    },
+    {
+      "id": "implicit_priority_questioning",
+      "category": "priority_correction_implicit",
+      "phrases": [
+        "你忘记我们现在最重要的任务是什么了",
+        "你不记得了吗",
+        "你忘了这个事情了吗",
+        "did you forget",
+        "have you forgotten",
+        "don't you remember"
+      ],
+      "state": "active",
+      "source": "seeded_sir_2026_05_25_real_log",
+      "note": "Sir 隐式质疑 priority 时使用 (从 jarvis_20260525_200517.log Turn 3/4 真原话提取). 命中 → 主脑应主动复盘当前 priority + 等待 Sir 显式纠正."
+    }
+  ],
+  "_review_queue": []
+}

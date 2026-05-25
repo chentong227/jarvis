@@ -4466,13 +4466,32 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 _en_net = re.sub(r'<[^>]+>', '',
                                    _strip_structural_tag_blocks(final_clean or '')
                                    ).strip()
-                if _en_net and len(_en_net) >= 30 and not zh_subtitle_text:
-                    # 含足够英文但 0 ZH → 翻译被 LLM truncate
+                # 🆕 [Sir 2026-05-25 20:31 真测追根 BUG 治本] ZH 截断检测增强
+                # =====================================================================
+                # 源 BUG: Sir 真测 'I shall pivot...interview preparation...' 英文完整,
+                # ZH '我失职了，先生。我会立即将' 半截没了. 老检测 'not zh_subtitle_text'
+                # 仅命中 ZH 完全空, 漏抓 ZH 半截. 治本: ZH 末尾不完整 (非 . ? ! 。 ? !)
+                # 或 ZH 长度 < EN 长度 × 0.4 (中文比英文短但不该差 60%) → 也算 truncate.
+                # =====================================================================
+                _zh_str = (zh_subtitle_text or '').strip()
+                _zh_clean = re.sub(r'<[^>]+>', '', _zh_str).strip()
+                _zh_endings = set('.?!。？！…')
+                _zh_truncated = False
+                if _en_net and len(_en_net) >= 30:
+                    if not _zh_clean:
+                        _zh_truncated = True  # 完全没 ZH
+                    elif _zh_clean[-1] not in _zh_endings:
+                        _zh_truncated = True  # 末尾不是收束标点
+                    elif len(_zh_clean) < len(_en_net) * 0.4:
+                        _zh_truncated = True  # ZH 显著短于 EN (中文一般为 EN 的 0.5~0.7 倍)
+                if _zh_truncated:
+                    # 含足够英文但 ZH 缺失/不完整 → 翻译被 LLM truncate
                     from jarvis_utils import bg_log as _zh_miss_bg
                     _zh_miss_bg(
                         f"⚠️ [Bilingual/Truncated] reply has English ({len(_en_net)}ch) "
-                        f"but no ---ZH--- translation. LLM stream may be cut off. "
-                        f"snippet='{_en_net[:80]}...'"
+                        f"but ZH translation truncated/missing "
+                        f"(zh_len={len(_zh_clean)}ch, ends_ok={_zh_clean and _zh_clean[-1] in _zh_endings}). "
+                        f"en_snip='{_en_net[:60]}...' zh_snip='{_zh_clean[:40]}...'"
                     )
                     try:
                         from jarvis_utils import get_event_bus as _geb_zh
@@ -4502,7 +4521,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     # =====================================================================
                     try:
                         import threading as _th_tr
-                        def _truncate_continuation_worker(snippet: str):
+                        def _truncate_continuation_worker(en_snippet: str, zh_snippet: str):
                             try:
                                 from jarvis_llm_reflector import LlmReflector as _LR
                                 from jarvis_utils import bg_log as _tr_bg
@@ -4512,15 +4531,23 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                 if _refl is None:
                                     _refl = _LR(key_router=self.key_router)
                                 _sys_prompt = (
-                                    "You are completing Jarvis's truncated butler reply. "
+                                    "You are repairing Jarvis's truncated butler reply. "
                                     "Output ONLY in this exact format:\n"
-                                    "<EN>...continuation of English (<= 25 words)</EN>\n"
-                                    "<ZH>...full Chinese translation of (original + continuation)</ZH>\n"
+                                    "<EN>...continuation of English if EN is incomplete; "
+                                    "empty if EN already ends naturally</EN>\n"
+                                    "<ZH>...COMPLETE Chinese translation of "
+                                    "(EN + EN continuation); always fully translate, "
+                                    "never leave ZH mid-sentence</ZH>\n"
                                     "Keep butler style: factual, concise, no emojis."
                                 )
                                 _user_prompt = (
-                                    f"Original truncated reply:\n```\n{snippet}\n```\n\n"
-                                    f"Complete the cut-off sentence naturally then output ZH."
+                                    f"EN (may be complete or truncated):\n"
+                                    f"```\n{en_snippet}\n```\n\n"
+                                    f"ZH partial (may be empty or mid-sentence):\n"
+                                    f"```\n{zh_snippet or '(empty)'}\n```\n\n"
+                                    f"Task: if EN ends naturally (period/etc.), "
+                                    f"leave <EN/> empty; otherwise complete it briefly. "
+                                    f"Always produce FULL ZH translation."
                                 )
                                 _res = _refl.reflect(
                                     model='flash_lite',
@@ -4557,7 +4584,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                     pass
                         _th_tr.Thread(
                             target=_truncate_continuation_worker,
-                            args=(_en_net,),
+                            args=(_en_net, _zh_clean),
                             daemon=True,
                             name='TruncateContinuation',
                         ).start()

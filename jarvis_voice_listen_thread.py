@@ -542,8 +542,13 @@ class VoiceListenThread(QThread):
     # Sir 不想"焦点模式期间随便录入电话/旁人话/视频音都触发 Jarvis"
     # 启发式打分: ASR 文本是否像"对 Jarvis 说" vs "对其他人/旁路说"
     # 返回 0-1 score, < 0.3 视为旁路语, 不触发主脑
+    # 🆕 [Sir 2026-05-25 21:14 真测追根] '小贾' = Sir 对 Jarvis 的活泼称呼
+    # Sir 21:14 原话 "小贾是我叫贾维斯的活泼的称呼而已"
+    # 准则 6 evidence: Sir 显式声明 → 立刻加 vocab. 后续如果 Sir 有更多昵称,
+    # 加 memory_pool/wake_word_vocab.json + scripts/wake_word_dump.py (TODO).
     _JARVIS_DIRECT_WAKE = (
         'jarvis', '贾维斯', 'javis', 'jervis', 'jarvi',
+        '小贾', '小贾贾', 'xiaojia',  # 🆕 Sir 活泼称呼
     )
     _JARVIS_DIRECT_VERBS_EN = (
         'help me', 'tell me', 'find', 'search', 'open', 'close', 'launch',
@@ -613,11 +618,20 @@ class VoiceListenThread(QThread):
         # 对话 ("我和 ud 聊天 / 我跟他说") → 不应被 third_person + conversational_marker
         # 双罚拉到 < 0.3 旁路化. Sir 是在向 Jarvis 转述, 不是跟外人说话.
         # 修法: 检测到 "Sir 直接说话" 信号 → 转述类罚分降权 50%.
+        # 🆕 [Sir 2026-05-25 21:14 真测追根 #2] Sir 第一人称自叙也是 addressing jarvis
+        # Sir 痛点: Sir 跟 Jarvis 讲自己事 ('我今天去面试...我是表现最好的...他要我上台')
+        # 含多个 '我' 第一人称 → Sir 在跟 Jarvis 叙事, 不是跟外人对话. 不该旁路化.
+        # 判定: '我' 出现 >= 2 次 → Sir 自叙 evidence (排除 '我妈/我爸' 家庭指代 → 那
+        # 是真转述他人对话).
+        _wo_count = text.count('我')
+        _has_family_indicator = any(w in text for w in ('我妈', '我爸', '我儿', '我女'))
+        _is_first_person_narrative = (_wo_count >= 2 and not _has_family_indicator)
         _is_addressing_jarvis = (
             'wake_word' in breakdown
             or 'zh_direct_verb' in breakdown
             or 'en_direct_verb' in breakdown
             or '你' in text  # Sir 第二人称 → 直接对 Jarvis
+            or _is_first_person_narrative  # Sir 自叙给 Jarvis 听
         )
 
         # -0.3 含明确第三人称指代 (含 padding 避免误判 ' the ')
