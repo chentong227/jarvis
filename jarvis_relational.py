@@ -140,6 +140,38 @@ class UnspokenProtocol:
     last_referenced: float = 0.0
     ttl_days: int = DEFAULT_TTL_DAYS
 
+    # 🆕 [Sir 2026-05-26 SOUL Phase C.2 条件触发] 不加 directive_registry 新概念,
+    # 复用 UnspokenProtocol 加 2 个 trigger 字段 → to_prompt_block 按 tier/sir_state filter.
+    # 解 Sir 真意场景: "Sir 在 coding 时不要 nudge" 这种**场景化**规则不该全 tier always-on.
+    # 设计原则:
+    #   - 空 list [] = 全 tier / 全 sir_state always inject (向后兼容老 protocol)
+    #   - 非空 list = 只在 current_tier ∈ trigger_tier (且) current_sir_state ∈ trigger_sir_state 时 inject
+    #   - AND 关系 (两个 trigger 都满足才 inject), 防意外触发
+    # 允许值: trigger_tier 任意 string (CHAT/STANDARD/SHORT_CHAT/FACTUAL_RECALL/REMINDER_FIRING/...)
+    #         trigger_sir_state: 'active' / 'afk_short' / 'afk_deep' / 'sleep'
+    trigger_tier: List[str] = field(default_factory=list)
+    trigger_sir_state: List[str] = field(default_factory=list)
+
+    def matches_context(self, current_tier: str = '',
+                          current_sir_state: str = '') -> bool:
+        """🆕 [Phase C.2] 判该 protocol 是否在当前 context 应 inject.
+
+        逻辑 (向后兼容老 protocol 字段空 → 全场景):
+          - trigger_tier=[] (默认) → 任何 tier 都 OK
+          - trigger_tier=['CHAT'] + current_tier='STANDARD' → 不 match
+          - trigger_sir_state=['active'] + current_sir_state='sleep' → 不 match
+          - 两个 trigger 都 (空 or match) → 才 inject
+        """
+        # tier gate
+        if self.trigger_tier:
+            if not current_tier or current_tier not in self.trigger_tier:
+                return False
+        # sir_state gate
+        if self.trigger_sir_state:
+            if not current_sir_state or current_sir_state not in self.trigger_sir_state:
+                return False
+        return True
+
     def record_violation(self, what: str, turn_id: str = '') -> None:
         now = time.time()
         self.violations.append({
@@ -950,6 +982,10 @@ class RelationalStateStore:
                         created_at=float(d.get('created_at', time.time())),
                         last_referenced=float(d.get('last_referenced', 0.0)),
                         ttl_days=int(d.get('ttl_days', DEFAULT_TTL_DAYS)),
+                        # 🆕 [Phase C.2] 老 protocol JSON 缺 trigger 字段 → 默认空 list
+                        # = 全场景 always inject (向后兼容).
+                        trigger_tier=list(d.get('trigger_tier') or []),
+                        trigger_sir_state=list(d.get('trigger_sir_state') or []),
                     )
                     self.unspoken_protocols[p.id] = p
                     result['protocols'] += 1
@@ -1048,7 +1084,9 @@ class RelationalStateStore:
 
     def to_prompt_block(self, top_jokes: int = 3, top_unfinished: int = 2,
                         top_threads: int = 2,
-                        max_chars: int = PROMPT_BLOCK_DEFAULT_MAX) -> str:
+                        max_chars: int = PROMPT_BLOCK_DEFAULT_MAX,
+                        current_tier: str = '',
+                        current_sir_state: str = '') -> str:
         """构造注入 prompt 的 [BETWEEN US] 块。
 
         结构（参考 Layer 0/1 风格）：
@@ -1067,7 +1105,15 @@ class RelationalStateStore:
         sir_profile.significant_milestones 注入 chapter_blocks 的路径）。
         """
         jokes = self._rank_inside_jokes(top_jokes)
-        protocols = self.list_protocols()
+        all_protocols = self.list_protocols()
+        # 🆕 [Phase C.2] filter protocols 按 current_tier + current_sir_state.
+        # 空 trigger_tier/trigger_sir_state (默认) → 老行为全场景 inject.
+        # 非空 → 只在 match 时 inject — 准则 6 让数据驱动行为, 不教硬规.
+        protocols = [
+            p for p in all_protocols
+            if p.matches_context(current_tier=current_tier,
+                                 current_sir_state=current_sir_state)
+        ]
         unfinished = self._rank_unfinished(top_unfinished)
         threads = self._rank_threads(top_threads)
 

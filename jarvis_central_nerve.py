@@ -2486,7 +2486,7 @@ User: {user_input}
         except Exception:
             return ''
 
-    def _build_layer_2_relational_block(self) -> str:
+    def _build_layer_2_relational_block(self, prompt_tier: str = '') -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 2: RelationalState block.
 
         🆕 [P5-Gap4-followup-L2] Layer 2 含 4 部分:
@@ -2494,17 +2494,33 @@ User: {user_input}
           - unfinished + threads → 潜在心结源, 同 Layer 1 三种条件才 inject
 
         依赖 self._soul_concern_inject_reason (Layer 1 副作用).
+
+        🆕 [Sir 2026-05-26 SOUL Phase C.2] 加 prompt_tier 参数 + 拿 current sir_state
+        from inner_thought_daemon._classify_sir_state. RelationalState.to_prompt_block
+        会按 trigger_tier/trigger_sir_state filter protocols (空 list = 全场景 inject).
         """
         try:
             if self.relational_state is not None:
                 # 复用 Layer 1 的判断: 只有 summon/preflight_fail 才 inject baggage
                 _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
                 _allow_baggage = _reason in ('summon', 'preflight_fail')
+                # 🆕 [Phase C.2] 拿 current_sir_state 给 protocol filter 用.
+                # InnerThoughtDaemon._classify_sir_state 是现成 helper (active /
+                # afk_short / afk_deep / sleep), 复用不加新 module.
+                _sir_state = ''
+                _it_daemon = getattr(self, 'inner_thought_daemon', None)
+                if _it_daemon is not None:
+                    try:
+                        _sir_state = _it_daemon._classify_sir_state()
+                    except Exception:
+                        _sir_state = ''
                 return self.relational_state.to_prompt_block(
                     top_jokes=3,
                     top_unfinished=2 if _allow_baggage else 0,
                     top_threads=2 if _allow_baggage else 0,
                     max_chars=700,
+                    current_tier=str(prompt_tier or ''),
+                    current_sir_state=_sir_state,
                 )
         except Exception:
             pass
@@ -3368,7 +3384,10 @@ User: {user_input}
         soul_block = self._build_layer_1_concerns_block(user_input)
         # 🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5 — Inner Thoughts (主脑碎碎念)
         inner_thoughts_block = self._build_layer_1b_inner_thoughts_block()
-        relational_block = self._build_layer_2_relational_block()
+        # 🆕 [Sir 2026-05-26 SOUL Phase C.2] 传 prompt_tier 让 protocol filter 按 tier
+        relational_block = self._build_layer_2_relational_block(
+            prompt_tier=str(prompt_tier or '')
+        )
         attention_block = self._build_layer_3_attention_block(user_input)
         # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 2 → Layer 3
         _parts = [_base_persona]
