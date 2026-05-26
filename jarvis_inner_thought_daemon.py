@@ -499,7 +499,8 @@ class InnerThoughtDaemon:
             "update_concern_severity:<concern_id>:<+/-delta> | "
             "publish_swm:<etype>:<short_desc> | "
             "suggest_inside_joke:<phrase> | "
-            "propose_protocol:<one-sentence imperative rule></ACTIONABLE>\n"
+            "propose_protocol:<one-sentence imperative rule> | "
+            "adjust_concern_notes:<concern_id>:<note text></ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
             "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n\n"
@@ -510,7 +511,11 @@ class InnerThoughtDaemon:
             "('Do not X' / 'Always Y when Z'), use propose_protocol to make it "
             "STRICT for next turn.\n"
             "  [C] CONCERN-EVOLUTION — should a concern severity change? "
-            "(use update_concern_severity with REAL concern_id from evidence below)\n"
+            "(use update_concern_severity with REAL concern_id from evidence below) "
+            "OR should I update HOW I respond to this concern? (use "
+            "adjust_concern_notes with REAL concern_id + short guidance text — "
+            "main brain reads this on next turn for self-restraint, e.g. "
+            "'DO NOT volunteer this topic unless Sir asks').\n"
             "  [D] PROACTIVE-SEED — what to silently do next? "
             "(use publish_swm so future-you sees it)\n"
             "  [E] RELATIONSHIP — inside joke / callback-worthy phrase "
@@ -523,6 +528,10 @@ class InnerThoughtDaemon:
             "  - propose_protocol: IMPERATIVE form (Do/Don't/Always/Never), "
             "OBSERVABLE (verifiable in my next reply), grounded in this B-class "
             "reflection. Python rejects if not B-class or sal<0.75.\n"
+            "  - adjust_concern_notes: short guidance (10-120 char) for main brain "
+            "to read on next turn. Python rejects if not C-class or sal<0.7. "
+            "Use when you noticed Sir's REACTION pattern (annoyed / asked to stop / "
+            "appreciates a certain framing) and want main brain to remember next time.\n"
             "  - If nothing meaningful comes, output <THOUGHT>(quiet)</THOUGHT> "
             "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> "
             "<EVIDENCE_LINK>none</EVIDENCE_LINK> — and that's perfectly fine.\n"
@@ -553,7 +562,22 @@ class InnerThoughtDaemon:
             "         really in THOUGHT → AutoArbiter will likely activate →\n"
             "         next turn Layer 2 STRICT RULES will enforce.\n"
             "  ❌ BAD: <CATEGORY>A</CATEGORY> (not B) → propose_protocol rejected by Python.\n"
-            "  ❌ BAD: B-class + sal=0.5 → rejected (low salience reflection not worth STRICT)."
+            "  ❌ BAD: B-class + sal=0.5 → rejected (low salience reflection not worth STRICT).\n\n"
+            "🆕 [Sir 2026-05-26 SOUL Phase B] C-class adjust_concern_notes example "
+            "(treats Sir's \"减少对面试准备的打扰\" 真意 anchor):\n"
+            "  ✅ GOOD: <CATEGORY>C</CATEGORY>\n"
+            "         <THOUGHT>Sir asked me to stop bringing up interview prep\n"
+            "                  unprompted earlier. The concern is still valid, but my\n"
+            "                  delivery should change — only address when Sir asks.</THOUGHT>\n"
+            "         <SALIENCE>0.8</SALIENCE>\n"
+            "         <ACTIONABLE>adjust_concern_notes:sir_interview_pr:DO NOT volunteer this topic — only address when Sir asks directly</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>stop bringing up</EVIDENCE_LINK>\n"
+            "         → C-class + sal≥0.7 + cite traces to concern + appended note\n"
+            "         → next turn main brain reads note → genuine self-restraint.\n"
+            "  ❌ BAD: <CATEGORY>B</CATEGORY> → rejected (notes adjust only from C).\n"
+            "  ❌ BAD: C-class + sal=0.5 → rejected (low salience C-class isn't worth note change).\n"
+            "  ❌ BAD: cite \"toggling\" with concern_id sir_interview_pr → rejected (cite ↔\n"
+            "         concern no token overlap — wrong concern, fix4 anchor)."
         )
 
         # User block — give LLM evidence to ground thought
@@ -720,6 +744,16 @@ class InnerThoughtDaemon:
             # Layer 2 SOUL "STRICT RULES" → 下次 turn 主脑硬约束.
             if a.startswith('propose_protocol:'):
                 return self._do_propose_protocol(thought, a)
+            # 🆕 [Sir 2026-05-26 SOUL Phase B] adjust_concern_notes — C 类反思改 concern note
+            # C 类 sal≥0.7 反思 → 给 concern.notes_for_self append note →
+            # Layer 1 prompt 主脑下次看 (现有路径) → 主脑自主调整对该 concern 反应方式.
+            # Sir 真意 anchor: "减少对面试准备的打扰" → 改 concern.notes 让主脑下次克制.
+            if a.startswith('adjust_concern_notes:'):
+                ok, result = self._do_adjust_concern_notes(thought, a)
+                # 二层 fail (cite ↔ concern wrong) → 降级 actionable=none (同 update_severity)
+                if not ok and 'evidence_link_wrong_concern' in result:
+                    thought.actionable = 'none'
+                return ok, result
             return False, f'unknown_actionable:{a[:40]}'
         except Exception as e:
             return False, f'exception:{str(e)[:80]}'
@@ -973,6 +1007,106 @@ class InnerThoughtDaemon:
             )
         except Exception as e:
             return False, f'protocol_build_fail:{str(e)[:60]}'
+
+    # 🆕 [Sir 2026-05-26 SOUL Phase B] adjust_concern_notes constants
+    _NOTES_MAX_CHARS = 500             # concern.notes_for_self 总长 cap (schema)
+    _NOTES_APPEND_MAX = 120            # 单次 append note 长 cap (防一次写太长)
+
+    def _do_adjust_concern_notes(self, thought: InnerThought,
+                                    a: str) -> Tuple[bool, str]:
+        """🆕 [Sir 2026-05-26 SOUL Phase B] adjust concern notes from C-class.
+
+        actionable=adjust_concern_notes:<concern_id>:<note text>
+
+        gate:
+          - C 类 only (强制 category check) — A/B/D/E reflect 不改 concern notes
+          - sal ≥ 0.7 (低 sal reflection 不值得改 concern note)
+          - cid 真存在
+          - 复用 evidence_link 双层 gate (cite 在 thought + cite ↔ concern overlap)
+
+        流程:
+          parse cid + note → 复用 _evidence_links_to_concern 二层 gate →
+          existing_notes + ' | [inner_thought] ' + note → cap 500 →
+          ConcernsLedger.update_concern_field('notes_for_self', new_value)
+          → Layer 1 prompt 主脑下次自然读 (现有路径).
+
+        Sir 真意 anchor: 上一轮 Sir 说"减少对面试准备的打扰" →
+        C 类 thought: "Sir asked me to stop bringing up interview prep unprompted"
+        actionable: adjust_concern_notes:sir_interview_pr:
+                     DO NOT volunteer this topic — only address when Sir asks
+        → 下次 turn 主脑读 note → 真克制.
+        """
+        # gate: C 类
+        if thought.category != 'C':
+            return False, (
+                f'gated:notes_adjust_only_from_C_concern_evolve '
+                f'(got {thought.category})'
+            )
+        # gate: sal
+        if thought.salience < 0.7:
+            return False, (
+                f'gated:notes_adjust_requires_sal>=0.7 '
+                f'(got {thought.salience:.2f})'
+            )
+
+        # parse "adjust_concern_notes:<cid>:<note>"
+        parts = a.split(':', 2)
+        if len(parts) < 3:
+            return False, 'parse_fail (expected adjust_concern_notes:<cid>:<note>)'
+        _, cid, note = parts
+        cid = cid.strip()
+        note = note.strip()
+        if not cid:
+            return False, 'empty_concern_id'
+        if not note:
+            return False, 'empty_note'
+        if len(note) < 10:
+            return False, f'note_too_short:{len(note)}<10'
+
+        if not self.concerns_ledger:
+            return False, 'no_concerns_ledger'
+
+        # locate concern
+        c = self.concerns_ledger.get(cid) if hasattr(
+            self.concerns_ledger, 'get'
+        ) else self.concerns_ledger.concerns.get(cid)
+        if c is None:
+            return False, f'concern_not_found:{cid}'
+
+        # 二层 gate: cite ↔ concern overlap (复用 fix4 evidence_link 机制 — 防 wrong concern)
+        link_ok, link_msg = self._evidence_links_to_concern(
+            thought.evidence_link, c
+        )
+        if not link_ok:
+            return False, f'evidence_link_wrong_concern:{cid}:{link_msg}'
+
+        # build new notes (append 不覆盖 + tag 来源 + cap)
+        note_capped = note[:self._NOTES_APPEND_MAX]
+        existing = (c.notes_for_self or '').strip()
+        tag = f"[inner_thought/{thought.category}/sal={thought.salience:.2f}]"
+        new_note_segment = f"{tag} {note_capped}"
+        if existing:
+            new_notes = (existing + ' | ' + new_note_segment).strip(' |')
+        else:
+            new_notes = new_note_segment
+        new_notes = new_notes[:self._NOTES_MAX_CHARS]
+
+        # 用 update_concern_field 走标准 mutation 路径 (有 signal trail + 持久化)
+        try:
+            ok, msg, old_v = self.concerns_ledger.update_concern_field(
+                cid, 'notes_for_self', new_notes,
+                source='inner_thought',
+                turn_id=thought.id,
+                reason=f"inner_thought [{thought.category}]: {thought.thought[:80]}",
+            )
+            if ok:
+                return True, (
+                    f'notes appended ({len(new_note_segment)} char added, '
+                    f'total {len(new_notes)}/{self._NOTES_MAX_CHARS})'
+                )
+            return False, f'update_fail:{msg[:60]}'
+        except Exception as e:
+            return False, f'notes_update_exception:{str(e)[:60]}'
 
     # ----------------------------------------------------------
     # SWM publish (jarvis_inner_thought event)
