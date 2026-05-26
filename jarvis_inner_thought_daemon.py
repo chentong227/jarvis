@@ -498,13 +498,17 @@ class InnerThoughtDaemon:
             "<ACTIONABLE>one of: none | "
             "update_concern_severity:<concern_id>:<+/-delta> | "
             "publish_swm:<etype>:<short_desc> | "
-            "suggest_inside_joke:<phrase></ACTIONABLE>\n"
+            "suggest_inside_joke:<phrase> | "
+            "propose_protocol:<one-sentence imperative rule></ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
             "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
-            "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern).\n"
+            "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
+            "If sal≥0.75 AND you can extract a CONCRETE behavior rule "
+            "('Do not X' / 'Always Y when Z'), use propose_protocol to make it "
+            "STRICT for next turn.\n"
             "  [C] CONCERN-EVOLUTION — should a concern severity change? "
             "(use update_concern_severity with REAL concern_id from evidence below)\n"
             "  [D] PROACTIVE-SEED — what to silently do next? "
@@ -516,6 +520,9 @@ class InnerThoughtDaemon:
             "  - Use REAL concern IDs from evidence — never invent IDs.\n"
             "  - update_concern_severity delta capped ±0.2 per thought.\n"
             "  - publish_swm etype: short snake_case (e.g. 'sir_seems_tired').\n"
+            "  - propose_protocol: IMPERATIVE form (Do/Don't/Always/Never), "
+            "OBSERVABLE (verifiable in my next reply), grounded in this B-class "
+            "reflection. Python rejects if not B-class or sal<0.75.\n"
             "  - If nothing meaningful comes, output <THOUGHT>(quiet)</THOUGHT> "
             "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> "
             "<EVIDENCE_LINK>none</EVIDENCE_LINK> — and that's perfectly fine.\n"
@@ -534,7 +541,19 @@ class InnerThoughtDaemon:
             "         actually appears in THOUGHT.\n"
             "  ✅ ALSO OK: <THOUGHT>Quiet moment, nothing notable</THOUGHT>\n"
             "         <ACTIONABLE>none</ACTIONABLE> <EVIDENCE_LINK>none</EVIDENCE_LINK>\n"
-            "         → ACTIONABLE=none ALWAYS preferred over forced un-grounded action."
+            "         → ACTIONABLE=none ALWAYS preferred over forced un-grounded action.\n\n"
+            "🆕 [Sir 2026-05-26 SOUL Phase A] B-class propose_protocol example:\n"
+            "  ✅ GOOD: <CATEGORY>B</CATEGORY>\n"
+            "         <THOUGHT>I opened that last reply with 'My apologies, Sir' — too\n"
+            "                  formal, sounded stiff. Should drop the formal apologies.</THOUGHT>\n"
+            "         <SALIENCE>0.8</SALIENCE>\n"
+            "         <ACTIONABLE>propose_protocol:Do not open replies with formal apologies like 'My apologies, Sir'</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>formal apologies</EVIDENCE_LINK>\n"
+            "         → B-class + sal≥0.75 + concrete IMPERATIVE rule + cite\n"
+            "         really in THOUGHT → AutoArbiter will likely activate →\n"
+            "         next turn Layer 2 STRICT RULES will enforce.\n"
+            "  ❌ BAD: <CATEGORY>A</CATEGORY> (not B) → propose_protocol rejected by Python.\n"
+            "  ❌ BAD: B-class + sal=0.5 → rejected (low salience reflection not worth STRICT)."
         )
 
         # User block — give LLM evidence to ground thought
@@ -696,6 +715,11 @@ class InnerThoughtDaemon:
                 return self._do_publish_swm_actionable(thought, a)
             if a.startswith('suggest_inside_joke:'):
                 return self._do_suggest_inside_joke(thought, a)
+            # 🆕 [Sir 2026-05-26 SOUL Phase A] propose_protocol — B 类反思真改自己行为
+            # B 类 sal≥0.75 反思 → propose protocol → AutoArbiter 自决 →
+            # Layer 2 SOUL "STRICT RULES" → 下次 turn 主脑硬约束.
+            if a.startswith('propose_protocol:'):
+                return self._do_propose_protocol(thought, a)
             return False, f'unknown_actionable:{a[:40]}'
         except Exception as e:
             return False, f'exception:{str(e)[:80]}'
@@ -895,6 +919,60 @@ class InnerThoughtDaemon:
             return ok, f'proposed:{phrase[:30]}' if ok else 'dedup_or_fail'
         except Exception as e:
             return False, f'joke_build_fail:{str(e)[:60]}'
+
+    def _do_propose_protocol(self, thought: InnerThought,
+                                a: str) -> Tuple[bool, str]:
+        """🆕 [Sir 2026-05-26 SOUL Phase A] propose UnspokenProtocol from B-class.
+
+        actionable=propose_protocol:<one-sentence imperative rule>
+        rule 必须:
+          - 来自 B 类 self-reflection (强制 category check)
+          - sal ≥ 0.75 (强制 salience gate, 低 sal 反思不值得 STRICT RULE)
+          - rule 文字非空 + ≤ 200 char
+
+        流程:
+          parse rule → build UnspokenProtocol(state=REVIEW) →
+          relational.propose_protocol → AutoArbiter 30min tick 自决 →
+          Layer 2 SOUL inject 'STRICT RULES' → 下次 turn 主脑硬约束.
+        """
+        # 准则 5 言出必行 + 6 evidence: gate B 类 + sal
+        if thought.category != 'B':
+            return False, f'gated:protocol_only_from_B_reflect (got {thought.category})'
+        if thought.salience < 0.75:
+            return False, (
+                f'gated:protocol_requires_sal>=0.75 (got {thought.salience:.2f})'
+            )
+
+        rule = a.split(':', 1)[1].strip() if ':' in a else ''
+        if not rule:
+            return False, 'empty_rule'
+        if len(rule) < 10:
+            return False, f'rule_too_short:{len(rule)}<10'
+
+        if not self.relational_state:
+            return False, 'no_relational_state'
+        if not hasattr(self.relational_state, 'propose_protocol'):
+            return False, 'propose_protocol method not found'
+
+        try:
+            from jarvis_relational import UnspokenProtocol
+            pid = (
+                f"proto_{time.strftime('%Y%m%d_%H%M%S')}"
+                f"_{int(time.time() * 1000) % 10000:04x}"
+            )
+            protocol = UnspokenProtocol(
+                id=pid,
+                rule=rule[:200],
+                source='inner_thought',
+                source_marker=thought.id,
+            )
+            ok = self.relational_state.propose_protocol(protocol)
+            return ok, (
+                f'proposed:{rule[:30]} (id={pid})'
+                if ok else 'dedup_or_fail'
+            )
+        except Exception as e:
+            return False, f'protocol_build_fail:{str(e)[:60]}'
 
     # ----------------------------------------------------------
     # SWM publish (jarvis_inner_thought event)

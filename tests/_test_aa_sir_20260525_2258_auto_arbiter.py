@@ -189,6 +189,23 @@ class TestL4Execute(unittest.TestCase):
 # L5: Sir revert (反向 active/archived)
 # ==========================================================================
 class TestL5SirRevert(unittest.TestCase):
+    def setUp(self):
+        # 🆕 [Sir 2026-05-26 SOUL Phase A test isolation] patch class attr 在 __init__ 前,
+        # 防 prod memory_pool/auto_arbiter_log.jsonl 污染 _decisions list.
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        self._tmp = tempfile.mkdtemp(prefix='aa_l5_')
+        self._saved_persist = AutoArbiterDaemon.PERSIST_PATH
+        self._saved_calib = AutoArbiterDaemon.CALIBRATION_PATH
+        AutoArbiterDaemon.PERSIST_PATH = os.path.join(self._tmp, 'log.jsonl')
+        AutoArbiterDaemon.CALIBRATION_PATH = os.path.join(self._tmp, 'cal.json')
+
+    def tearDown(self):
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        AutoArbiterDaemon.PERSIST_PATH = self._saved_persist
+        AutoArbiterDaemon.CALIBRATION_PATH = self._saved_calib
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
     def _make_daemon(self):
         from jarvis_auto_arbiter import AutoArbiterDaemon, ArbiterDecision
         mock_rel = MagicMock()
@@ -311,10 +328,27 @@ class TestL6DailyReflection(unittest.TestCase):
 # L7: Persistence
 # ==========================================================================
 class TestL7Persistence(unittest.TestCase):
+    def setUp(self):
+        # 🆕 [Sir 2026-05-26 SOUL Phase A test isolation] patch class attr 在 __init__ 前.
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        self._tmp = tempfile.mkdtemp(prefix='aa_l7_')
+        self._saved_persist = AutoArbiterDaemon.PERSIST_PATH
+        self._saved_calib = AutoArbiterDaemon.CALIBRATION_PATH
+        AutoArbiterDaemon.PERSIST_PATH = os.path.join(self._tmp, 'class_log.jsonl')
+        AutoArbiterDaemon.CALIBRATION_PATH = os.path.join(self._tmp, 'cal.json')
+
+    def tearDown(self):
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        AutoArbiterDaemon.PERSIST_PATH = self._saved_persist
+        AutoArbiterDaemon.CALIBRATION_PATH = self._saved_calib
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
     def test_persist_and_load_decision(self):
         from jarvis_auto_arbiter import AutoArbiterDaemon, ArbiterDecision
         with tempfile.TemporaryDirectory() as tmp:
             persist = os.path.join(tmp, 'log.jsonl')
+            AutoArbiterDaemon.PERSIST_PATH = persist  # patch 在 init 前
             d = AutoArbiterDaemon(key_router=None)
             d.PERSIST_PATH = persist
             dec = ArbiterDecision(
@@ -325,9 +359,10 @@ class TestL7Persistence(unittest.TestCase):
                 threshold_at_decision=0.75, executed_ok=True,
             )
             d._persist_decision(dec)
-            # reload
+            # reload (d2 init 时已经 load 一次, 重置 + reload 验证 disk 有 1 条)
             d2 = AutoArbiterDaemon(key_router=None)
             d2.PERSIST_PATH = persist
+            d2._decisions = []
             d2._load_persist()
             self.assertEqual(len(d2._decisions), 1)
             self.assertEqual(d2._decisions[0].id, 'aa_t1')
@@ -337,6 +372,7 @@ class TestL7Persistence(unittest.TestCase):
         from jarvis_auto_arbiter import AutoArbiterDaemon, ArbiterDecision
         with tempfile.TemporaryDirectory() as tmp:
             persist = os.path.join(tmp, 'log.jsonl')
+            AutoArbiterDaemon.PERSIST_PATH = persist  # patch 在 init 前
             d = AutoArbiterDaemon(key_router=None)
             d.PERSIST_PATH = persist
             dec = ArbiterDecision(
@@ -351,8 +387,10 @@ class TestL7Persistence(unittest.TestCase):
             dec.sir_revert_reason = 'Sir 撤了'
             d._persist_decision(dec)
             # 2 行 jsonl 同 id
+            AutoArbiterDaemon.PERSIST_PATH = persist  # 保证 d2 也 init 前 patch
             d2 = AutoArbiterDaemon(key_router=None)
             d2.PERSIST_PATH = persist
+            d2._decisions = []  # 重置 避免 init 时 load 遗留
             d2._load_persist()
             self.assertEqual(len(d2._decisions), 1,
                 'load 必须按 id dedup (取最新)')

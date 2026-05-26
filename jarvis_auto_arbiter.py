@@ -113,6 +113,7 @@ class AutoArbiterDaemon:
     DEFAULT_THRESHOLDS = {
         'inside_joke': 0.75,
         'thread':      0.75,
+        'protocol':    0.80,  # 🆕 [Sir 2026-05-26 SOUL Phase A] 中间档 — 严过 joke (行为 STRICT)
         'concern':     0.85,
         'directive':   0.90,
     }
@@ -124,7 +125,8 @@ class AutoArbiterDaemon:
     THRESHOLD_LOWER_STEP = 0.02
 
     # 风险分类
-    RISK_LOW = frozenset({'inside_joke', 'thread'})
+    # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol 列 LOW 真自决 (Sir 元否决可 revert)
+    RISK_LOW = frozenset({'inside_joke', 'thread', 'protocol'})
     RISK_MEDIUM = frozenset({'concern', 'directive'})
     KNOWN_KINDS = RISK_LOW | RISK_MEDIUM
 
@@ -295,13 +297,26 @@ class AutoArbiterDaemon:
                 })
         except Exception:
             pass
+        # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol review queue
+        try:
+            protocols_review = (
+                self.relational.list_protocols_review() or []
+                if hasattr(self.relational, 'list_protocols_review') else []
+            )
+            for p in protocols_review:
+                items_to_eval.append({
+                    'kind': 'protocol', 'entity': p,
+                    'preview': (p.rule or '')[:80],
+                })
+        except Exception:
+            pass
 
         if not items_to_eval:
             return
 
         self._bg_log(
             f"🤖 [AutoArbiter] tick: {len(items_to_eval)} review items "
-            f"(jokes + threads), evaluating..."
+            f"(jokes + threads + protocols), evaluating..."
         )
 
         for item in items_to_eval:
@@ -466,6 +481,21 @@ class AutoArbiterDaemon:
                     {'title': t.title[:80]}
                     for t in active_threads[:5]
                 ]
+            elif kind == 'protocol':
+                # 🆕 [Sir 2026-05-26 SOUL Phase A]
+                ev['entity'] = {
+                    'rule': getattr(entity, 'rule', ''),
+                    'source': getattr(entity, 'source', ''),
+                    'source_marker': getattr(entity, 'source_marker', ''),
+                }
+                active_protocols = [
+                    p for p in self.relational.unspoken_protocols.values()
+                    if getattr(p, 'state', '') == 'active'
+                ]
+                ev['existing_active_protocols'] = [
+                    {'rule': p.rule[:120], 'source': p.source}
+                    for p in active_protocols[:5]
+                ]
         except Exception:
             pass
         # STM 最近 5 turn (主脑近况)
@@ -543,6 +573,26 @@ class AutoArbiterDaemon:
                 "  CONFIDENCE high (0.8+) only when 2+ STM hits AND clearly "
                 "distinct. Otherwise <0.7.\n"
             )
+        elif kind == 'protocol':
+            # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol 严于 joke — 这是 STRICT 行为约束
+            system += (
+                "  ACTIVATE if: rule encodes a CONCRETE, ACTIONABLE behavior\n"
+                "    constraint Sir would want enforced (e.g. 'Do not open\n"
+                "    replies with formal apologies' / 'Skip exposition when\n"
+                "    Sir says \u2018just do it\u2019'). Rule must be:\n"
+                "      • IMPERATIVE form (Do / Don't / Always / Never)\n"
+                "      • OBSERVABLE (someone reading my next reply can verify)\n"
+                "      • DISTINCT from existing active protocols (no dup)\n"
+                "      • Grounded in B-class self-reflection thought evidence.\n"
+                "  REJECT if: vague (e.g. 'be nicer') / generic butler norm /\n"
+                "    overlaps with existing protocol / aspirational but un-\n"
+                "    enforceable / Sir-flatter rule (e.g. 'always praise Sir').\n"
+                "  Remember: this becomes STRICT RULES injected into Sir-facing\n"
+                "    prompts. Bad protocol → main brain over-constrained → worse\n"
+                "    replies. Be conservative.\n"
+                "  CONFIDENCE high (0.8+) only when rule is concrete + clear\n"
+                "    self-reflection evidence + no overlap. Otherwise <0.7.\n"
+            )
         else:
             system += (
                 "  (Generic) Use evidence to judge. Be conservative — when "
@@ -591,6 +641,24 @@ class AutoArbiterDaemon:
                     user_lines.append(f"  - \"{t['title']}\"")
             else:
                 user_lines.append("  (none active)")
+        elif kind == 'protocol':
+            # 🆕 [Sir 2026-05-26 SOUL Phase A]
+            user_lines = ["[CANDIDATE UNSPOKEN_PROTOCOL]"]
+            user_lines.append(f"  rule:          \"{ent.get('rule', '')}\"")
+            user_lines.append(f"  source:        {ent.get('source', '')}")
+            user_lines.append(
+                f"  source_marker: {(ent.get('source_marker') or '')[:60]}"
+            )
+            user_lines.append("")
+            user_lines.append("[EXISTING ACTIVE PROTOCOLS (dedup reference)]")
+            existing = evidence.get('existing_active_protocols') or []
+            if existing:
+                for p in existing:
+                    user_lines.append(
+                        f"  - \"{p['rule']}\" (source={p['source']})"
+                    )
+            else:
+                user_lines.append("  (none active — first protocol!)")
         else:
             user_lines = [f"[CANDIDATE {kind.upper()}]", repr(ent)[:300]]
 
@@ -652,7 +720,8 @@ class AutoArbiterDaemon:
     # ----------------------------------------------------------
     def _execute(self, kind: str, item_id: str,
                   action: str) -> Tuple[bool, str]:
-        if kind in ('inside_joke', 'thread'):
+        # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol 复用 activate/reject_from_review 路径
+        if kind in ('inside_joke', 'thread', 'protocol'):
             try:
                 if action == 'activate':
                     res_kind = self.relational.activate_from_review(item_id)

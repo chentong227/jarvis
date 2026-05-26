@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field, asdict
@@ -638,6 +639,58 @@ class RelationalStateStore:
             pass
         return self.add_inside_joke(joke)
 
+    def propose_protocol(self, protocol: UnspokenProtocol) -> bool:
+        """🆕 [Sir 2026-05-26 SOUL Phase A] 自动来源 (InnerThought B 类反思) propose
+        新 protocol. 强制 state=STATE_REVIEW, 等 AutoArbiter 自决 + Sir review.
+
+        类似 propose_inside_joke + propose_thread 模式. dedup:
+          - rule 完全相同 / 包含 (≥10 字符 substring) → skip
+          - rule token jaccard ≥ 0.7 → skip (防 LLM 语义重复)
+        """
+        protocol.state = STATE_REVIEW
+        try:
+            new_rule = (protocol.rule or '').lower().strip()
+            if not new_rule:
+                return False
+            new_tokens = set(re.findall(r'\w+', new_rule))
+            for existing in self.unspoken_protocols.values():
+                ex_rule = (existing.rule or '').lower().strip()
+                if not ex_rule:
+                    continue
+                if new_rule == ex_rule:
+                    return False
+                # substring match (≥10 char)
+                if len(new_rule) >= 10 and len(ex_rule) >= 10:
+                    if new_rule in ex_rule or ex_rule in new_rule:
+                        try:
+                            from jarvis_utils import bg_log
+                            bg_log(
+                                f"🚫 [Protocol/dedup] propose '{protocol.rule[:50]}' "
+                                f"vs existing '{existing.rule[:50]}' — substring, skip"
+                            )
+                        except Exception:
+                            pass
+                        return False
+                # token jaccard ≥ 0.7
+                ex_tokens = set(re.findall(r'\w+', ex_rule))
+                if new_tokens and ex_tokens:
+                    inter = len(new_tokens & ex_tokens)
+                    union = len(new_tokens | ex_tokens)
+                    jaccard = inter / union if union > 0 else 0.0
+                    if jaccard >= 0.7:
+                        try:
+                            from jarvis_utils import bg_log
+                            bg_log(
+                                f"🚫 [Protocol/dedup] propose '{protocol.rule[:50]}' "
+                                f"vs '{existing.rule[:50]}' — jaccard {jaccard:.2f}, skip"
+                            )
+                        except Exception:
+                            pass
+                        return False
+        except Exception:
+            pass
+        return self.add_protocol(protocol)
+
     def propose_thread(self, thread: SharedHistoryThread) -> bool:
         """自动来源 propose 新 shared_history_thread。强制 state=STATE_REVIEW。
 
@@ -701,8 +754,13 @@ class RelationalStateStore:
         return [t for t in self.shared_history_threads.values()
                 if t.state == STATE_REVIEW]
 
+    def list_protocols_review(self) -> List[UnspokenProtocol]:
+        """🆕 [Sir 2026-05-26 SOUL Phase A] AutoArbiter 拉 review queue 用."""
+        return [p for p in self.unspoken_protocols.values()
+                if p.state == STATE_REVIEW]
+
     def activate_from_review(self, item_id: str) -> str:
-        """把 review 状态的条目转 active。返回 kind ('joke' / 'thread' / '') 或 ''。"""
+        """把 review 状态的条目转 active。返回 kind ('joke' / 'thread' / 'protocol' / '')."""
         with self._lock:
             if item_id in self.inside_jokes:
                 j = self.inside_jokes[item_id]
@@ -716,6 +774,13 @@ class RelationalStateStore:
                     t.state = STATE_ACTIVE
                     self._dirty = True
                     return 'thread'
+            # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol review → active
+            if item_id in self.unspoken_protocols:
+                p = self.unspoken_protocols[item_id]
+                if p.state == STATE_REVIEW:
+                    p.state = STATE_ACTIVE
+                    self._dirty = True
+                    return 'protocol'
         return ''
 
     def reject_from_review(self, item_id: str) -> str:
@@ -733,6 +798,13 @@ class RelationalStateStore:
                     t.state = STATE_ARCHIVED
                     self._dirty = True
                     return 'thread'
+            # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol review → archived
+            if item_id in self.unspoken_protocols:
+                p = self.unspoken_protocols[item_id]
+                if p.state == STATE_REVIEW:
+                    p.state = STATE_ARCHIVED
+                    self._dirty = True
+                    return 'protocol'
         return ''
 
     def write_review_queue(self) -> bool:
@@ -741,6 +813,9 @@ class RelationalStateStore:
             'inside_jokes': [j.to_dict() for j in self.list_inside_jokes_review()],
             'shared_history_threads': [
                 t.to_dict() for t in self.list_threads_review()
+            ],
+            'unspoken_protocols': [
+                p.to_dict() for p in self.list_protocols_review()
             ],
             '_meta': {
                 'persisted_at': time.time(),
