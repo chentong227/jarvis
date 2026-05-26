@@ -959,9 +959,41 @@ class InnerThoughtDaemon:
                 birth_turn_id='',
             )
             ok = self.relational_state.propose_inside_joke(joke)
+            if ok:
+                # 🚨 [Sir 2026-05-26 12:21 真痛 fix] propose 后立即 flush 到 disk.
+                # 不依赖 inside_joke_reflector 救场 (准则 5 言出必行).
+                self._flush_relational('inside_joke')
             return ok, f'proposed:{phrase[:30]}' if ok else 'dedup_or_fail'
         except Exception as e:
             return False, f'joke_build_fail:{str(e)[:60]}'
+
+    def _flush_relational(self, kind: str) -> None:
+        """🚨 [Sir 2026-05-26 12:21 真痛 fix] flush relational_state to disk + review queue.
+
+        Sir 真测 75 个 thought 后 dashboard 还是 0 protocols — 根因:
+        propose_X 只 set _dirty=True 不真写 disk. protocol 没 reflector daemon
+        救场 → 永远丢. 准则 5 言出必行: 自己负责自己的 persistence.
+
+        kind 仅 log 用 ('inside_joke' / 'protocol' / 其他). 失败不重抛 (best-effort).
+        """
+        try:
+            rs = self.relational_state
+            if rs is None:
+                return
+            # persist 主 state file (active entities)
+            if hasattr(rs, 'persist'):
+                rs.persist()
+            # write_review_queue 写 review state (AutoArbiter 要看的 queue)
+            if hasattr(rs, 'write_review_queue'):
+                rs.write_review_queue()
+        except Exception as e:
+            try:
+                self._bg_log(
+                    f"⚠️ [InnerThought] _flush_relational({kind}) failed: "
+                    f"{str(e)[:80]}"
+                )
+            except Exception:
+                pass
 
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
@@ -1010,6 +1042,14 @@ class InnerThoughtDaemon:
                 source_marker=thought.id,
             )
             ok = self.relational_state.propose_protocol(protocol)
+            if ok:
+                # 🚨 [Sir 2026-05-26 12:21 真痛 fix] CRITICAL 修:
+                # 之前 propose_protocol 后没调 persist + write_review_queue
+                # → _dirty=True 但永远不 flush 到 disk
+                # → 重启后 protocols=0 (Sir 真测 75 个 thought 后 dashboard 还是 0)
+                # → Phase A propose_protocol 闭环全废
+                # protocol 没 reflector daemon 救场, 必须自己 flush.
+                self._flush_relational('protocol')
             return ok, (
                 f'proposed:{rule[:30]} (id={pid})'
                 if ok else 'dedup_or_fail'
