@@ -214,4 +214,91 @@
 
 ---
 
+## 8. 真实施进度 (Sir 起床后 2026-05-26 真测真改)
+
+### Phase A ✅ commit `fdd7cd9` (push)
+B 类反思 → `propose_protocol` → AutoArbiter 自决 → Layer 2 STRICT RULES.
+22 测试 + 3 老 AutoArbiter isolation fix. **Sir 真测真生效**.
+
+### Phase B ✅ commit `19212ba` (push)
+C 类反思 → `adjust_concern_notes` → `notes_for_self` → Layer 1 主脑自调.
+19 测试. **Sir 真意 "减少对面试准备的打扰" 闭环.**
+
+### Phase C.1 (full directive registration) — ❌ **跳过 (不做)**
+
+**跳过原因 (Sir 12:11 反问"为什么暂缓"后真考量)**:
+- **跟 Phase A protocol 功能重叠 80%** — 都 inject Layer 2 STRICT RULES
+- **LLM 写不出 Python `trigger_func`** — 需要新 DSL + dispatcher (复杂度 + 风险高)
+- **49 个 active directive 已涌** — 加 InnerThought-propose directive 可能噪音
+
+**何时考虑做 C.1**:
+- Phase C.2 trigger_tier/trigger_sir_state 不够用 (需要 complex condition 如 last_3_turn_count, time_of_day)
+- Sir 真测 1-2 周后看是否有"protocol 满足不了的场景化规则"
+- 真需要 directive 的 priority + decay 老化机制 (protocol 只有 ttl_days)
+
+### Phase C.2 ✅ commit `cf67b98` (push 等网络)
+
+Sir 拍板"按你推荐的来吧" — UnspokenProtocol 加 `trigger_tier` + `trigger_sir_state`.
+
+**改动**:
+- `jarvis_relational.py`: UnspokenProtocol + matches_context + to_prompt_block filter + load_persist 兼容老 JSON
+- `jarvis_central_nerve.py`: `_build_layer_2_relational_block(prompt_tier)` + 拿 sir_state from inner_thought_daemon
+- 12 测试
+
+**100% 向后兼容**: trigger 空 list = 全场景 always inject (Phase A 行为).
+
+**未做 (后续 Phase C.2.1)**:
+- AutoArbiter 自决 trigger 范围 — 现状 Sir 需要 CLI 手动编辑 trigger 字段, 后续可加 LLM 自决
+- InnerThought actionable schema 扩 (`propose_protocol:<rule>||trigger_tier=...`) — 现状 propose 默认空 trigger, 后续可加 LLM 输出 trigger
+
+### Phase C.3 (真暂缓) — N/A
+已实施 C.2, 此选项作废.
+
+---
+
+## 9. Sir 12:21 真测真痛 + 真修 (CRITICAL anchor)
+
+### Sir 真痛 1: cooldown 30min → 5min (commit `937bb23` push)
+Sir log 真证据: `all 5 categories in cooldown (skip count 6), next free in 11min`.
+根因: `SAME_CATEGORY_COOLDOWN_S=1800` × 5 cat → 5 tick 后 silence 25min.
+修: `300s` (5min) + 工程不变式 `cooldown == active_interval × 5` 保 daemon 不静默.
+
+### Sir 真痛 2: propose_* 后没 persist (commit `e64ab29` push 等网络)
+Sir 真证据: dashboard 显 thought `actionable_result=proposed:Do not open...`,
+但 `relational_state.json + relational_review.json` **都空** — Phase A 闭环 silently 全废.
+根因: `propose_protocol` 只 set `_dirty=True` 不真 flush. protocol 没 reflector 救场 (inside_joke 被 inside_joke_reflector 救).
+修: `_flush_relational(kind)` helper + 4 处 propose/inside_joke 后立即 persist + write_review_queue.
+
+---
+
+## 10. Sir 真意 Meta-thinking (commit `d66b18f` push 等网络)
+
+Sir 12:21 原话: "这个思考的间隔能否也成为他思考的一部分? 发现我离开了就减慢思考频率,
+发现我回来了就回到 1 分钟一次, 如果很需要频繁思考甚至可以提高 30s 一次."
+
+**设计**:
+- `InnerThought` 加 `next_interval_s` + `tick_origin` 字段
+- prompt 加 `<NEXT_INTERVAL>` tag (enum 30/60/180/600/1800/default)
+- `_resolve_next_interval` 二段保底:
+  a. **Physical gate**: LLM 选超物理边界 → fallback baseline (sleep 不能选 30, active 不能选 1800)
+  b. **Smoothing**: 最近 5 thought ≥3 选 30 + 平均 sal<0.5 → 强制 60 (token 保底)
+- `start()` loop 优先 LLM-chosen interval, fallback baseline
+
+**弊端解决**:
+| 弊端 | 解决 |
+|---|---|
+| LLM 总选 30s token 爆 | Smoothing 强制回 60s |
+| LLM 选非法值 | enum 校验 |
+| LLM 离线判断错 | 物理 gate 保底 |
+| 频率震荡 | 每次自决, 自然变化 (feature) |
+
+15 测试. Sir 真证据 (启动后):
+```
+💭 [InnerThought] [B/sal=0.85/state=active/tick=60s] ... | next=30s(llm_chosen) ← 急思考
+💭 [InnerThought] [D/sal=0.4/state=afk_deep/tick=60s] ... | next=600s(llm_chosen) ← 慢
+💭 [InnerThought] [E/sal=0.3/state=active/tick=60s] ... | next=60s(llm_smoothed) ← 被 smooth
+```
+
+---
+
 **Sir 起床看完, 选择: A/B/C 顺序 + 现在拍板. 我执行 + push.**
