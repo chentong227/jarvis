@@ -349,5 +349,191 @@ class TestM4DashboardAPI(unittest.TestCase):
             self.assertIn(k, ob)
 
 
+# ==========================================================
+# Sir 2026-05-27 00:43 — 重复思考 / log truncate / thread panel 真痛 3 修
+# ==========================================================
+
+class TestFix1727RepeatThoughtAndLogTruncate(unittest.TestCase):
+    """Sir image 1: 同主题 2 thought 60s 连 fire, 都 propose 同 tool 都失败.
+
+    根因: evidence 没传 actionable_done + actionable_result → LLM 看不到
+    上次 fail 的真原因, 重复 propose 同 actionable.
+
+    修法 (准则 6 evidence-driven):
+      1. log truncate 100→300 让 Sir 看完整 thought
+      2. evidence collection 传 actionable_done + actionable_result
+      3. prompt render 显 ✅/❌ FAILED + "Do NOT re-propose" directive
+    """
+
+    def test_log_truncate_extended_to_300_chars(self):
+        """Sir 真痛: log 截 [:100] 太短, 改 [:300] 让 reasoning 完整."""
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 应有 thought.thought[:300] (新)
+        self.assertIn('thought.thought[:300]', src,
+                       'log truncate 应改成 [:300] 让 Sir 看完整 reasoning')
+        # mediocre log [:60] OK 保留 (mediocre 本来就不重要)
+
+    def test_evidence_collection_includes_actionable_done_and_result(self):
+        """recent_thoughts evidence 真传 actionable_done + actionable_result.
+
+        防 LLM 看不到上次失败 → 重复 propose 同 actionable.
+        """
+        from jarvis_inner_thought_daemon import (
+            InnerThought, InnerThoughtDaemon,
+        )
+        # 真造 1 失败 thought
+        failed_thought = InnerThought(
+            id='thought_fail_x', ts=time.time() - 60, ts_iso='',
+            category='A', thought='try to call tool', salience=0.8,
+            actionable='call_tool:ui_control.dashboard_open:{}',
+        )
+        failed_thought.actionable_done = False
+        failed_thought.actionable_result = (
+            'gated:call_tool_requires_sal>=0.9 (got 0.80)'
+        )
+        daemon = InnerThoughtDaemon.__new__(InnerThoughtDaemon)
+        daemon._thoughts = [failed_thought]
+        # 真 RLock — 不是 MagicMock, 防 'with self._lock:' 报错
+        import threading as _th
+        daemon._lock = _th.RLock()
+        # 不真 swm / stm — 只测 recent_thoughts 段, 全 mock
+        daemon.nerve = MagicMock()
+        daemon.nerve.profile = None
+        daemon.concerns_ledger = None
+        daemon.runtime_log_buffer = []
+        # _read_declared_status / _get_idle_seconds 让走 default
+        # _collect_evidence(sir_state, within_seconds) — 真 signature
+        ev = daemon._collect_evidence('active', 600)
+        rt = ev.get('recent_thoughts', [])
+        self.assertEqual(len(rt), 1)
+        self.assertIn('actionable_done', rt[0])
+        self.assertIn('actionable_result', rt[0])
+        self.assertEqual(rt[0]['actionable_done'], False)
+        self.assertIn('gated:call_tool_requires_sal',
+                       rt[0]['actionable_result'])
+
+    def test_prompt_renders_failed_actionable_with_warning(self):
+        """prompt render 真显 ❌ FAILED + 警告 directive."""
+        from jarvis_inner_thought_daemon import InnerThoughtDaemon
+        daemon = InnerThoughtDaemon.__new__(InnerThoughtDaemon)
+        # 注: _build_prompt 复用. 直接构造 evidence + 跑 render
+        # 但 _build_prompt 是 private + complex. Test source 文件 含 render 段:
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # render 段含 "Did:" + "Result:" + "❌ FAILED"
+        self.assertIn('Did:', src,
+                       'prompt 段应显示上次 actionable Did:')
+        self.assertIn('Result:', src,
+                       'prompt 段应显示上次 actionable Result:')
+        self.assertIn('❌ FAILED', src,
+                       'prompt 段应显示 ❌ FAILED 让 LLM 看到失败')
+        self.assertIn('Do NOT re-propose', src,
+                       'prompt 段应有 directive 教 LLM 不重 propose')
+
+    def test_prompt_renders_successful_actionable_too(self):
+        """对称: 成功也显 ✅ — 让 LLM 看到 OK 的 action 可以延展."""
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # success mark 也在
+        self.assertIn("'✅'", src,
+                       'prompt 段应显 ✅ 标 (成功 actionable)')
+
+
+class TestFix1729IdentityBlockUnification(unittest.TestCase):
+    """Sir 2026-05-27 00:49 Option B — 思考脑装主脑公共子集 (人设统一).
+
+    Sir 真意:
+      - "主脑装配的 prompt 也该给思考脑保证人设信息统一"
+      - "现在思考脑只看上下文会判断失误"
+      - "连续+时间感知是最重要的, 不要让 LLM 变蠢"
+
+    设计 (准则 6 持久化 vocab + 8 优雅): 5 段公共子集
+      1. now_time / hour_pattern (已有)
+      2. sir_declared_status (SirStatusTracker raw — sleep/lunch/dnd)
+      3. sir_profile_mini (ProfileCard.to_prompt_block(400))
+      4. active_directives (top 5 by priority, only purpose_short)
+      5. 强化 continuity directive (failed actionable → DIFFERENT approach)
+    """
+
+    def test_identity_block_vocab_file_exists(self):
+        """vocab json 持久化 + schema 完整."""
+        from jarvis_inner_thought_daemon import InnerThoughtDaemon
+        path = InnerThoughtDaemon._IDENTITY_VOCAB_PATH
+        self.assertTrue(os.path.exists(path),
+                         f'vocab json missing: {path}')
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        self.assertIn('blocks_enabled', data)
+        for k in ('now_time', 'hour_pattern', 'sir_declared_status',
+                  'sir_profile_mini', 'active_directives'):
+            self.assertIn(k, data['blocks_enabled'],
+                            f'missing block flag {k}')
+
+    def test_load_identity_block_vocab_fail_safe(self):
+        """vocab path 缺失 → default (全 on), 不 raise."""
+        from jarvis_inner_thought_daemon import InnerThoughtDaemon
+        daemon = InnerThoughtDaemon.__new__(InnerThoughtDaemon)
+        # 暂 swap path 到不存在
+        old = InnerThoughtDaemon._IDENTITY_VOCAB_PATH
+        InnerThoughtDaemon._IDENTITY_VOCAB_PATH = '/__nonexistent__.json'
+        InnerThoughtDaemon._IDENTITY_VOCAB_CACHE = {
+            'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+        }
+        try:
+            cfg = daemon._load_identity_block_vocab()
+            self.assertIn('blocks_enabled', cfg)
+            self.assertTrue(cfg['blocks_enabled']['now_time'])
+            self.assertTrue(cfg['blocks_enabled']['sir_declared_status'])
+        finally:
+            InnerThoughtDaemon._IDENTITY_VOCAB_PATH = old
+            InnerThoughtDaemon._IDENTITY_VOCAB_CACHE = {
+                'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+            }
+
+    def test_prompt_renders_3_new_blocks_when_evidence_present(self):
+        """Sir status / profile / directives 真 render 在 user prompt."""
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 3 段 marker 真存在
+        self.assertIn('[SIR DECLARED STATUS', src,
+                       'prompt 应含 SIR DECLARED STATUS 段 (Sir raw 真意)')
+        self.assertIn('[SIR PROFILE MINI', src,
+                       'prompt 应含 SIR PROFILE MINI 段 (identity/habit/projects)')
+        self.assertIn('[ACTIVE DIRECTIVES', src,
+                       'prompt 应含 ACTIVE DIRECTIVES 段 (主脑 rules)')
+
+    def test_continuity_directive_warns_against_repeating_failed_actionable(self):
+        """强化 CONTINUITY directive — 防 image 1 重复 thought BUG."""
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 在 CONTINUITY directive 段强调"上次 failed → DIFFERENT approach"
+        self.assertIn('DIFFERENT approach', src,
+                       'CONTINUITY directive 应教 LLM 上次 failed → '
+                       'DIFFERENT approach 不重提同 actionable')
+
+
+class TestFix1728ThreadChainsPanel(unittest.TestCase):
+    """Sir image 1 + 第 2 问 "思考链可视化在哪看": 老 condition count>=2 太严."""
+
+    def test_dashboard_thread_chains_shows_when_any_thread(self):
+        """新 condition: allThreads.length > 0 就显, 不再 require count>=2."""
+        dash_path = os.path.join(ROOT, 'scripts', 'jarvis_dashboard_web.py')
+        with open(dash_path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 老 condition `.filter(t => t.count >= 2)` 不该再有
+        self.assertNotIn('filter(t => t.count >= 2)', src,
+                          'thread chain panel condition 应改, '
+                          'count>=2 filter 已撤')
+        # 新: count >= 2 标 续, count=1 标 独立
+        self.assertIn('isContinued', src)
+        self.assertIn('独立 thread', src)
+
+
 if __name__ == '__main__':
     unittest.main()

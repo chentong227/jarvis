@@ -1,0 +1,24 @@
+{
+  "_doc": "[Sir 2026-05-27 00:49 Option B] 思考脑 prompt 装 'main 主脑公共子集' 让 LLM stay-in-character + 时间感知 + Sir status. Sir 真意: '连续+时间感知 最重要', '不要变蠢' = prompt 不能过载. 持久化 vocab 让 Sir CLI 一关一段不需改 .py (准则 6).",
+  "blocks_enabled": {
+    "now_time": true,
+    "hour_pattern": true,
+    "sir_declared_status": true,
+    "sir_profile_mini": true,
+    "active_directives": true
+  },
+  "limits": {
+    "profile_max_chars": 400,
+    "directives_top_n": 5,
+    "directive_purpose_max_chars": 80,
+    "hour_pattern_max_activities": 3,
+    "hour_pattern_max_topics": 3
+  },
+  "_field_doc": {
+    "blocks_enabled": "5 段开关 — Sir 关任一段不需改 .py (准则 6 vocab 持久化). 全关 → 退化到老 prompt.",
+    "limits.profile_max_chars": "ProfileCard.to_prompt_block 截字 (老 800, 思考脑 400 已够).",
+    "limits.directives_top_n": "active directive 拉 top N (按 priority desc, 只 purpose_short).",
+    "limits.directive_purpose_max_chars": "单条 directive purpose_short 截字.",
+    "limits.hour_pattern_max_activities": "M2 typical_activities at this hour 取前 N (Sir 常做啥)."
+  }
+}

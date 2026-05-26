@@ -4013,7 +4013,7 @@ _INNER_THOUGHTS_HTML = r"""
 
   <!-- 🆕 [Sir 2026-05-27 00:11 M4] 思考链 (M1 ThoughtChain) -->
   <div id="thread-chains-box" style="background:#161b22; padding:0.8rem 1rem; border-radius:6px; border:1px solid #30363d; margin-top:0.8rem; display:none;">
-    <h3 style="margin:0 0 0.4rem 0; color:#a78bfa; font-size:1rem;">🔗 思考链 (连续延展的 thread, 长链优先)</h3>
+    <h3 style="margin:0 0 0.4rem 0; color:#a78bfa; font-size:1rem;">🔗 思考链 (LLM 自选 continuity, 🔗 续 N 次 = 同主题串 / ✨ 独立 = 新 topic)</h3>
     <div id="thread-chains-content" style="color:#c9d1d9; font-size:0.85rem; line-height:1.7;"></div>
   </div>
 
@@ -4129,19 +4129,30 @@ _INNER_THOUGHTS_HTML = r"""
           }
 
           // 🆕 [M4] thread chains (M1 ThoughtChain)
-          const threads = (data.thread_groups || []).filter(t => t.count >= 2);
+          // 🆕 [Sir 2026-05-27 00:43 真问"思考链可视化在哪"] 老 condition count>=2 太严,
+          // Sir 没续链 thought 时 panel 永远 hidden. 改成: 有 thread_groups (>=1) 就显,
+          // 续链 count>=2 标 🔗 续, 单条 thread 标 ✨ 独. Sir 能看到 LLM 真选的 continuity.
+          const allThreads = data.thread_groups || [];
           const tcBox = document.getElementById('thread-chains-box');
-          if (threads.length > 0) {
+          if (allThreads.length > 0) {
             tcBox.style.display = 'block';
+            // sort: 续链 (count>=2) 优先, count desc
+            const threads = allThreads.slice().sort((a, b) => b.count - a.count);
             let tcHtml = '';
-            threads.slice(0, 10).forEach(t => {
+            threads.slice(0, 15).forEach(t => {
               const catSummary = Object.entries(t.category_distrib || {})
                 .sort((a,b) => b[1] - a[1])
                 .map(([c, n]) => `${c}×${n}`)
                 .join(' ');
-              tcHtml += `<div style="margin-bottom:0.4rem; padding:0.3rem 0.5rem; background:#0d1117; border-radius:4px; border-left:3px solid #a78bfa;">`;
+              // 🆕 [Sir 2026-05-27 00:43] 续链 vs 独立 thread 区分标签
+              const isContinued = t.count >= 2;
+              const borderColor = isContinued ? '#a78bfa' : '#79c0ff';
+              const badge = isContinued
+                ? `<span style="color:#a78bfa; font-weight:bold;">🔗 续 ${t.count} 次</span>`
+                : `<span style="color:#79c0ff; font-weight:bold;">✨ 独立 thread</span>`;
+              tcHtml += `<div style="margin-bottom:0.4rem; padding:0.3rem 0.5rem; background:#0d1117; border-radius:4px; border-left:3px solid ${borderColor};">`;
               tcHtml += `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">`;
-              tcHtml += `<span style="color:#a78bfa; font-weight:bold;">🔗 续 ${t.count} 次</span>`;
+              tcHtml += badge;
               tcHtml += `<span style="color:#6e7681; font-size:0.78rem;">${catSummary}</span>`;
               tcHtml += `<span style="color:#6e7681; font-size:0.78rem;">${fmtTs(t.first_ts)} → ${fmtTs(t.last_ts)}</span>`;
               tcHtml += `</div>`;

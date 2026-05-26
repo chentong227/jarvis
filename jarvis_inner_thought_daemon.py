@@ -791,9 +791,11 @@ class InnerThoughtDaemon:
                 f"] {thought.thought[:60]}…{meta_str}"
             )
         else:
+            # 🆕 [Sir 2026-05-27 00:43 真痛] log truncate 100→300 让 Sir 看完整 thought
+            # 老截 [:100] 越表达位裁, Sir image 1 "was g" 裁断 看不到完整 reasoning
             self._bg_log(
                 f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
-                f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
+                f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:300]}"
                 f"{action_str}{ev_str}{meta_str}"
             )
 
@@ -909,6 +911,10 @@ class InnerThoughtDaemon:
         try:
             with self._lock:
                 recent_3 = sorted(self._thoughts, key=lambda t: -t.ts)[:3]
+            # 🆕 [Sir 2026-05-27 00:43 真痛 重复思考] 传 actionable_done + actionable_result 让 LLM 看上次失败
+            # Sir image 1: 同主题 2 thought 60s 连 fire, 都 propose 同 tool 都失败.
+            # 根因: LLM 只看到上次 actionable 文本不知道为啥 fail. 补上 result 后 LLM
+            # 自然看到 "gated:call_tool_requires_sal>=0.9" → 不重提同 tool.
             ev['recent_thoughts'] = [
                 {
                     'id': t.id,
@@ -917,7 +923,11 @@ class InnerThoughtDaemon:
                     'category': t.category,
                     'thought': (t.thought or '')[:200],
                     'salience': t.salience,
-                    'actionable': (t.actionable or 'none')[:40],
+                    'actionable': (t.actionable or 'none')[:60],
+                    'actionable_done': getattr(t, 'actionable_done', None),
+                    'actionable_result': (
+                        getattr(t, 'actionable_result', '') or ''
+                    )[:120],
                     'outcome': getattr(t, 'outcome', 'pending'),
                     'age_s': int(time.time() - t.ts),
                 }
@@ -1084,6 +1094,73 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-27 00:49 Option B 人设统一] 4 段公共子集 — 让思考脑跟主脑同人设
+        # =====================================================================
+        # Sir 真意 (Option B): "主脑装配的 prompt 也该给思考脑保证人设信息统一", "现在
+        # 思考脑只看上下文会判断失误". Sir 优先级: 连续 > 时间 > 人设. 不让 LLM 变蠢 =
+        # 装最小必要 + 持久化 vocab 让 Sir 一关一段不需改 .py (准则 6).
+        # 5 块: now_time / hour_pattern (已有上) / sir_declared_status / sir_profile_mini
+        #       / active_directives. 全 vocab gate (memory_pool/inner_thought_identity_
+        #       block_vocab.json).
+        # =====================================================================
+        try:
+            _id_vocab = self._load_identity_block_vocab()
+        except Exception:
+            _id_vocab = {}
+        _enabled = (_id_vocab.get('blocks_enabled') or {})
+        _limits = (_id_vocab.get('limits') or {})
+        # (1) Sir declared status raw — Sir 真声明 (sleep/lunch/dinner/out/dnd) +
+        #     age (Sir 何时说的). 老 evidence 只聚合后 sir_state, 看不到细节.
+        if _enabled.get('sir_declared_status', True):
+            try:
+                status, age_s, is_overdue = self._read_declared_status()
+                ev['sir_declared_status'] = {
+                    'status': status,
+                    'age_s': int(age_s),
+                    'is_overdue': bool(is_overdue),
+                }
+            except Exception:
+                pass
+        # (2) Sir profile mini — ProfileCard.to_prompt_block(400) 截字精简
+        if _enabled.get('sir_profile_mini', True):
+            try:
+                _max = int(_limits.get('profile_max_chars', 400))
+                if self.nerve and hasattr(self.nerve, 'profile_card'):
+                    pc = self.nerve.profile_card
+                    if pc and hasattr(pc, 'to_prompt_block'):
+                        ev['sir_profile_mini'] = pc.to_prompt_block(
+                            max_chars=_max,
+                        )
+            except Exception:
+                pass
+        # (3) Active directives — top N by priority, 只取 id + purpose_short
+        if _enabled.get('active_directives', True):
+            try:
+                from jarvis_directives import (get_default_registry as
+                                                   _gdr_drv)
+                reg = _gdr_drv()
+                if reg and hasattr(reg, 'directives'):
+                    top_n = int(_limits.get('directives_top_n', 5))
+                    pmax = int(_limits.get('directive_purpose_max_chars', 80))
+                    active = [
+                        d for d in reg.directives.values()
+                        if getattr(d, 'state', '') == 'active'
+                        and getattr(d, 'purpose_short', '')
+                    ]
+                    active.sort(
+                        key=lambda d: -int(getattr(d, 'priority', 0))
+                    )
+                    ev['active_directives'] = [
+                        {
+                            'id': d.id,
+                            'purpose': (d.purpose_short or '')[:pmax],
+                            'priority': int(getattr(d, 'priority', 0)),
+                        }
+                        for d in active[:top_n]
+                    ]
+            except Exception:
+                pass
+
         # 🆕 [Sir 2026-05-25 23:18 真痛-2] concerns 给全 active id list 防 LLM hallucinate
         # 老 BUG: 只 top 3 → LLM 想改第 4+ concern (e.g. sir_interview_prep_balance
         # severity 极低), 没在 prompt 列 → LLM hallucinate id (e.g. jarvis_internal_health).
@@ -1246,7 +1323,10 @@ class InnerThoughtDaemon:
             "<CONTINUITY>same_thread:<thread_id_short> | new_topic</CONTINUITY>  "
             "← 🆕 [Sir 2026-05-27 M1] is this thought延续上 3 thought 中某一条? "
             "若延续 → 'same_thread:<thread_id_from_above>' (extends chain); "
-            "若新主题 → 'new_topic' (start new chain).\n\n"
+            "若新主题 → 'new_topic' (start new chain). 🆕 [Sir 00:43] 若上次 "
+            "actionable failed (见 'Result: ❌ FAILED' below), 你 SHOULD 延续 "
+            "same_thread 但 propose DIFFERENT approach OR fall back ACTIONABLE=none "
+            "— DO NOT repeat the exact same actionable.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -1364,6 +1444,21 @@ class InnerThoughtDaemon:
                 lines.append(f"    Thought: \"{t.get('thought', '')[:160]}\"")
                 if t.get('actionable') and t.get('actionable') != 'none':
                     lines.append(f"    Did: {t.get('actionable', '')[:80]}")
+                    # 🆕 [Sir 2026-05-27 00:43 真痛] 显 actionable result 让 LLM 看是否 failed
+                    # 防 LLM 重提同 actionable. 同 actionable + 同 result = same_thread 不要重
+                    ar = t.get('actionable_result', '') or ''
+                    ad = t.get('actionable_done')
+                    if ar:
+                        mark = '❌ FAILED' if ad is False else (
+                            '✅' if ad else '?'
+                        )
+                        lines.append(f"    Result: {mark} — {ar[:120]}")
+                        if ad is False:
+                            lines.append(
+                                f"    ⚠️ Do NOT re-propose this exact actionable "
+                                f"again — it will fail the same way unless "
+                                f"underlying constraint changed."
+                            )
             lines.append(
                 "  ⚠️ If your new thought continues a SAME topic as one above, "
                 "output <CONTINUITY>same_thread:<thread_id_short></CONTINUITY> to "
@@ -1496,6 +1591,52 @@ class InnerThoughtDaemon:
                 "  ⚠️ Reflect: does this hour-pattern match Sir's current STM signal? "
                 "If Sir deviates from typical (e.g. typical sleep at 23 but still coding), "
                 "thought may be: yield/silence vs gentle hint based on severity."
+            )
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-27 00:49 Option B 人设统一] 3 段公共子集 render
+        # (按 Sir 优先 "连续>时间>人设": 时间已上, 现 status > profile > directives)
+        # =====================================================================
+        # Sir 真意: "现在思考脑只看上下文会判断失误" — 加 SirStatusTracker raw +
+        # ProfileCard mini + active directive purpose, 让思考脑跟主脑同人设.
+        # 全 vocab gate (准则 6 持久化).
+        # =====================================================================
+        _ds = evidence.get('sir_declared_status')
+        if _ds and _ds.get('status'):
+            _age_min = _ds.get('age_s', 0) // 60
+            _od = ' (overdue)' if _ds.get('is_overdue') else ''
+            lines.append("[SIR DECLARED STATUS (raw — Sir 真意 sensor, before aggregation)]")
+            lines.append(
+                f"  - status: {_ds['status']} | declared "
+                f"{_age_min}min ago{_od}"
+            )
+            lines.append(
+                "  ⚠️ Honor Sir's declaration. e.g. status=sleep/nap/dnd "
+                "→ NO surface_to_sir / fire_nudge / call_tool 'open UI' "
+                "this tick (only silent SWM publish OK). status=out/lunch "
+                "→ delay actionable, low urgency."
+            )
+            lines.append("")
+
+        _pm = evidence.get('sir_profile_mini')
+        if _pm:
+            lines.append("[SIR PROFILE MINI (identity + state + habit + projects)]")
+            for ln in str(_pm).splitlines():
+                lines.append(f"  {ln}")
+            lines.append("")
+
+        _ad = evidence.get('active_directives') or []
+        if _ad:
+            lines.append("[ACTIVE DIRECTIVES — main brain rules you must align with]")
+            for d in _ad:
+                lines.append(
+                    f"  - [{d.get('priority', 0)}] {d.get('id')}: "
+                    f"{d.get('purpose', '')}"
+                )
+            lines.append(
+                "  ⚠️ Your thought MUST NOT contradict these. e.g. if a directive "
+                "is 'DO NOT volunteer interview prep', do not propose_protocol/"
+                "fire_nudge against that topic."
             )
             lines.append("")
 
@@ -2696,6 +2837,69 @@ class InnerThoughtDaemon:
             return config
         except Exception:
             return dict(self._PULSE_DEFAULT_VOCAB)
+
+    # 🆕 [Sir 2026-05-27 00:49 Option B 人设统一] identity_block vocab loader
+    # =====================================================================
+    # 持久化 memory_pool/inner_thought_identity_block_vocab.json, mtime cache,
+    # 30s throttle, fail-safe → default (5 段全 on / limits 默认值).
+    # Sir CLI 一关一段不需改 .py (准则 6 + 8).
+    # =====================================================================
+    _IDENTITY_VOCAB_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'inner_thought_identity_block_vocab.json',
+    )
+    _IDENTITY_VOCAB_CACHE: dict = {
+        'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+    }
+    _IDENTITY_VOCAB_CHECK_INTERVAL_S = 30.0
+    _IDENTITY_DEFAULT_VOCAB = {
+        'blocks_enabled': {
+            'now_time': True, 'hour_pattern': True,
+            'sir_declared_status': True, 'sir_profile_mini': True,
+            'active_directives': True,
+        },
+        'limits': {
+            'profile_max_chars': 400, 'directives_top_n': 5,
+            'directive_purpose_max_chars': 80,
+            'hour_pattern_max_activities': 3,
+            'hour_pattern_max_topics': 3,
+        },
+    }
+
+    def _load_identity_block_vocab(self) -> dict:
+        """Lazy load + 30s throttle. Fail-safe → default (全 on)."""
+        now = time.time()
+        cache = self._IDENTITY_VOCAB_CACHE
+        if (cache['data'] is not None and
+                now - cache['checked_at'] <
+                    self._IDENTITY_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        try:
+            if not os.path.exists(self._IDENTITY_VOCAB_PATH):
+                cache['data'] = dict(self._IDENTITY_DEFAULT_VOCAB)
+                return cache['data']
+            mtime = os.path.getmtime(self._IDENTITY_VOCAB_PATH)
+            if mtime == cache['mtime'] and cache['data']:
+                return cache['data']
+            with open(self._IDENTITY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # deep-merge (block by block, key by key)
+            cfg = {
+                'blocks_enabled': dict(
+                    self._IDENTITY_DEFAULT_VOCAB['blocks_enabled']
+                ),
+                'limits': dict(self._IDENTITY_DEFAULT_VOCAB['limits']),
+            }
+            if isinstance(data.get('blocks_enabled'), dict):
+                cfg['blocks_enabled'].update(data['blocks_enabled'])
+            if isinstance(data.get('limits'), dict):
+                cfg['limits'].update(data['limits'])
+            cache['data'] = cfg
+            cache['mtime'] = mtime
+            return cfg
+        except Exception:
+            return dict(self._IDENTITY_DEFAULT_VOCAB)
 
     def _emit_thought_pulse(self, thought: InnerThought) -> None:
         """字幕区 subtle 💭 闪 (Sir 真看见思考). vocab 节流.
