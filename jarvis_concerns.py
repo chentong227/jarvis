@@ -847,6 +847,26 @@ class ConcernsLedger:
                 what = _emphasize_facts(last.get('what', '')[:80])
                 if what:
                     lines.append(f"      recent signal: {what}"[:160])
+            # 🚨 [Sir 2026-05-26 12:28 真痛 CRITICAL] notes_for_self 主脑必须看见
+            # =====================================================================
+            # 源 BUG: ConcernsLedger.to_prompt_block 漏 inject notes_for_self,
+            # → Sir 12:28 真痛 anchor: "保证贾维斯的思考是真能调整他的行为, 而不是
+            # 一个展示在面板给我看的玩具".
+            # Phase B (adjust_concern_notes) + dismiss + pending_ack + snooze 都写
+            # notes_for_self, 设计意图就是主脑下轮看见自调行为, 但 prompt 完全
+            # 不显示 → 全废. dismiss 注释 L458 写 "notes_for_self 记 (主脑下轮看)"
+            # — 设计就该 inject, 但代码漏了.
+            # 修: cap 200 char (够主脑读 "DO NOT volunteer this topic" 这类 guidance),
+            # 用 ⚠ 前缀让主脑视觉抢眼. 准则 5 言出必行 + 6 evidence-driven.
+            # =====================================================================
+            try:
+                _notes = (c.notes_for_self or '').strip()
+                if _notes:
+                    lines.append(
+                        f"      ⚠ note to self: {_notes[:200]}"[:240]
+                    )
+            except Exception:
+                pass
         out = '\n'.join(lines)
         if len(out) > max_chars:
             _suffix = '\n…[truncated]'
