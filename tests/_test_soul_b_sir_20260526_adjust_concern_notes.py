@@ -127,7 +127,9 @@ class TestL1ActionableRoute(unittest.TestCase):
 
 
 # ==========================================================================
-# L2: gate C-class only
+# L2: 🆕 [Sir 2026-05-26 23:17 BUG-4/A 准则 6] 删 C-class hard gate.
+# cross-class adjust_concern_notes 允许, 只要 sal ≥ 0.7 + cid 存在 + cite 合法.
+# 老 hard gate 拦 B-self-reflect 想给 concern 加 note 不合理 (准则 6 违反).
 # ==========================================================================
 class TestL2GateClass(unittest.TestCase):
     def setUp(self):
@@ -150,22 +152,17 @@ class TestL2GateClass(unittest.TestCase):
         )
         return self.d._do_adjust_concern_notes(t, t.actionable)
 
-    def test_b_class_rejected(self):
-        ok, result = self._run_with_category('B')
-        self.assertFalse(ok)
-        self.assertIn('gated:notes_adjust_only_from_C', result)
-
-    def test_a_class_rejected(self):
-        ok, _ = self._run_with_category('A')
-        self.assertFalse(ok)
-
-    def test_d_class_rejected(self):
-        ok, _ = self._run_with_category('D')
-        self.assertFalse(ok)
-
-    def test_e_class_rejected(self):
-        ok, _ = self._run_with_category('E')
-        self.assertFalse(ok)
+    def test_cross_class_not_gated_by_category(self):
+        """🆕 [Sir 23:17 BUG-4] 删 hard gate, A/B/D/E 不应被 category 拦.
+        仍可能被 cite gate / cid gate / sal gate 拦 — 但不是 notes_adjust_only_from_C.
+        准则 6: LLM 自决 cross-class 适用性.
+        """
+        for cat in ('A', 'B', 'D', 'E'):
+            ok, result = self._run_with_category(cat)
+            self.assertNotIn(
+                'gated:notes_adjust_only_from_C', result,
+                f'cat={cat}: 准则 6 cross-class adjust_concern_notes 不应被 hard gate 拦, got {result}'
+            )
 
 
 # ==========================================================================
@@ -357,7 +354,10 @@ class TestL9CharCaps(unittest.TestCase):
             f'单次 append 应 cap 120 char, got {repeat_count} repeats')
 
     def test_total_capped_at_500(self):
-        long_existing = 'x' * 450
+        # 🆕 [Sir 2026-05-26 13:32 BUG 3 治本] notes >=80% (400+) 改成早 reject (避免
+        # 浪费 mutation). 这里用 existing=350 (70%, 未达 reject 阈值) 仍验证 500 cap.
+        # 80% reject 行为单独由 _test_fix8 TestBug3NotesFullEarlyReject 覆盖.
+        long_existing = 'x' * 350
         c = _mk_concern('sir_interview_pr',
                           'Sir interview preparation balance',
                           notes_for_self=long_existing)

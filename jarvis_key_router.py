@@ -149,9 +149,21 @@ class KeyRouter:
     def __init__(self, main_brain_key: str, google_keys: list, openrouter_keys: list):
         self._main_brain_key = main_brain_key
         
+        # 🆕 [Sir 2026-05-26 22:50 真痛 BUG 治本] google_1 paid / google_2/3 free
+        # =====================================================================
+        # Sir 截图 Gemini 3 Flash 19/20 RPD — google 免费 tier daily quota 仅 20.
+        # 老 50/50 random pool → 副链消耗 free key → 一天爆.
+        # Sir 真意 (22:50): "googlekey1 是付费, 后面两个是免费. 付费的要保留随机,
+        # 免费的只要保留 Hippocampus summary".
+        # 治本: pool entry 加 tier 标. 默认高频 caller 只用 paid (google_1).
+        # Hippocampus summary 显式 tier_filter='free' 优先 free, fallback paid.
+        # =====================================================================
         self._google_pool = []
         for i, k in enumerate(google_keys):
-            self._google_pool.append({'key': k, 'label': f'google_{i+1}'})
+            tier = 'paid' if i == 0 else 'free'
+            self._google_pool.append(
+                {'key': k, 'label': f'google_{i+1}', 'tier': tier}
+            )
         
         self._openrouter_pool = []
         for i, k in enumerate(openrouter_keys):
@@ -262,13 +274,33 @@ class KeyRouter:
                     return key, entry['label']
         return None, None
     
-    def get_google_key(self, caller: str) -> tuple:
-        """从 Google Key 池随机抽一个。返回 (key, key_name)。失败抛异常。"""
+    def get_google_key(self, caller: str, tier_filter: str = 'paid') -> tuple:
+        """从 Google Key 池随机抽一个。返回 (key, key_name)。失败抛异常。
+
+        🆕 [Sir 2026-05-26 22:50 真痛 BUG 治本] tier_filter:
+          'paid' (default) — 只取 paid keys (google_1). 高频 caller 默认.
+            Sir 真意: paid google_1 RPD 几乎无限, 高频 caller (Gatekeeper/
+            Translation/Interruption) 都走 paid, 不消耗 free google_2/3.
+          'free'  — 优先 free (google_2/3), fallback paid (google_1).
+            Hippocampus summary (1/day) 用 — 不消耗 paid quota.
+          'any'   — 全池 (老 50/50 行为). 罕用.
+        """
         self._reset_daily_counters()
-        key, key_name = self._pick_from_pool(self._google_pool, self.PROVIDER_GOOGLE)
+        if tier_filter == 'paid':
+            pool = [e for e in self._google_pool if e.get('tier') == 'paid']
+        elif tier_filter == 'free':
+            # 优先 free, fallback paid (free 全爆时仍能用 paid)
+            free_pool = [e for e in self._google_pool if e.get('tier') == 'free']
+            paid_pool = [e for e in self._google_pool if e.get('tier') == 'paid']
+            pool = free_pool + paid_pool
+        else:  # 'any'
+            pool = self._google_pool
+        key, key_name = self._pick_from_pool(pool, self.PROVIDER_GOOGLE)
         if key:
             return key, key_name
-        raise RuntimeError(f"[KeyRouter] 所有 Google Key 均不可用 (caller={caller})。")
+        raise RuntimeError(
+            f"[KeyRouter] tier={tier_filter} 所有 Google Key 均不可用 (caller={caller})."
+        )
     
     def get_openrouter_key(self, caller: str,
                             priority: Optional[str] = None) -> tuple:
@@ -722,6 +754,21 @@ class KeyRouter:
             return ''
         if self._openrouter_alerted_today:
             return ''
+        # 🆕 [Sir 2026-05-27 00:05 真测 BUG-3 治本] Google 健康时不报 OR alert.
+        # Sir 真痛: 任何 OR 调用 (e.g. intent_resolver / hippocampus 次要 LLM)
+        # 就触发 alert, 但 Google 主对话池还正常 → 主脑 prompt 注入 "OR usage" 误导.
+        # 治本: 只在 Google 池 ≥ 50% 挂 (真该 fallback) 时报 alert.
+        try:
+            google_keys = [v for v in self._key_status.values()
+                            if v['provider'] == self.PROVIDER_GOOGLE]
+            if google_keys:
+                unhealthy = sum(1 for v in google_keys
+                                if not v['healthy'] or v.get('permanently_dead', False))
+                ratio = unhealthy / len(google_keys)
+                if ratio < 0.5:  # < 50% 挂 = Google 主路径仍正常 → 不报 alert
+                    return ''
+        except Exception:
+            pass
         self._openrouter_alerted_today = True
         return (
             f"[SYSTEM ALERT] Jarvis 正在使用 OpenRouter 作为 API 后端 "

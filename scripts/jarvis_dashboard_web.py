@@ -3653,6 +3653,14 @@ def api_inner_thoughts():
                 'sir_state_icon': state_meta['icon'],
                 'sir_state_zh': state_meta['label'],
                 'tick_interval_s': t.get('tick_interval_s', 0),
+                # 🆕 [Sir 2026-05-27 00:11 M1 ThoughtChain] continuity 字段透传
+                'thread_id': t.get('thread_id', '') or t.get('id', ''),
+                'continuity': t.get('continuity', 'new_topic'),
+                # 🆕 [Sir 2026-05-27 00:11 M5 OutcomeTracker] outcome 字段透传
+                'outcome': t.get('outcome', 'pending'),
+                'evidence_link': (t.get('evidence_link') or '')[:80],
+                'next_interval_s': t.get('next_interval_s', 0),
+                'tick_origin': t.get('tick_origin', ''),
             })
 
         # 试拿 daemon 实时状态 (current_state / interval) — 主进程内才有
@@ -3688,6 +3696,59 @@ def api_inner_thoughts():
             health_msg = (f"最近 24h {n} 条思考, 5 类分布健康. "
                             f"actionable 完成 {action_done}/{action_total}.")
 
+        # 🆕 [Sir 2026-05-27 00:11 M4 Dashboard] outcome 分布 (M5 OutcomeTracker)
+        # 让 Sir 一眼看 Jarvis thought "真打动 Sir 还是被忽略", 反映 thought 学习信号.
+        outcome_count = {
+            'pending': 0,
+            'sir_engaged': 0,
+            'sir_silenced': 0,
+            'sir_rejected': 0,
+        }
+        for t in all_thoughts:
+            oc = t.get('outcome', 'pending')
+            outcome_count[oc] = outcome_count.get(oc, 0) + 1
+
+        # 🆕 [Sir 2026-05-27 00:11 M4 Dashboard] thread chain group
+        # 让 Sir 看连续思考 "thread #X 续了 3 次, thread #Y 单次"
+        thread_groups: dict = {}
+        for t in all_thoughts:
+            tid = t.get('thread_id', '') or t.get('id', '')
+            if not tid:
+                continue
+            if tid not in thread_groups:
+                thread_groups[tid] = {
+                    'thread_id': tid,
+                    'thought_ids': [],
+                    'first_ts': t.get('ts', 0),
+                    'last_ts': t.get('ts', 0),
+                    'count': 0,
+                    'category_distrib': {},
+                    'first_thought_preview': (t.get('thought') or '')[:80],
+                }
+            tg = thread_groups[tid]
+            tg['thought_ids'].append(t.get('id'))
+            tg['count'] += 1
+            tg['first_ts'] = min(tg['first_ts'], t.get('ts', 0))
+            tg['last_ts'] = max(tg['last_ts'], t.get('ts', 0))
+            ct = t.get('category', '?')
+            tg['category_distrib'][ct] = tg['category_distrib'].get(ct, 0) + 1
+        # 排序: 长链优先, 再按 last_ts 新 → 旧
+        thread_list = sorted(
+            thread_groups.values(),
+            key=lambda g: (-g['count'], -g['last_ts'])
+        )[:15]  # top 15 thread
+
+        # 🆕 [Sir 2026-05-27 00:11 M4 Dashboard] time pattern @ now
+        # 让 Sir 看 "12 点钟你常 lull, 现在 Jarvis 怎么反应"
+        time_pattern_now = None
+        try:
+            from jarvis_time_awareness import get_pattern_at_now
+            tp = get_pattern_at_now()
+            if tp:
+                time_pattern_now = tp
+        except Exception:
+            pass
+
         return jsonify({
             'ok': True,
             'total': len(filtered),
@@ -3700,7 +3761,12 @@ def api_inner_thoughts():
                 'actionable_total': action_total,
                 'current_state': cur_state,
                 'current_interval_s': cur_interval,
+                # 🆕 M4
+                'outcome_breakdown': outcome_count,
+                'thread_count_total': len(thread_groups),
             },
+            'thread_groups': thread_list,
+            'time_pattern_now': time_pattern_now,
             'health': health,
             'health_msg': health_msg,
         })
@@ -3923,6 +3989,34 @@ _INNER_THOUGHTS_HTML = r"""
       <div class="cnt" id="cat-E">-</div><div class="desc">inside joke</div></div>
   </div>
 
+  <!-- 🆕 [Sir 2026-05-27 00:11 M4] outcome 分布 (M5 OutcomeTracker) -->
+  <div class="cat-bars" id="outcome-bars" style="margin-top:0.8rem;">
+    <div class="cat-bar" style="border-left-color:#6e7681">
+      <div class="ic">⏳</div><div class="lbl">待观察</div>
+      <div class="cnt" id="oc-pending">-</div><div class="desc">还未 Sir 反应</div></div>
+    <div class="cat-bar" style="border-left-color:#3fb950">
+      <div class="ic">✨</div><div class="lbl">Sir 接住</div>
+      <div class="cnt" id="oc-engaged">-</div><div class="desc">10min 内 Sir 提了</div></div>
+    <div class="cat-bar" style="border-left-color:#d29922">
+      <div class="ic">🔇</div><div class="lbl">Sir 没接</div>
+      <div class="cnt" id="oc-silenced">-</div><div class="desc">无 Sir 反应</div></div>
+    <div class="cat-bar" style="border-left-color:#f85149">
+      <div class="ic">❌</div><div class="lbl">Sir 拒了</div>
+      <div class="cnt" id="oc-rejected">-</div><div class="desc">verbatim 否定</div></div>
+  </div>
+
+  <!-- 🆕 [Sir 2026-05-27 00:11 M4] 此刻时间感知 (M2 TimeAwareness) -->
+  <div id="time-pattern-box" style="background:#161b22; padding:0.8rem 1rem; border-radius:6px; border:1px solid #30363d; margin-top:0.8rem; display:none;">
+    <h3 style="margin:0 0 0.4rem 0; color:#3fb950; font-size:1rem;">🕐 此刻时间感知 (Jarvis 从历史中学的)</h3>
+    <div id="time-pattern-content" style="color:#c9d1d9; font-size:0.88rem; line-height:1.6;"></div>
+  </div>
+
+  <!-- 🆕 [Sir 2026-05-27 00:11 M4] 思考链 (M1 ThoughtChain) -->
+  <div id="thread-chains-box" style="background:#161b22; padding:0.8rem 1rem; border-radius:6px; border:1px solid #30363d; margin-top:0.8rem; display:none;">
+    <h3 style="margin:0 0 0.4rem 0; color:#a78bfa; font-size:1rem;">🔗 思考链 (连续延展的 thread, 长链优先)</h3>
+    <div id="thread-chains-content" style="color:#c9d1d9; font-size:0.85rem; line-height:1.7;"></div>
+  </div>
+
   <div class="records" id="records">
     <div class="empty-state">loading...</div>
   </div>
@@ -4006,6 +4100,59 @@ _INNER_THOUGHTS_HTML = r"""
             document.getElementById('cat-' + c).textContent = cb[c] || 0;
           });
 
+          // 🆕 [M4] outcome 分布 (M5 OutcomeTracker)
+          const ob = s.outcome_breakdown || {};
+          document.getElementById('oc-pending').textContent = ob.pending || 0;
+          document.getElementById('oc-engaged').textContent = ob.sir_engaged || 0;
+          document.getElementById('oc-silenced').textContent = ob.sir_silenced || 0;
+          document.getElementById('oc-rejected').textContent = ob.sir_rejected || 0;
+
+          // 🆕 [M4] time pattern @ now (M2 TimeAwareness)
+          // schema 来自 jarvis_time_awareness.get_pattern_at_now():
+          //   hour, day, typical_activities[], typical_topics[],
+          //   frequency, sample_count, fallback_used, has_data
+          const tp = data.time_pattern_now;
+          const tpBox = document.getElementById('time-pattern-box');
+          if (tp && tp.has_data) {
+            tpBox.style.display = 'block';
+            const dayMap = {mon:'周一', tue:'周二', wed:'周三', thu:'周四', fri:'周五', sat:'周六', sun:'周日'};
+            const dayZh = dayMap[tp.day] || tp.day;
+            let tpHtml = `<div><strong>当前 ${tp.hour}:00 ${dayZh}</strong> · 历史 ${tp.sample_count} 次记录${tp.fallback_used ? ' (跨天聚合)' : ''}:</div>`;
+            const traits = [];
+            if (tp.typical_activities && tp.typical_activities.length) traits.push(`常做 <code style="color:#79c0ff">${tp.typical_activities.slice(0,3).join(' / ')}</code>`);
+            if (tp.typical_topics && tp.typical_topics.length) traits.push(`常聊 <code style="color:#ec4899">${tp.typical_topics.slice(0,3).join(' / ')}</code>`);
+            if (tp.frequency) traits.push(`频次 ${(tp.frequency * 100).toFixed(0)}%`);
+            if (traits.length > 0) tpHtml += `<div style="margin-top:0.3rem;">${traits.join(' · ')}</div>`;
+            document.getElementById('time-pattern-content').innerHTML = tpHtml;
+          } else {
+            tpBox.style.display = 'none';
+          }
+
+          // 🆕 [M4] thread chains (M1 ThoughtChain)
+          const threads = (data.thread_groups || []).filter(t => t.count >= 2);
+          const tcBox = document.getElementById('thread-chains-box');
+          if (threads.length > 0) {
+            tcBox.style.display = 'block';
+            let tcHtml = '';
+            threads.slice(0, 10).forEach(t => {
+              const catSummary = Object.entries(t.category_distrib || {})
+                .sort((a,b) => b[1] - a[1])
+                .map(([c, n]) => `${c}×${n}`)
+                .join(' ');
+              tcHtml += `<div style="margin-bottom:0.4rem; padding:0.3rem 0.5rem; background:#0d1117; border-radius:4px; border-left:3px solid #a78bfa;">`;
+              tcHtml += `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">`;
+              tcHtml += `<span style="color:#a78bfa; font-weight:bold;">🔗 续 ${t.count} 次</span>`;
+              tcHtml += `<span style="color:#6e7681; font-size:0.78rem;">${catSummary}</span>`;
+              tcHtml += `<span style="color:#6e7681; font-size:0.78rem;">${fmtTs(t.first_ts)} → ${fmtTs(t.last_ts)}</span>`;
+              tcHtml += `</div>`;
+              tcHtml += `<div style="margin-top:0.2rem; color:#c9d1d9; font-style:italic;">"${escapeHtml(t.first_thought_preview)}"</div>`;
+              tcHtml += `</div>`;
+            });
+            document.getElementById('thread-chains-content').innerHTML = tcHtml;
+          } else {
+            tcBox.style.display = 'none';
+          }
+
           // 健康 banner
           const hb = document.getElementById('health-banner');
           const healthClass = {empty: 'empty', warn: 'warn',
@@ -4069,10 +4216,25 @@ _INNER_THOUGHTS_HTML = r"""
               html += `</div>`;
             }
 
-            // meta footer (sir state + tick)
+            // meta footer (sir state + tick + 🆕 M1 thread + 🆕 M5 outcome)
             html += `<div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; font-size:0.78rem; color:#6e7681;">`;
             html += `<span class="sir-badge">${t.sir_state_icon} ${t.sir_state_zh}</span>`;
             html += `<span>·</span><span>tick ${t.tick_interval_s}s</span>`;
+            // 🆕 [M1] continuity badge
+            if (t.continuity === 'same_thread') {
+              html += `<span>·</span><span style="color:#a78bfa;">🔗 续</span>`;
+            } else if (t.continuity === 'new_topic') {
+              html += `<span>·</span><span style="color:#79c0ff;">✨ 新</span>`;
+            }
+            // 🆕 [M5] outcome badge
+            const ocMap = {
+              'pending':      {icon: '⏳', label: '待观察', color: '#6e7681'},
+              'sir_engaged':  {icon: '✨', label: 'Sir 接住', color: '#3fb950'},
+              'sir_silenced': {icon: '🔇', label: 'Sir 没接', color: '#d29922'},
+              'sir_rejected': {icon: '❌', label: 'Sir 拒了', color: '#f85149'},
+            };
+            const oc = ocMap[t.outcome] || ocMap.pending;
+            html += `<span>·</span><span style="color:${oc.color};">${oc.icon} ${oc.label}</span>`;
             html += `<span>·</span><span>${fmtTs(t.ts)}</span>`;
             html += `</div>`;
 

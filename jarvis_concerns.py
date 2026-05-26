@@ -96,6 +96,14 @@ class Concern:
     last_user_feedback: dict = field(default_factory=dict)
     optimal_timing: str = ''        # 'before_sleep' / 'morning' / 'evening' / 'now' / ''
 
+    # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Skepticism Learning Loop field
+    # ========================================================================
+    # Sir 自然质疑某 concern (e.g. "为什么又提这个" 时 inject 命中此 concern) →
+    # SirSkepticismDetector → AttributionEngine 匹到此 concern_id →
+    # DecayEngine 累 skepticism_count + 降 severity. count=3 → auto dismiss.
+    # 详 jarvis_sir_skepticism.py + docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §3.
+    skepticism_count: int = 0
+
     def record_signal(self, what: str, severity_delta: float = 0.0,
                       source_turn_id: str = '') -> None:
         """记一条 evidence。recent_signals 最多保 10 条。"""

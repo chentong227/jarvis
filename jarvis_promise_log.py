@@ -256,6 +256,16 @@ class PromiseExecutionLog:
 
     def mark_fulfilled(self, promise_id: str, evidence_kind: str,
                         evidence_what: str) -> bool:
+        # 🆕 [Sir 2026-05-26 19:14 准则 6 治本 Sir Q3 元根] dedup mark fulfilled —
+        # =====================================================================
+        # 源 BUG: 同 Sir 真意 (1:30 PM wake-up) 注册 2 个 promise (p_543b5902 hard +
+        # p_56cbff2b commitment, desc 完全相同). Sir 18:59 confirm → 只 mark
+        # p_543b5902. 19:01 commitment_watcher reload from PromiseLog → 看到
+        # p_56cbff2b 仍 pending → SmartNudge 又 fire commitment_check (Sir 痛点).
+        # 治本: mark_fulfilled 找 pending dup (同 description lower strip), 一并
+        # mark. dup 多个 register 路径并行写时 cleanup. 准则 8 优雅 (1 处治, 不
+        # downstream patch each path 检查 dup).
+        # =====================================================================
         with self._lock:
             p = self.promises.get(promise_id)
             if p is None or p.state != STATE_PENDING:
@@ -263,6 +273,24 @@ class PromiseExecutionLog:
             p.state = STATE_FULFILLED
             p.fulfilled_at = time.time()
             p.add_evidence(evidence_kind, evidence_what)
+            # 找 pending dup (同 description case-insensitive strip), 全 mark
+            dup_marked: list = []
+            target_desc = (p.description or '').strip().lower()
+            if target_desc:
+                for other_pid, other_p in self.promises.items():
+                    if other_pid == promise_id:
+                        continue
+                    if other_p.state != STATE_PENDING:
+                        continue
+                    other_desc = (other_p.description or '').strip().lower()
+                    if other_desc == target_desc:
+                        other_p.state = STATE_FULFILLED
+                        other_p.fulfilled_at = time.time()
+                        other_p.add_evidence(
+                            f'{evidence_kind}_dup_of_{promise_id}',
+                            f'auto-marked dup of {promise_id}: {evidence_what[:80]}',
+                        )
+                        dup_marked.append(other_pid)
         try:
             self._persist()
         except Exception:
@@ -274,6 +302,13 @@ class PromiseExecutionLog:
         )
         print(line)
         bg_log(line)
+        if dup_marked:
+            dup_line = (
+                f"🧹 [PromiseLog/dedup] also marked fulfilled (same desc): "
+                f"{', '.join(dup_marked)} — prevents reload re-fire"
+            )
+            print(dup_line)
+            bg_log(dup_line)
         # 🆕 [P5-fix27-A / 2026-05-22] SWM publish — 主脑下轮 prompt 看得到
         # "Sir 完成了体检 promise" event, 不再凭过期 STM 错说"明天体检".
         _publish_promise_event(

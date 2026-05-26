@@ -290,6 +290,20 @@ class SubtitleOverlay(QWidget):
                         # 用 user 通道把"轻推"展示出来，让 Sir 能看见
                         self.show_user_speech(f"💭 {text}")
                         changed = True
+                elif lang == "thought_pulse":
+                    # 🆕 [Sir 2026-05-27 00:11 M3 VisualPulse] InnerThought subtle 闪
+                    # =====================================================================
+                    # Sir 真意: "可视化看到思考变化, 不是离散像看故事".
+                    # daemon fire 后 (sal>=threshold) → 字幕区轻闪 "💭 thinking: <preview>".
+                    # 用 show_user_speech 配 💭 emoji + thread/cont marker. 节流由 daemon 端管.
+                    # =====================================================================
+                    if self.subtitle_enabled and text:
+                        # 暗色暗示 thinking 不是 Sir 真要看的字幕主体, 只是侧道感知
+                        try:
+                            self.show_user_speech(f"💭 {text}")
+                            changed = True
+                        except Exception:
+                            pass
                 elif lang == "visual_pulse":
                     # [轴 1.5 / 2026-05-15] α5 VISUAL_PULSE 通道终于接通：
                     # 之前是占位 pass（事件被静默丢）→ 现在调 orb.flash_pulse(nudge_type)

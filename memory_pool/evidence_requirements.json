@@ -116,6 +116,17 @@
       "source": "seed",
       "created_at": 1779999600.0,
       "note": "Unknown (L1 没分到任何类): 空 list → 不 verify 也不 audit. Fail-safe 防 ALERT 死循环 (β.4.2-hotfix 教训内化)."
+    },
+    {
+      "id": "reflector_past_1779798637",
+      "claim_type": "Past",
+      "accepted_evidence_kinds": [
+        "tool_results_success"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779798637.2089489,
+      "note": "Past action claims like 'I've updated' or 'I set' frequently require confirmation from tool execution logs."
     }
   ]
 }

@@ -173,10 +173,24 @@ class Hippocampus:
         except Exception:
             return 0
 
-    def _get_key_and_client(self, api_key=None):
+    def _get_key_and_client(self, api_key=None, prefer_free_google: bool = False):
+        """🆕 [Sir 2026-05-26 22:50 真痛 BUG 治本] prefer_free_google 参数.
+
+        Sir 真意: google_1 是 paid (RPD 无限), google_2/3 是 free (RPD 20).
+        Hippocampus summary (1/day, ≤20 RPD) 应该用 free, 不消耗 paid quota.
+        embedding (高频) 用 _embed_with_rotation 显式遍历 _google_pool, 不走这里.
+        其他 caller default prefer_free_google=False → 只取 paid google_1.
+        """
         if self.key_router:
-            _key, _key_name, _provider = self.key_router.get_key('hippocampus', 'flash_lite',
-                                                       allow_openrouter_fallback=False)
+            tier = 'free' if prefer_free_google else 'paid'
+            try:
+                _key, _key_name = self.key_router.get_google_key('hippocampus', tier_filter=tier)
+                _provider = self.key_router.PROVIDER_GOOGLE
+            except (RuntimeError, AttributeError):
+                # 老路径兜底 (key_router 无 get_google_key tier 参数)
+                _key, _key_name, _provider = self.key_router.get_key(
+                    'hippocampus', 'flash_lite', allow_openrouter_fallback=False
+                )
         else:
             _key, _key_name = api_key, 'direct'
         return _key, _key_name, create_genai_client(api_key=_key)
@@ -1199,7 +1213,11 @@ class Hippocampus:
                 
                 print(f"\n🧠 [海马体]: 监测到 {days} 天前的零碎对话，正在进入潜意识梦境进行压缩整理...")
                 
-                _key, _key_name, client = self._get_key_and_client(api_key)
+                # 🆕 [Sir 2026-05-26 22:50] summary 1/day, 走 google free (google_2/3),
+                # 不消耗 paid google_1 quota. fallback paid 如 free 全爆.
+                _key, _key_name, client = self._get_key_and_client(
+                    api_key, prefer_free_google=True
+                )
                 prompt = f"""你是一个记忆整理模块。请将以下人类与Jarvis的日常对话记录，浓缩总结为一段极其精简的【长期记忆档案】。
 必须提取的核心：用户表达的习惯、喜好、情绪、计划、发生的关键事件。去除毫无意义的客套话。
 请以 Jarvis (第一人称) 的视角记录这段回忆。

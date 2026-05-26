@@ -55,8 +55,20 @@ class TestL0ModuleAndDataclass(unittest.TestCase):
 # ==========================================================================
 class TestL1RiskAndThreshold(unittest.TestCase):
     def setUp(self):
+        # 🩹 [Sir 2026-05-26 19:14 test_isolate] patch CALIBRATION_PATH 到 tmp
+        # 不存在路径 → daemon load_calibration 用 DEFAULT_THRESHOLDS
+        # (不读真 memory_pool/auto_arbiter_calibration.json 的 Sir 私改值)
         from jarvis_auto_arbiter import AutoArbiterDaemon
+        self._tmp = tempfile.mkdtemp(prefix='aa_l1_')
+        self._saved_calib = AutoArbiterDaemon.CALIBRATION_PATH
+        AutoArbiterDaemon.CALIBRATION_PATH = os.path.join(self._tmp, 'cal.json')
         self.daemon = AutoArbiterDaemon(key_router=None)
+
+    def tearDown(self):
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        AutoArbiterDaemon.CALIBRATION_PATH = self._saved_calib
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_risk_classification(self):
         from jarvis_auto_arbiter import AutoArbiterDaemon
@@ -261,6 +273,19 @@ class TestL5SirRevert(unittest.TestCase):
 # L6: Daily reflection (revert_rate → threshold 调)
 # ==========================================================================
 class TestL6DailyReflection(unittest.TestCase):
+    def setUp(self):
+        # 🩹 [Sir 2026-05-26 19:14 test_isolate] 同 L1 — patch tmp CALIBRATION_PATH
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        self._tmp = tempfile.mkdtemp(prefix='aa_l6_')
+        self._saved_calib = AutoArbiterDaemon.CALIBRATION_PATH
+        AutoArbiterDaemon.CALIBRATION_PATH = os.path.join(self._tmp, 'cal.json')
+
+    def tearDown(self):
+        from jarvis_auto_arbiter import AutoArbiterDaemon
+        AutoArbiterDaemon.CALIBRATION_PATH = self._saved_calib
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
     def _make_daemon_with_decisions(self, decisions_data):
         from jarvis_auto_arbiter import AutoArbiterDaemon, ArbiterDecision
         d = AutoArbiterDaemon(key_router=None)

@@ -74,7 +74,11 @@ class TestL1AdaptiveFrequency(unittest.TestCase):
                 self.assertEqual(self.daemon._classify_sir_state(), 'active')
 
     def test_state_afk_short_when_idle_5min(self):
-        with patch.object(self.daemon, '_get_idle_seconds', return_value=400.0):
+        # 🆕 [Sir 2026-05-26 21:40 test isolation] mock declared_status='unknown'
+        # 让走 idle fallback (老 BUG: 真机 status='sleep' 时 fast-path override)
+        with patch.object(self.daemon, '_get_idle_seconds', return_value=400.0), \
+             patch.object(self.daemon, '_read_declared_status',
+                            return_value=('unknown', 0.0, False)):
             with patch('time.localtime') as mt:
                 mt.return_value = time.struct_time(
                     (2026, 5, 25, 14, 0, 0, 0, 0, 0)
@@ -82,20 +86,23 @@ class TestL1AdaptiveFrequency(unittest.TestCase):
                 self.assertEqual(self.daemon._classify_sir_state(), 'afk_short')
 
     def test_state_afk_deep_when_idle_30min_plus(self):
-        with patch.object(self.daemon, '_get_idle_seconds', return_value=2000.0):
+        with patch.object(self.daemon, '_get_idle_seconds', return_value=2000.0), \
+             patch.object(self.daemon, '_read_declared_status',
+                            return_value=('unknown', 0.0, False)):
             with patch('time.localtime') as mt:
                 mt.return_value = time.struct_time(
                     (2026, 5, 25, 14, 0, 0, 0, 0, 0)
                 )
                 self.assertEqual(self.daemon._classify_sir_state(), 'afk_deep')
 
-    def test_state_sleep_at_night_when_idle(self):
-        with patch.object(self.daemon, '_get_idle_seconds', return_value=700.0):
-            with patch('time.localtime') as mt:
-                mt.return_value = time.struct_time(
-                    (2026, 5, 25, 3, 0, 0, 0, 0, 0)  # 03:00
-                )
-                self.assertEqual(self.daemon._classify_sir_state(), 'sleep')
+    def test_state_sleep_via_sir_status_tracker(self):
+        # 🆕 [Sir 2026-05-26 19:01 准则 6 极致版] 老测 "夜间 + idle" 凌晨窗已删.
+        # 新路径: SirStatusTracker.current_status() 声明 sleep + idle 高 + 未 overdue.
+        with patch.object(self.daemon, '_get_idle_seconds', return_value=700.0), \
+             patch('jarvis_sir_status_tracker.current_status',
+                    return_value={'status': 'sleep', 'age_s': 100,
+                                   'is_overdue': False}):
+            self.assertEqual(self.daemon._classify_sir_state(), 'sleep')
 
     def test_interval_matches_state(self):
         from jarvis_inner_thought_daemon import InnerThoughtDaemon
@@ -155,7 +162,8 @@ class TestL2PromptBuild(unittest.TestCase):
         _, user_p = self.daemon._build_prompt('active', evidence)
         self.assertIn('CURRENT MOMENT', user_p)
         self.assertIn('RECENT SWM EVENTS', user_p)
-        self.assertIn('STM LAST 2 TURNS', user_p)
+        # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn 后改 block name
+        self.assertIn('STM LAST 5 TURNS', user_p)
         self.assertIn('YOUR ACTIVE CONCERNS', user_p)
         self.assertIn('Sir 说 你好', user_p)
         self.assertIn('sir_sleep', user_p)

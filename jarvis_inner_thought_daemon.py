@@ -43,12 +43,120 @@ Sir 真问 (22:10 + 22:20):
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, List, Optional, Tuple
+
+
+# ==========================================================================
+# 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 A 治本 / 准则 6 vocab 持久化]
+# Soul block 排序权重 + cap 持久化 (memory_pool/inner_thought_soul_block_vocab.json)
+# Sir 真痛: "想了一堆没体现在对话里" → 老 sal=0.9 挤掉新 sal=0.7.
+# 治本: score = salience*w_sal + recency*w_rec (e^(-age/halflife)), 权重 vocab 可改.
+# ==========================================================================
+_SOUL_BLOCK_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_thought_soul_block_vocab.json',
+)
+_SOUL_BLOCK_CONFIG_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_SOUL_BLOCK_CONFIG_CHECK_INTERVAL_S = 30.0
+
+# fallback config (vocab fail 时用, 让 daemon 不崩)
+_SOUL_BLOCK_DEFAULT_CONFIG: dict = {
+    'weights': {'salience': 0.5, 'recency': 0.5},
+    'recency_halflife_s': 3600,
+    'max_inject': 5,
+    'max_chars': 800,
+    'max_age_s': 86400,
+}
+
+
+def _load_soul_block_config() -> dict:
+    """Lazy load soul block vocab + mtime 30s throttle. 失败 fallback default."""
+    now = time.time()
+    if (_SOUL_BLOCK_CONFIG_CACHE['data'] is not None and
+            now - _SOUL_BLOCK_CONFIG_CACHE['checked_at']
+            < _SOUL_BLOCK_CONFIG_CHECK_INTERVAL_S):
+        return _SOUL_BLOCK_CONFIG_CACHE['data']
+    _SOUL_BLOCK_CONFIG_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_SOUL_BLOCK_VOCAB_PATH):
+            _SOUL_BLOCK_CONFIG_CACHE['data'] = _SOUL_BLOCK_DEFAULT_CONFIG
+            return _SOUL_BLOCK_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_SOUL_BLOCK_VOCAB_PATH)
+        if (mtime == _SOUL_BLOCK_CONFIG_CACHE['mtime']
+                and _SOUL_BLOCK_CONFIG_CACHE['data']):
+            return _SOUL_BLOCK_CONFIG_CACHE['data']
+        with open(_SOUL_BLOCK_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # merge with default (容错: vocab 缺 key fallback)
+        config = dict(_SOUL_BLOCK_DEFAULT_CONFIG)
+        for k in ('weights', 'recency_halflife_s', 'max_inject', 'max_chars',
+                    'max_age_s'):
+            if k in data:
+                config[k] = data[k]
+        _SOUL_BLOCK_CONFIG_CACHE['data'] = config
+        _SOUL_BLOCK_CONFIG_CACHE['mtime'] = mtime
+        return config
+    except Exception:
+        return _SOUL_BLOCK_DEFAULT_CONFIG
+
+
+# ==========================================================================
+# 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 治本 / 准则 6 vocab 持久化]
+# surface_to_sir 阈值 / 频限 / 通道白名单 (memory_pool/surface_to_sir_vocab.json)
+# Sir 真痛: "思考层没主动发声". 给 thought 一档轻量 surface 通道
+# (terminal_pulse / next_turn_inject), 不抢 voice channel.
+# ==========================================================================
+_SURFACE_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'surface_to_sir_vocab.json',
+)
+_SURFACE_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_SURFACE_VOCAB_CHECK_INTERVAL_S = 30.0
+
+_SURFACE_DEFAULT_CONFIG: dict = {
+    'salience_threshold': 0.7,
+    'cooldown_global_s': 120,
+    'cooldown_per_channel_s': 300,
+    'max_per_hour': 6,
+    'allowed_channels': ['terminal_pulse', 'next_turn_inject'],
+}
+
+
+def _load_surface_to_sir_config() -> dict:
+    """Lazy load surface vocab + mtime 30s throttle. 失败 fallback default."""
+    now = time.time()
+    if (_SURFACE_VOCAB_CACHE['data'] is not None and
+            now - _SURFACE_VOCAB_CACHE['checked_at']
+            < _SURFACE_VOCAB_CHECK_INTERVAL_S):
+        return _SURFACE_VOCAB_CACHE['data']
+    _SURFACE_VOCAB_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_SURFACE_VOCAB_PATH):
+            _SURFACE_VOCAB_CACHE['data'] = _SURFACE_DEFAULT_CONFIG
+            return _SURFACE_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_SURFACE_VOCAB_PATH)
+        if (mtime == _SURFACE_VOCAB_CACHE['mtime']
+                and _SURFACE_VOCAB_CACHE['data']):
+            return _SURFACE_VOCAB_CACHE['data']
+        with open(_SURFACE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        config = dict(_SURFACE_DEFAULT_CONFIG)
+        for k in ('salience_threshold', 'cooldown_global_s',
+                    'cooldown_per_channel_s', 'max_per_hour',
+                    'allowed_channels'):
+            if k in data:
+                config[k] = data[k]
+        _SURFACE_VOCAB_CACHE['data'] = config
+        _SURFACE_VOCAB_CACHE['mtime'] = mtime
+        return config
+    except Exception:
+        return _SURFACE_DEFAULT_CONFIG
 
 
 # ==========================================================================
@@ -67,6 +175,17 @@ class InnerThought:
     actionable: str          # 'none' / 'update_concern_severity:...' / ...
     actionable_done: bool = False
     actionable_result: str = 'pending'
+    # 🆕 [Sir 2026-05-26 19:48 Phase 2B] thought outcome (Sir react/ignore feedback)
+    # =====================================================================
+    # 让 thought 真"学" — 落 outcome 后, WeeklyReflectionConsolidator 7d 看
+    # sir_engaged rate / sir_silenced rate / sir_rejected rate per category,
+    # 反馈 dashboard 调 daemon SAL threshold / cooldown.
+    # 现 daemon 不自动判 outcome (需要主脑 reply track + Sir 反应 detector),
+    # 这是 Phase 2B Wire 1: 字段就位, outcome 判别由 WRC 反思时打 (read SWM).
+    # 值: 'pending' (未 fire), 'sir_engaged' (Sir 回应正面), 'sir_silenced'
+    #     (Sir 没回应), 'sir_rejected' (Sir 直接说"别提了"/"不要")
+    # =====================================================================
+    outcome: str = 'pending'
     sir_state: str = 'unknown'     # 'active' / 'afk_short' / 'afk_deep' / 'sleep'
     tick_interval_s: int = 60
     # 🆕 [Sir 2026-05-26 12:21 真意 Meta-thinking] daemon 让 thought 决定下次 tick 间隔.
@@ -91,6 +210,12 @@ class InnerThought:
     # thought → actionable 真有 trace. Python 校验 cite 在 thought 里, 否则
     # 降级 actionable='none' (无 evidence 不执行, 准则 5 言出必行 + 6 evidence).
     evidence_link: str = ''
+    # 🆕 [Sir 2026-05-27 00:11 真意 M1 ThoughtChain] thought 连续性 thread.
+    # Sir 真意: "思考能连续, 不像现在离散像看故事". 同主题 thought 串成 thread,
+    # 主脑下次 tick 看上 3 thought 自决 "same_thread:<id>" / "new_topic".
+    # Python 不判 thread, 只追踪 LLM 自报值; 同主题串成链便于 dashboard 可视化.
+    thread_id: str = ''         # ID of thought thread this belongs to (新 thread = self.id)
+    continuity: str = 'new_topic'  # 'same_thread' / 'new_topic' (LLM 自报)
 
 
 # ==========================================================================
@@ -114,7 +239,14 @@ class InnerThoughtDaemon:
     SOUL_INJECT_MAX_CHARS = 500
 
     # adaptive frequency (sec)
-    INTERVAL_ACTIVE_S = 60
+    # 🆕 [Sir 2026-05-26 23:24 真痛 D / 准则 4 懂我] 60 → 45s active baseline.
+    # =========================================================================
+    # Sir 真痛: "我想让他频繁思考的本意是想让他拥有小于我观察间隔的唤醒, 看着像
+    # 持续存在的生命". 60s 觉得"不够生命感". Sir google_1 paid $10/月 cap, 用 lite
+    # 模型 60s→45s active ⇒ ~$8/月 paid Google (16h × 80 ticks/h × 50% paid lite),
+    # 余 $2 buffer. 不爆 cap. 加频不无脑 (Sir 拒 30s 爆 cap), 45s 是优雅平衡点.
+    # =========================================================================
+    INTERVAL_ACTIVE_S = 45
     INTERVAL_AFK_SHORT_S = 180
     INTERVAL_AFK_DEEP_S = 600
     INTERVAL_SLEEP_S = 1800
@@ -126,19 +258,39 @@ class InnerThoughtDaemon:
     SLEEP_HOUR_START = 0              # 凌晨 0-6 点
     SLEEP_HOUR_END = 6
 
+    # 🆕 [Sir 2026-05-26 19:01 真痛 元否决 BUG 治本] 准则 6 极致版 — 删 hardcode vocab
+    # =========================================================================
+    # Sir 19:01 真痛: "怎么我看你的思考链里一堆硬编码? 知道我不在/在电脑前很困难吗?
+    # 我们有 30+ 种 sensor 参数矩阵!"
+    #
+    # 源 BUG: BUG 1 fix (13:32) 用 _REST_INTENT_VOCAB hardcode list (15 keyword) +
+    # _has_active_rest_commitment 反推 sleep. 这是把"硬编码时间窗"换成"硬编码 vocab",
+    # 没真治本. 19:01 实测仍然 fire — Sir 18:59 真意 "回来" 已被 SirStatusTracker capture
+    # 但 daemon 不看, 继续看自己反推 vocab.
+    #
+    # 真治本 (准则 6 数据强耦合 + 准则 8 优雅):
+    #   _classify_sir_state 直接看 SirStatusTracker.current_status() (Sir 真意 sensor,
+    #   vocab 已 jarvis_sir_status_tracker.py 持久化 + publish SWM 'sir_declared_status').
+    #   + idle 物理 atomic 短路 (< 5min 永远 active, 不管声明).
+    #   + is_overdue check (Sir 声明 lunch 已过 3h → 默认回 active).
+    #
+    # 删: _REST_INTENT_VOCAB + _has_active_rest_commitment (this is the fix).
+    # =========================================================================
+
     # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM-self-chosen tick interval.
     # Sir 真意: thought 决定下次思考间隔 (而不只是物理状态驱动).
     # enum 5 + 'default' (6 选 1): 30s 急 / 60s active 默认 / 180s afk_short /
     # 600s afk_deep / 1800s sleep / default (用 _compute_adaptive_interval baseline)
-    _NEXT_INTERVAL_ENUM = frozenset({30, 60, 180, 600, 1800})
+    # 🆕 [Sir 2026-05-26 23:24] 加 45s (active 默认), Sir 加频但守 $10 cap.
+    _NEXT_INTERVAL_ENUM = frozenset({30, 45, 60, 180, 600, 1800})
 
     # Physical gate (准则 6 信任 LLM 但物理保底):
     # 物理 sir_state 决定哪些 interval LLM 可选. 超出 → fallback baseline.
     # 例: Sir active 不能选 1800 (Sir 真在不能等 30min);
     #     Sir sleep 不能选 30 (睡觉时不应急思考 — 浪费 token + 噪音).
     _PHYSICAL_GATE = {
-        'active':    frozenset({30, 60, 180}),
-        'afk_short': frozenset({60, 180, 600}),
+        'active':    frozenset({30, 45, 60, 180}),  # 🆕 [23:24] +45
+        'afk_short': frozenset({45, 60, 180, 600}),  # 🆕 [23:24] +45 (Sir 回来 fast)
         'afk_deep':  frozenset({180, 600, 1800}),
         'sleep':     frozenset({600, 1800}),
         'unknown':   frozenset({60, 180, 600}),  # fallback 中庸
@@ -159,8 +311,116 @@ class InnerThoughtDaemon:
     SAME_CATEGORY_COOLDOWN_S = 300   # 5min 同 category 不重复 (Sir 12:13 真痛 fix)
     STARTUP_DELAY_S = 30              # 启动 30s 后才开始 (系统稳定)
 
+    # 🆕 [Sir 2026-05-26 23:24 真痛 BUG-5 / 准则 8 优雅] mediocre thought 兜底
+    # =========================================================================
+    # 当 LLM 没 follow "(quiet) sal=0.0" prompt rule, 输出 sal<0.5 + 无 action 的
+    # A/E (passive observation/relationship) thought → daemon skip SWM publish,
+    # 不污染 dashboard, log compact. thought 仍 persist (preserve for chain v2).
+    # =========================================================================
+    _MEDIOCRE_SAL_THRESHOLD = 0.5
+
     # actionable cap
     SEVERITY_DELTA_CAP = 0.2          # update_concern_severity ±0.2 per thought
+
+    # 🆕 [Sir 2026-05-26 18:54 FIX B/C] runtime_log + SWM action filter constants
+    # =====================================================================
+    # _ACTION_EVENT_PREFIXES: SWM filter — 从 event_bus 拉真 jarvis 行为 etype
+    #                         prefix (准则 6 vocab 持久化 memory_pool/
+    #                         runtime_log_marker_vocab.json + CLI 可改 + L7 propose)
+    # RUNTIME_LOG_TAIL_BYTES: log seek 末尾字节数 (100KB ~1500 行 ~ 5-30min 覆盖)
+    # RUNTIME_LOG_TAIL_MAX_LINES: filter marker 后最多收 N 行 (cap 总 token ~600)
+    # RUNTIME_LOG_LINE_MAX_CHARS: 单行 cap 防 super 长 prompt 行污染
+    # =====================================================================
+    RUNTIME_LOG_TAIL_BYTES = 100_000
+    RUNTIME_LOG_TAIL_MAX_LINES = 12
+    RUNTIME_LOG_LINE_MAX_CHARS = 180
+    RUNTIME_LOG_LATEST_PATH = 'docs/runtime_logs/latest.txt'
+
+    @property
+    def _ACTION_EVENT_PREFIXES(self) -> tuple:
+        """SWM event_bus filter — 真 jarvis 行为 etype prefix.
+
+        准则 6 vocab 持久化: 从 jarvis_runtime_log_markers 加载,
+        Sir CLI add/remove 直接生效 (mtime check, 30s throttle).
+        缺失 / 损坏 → fallback 内置 DEFAULTS (preserve daemon 可用).
+        """
+        try:
+            from jarvis_runtime_log_markers import load_action_event_prefixes
+            return load_action_event_prefixes()
+        except Exception:
+            return (
+                'proactive_nudge_', 'inner_thought_',
+                'concern_severity_changed', 'concern_notes_appended',
+                'promise_', 'commitment_', 'reminder_', 'wake_',
+                'sir_intent_', 'stand_down_', 'utterance_appended',
+            )
+
+    def _collect_runtime_log_tail(self, max_lines: int = None) -> list:
+        """🆕 [Sir 2026-05-26 18:54 FIX C] 拉 runtime_log tail 让反思看真日志.
+
+        策略 (准则 8 优雅 — 不全量 read 防 token + IO 爆):
+          1. read latest.txt → resolve abs log path (1 IO)
+          2. os.path.getsize() — file_size 算
+          3. f.seek(max(0, file_size - 100KB)) — 从末尾 100KB 开始读 (~1500 行)
+          4. UTF-8 decode errors='ignore' (防 emoji 部分写入)
+          5. lines reversed() → marker regex hit → collect
+          6. 收 max_lines=12 即 break
+          7. 倒序返回 (旧→新, 让 LLM 自然读时间线)
+          8. 每行 cap 180 char + 全量 cap ~2.2KB
+
+        Safety: 任何 IO/decode error → return [] (daemon 不挂).
+
+        Args:
+          max_lines: cap 行数 (None = 用 RUNTIME_LOG_TAIL_MAX_LINES=12).
+
+        Returns: List[str] (旧→新, 已 marker filter + cap line len).
+        """
+        max_lines = max_lines or self.RUNTIME_LOG_TAIL_MAX_LINES
+        try:
+            # Step 1: resolve log path from latest.txt
+            latest_path = self.RUNTIME_LOG_LATEST_PATH
+            if not os.path.isabs(latest_path):
+                # 相对路径 → 解析为 jarvis root 下
+                root = os.path.dirname(os.path.abspath(__file__))
+                latest_path = os.path.join(root, latest_path)
+            if not os.path.exists(latest_path):
+                return []
+            with open(latest_path, 'r', encoding='utf-8') as f:
+                log_path = f.read().strip()
+            if not log_path:
+                return []
+            if not os.path.isabs(log_path):
+                root = os.path.dirname(os.path.abspath(__file__))
+                log_path = os.path.join(root, log_path)
+            if not os.path.exists(log_path):
+                return []
+
+            # Step 2-4: seek tail + decode
+            file_size = os.path.getsize(log_path)
+            read_offset = max(0, file_size - self.RUNTIME_LOG_TAIL_BYTES)
+            with open(log_path, 'rb') as f:
+                f.seek(read_offset)
+                data = f.read()
+            text = data.decode('utf-8', errors='ignore')
+            lines = text.split('\n')
+
+            # Step 5-6: reversed marker filter
+            from jarvis_runtime_log_markers import load_marker_regex
+            marker_re = load_marker_regex()
+            collected = []
+            for line in reversed(lines):
+                stripped = line.strip()
+                if not stripped or len(stripped) < 20:
+                    continue
+                if marker_re.search(stripped):
+                    collected.append(stripped[:self.RUNTIME_LOG_LINE_MAX_CHARS])
+                    if len(collected) >= max_lines:
+                        break
+
+            # Step 7: 倒序 (旧→新) 给 LLM
+            return list(reversed(collected))
+        except Exception:
+            return []
 
     def __init__(self, key_router, concerns_ledger=None,
                   relational_state=None, central_nerve=None):
@@ -253,15 +513,71 @@ class InnerThoughtDaemon:
         except Exception:
             return 0.0
 
-    def _classify_sir_state(self) -> str:
-        idle_s = self._get_idle_seconds()
+    def _read_declared_status(self) -> Tuple[str, float, bool]:
+        """🆕 [Sir 2026-05-26 19:01 准则 6 极致版] 读 SirStatusTracker (Sir 真意 sensor).
+
+        vocab 已全 jarvis_sir_status_tracker.py 持久化 (memory_pool/sir_status.json
+        + fallback seed), publish SWM 'sir_declared_status'. daemon 只拿,不自己
+        reproduce vocab list.
+
+        Returns:
+          (status, age_s, is_overdue):
+            status: 'unknown' | 'active' | 'sleep' | 'nap' | 'lunch' | 'dinner'
+                   | 'out' | 'afk_short' | 'dnd'
+            age_s: Sir 声明后多久 (秒)
+            is_overdue: 是否已超预期返回时长 (e.g. lunch 声明过 3h)
+        """
         try:
-            hour = time.localtime().tm_hour
-            is_night = self.SLEEP_HOUR_START <= hour < self.SLEEP_HOUR_END
+            from jarvis_sir_status_tracker import current_status
+            cur = current_status()
+            return (
+                cur.get('status', 'unknown'),
+                float(cur.get('age_s', 0)),
+                bool(cur.get('is_overdue', False)),
+            )
         except Exception:
-            is_night = False
-        if is_night and idle_s > self.THRESHOLD_SLEEP_IDLE_S:
-            return 'sleep'
+            return ('unknown', 0.0, False)
+
+    def _classify_sir_state(self) -> str:
+        """🆕 [Sir 2026-05-26 19:01 准则 6 极致版] 多 sensor 联合看 state.
+
+        优先级 (准则 6 数据强耦合 + 准则 8 优雅):
+          1. idle 物理短路 (< 5min) → active (Sir 在键鼠真在用, 不可能睡/AFK,
+             不管声明说什么). 这拦 Q1 真痛: 13:30 wake-up commitment 未 fulfill
+             但 Sir 18:55 在键鼠 → 老代码误判 sleep, idle 短路治本.
+          2. SirStatusTracker declared_status (Sir 真意 sensor):
+             - status sleep/nap + 未 is_overdue → 'sleep'
+             - status out/lunch/dinner + idle > 5min → 'afk_deep'
+             - status dnd → 'sleep' (不打扰)
+             - status afk_short → 'afk_short'
+             - is_overdue=True → 不再以声明状态为准 (走底 fallback)
+          3. Fallback: 物理 idle 阈值 (老本为底, 依然在)
+
+        删 hardcode (准则 6 严格):
+          - 删 commitment_watcher 反推 (忙出错 + 重复 SirStatusTracker)
+          - 删 _REST_INTENT_VOCAB hardcode list
+          - 删 SLEEP_HOUR_START/END 凌晨窗 (vocab + idle 够了)
+        """
+        idle_s = self._get_idle_seconds()
+
+        # 🆕 一 物理 atomic 短路 — Sir 在键鼠真在用 → 永远 active.
+        # 这 cover Q1 真痛: 13:30 wake commitment 未 fulfill, 但 Sir 18:55 真在用键鼠
+        # → 老代码 _has_active_rest_commitment() 误返 True → state=sleep → tick=1800s.
+        # idle < 5min 是 Sir 在场物理准据, 比 SirStatusTracker / commitment 可靠得多.
+        if idle_s < self.THRESHOLD_AFK_SHORT_S:
+            return 'active'
+
+        # 🆕 二 SirStatusTracker (Sir 真意 sensor, 已持久化 vocab).
+        status, _age_s, is_overdue = self._read_declared_status()
+        if not is_overdue:
+            if status in ('sleep', 'nap', 'dnd'):
+                return 'sleep'
+            if status in ('out', 'lunch', 'dinner'):
+                return 'afk_deep'
+            if status == 'afk_short':
+                return 'afk_short'
+
+        # 🆕 三 底 fallback: 物理 idle 阈值 (面上 SirStatusTracker 未覆盖 的 边 case)
         if idle_s > self.THRESHOLD_AFK_DEEP_S:
             return 'afk_deep'
         if idle_s > self.THRESHOLD_AFK_SHORT_S:
@@ -420,9 +736,43 @@ class InnerThoughtDaemon:
 
         # persist + publish SWM
         self._persist_thought(thought)
-        self._publish_swm(thought)
 
-        # log (Sir 真看见 daemon 在 work)
+        # 🆕 [Sir 2026-05-26 23:24 真痛 BUG-5 治本 / 准则 8 优雅高效]
+        # =====================================================================
+        # Sir 截图 (22:41:37): "[E/sal=0.40] Sir is troubleshooting an API tier
+        # configuration issue; I shall remain ready to assist" — 平庸 surface
+        # observation, 没价值, 浪费 SWM publish + dashboard 噪音.
+        # Prompt 第 1166 行已教 "If nothing meaningful comes, output (quiet)
+        # SALIENCE=0.0", 但 LLM 偶尔不 follow → daemon 兜底:
+        #   sal < MEDIOCRE_THRESHOLD + actionable='none' + A/E (passive 类) →
+        #   skip publish_swm (不污染 SWM/dashboard), log compact 标 [skip:mediocre].
+        # 不动 sal 阈值 (Sir 拒 E), 仅省 SWM publish + 简化 log. thought 仍 persist
+        # (preserve for thought chain v2 / time awareness).
+        # =====================================================================
+        # 🆕 [Sir 2026-05-26 23:53 真测 BUG-γ] 扩 cover D class.
+        # Sir 23:52:38 实测 '[D/sal=0.20] system key routing remains critical;
+        # I should continue to monitor...' — D-class PROACTIVE-SEED 但没 action,
+        # sal=0.2 极低, 与 A/E 同类无价值 surface observation, skip publish.
+        is_mediocre = (
+            thought.salience < self._MEDIOCRE_SAL_THRESHOLD
+            and (not thought.actionable or thought.actionable.lower() == 'none')
+            and thought.category in ('A', 'D', 'E')
+        )
+        if not is_mediocre:
+            self._publish_swm(thought)
+
+        # 🆕 [Sir 2026-05-27 00:11 M3 VisualPulse] 字幕区 subtle 💭 闪 (Sir 真看见思考)
+        # =====================================================================
+        # Sir 真意: "可视化看到思考变化, 不是离散像看故事".
+        # mediocre 跳过, 主对话 5s 内跳过 (vocab 节流). 阈值 + cooldown 全 vocab 可改.
+        # =====================================================================
+        if not is_mediocre:
+            try:
+                self._emit_thought_pulse(thought)
+            except Exception:
+                pass
+
+        # log (Sir 真看见 daemon 在 work) — mediocre 用 compact log
         action_str = ''
         if thought.actionable and thought.actionable.lower() != 'none':
             action_str = f" | actionable={thought.actionable[:40]} → {result}"
@@ -434,11 +784,18 @@ class InnerThoughtDaemon:
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] 显示下次 tick 由谁决定 +
         # interval 真值 (Sir 看 daemon 真在 self-pacing 还是默认)
         meta_str = f" | next={resolved_interval}s({tick_origin})"
-        self._bg_log(
-            f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
-            f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
-            f"{action_str}{ev_str}{meta_str}"
-        )
+        # 🆕 [Sir 23:24 BUG-5] mediocre log compact (前 50 ch + [skip:mediocre] 标)
+        if is_mediocre:
+            self._bg_log(
+                f"💭 [InnerThought/skip:mediocre] [{thought.category}/sal={thought.salience:.2f}"
+                f"] {thought.thought[:60]}…{meta_str}"
+            )
+        else:
+            self._bg_log(
+                f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
+                f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
+                f"{action_str}{ev_str}{meta_str}"
+            )
 
     def _compute_free_categories(self) -> List[str]:
         """🆕 [Sir 2026-05-25 23:18] 算当前可用 categories (不在 cooldown).
@@ -544,7 +901,30 @@ class InnerThoughtDaemon:
             'swm_events': [],
             'stm': [],
             'concerns': [],
+            # 🆕 [Sir 2026-05-27 00:11 真意 M1 ThoughtChain] 上 3 thought 给 LLM 看
+            # 让思考连续 (LLM 自决是否延续上次 thread).
+            'recent_thoughts': [],
         }
+        # 拿上 3 个 thought (含 thread_id + continuity tag)
+        try:
+            with self._lock:
+                recent_3 = sorted(self._thoughts, key=lambda t: -t.ts)[:3]
+            ev['recent_thoughts'] = [
+                {
+                    'id': t.id,
+                    'thread_id': getattr(t, 'thread_id', '') or t.id,
+                    'continuity': getattr(t, 'continuity', 'new_topic'),
+                    'category': t.category,
+                    'thought': (t.thought or '')[:200],
+                    'salience': t.salience,
+                    'actionable': (t.actionable or 'none')[:40],
+                    'outcome': getattr(t, 'outcome', 'pending'),
+                    'age_s': int(time.time() - t.ts),
+                }
+                for t in recent_3
+            ]
+        except Exception:
+            pass
         # SWM events
         try:
             from jarvis_utils import get_event_bus
@@ -564,19 +944,146 @@ class InnerThoughtDaemon:
                 ev['swm_events'] = events[:8]
         except Exception:
             pass
-        # STM last 2 turns
+        # 🆕 [Sir 2026-05-26 18:54 真意 anchor "让反思看真证据"] FIX A:
+        # =====================================================================
+        # 老 BUG: STM 只 2 turn, user 120 char, jarvis 200 char — 一句长 reply 看不全.
+        # Sir 真意: "终端省略很多输出, 反思看不到完整对话". 5 turn × 长字数能覆盖
+        # Sir 真痛 anchor ("xx不舒服了"/"xx打扰了") + Jarvis 完整 reply (含啰嗦/犯错).
+        # 治本 (准则 6 evidence-driven + 准则 8 优雅): 2→5 turn, 字数翻倍.
+        # token 加 ~$0.3/月 (5 turn × 650 char = 3.3KB, 老 2 turn × 320 = 640).
+        # =====================================================================
         try:
             stm = []
             if self.nerve and getattr(self.nerve, 'short_term_memory', None):
-                for t in list(self.nerve.short_term_memory)[-2:]:
+                for t in list(self.nerve.short_term_memory)[-5:]:
                     stm.append({
-                        'user': (t.get('user') or '')[:120],
-                        'jarvis': (t.get('jarvis') or '')[:200],
-                        'when': t.get('when_iso', ''),
+                        'user': (t.get('user') or '')[:250],
+                        'jarvis': (t.get('jarvis') or '')[:400],
+                        'when': t.get('time') or t.get('when_iso', ''),
                     })
             ev['stm'] = stm
         except Exception:
             pass
+
+        # 🆕 [Sir 2026-05-26 18:54 真意 anchor FIX B] recent_jarvis_actions —
+        # =====================================================================
+        # Sir 真意: "反思只看 thought 文本太抽象, 看不见 Jarvis 真做了什么 (NUDGE
+        # fire/skipped/published_swm/rejected_actionable)". 老 evidence['swm_events']
+        # 含所有 event 类型, 太杂. 这里 filter 出 jarvis 真行为 (action signals) 单独
+        # 列, 让反思能看 "I just fired return_greeting 6s after commitment_check, 
+        # Sir might find it pushy". 准则 6 数据强耦合 (SWM 已 publish, 只 filter).
+        # 工程: 从 swm_events 中 filter etype prefix in ACTION_EVENT_PREFIXES, 留
+        # 10 个 latest, 给反思看真发生的 jarvis 行为时间线.
+        # =====================================================================
+        try:
+            from jarvis_utils import get_event_bus as _geb_a
+            bus_a = _geb_a()
+            if bus_a is not None:
+                top_a = bus_a.top_n(n=40) or []
+                actions = []
+                for e in top_a:
+                    age = e.get('_age_s', 9999)
+                    if age > within_seconds:
+                        continue
+                    etype = e.get('type', '')
+                    # 真 jarvis 行为 etype prefix (准则 6 vocab driven, 不写死)
+                    if any(etype.startswith(p) for p in self._ACTION_EVENT_PREFIXES):
+                        actions.append({
+                            'etype': etype,
+                            'desc': (e.get('description') or '')[:140],
+                            'source': e.get('source', ''),
+                            'age_s': int(age),
+                        })
+                ev['recent_jarvis_actions'] = actions[:10]
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 18:54 真意 anchor FIX C] runtime_log tail —
+        # =====================================================================
+        # Sir 真意 anchor: "终端省略了很多输出我记得". 反思如果只看 SWM event +
+        # STM 短对话, 真错过 bg_log 写到 docs/runtime_logs/*.log 的完整信息 (sentinel
+        # blocked / state transition / failed promise / TTS skipped, 等等). 让 daemon
+        # 在 reflect 时 read latest.txt → tail N 行 → regex filter 含 marker (Sir/Jarvis/
+        # State/NUDGE/published/rejected/...) → inject ~2KB. 准则 6 evidence-driven 完整版
+        # 准则 8 优雅治本 (不解析整 log MB 级, tail + filter).
+        # =====================================================================
+        try:
+            ev['runtime_log_tail'] = self._collect_runtime_log_tail(max_lines=12)
+        except Exception:
+            ev['runtime_log_tail'] = []
+
+        # 🆕 [Sir 2026-05-26 19:48 Phase 1B] anticipated_ltm_context — Anticipator preload
+        # =====================================================================
+        # Sir 真问 "目前思考和真主动性距离" → Anticipator 已专职 30s tick + HabitClock
+        # + preload LTM (jarvis_memory_core.py:851). thought 复用 preload (不重复 query
+        # 浪费 LLM token + 不破 Anticipator 节奏). 准则 8 优雅.
+        # =====================================================================
+        try:
+            if self.nerve and hasattr(self.nerve, 'anticipator'):
+                anticipator = self.nerve.anticipator
+                if anticipator is not None and hasattr(anticipator, 'get_preloaded_context'):
+                    ctx = anticipator.get_preloaded_context() or ''
+                    if ctx.strip():
+                        ev['anticipated_ltm_context'] = ctx[:1500]
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 19:48 Phase 1C] daemon_health — read SWM 'daemon_health_warning'
+        # =====================================================================
+        # Sir 真意: thought 该看自己健康 (token 用量, sentinel fail rate, calibration 阈值).
+        # DaemonHealthMonitor 已 6h tick + publish SWM (jarvis_daemon_health_monitor.py).
+        # thought 只 read SWM 'daemon_health_warning' event, 不重复 monitor 逻辑.
+        # =====================================================================
+        try:
+            from jarvis_utils import get_event_bus as _geb_dh
+            bus_dh = _geb_dh()
+            if bus_dh is not None:
+                top_dh = bus_dh.top_n(n=30) or []
+                health_warns = []
+                for e in top_dh:
+                    if e.get('type') != 'daemon_health_warning':
+                        continue
+                    age_s = e.get('_age_s', 999999)
+                    if age_s > 86400:  # 1d cap
+                        continue
+                    meta = e.get('metadata') or {}
+                    health_warns.append({
+                        'issue': (e.get('description') or '')[:140],
+                        'severity': meta.get('severity', 'warn'),
+                        'age_h': int(age_s / 3600),
+                    })
+                ev['daemon_health'] = health_warns[:3]
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-27 00:11 真意 M2] TimeAwareness — 注入 hour pattern.
+        # Sir 原话: "给予贾维斯真正对时间的理解, 这有助于他理解我的行为模式".
+        # 数据流: get_pattern_at_now (vocab) + detect_deviation_today (vs 今 STM).
+        # vocab JSON 持久化 + reflector hourly mine STM pattern (准则 6).
+        try:
+            from jarvis_time_awareness import (get_pattern_at_now,
+                                                  detect_deviation_today,
+                                                  get_routines_active_now,
+                                                  maybe_run_reflector)
+            ev['time_pattern'] = get_pattern_at_now()
+            ev['time_active_routines'] = get_routines_active_now()
+            stm_for_dev = ev.get('stm', [])
+            # detect_deviation_today 需 stm 含 ts (numeric), 用 raw STM 不一定有
+            try:
+                ev['time_deviation_today'] = detect_deviation_today(stm_for_dev)
+            except Exception:
+                ev['time_deviation_today'] = None
+            # 周期 reflect (hourly), 在 daemon tick 中顺便触发 — 不阻塞 (内部 30s 缓存)
+            try:
+                full_stm = []
+                if self.nerve and getattr(self.nerve, 'short_term_memory', None):
+                    full_stm = list(self.nerve.short_term_memory)[-100:]
+                maybe_run_reflector(full_stm)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         # 🆕 [Sir 2026-05-25 23:18 真痛-2] concerns 给全 active id list 防 LLM hallucinate
         # 老 BUG: 只 top 3 → LLM 想改第 4+ concern (e.g. sir_interview_prep_balance
         # severity 极低), 没在 prompt 列 → LLM hallucinate id (e.g. jarvis_internal_health).
@@ -590,11 +1097,92 @@ class InnerThoughtDaemon:
                         'id': c.id,
                         'what': (c.what_i_watch or '')[:80],
                         'severity': round(c.severity, 2),
+                        # 🆕 [Sir 2026-05-26 13:32 BUG 3] notes 容量信号 — 让 LLM
+                        # 看见 concern 已满, 不再 propose adjust_concern_notes 浪费 tick
+                        'notes_chars': len((c.notes_for_self or '').strip()),
                     }
                     for c in active_sorted[:5]
                 ]
                 # 全 active id list (let LLM 见全, 不光 top 5)
                 ev['all_active_concern_ids'] = [c.id for c in active_sorted]
+        except Exception:
+            pass
+        # 🆕 [Sir 2026-05-26 13:32 真痛 BUG 治本] BUG 2 propose dedup:
+        # ===================================================================
+        # 源 BUG: 13:33→13:31 LLM 5+ 次 propose 几乎同样 "Do not use formal apologies"
+        # 类 protocol (B 类 self-reflect). 真因: prompt 没 inject 已 active + pending
+        # review 的 protocols, LLM 每次 tick 全新发现 "I'm too formal" → propose.
+        # 同 BUG 影响 inside_joke ("地基要打牢" 重复 3 次).
+        # 治本: inject 已 active + pending review entries, prompt 教 LLM "若已覆盖
+        # 同概念, 不再 propose" + dedup hint. 准则 6 数据驱动 (vocab persisted).
+        # ===================================================================
+        try:
+            rs = self.relational_state
+            if rs is not None:
+                if hasattr(rs, 'list_protocols'):
+                    active_protos = rs.list_protocols(include_archived=False) or []
+                    ev['active_protocols'] = [
+                        (p.rule or '')[:120] for p in active_protos[:5]
+                    ]
+                if hasattr(rs, 'list_protocols_review'):
+                    review_protos = rs.list_protocols_review() or []
+                    ev['pending_review_protocols'] = [
+                        (p.rule or '')[:120] for p in review_protos[:5]
+                    ]
+                if hasattr(rs, 'list_inside_jokes'):
+                    active_jokes = rs.list_inside_jokes(include_archived=False) or []
+                    ev['active_inside_jokes'] = [
+                        (j.phrase or '')[:80] for j in active_jokes[:5]
+                    ]
+                if hasattr(rs, 'list_inside_jokes_review'):
+                    review_jokes = rs.list_inside_jokes_review() or []
+                    ev['pending_review_jokes'] = [
+                        (j.phrase or '')[:80] for j in review_jokes[:5]
+                    ]
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Skepticism Learning Loop evidence
+        # ===================================================================
+        # Sir 真意 anchor: "我提质疑时它会降低使用权重, 多次质疑甚至考虑删除".
+        # SirSkepticismDetector 在 chat_bypass.stream_chat 入口 publish SWM
+        # event ('sir_skepticism' / 'item_skepticism_decay' / 'item_auto_archived'
+        # / 'item_reactivated' 等). thought 反思看这些 evidence 自决是否:
+        #   - B 类 propose_protocol "Don't reuse joke X" 强化趋势
+        #   - C 类 adjust_concern_notes 给 main brain 警告"Sir 不喜欢提 X"
+        #   - 让主脑下轮看 SOUL inject "我注意到 Sir 三次质疑 X" → 自然不提
+        # 准则 6 数据强耦合: 全 publish SWM, evidence-driven, 不 hardcode behavior.
+        # 准则 7 Sir 元否决: Sir reactivation → publish 'item_reactivated' 让反思看到.
+        # ===================================================================
+        try:
+            from jarvis_utils import get_event_bus as _geb_sk
+            bus_sk = _geb_sk()
+            if bus_sk is not None:
+                _SKEPTICISM_ETYPES = {
+                    'sir_skepticism', 'sir_reactivation', 'sir_confusion',
+                    'item_skepticism_decay', 'item_skepticism_warning',
+                    'item_auto_archived', 'item_auto_dismissed', 'item_reactivated',
+                }
+                top_sk = bus_sk.top_n(n=40) or []
+                sk_events = []
+                for e in top_sk:
+                    etype = e.get('type', '')
+                    if etype not in _SKEPTICISM_ETYPES:
+                        continue
+                    age_s = e.get('_age_s', 999999)
+                    if age_s > 86400:  # 24h cap
+                        continue
+                    meta = e.get('metadata') or {}
+                    sk_events.append({
+                        'etype': etype,
+                        'desc': (e.get('description') or '')[:140],
+                        'age_s': int(age_s),
+                        'matched_phrase': str(meta.get('matched_phrase', ''))[:60],
+                        'target_kind': str(meta.get('target_kind', ''))[:30],
+                        'target_id': str(meta.get('target_id', ''))[:60],
+                        'count': meta.get('count') or meta.get('new_count'),
+                    })
+                ev['recent_skepticism_events'] = sk_events[:5]
         except Exception:
             pass
         return ev
@@ -607,26 +1195,58 @@ class InnerThoughtDaemon:
         free_str = (
             ''.join(free_categories) if free_categories else 'ABCDE'
         )
+        # 🆕 [Sir 2026-05-26 20:21 真痛追根 BUG-B 治本 / 准则 8 优雅]
+        # =====================================================================
+        # Sir 真测 (20:21:03): InnerThought 输出 "I noticed I've been fixating on..."
+        # 这种 casual self-talk 不像 butler. 真根因: 旧 system prompt 只一句
+        # "You are J.A.R.V.I.S." 没引主脑 JARVIS_CORE_PERSONA (2700ch identity +
+        # INTEGRITY 准则), 思考层人设和主脑分裂 — 主脑 butler / 思考层 casual.
+        # 修法 (准则 8 优雅): lazy import PERSONA → 拼到 system 开头 → 思考也守
+        # butler 风格 + INTEGRITY claim honesty. THOUGHT 调性改 "first-person but
+        # JARVIS-voice (composed, dry, integrity-bound)" 保 inner monologue 私密感
+        # 同时不丢人设. PERSONA 失败 fallback 空字符串 (不阻塞 thought 生成).
+        # =====================================================================
+        try:
+            from jarvis_central_nerve import JARVIS_CORE_PERSONA as _JCP
+        except Exception:
+            _JCP = ""
+        _persona_block = (f"{_JCP}\n\n" if _JCP else "")
         system = (
-            "You are J.A.R.V.I.S., generating ONE brief inner thought during a "
-            "quiet moment. This is your private mental note — not addressed to Sir.\n\n"
+            f"{_persona_block}"
+            "=== INNER MONOLOGUE MODE (private mental note, NOT addressed to Sir) ===\n"
+            "You are now in a quiet moment, generating ONE brief inner thought for "
+            "yourself. This is private self-reflection — Sir will NOT see this directly. "
+            "But you remain J.A.R.V.I.S. even in self-talk: composed, dry, restrained, "
+            "integrity-bound. No casual slang ('like...', 'kinda', 'gonna'), no "
+            "stream-of-consciousness rambling. Think the way a quiet butler would think.\n\n"
             "Output FORMAT (strict, all 5 tags required):\n"
             f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
             "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
-            "<THOUGHT>1-2 sentences, first-person ('I noticed...', 'I'm thinking...'), "
-            "casual self-talk, NOT formal speech to Sir.</THOUGHT>\n"
+            "<THOUGHT>1-2 sentences, first-person but JARVIS-voice (composed, dry, "
+            "factually grounded). Examples: 'I appear to have over-attended to...', "
+            "'My last reply leaned too formal — drop the apologies.', 'Sir's hour is "
+            "late; I should yield further attempts at chatter.' NOT 'I'm kinda noticing...'"
+            "</THOUGHT>\n"
             "<SALIENCE>0.0-1.0 (0.7+ = worth bringing up later; 0.3- = passing)</SALIENCE>\n"
             "<ACTIONABLE>one of: none | "
             "update_concern_severity:<concern_id>:<+/-delta> | "
             "publish_swm:<etype>:<short_desc> | "
             "suggest_inside_joke:<phrase> | "
             "propose_protocol:<one-sentence imperative rule> | "
-            "adjust_concern_notes:<concern_id>:<note text></ACTIONABLE>\n"
+            "adjust_concern_notes:<concern_id>:<note text> | "
+            "fire_nudge:<kind>:<1-2 sentence draft> | "
+            "propose_watch_task:<trigger_kind:value>:<long-term goal desc> | "
+            "call_tool:<tool_name>:<json_args> | "
+            "surface_to_sir:<channel>:<one-sentence summary></ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
             "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n"
             "<NEXT_INTERVAL>30 | 60 | 180 | 600 | 1800 | default</NEXT_INTERVAL>  "
-            "← how soon should I think again? Python physically gates per Sir state.\n\n"
+            "← how soon should I think again? Python physically gates per Sir state.\n"
+            "<CONTINUITY>same_thread:<thread_id_short> | new_topic</CONTINUITY>  "
+            "← 🆕 [Sir 2026-05-27 M1] is this thought延续上 3 thought 中某一条? "
+            "若延续 → 'same_thread:<thread_id_from_above>' (extends chain); "
+            "若新主题 → 'new_topic' (start new chain).\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -649,12 +1269,13 @@ class InnerThoughtDaemon:
             "  - update_concern_severity delta capped ±0.2 per thought.\n"
             "  - publish_swm etype: short snake_case (e.g. 'sir_seems_tired').\n"
             "  - propose_protocol: IMPERATIVE form (Do/Don't/Always/Never), "
-            "OBSERVABLE (verifiable in my next reply), grounded in this B-class "
-            "reflection. Python rejects if not B-class or sal<0.75.\n"
+            "OBSERVABLE (verifiable in my next reply). 🆕 [Sir 23:17] cross-class OK "
+            "(B is idiomatic but A/C/D/E reflection can also propose if grounded). "
+            "Python only gates sal<0.75 (strict rule needs high confidence).\n"
             "  - adjust_concern_notes: short guidance (10-120 char) for main brain "
-            "to read on next turn. Python rejects if not C-class or sal<0.7. "
-            "Use when you noticed Sir's REACTION pattern (annoyed / asked to stop / "
-            "appreciates a certain framing) and want main brain to remember next time.\n"
+            "to read on next turn. 🆕 [Sir 23:17] cross-class OK (C is idiomatic "
+            "but B-self-reflect can also adjust note if it really notices a pattern). "
+            "Python only gates sal<0.7 + cid must exist + cite must overlap concern.\n"
             "  - NEXT_INTERVAL: pick 30 if URGENT thought (sal≥0.85 + actionable + "
             "Sir active), 60 for normal active thinking, 180/600/1800 if Sir AFK/sleep, "
             "or 'default' to use baseline. Python physically gates: e.g. you can't pick 30 "
@@ -717,6 +1338,40 @@ class InnerThoughtDaemon:
         lines.append(f"  - hour: {evidence.get('hour')}:00")
         lines.append("")
 
+        # 🆕 [Sir 2026-05-27 00:11 真意 M1 ThoughtChain] 上 3 thought — 让思考连续
+        # =====================================================================
+        # Sir 真意: "思考能连续, 不像现在离散像看故事". 给 LLM 看上 3 thought 内容,
+        # LLM 自决 <CONTINUITY>same_thread:<id> | new_topic</CONTINUITY> 标签.
+        # Python 不强 thread, 只追踪 LLM 自报值 — 准则 6 信任 LLM.
+        # =====================================================================
+        prev_thoughts = evidence.get('recent_thoughts') or []
+        if prev_thoughts:
+            lines.append("[MY PREVIOUS THOUGHTS (last 3, for continuity — pick one to延续 or new topic)]")
+            for t in prev_thoughts:
+                age_s = t.get('age_s', 0)
+                age_str = (f"{age_s}s ago" if age_s < 60
+                              else f"{age_s // 60}m ago" if age_s < 3600
+                              else f"{age_s // 3600}h ago")
+                cont_marker = t.get('continuity', 'new_topic')
+                thread_id_short = (t.get('thread_id', '') or t.get('id', ''))[:12]
+                outcome_str = ''
+                if t.get('outcome') not in (None, '', 'pending'):
+                    outcome_str = f" [outcome: {t.get('outcome')}]"
+                lines.append(
+                    f"  [{age_str}] thread={thread_id_short} cat={t.get('category')} "
+                    f"sal={t.get('salience', 0):.2f} cont={cont_marker}{outcome_str}"
+                )
+                lines.append(f"    Thought: \"{t.get('thought', '')[:160]}\"")
+                if t.get('actionable') and t.get('actionable') != 'none':
+                    lines.append(f"    Did: {t.get('actionable', '')[:80]}")
+            lines.append(
+                "  ⚠️ If your new thought continues a SAME topic as one above, "
+                "output <CONTINUITY>same_thread:<thread_id_short></CONTINUITY> to "
+                "extend the chain (Sir can see continuity visually). If truly new "
+                "subject, output <CONTINUITY>new_topic</CONTINUITY>."
+            )
+            lines.append("")
+
         lines.append("[RECENT SWM EVENTS]")
         sw = evidence.get('swm_events') or []
         if sw:
@@ -726,7 +1381,8 @@ class InnerThoughtDaemon:
             lines.append("  (none recent)")
         lines.append("")
 
-        lines.append("[STM LAST 2 TURNS]")
+        # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn, 字数翻倍 (反思看完整对话)
+        lines.append("[STM LAST 5 TURNS]")
         stm = evidence.get('stm') or []
         if stm:
             for t in stm:
@@ -739,12 +1395,123 @@ class InnerThoughtDaemon:
             lines.append("  (no recent turns this session)")
         lines.append("")
 
+        # 🆕 [Sir 2026-05-26 18:54 FIX B] recent_jarvis_actions — 我真做了什么
+        # =====================================================================
+        # 反思看具体 NUDGE fire/skipped/published/etc, 不光看 thought 文本.
+        # 让 Jarvis 能反思 "I just fired return_greeting 6s after commitment_check,
+        # Sir might find it pushy" — 比抽象 thought 更具体可反思.
+        # =====================================================================
+        actions = evidence.get('recent_jarvis_actions') or []
+        if actions:
+            lines.append("[WHAT I JUST DID (recent SWM actions, latest first)]")
+            for a in actions:
+                age_s = a.get('age_s', 0)
+                age_str = (f"{age_s}s" if age_s < 60
+                              else f"{age_s // 60}m{age_s % 60}s")
+                lines.append(
+                    f"  - [{age_str} ago] {a.get('etype', '?')} "
+                    f"({a.get('source', '?')}): {a.get('desc', '')}"
+                )
+            lines.append(
+                "  ⚠️ Reflect: was this action coherent with Sir's intent? "
+                "Did I yield to others properly? (β.5.0 三维耦合)"
+            )
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-26 18:54 FIX C] runtime_log tail — 看真发生的事
+        # =====================================================================
+        # 终端 summary 漏太多 (bg_log 真完整在 docs/runtime_logs/*.log).
+        # 反思在 reflect 时拉 latest.txt → tail 100KB → marker filter →
+        # 收 12 行 (旧→新). LLM 能看 sentinel 真 blocked / state transition / etc.
+        # marker vocab 持久化 memory_pool/runtime_log_marker_vocab.json (CLI 可改)
+        # =====================================================================
+        log_tail = evidence.get('runtime_log_tail') or []
+        if log_tail:
+            lines.append("[REAL RUNTIME LOG (last few minutes, filtered by marker)]")
+            for ln in log_tail:
+                lines.append(f"  | {ln}")
+            lines.append(
+                "  ⚠️ This is the SOURCE OF TRUTH — terminal output is "
+                "summarized. If reflection contradicts the log, trust the log."
+            )
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-26 19:48 Phase 1B] anticipated_ltm_context block
+        ant_ctx = evidence.get('anticipated_ltm_context', '').strip()
+        if ant_ctx:
+            lines.append("[ANTICIPATED LTM CONTEXT (Anticipator preload, predicted relevant)]")
+            for ln in ant_ctx.split('\n')[:8]:
+                if ln.strip():
+                    lines.append(f"  | {ln[:160]}")
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-26 19:48 Phase 1C] daemon_health block (我自己健康)
+        health_warns = evidence.get('daemon_health', [])
+        if health_warns:
+            lines.append("[MY OWN HEALTH (DaemonHealthMonitor warnings)]")
+            for w in health_warns:
+                lines.append(
+                    f"  - [{w.get('severity', 'warn')}] {w.get('issue', '')[:140]} "
+                    f"({w.get('age_h', 0)}h ago)"
+                )
+            lines.append(
+                "  ⚠️ My own daemon is unhealthy. Reflect if it affects "
+                "my judgment. Consider proposing fix or notifying Sir."
+            )
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-27 00:11 真意 M2] TIME CONTEXT — Sir 行为模式 时间理解
+        # =====================================================================
+        # Sir 原话: "给予贾维斯真正对时间的理解, 这有助于他理解我的行为模式".
+        # 数据 source: jarvis_time_awareness vocab (hourly mined) + active routines
+        # + today's deviation. LLM 用此 evidence 自决 "Sir 今天反常 / 该提醒 routine
+        # / 该 yield 因为他通常此 hour AFK / etc.".
+        # =====================================================================
+        tp = evidence.get('time_pattern') or {}
+        if tp.get('has_data') or evidence.get('time_active_routines') or evidence.get('time_deviation_today'):
+            lines.append("[TIME CONTEXT (Sir's behavioral pattern at this hour, learned)]")
+            if tp.get('has_data'):
+                acts = ', '.join(tp.get('typical_activities', [])[:5])
+                lines.append(f"  - Now: {tp.get('hour')}:00 {tp.get('day')}")
+                if acts:
+                    lines.append(f"  - Sir's typical at this hour: {acts}")
+                if tp.get('frequency', 0) > 0:
+                    lines.append(
+                        f"  - Pattern confidence: {tp['frequency']:.0%} "
+                        f"({tp.get('sample_count', 0)} historical samples)"
+                    )
+                if tp.get('fallback_used'):
+                    lines.append(
+                        f"  - (Aggregate across days, no {tp.get('day')}-specific data)"
+                    )
+            dev = evidence.get('time_deviation_today')
+            if dev:
+                lines.append(f"  - Today's deviation: {dev}")
+            for r in (evidence.get('time_active_routines') or [])[:2]:
+                lines.append(
+                    f"  - Active routine: {r.get('name', '?')} "
+                    f"(sig: {','.join(r.get('signature', [])[:3])})"
+                )
+            lines.append(
+                "  ⚠️ Reflect: does this hour-pattern match Sir's current STM signal? "
+                "If Sir deviates from typical (e.g. typical sleep at 23 but still coding), "
+                "thought may be: yield/silence vs gentle hint based on severity."
+            )
+            lines.append("")
+
         lines.append("[YOUR ACTIVE CONCERNS (top 5 by severity)]")
         cc = evidence.get('concerns') or []
         if cc:
             for c in cc:
+                # 🆕 [Sir 2026-05-26 13:32 BUG 3] notes 容量信号 — full/near warn
+                _nc = c.get('notes_chars', 0)
+                _cap_tag = ''
+                if _nc >= 400:
+                    _cap_tag = f' [notes {_nc}/500 NEAR FULL — adjust will be rejected]'
+                elif _nc >= 250:
+                    _cap_tag = f' [notes {_nc}/500 half-full]'
                 lines.append(
-                    f"  - id={c['id']} (severity {c['severity']}): {c['what']}"
+                    f"  - id={c['id']} (severity {c['severity']}): {c['what']}{_cap_tag}"
                 )
         else:
             lines.append("  (none active)")
@@ -756,10 +1523,88 @@ class InnerThoughtDaemon:
                 f"{', '.join(all_ids)}"
             )
             lines.append(
-                "  ⚠️ For update_concern_severity, ONLY use IDs from above. "
-                "Inventing IDs will fail."
+                "  ⚠️ HARD RULE: For update_concern_severity AND "
+                "adjust_concern_notes, ONLY use IDs from the list above. "
+                "Inventing IDs like 'jarvis_self_maintenance' / "
+                "'sir_general_health' that SOUND reasonable but aren't in "
+                "the list will be REJECTED (concern_not_found). If your "
+                "thought doesn't fit any existing concern, use "
+                "ACTIONABLE=publish_swm or none — DO NOT invent a concern."
             )
         lines.append("")
+
+        # 🆕 [Sir 2026-05-26 13:32 真痛 BUG 治本] BUG 2 propose dedup: inject
+        # 已 active + pending review protocols/jokes, prompt 教 LLM "若已覆盖
+        # 同概念, 不再 propose" — 防 5+ 次重复 "Do not use formal apologies".
+        active_protos = evidence.get('active_protocols') or []
+        review_protos = evidence.get('pending_review_protocols') or []
+        if active_protos or review_protos:
+            lines.append("[YOUR ACTIVE PROTOCOLS (already in force — main brain enforces)]")
+            if active_protos:
+                for p in active_protos:
+                    lines.append(f"  ✅ {p}")
+            else:
+                lines.append("  (none active yet)")
+            if review_protos:
+                lines.append("[PENDING REVIEW (you already proposed — awaiting Sir's verdict)]")
+                for p in review_protos:
+                    lines.append(f"  ⏳ {p}")
+            lines.append(
+                "  ⚠️ DO NOT propose_protocol if any above already covers the "
+                "same concept (e.g. 'too formal' / 'too verbose' / 'too robotic'). "
+                "Re-proposing wastes tokens + AutoArbiter will DEFER. If Sir "
+                "hasn't activated, ACCEPT it's pending — don't re-propose."
+            )
+            lines.append("")
+
+        active_jokes = evidence.get('active_inside_jokes') or []
+        review_jokes = evidence.get('pending_review_jokes') or []
+        if active_jokes or review_jokes:
+            lines.append("[YOUR ACTIVE INSIDE JOKES + PENDING JOKES]")
+            for j in active_jokes:
+                lines.append(f"  ✅ \"{j}\"")
+            for j in review_jokes:
+                lines.append(f"  ⏳ \"{j}\"")
+            lines.append(
+                "  ⚠️ DO NOT suggest_inside_joke if phrase already above (active "
+                "or pending). Same phrase will be dedup_or_fail rejected."
+            )
+            lines.append("")
+
+        # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Skepticism Learning Loop block
+        # ===================================================================
+        # Sir 自然质疑被 SirSkepticismDetector 捕获 → AttributionEngine 找 30s 内
+        # 最 plausible target → DecayEngine 自动累 count + decay weight.
+        # thought 看这 evidence 自决: B 类 propose_protocol "Don't reuse X" /
+        # C 类 adjust_concern_notes "Sir 不喜欢提 Y, 别 volunteer".
+        # 准则 6: 不教句式, 只给证据 (etype + matched_phrase + target + count).
+        # ===================================================================
+        sk_events = evidence.get('recent_skepticism_events') or []
+        if sk_events:
+            lines.append("[SIR SKEPTICISM RECENT (last 24h, auto-detected from Sir's natural reply)]")
+            for ev_sk in sk_events:
+                age_s = ev_sk.get('age_s', 0)
+                age_str = (f"{age_s}s" if age_s < 60
+                              else f"{age_s // 60}m{age_s % 60}s" if age_s < 3600
+                              else f"{age_s // 3600}h")
+                target_str = ''
+                if ev_sk.get('target_kind') and ev_sk.get('target_id'):
+                    target_str = f" → {ev_sk['target_kind']}/{ev_sk['target_id']}"
+                count_str = ''
+                if ev_sk.get('count') is not None:
+                    count_str = f" (count={ev_sk['count']})"
+                phrase = ev_sk.get('matched_phrase', '')
+                phrase_str = f" \"{phrase}\"" if phrase else ''
+                lines.append(
+                    f"  - [{age_str} ago] {ev_sk['etype']}{phrase_str}{target_str}{count_str}"
+                )
+            lines.append(
+                "  ⚠️ Reflect: Is Sir tired of a specific topic/joke/concern? "
+                "Consider propose_protocol (B) like 'Do not bring up X unless asked' "
+                "OR adjust_concern_notes (C) to warn main brain. Loop already "
+                "decayed weight — your job is meta-learning the pattern."
+            )
+            lines.append("")
 
         if free_categories and len(free_categories) < 5:
             lines.append(
@@ -812,6 +1657,10 @@ class InnerThoughtDaemon:
         next_int_m = re.search(
             r'<NEXT_INTERVAL>(.*?)</NEXT_INTERVAL>', raw, re.DOTALL
         )
+        # 🆕 [Sir 2026-05-27 00:11 M1 ThoughtChain] CONTINUITY 解析 (option)
+        cont_m = re.search(
+            r'<CONTINUITY>(.*?)</CONTINUITY>', raw, re.DOTALL
+        )
         if not (cat_m and thought_m and sal_m):
             return None
         thought_text = (thought_m.group(1) or '').strip()
@@ -842,8 +1691,36 @@ class InnerThoughtDaemon:
             except (ValueError, TypeError):
                 next_interval_s = 0
         now = time.time()
+        new_id = f"thought_{time.strftime('%Y%m%d_%H%M%S')}_{int(now * 1000) % 10000:04x}"
+        # 🆕 [Sir 2026-05-27 00:11 M1 ThoughtChain] continuity → thread_id 解析
+        # LLM 输出 'same_thread:<id_short>' / 'new_topic'.
+        # Python: 同 thread → 沿用 prev thread_id; 新 topic → thread_id = self.id (新 thread).
+        # 防错: 'same_thread:' 后 id 必须能在 recent_thoughts 中找到 (按 prefix),
+        # 否则降级 new_topic + thread_id=self.id (准则 5: 不信 LLM 编造 id).
+        continuity_raw = (
+            (cont_m.group(1) or '').strip().lower() if cont_m else ''
+        )[:80]
+        thread_id = new_id  # default: new thread
+        continuity = 'new_topic'
+        if continuity_raw.startswith('same_thread:'):
+            claimed_id = continuity_raw.split(':', 1)[1].strip()[:32]
+            if claimed_id:
+                # 查 recent thoughts (unlocked snapshot, 接受 race)
+                try:
+                    for t in list(self._thoughts)[-10:]:
+                        candidate_thread = getattr(t, 'thread_id', '') or t.id
+                        if (candidate_thread.startswith(claimed_id) or
+                                t.id.startswith(claimed_id)):
+                            thread_id = candidate_thread
+                            continuity = 'same_thread'
+                            break
+                except Exception:
+                    pass
+        elif continuity_raw == 'new_topic':
+            continuity = 'new_topic'
+            thread_id = new_id
         return InnerThought(
-            id=f"thought_{time.strftime('%Y%m%d_%H%M%S')}_{int(now * 1000) % 10000:04x}",
+            id=new_id,
             ts=now,
             ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
             category=cat_m.group(1).upper(),
@@ -856,7 +1733,9 @@ class InnerThoughtDaemon:
             tick_interval_s=tick_interval,
             evidence_link=evidence_link,
             next_interval_s=next_interval_s,
-            tick_origin='',  # set by _resolve_next_interval after gate/smoothing
+            tick_origin='',
+            thread_id=thread_id,
+            continuity=continuity,
         )
 
     # ----------------------------------------------------------
@@ -904,6 +1783,29 @@ class InnerThoughtDaemon:
                 if not ok and 'evidence_link_wrong_concern' in result:
                     thought.actionable = 'none'
                 return ok, result
+            # 🆕 [Sir 2026-05-26 19:48 Phase 1A] fire_nudge — thought 自决出声
+            # sal>=0.85 + 接 nudge_coordination yield + 主脑 directive 可 [SILENCE].
+            # 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 1A.
+            if a.startswith('fire_nudge:'):
+                return self._do_fire_nudge_actionable(thought, a)
+            # 🆕 [Sir 2026-05-26 19:48 Phase 2A] propose_watch_task — thought 设长目标
+            # C/D 类 sal>=0.75 → 调 PromiseLog watch kind (现有 schema).
+            if a.startswith('propose_watch_task:'):
+                return self._do_propose_watch_task(thought, a)
+            # 🆕 [Sir 2026-05-26 19:48 Phase 3] call_tool — thought 真行动 (高风险)
+            # sal>=0.90 + tool in allowlist + Sir 元否决预留 (CLI revert).
+            if a.startswith('call_tool:'):
+                return self._do_call_tool_actionable(thought, a)
+            # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C] surface_to_sir — thought 主动发声
+            # =================================================================
+            # Sir 真痛: "思考层也没主动发声". 给 thought 一档轻量 surface 通道:
+            #   - terminal_pulse: bg_log 终端显示 (Sir 真看见, 不抢 voice)
+            #   - next_turn_inject: publish SWM, 主脑下轮 prompt 强提示 reference
+            # 阈值 + 频限 + channel allow list 全持久化
+            # memory_pool/surface_to_sir_vocab.json (Sir CLI 可调).
+            # =================================================================
+            if a.startswith('surface_to_sir:'):
+                return self._do_surface_to_sir_actionable(thought, a)
             return False, f'unknown_actionable:{a[:40]}'
         except Exception as e:
             return False, f'exception:{str(e)[:80]}'
@@ -1151,9 +2053,13 @@ class InnerThoughtDaemon:
           relational.propose_protocol → AutoArbiter 30min tick 自决 →
           Layer 2 SOUL inject 'STRICT RULES' → 下次 turn 主脑硬约束.
         """
-        # 准则 5 言出必行 + 6 evidence: gate B 类 + sal
-        if thought.category != 'B':
-            return False, f'gated:protocol_only_from_B_reflect (got {thought.category})'
+        # 🆕 [Sir 2026-05-26 23:17 真痛 BUG-4 治本 / 准则 6 LLM 自决]
+        # =====================================================================
+        # 老 hard gate `category != 'B'` 拦 cross-class — Sir 真测痛点:
+        # B-class thought "my reply abrupt; Sir mentioned fatigue" 想 propose_protocol
+        # "Don't be abrupt when Sir tired" — 完全合理, 但被 Python 拦.
+        # 准则 6: LLM 决策, python 不教类别. 保 sal gate (准则 5 strict rule 要高 sal).
+        # =====================================================================
         if thought.salience < 0.75:
             return False, (
                 f'gated:protocol_requires_sal>=0.75 (got {thought.salience:.2f})'
@@ -1226,12 +2132,14 @@ class InnerThoughtDaemon:
                      DO NOT volunteer this topic — only address when Sir asks
         → 下次 turn 主脑读 note → 真克制.
         """
-        # gate: C 类
-        if thought.category != 'C':
-            return False, (
-                f'gated:notes_adjust_only_from_C_concern_evolve '
-                f'(got {thought.category})'
-            )
+        # 🆕 [Sir 2026-05-26 23:17 真痛 BUG-4 治本 / 准则 6 LLM 自决]
+        # =====================================================================
+        # 老 hard gate `category != 'C'` 拦 cross-class — Sir 真测痛点 (22:42:13):
+        # B-class thought 想 adjust_concern_notes:sir_interview_prep — 完全合理
+        # (B-self-reflect 看到自己 abrupt, 给 sir_interview_prep concern 加 note
+        # "Sir 累, 别 abrupt"), 但被 Python 拦. 准则 6 违反.
+        # 保 sal gate + cid 真存在 + cite 双层 gate 仍守 (准则 5/6 防 LLM 瞎编).
+        # =====================================================================
         # gate: sal
         if thought.salience < 0.7:
             return False, (
@@ -1273,6 +2181,14 @@ class InnerThoughtDaemon:
         # build new notes (append 不覆盖 + tag 来源 + cap)
         note_capped = note[:self._NOTES_APPEND_MAX]
         existing = (c.notes_for_self or '').strip()
+        # 🆕 [Sir 2026-05-26 13:32 BUG 3 治本] notes 容量预检 — 已满 80%+ 直接 reject,
+        # 不浪费 update_concern_field mutation + signal trail. LLM 下次 tick prompt 会
+        # 看到 'NEAR FULL — adjust will be rejected' 警告, 不再 propose 同 concern.
+        if len(existing) >= int(self._NOTES_MAX_CHARS * 0.8):
+            return False, (
+                f'notes_near_cap:{len(existing)}/{self._NOTES_MAX_CHARS} '
+                f'(>=80% — wait for archival or prune before adding)'
+            )
         tag = f"[inner_thought/{thought.category}/sal={thought.salience:.2f}]"
         new_note_segment = f"{tag} {note_capped}"
         if existing:
@@ -1297,6 +2213,546 @@ class InnerThoughtDaemon:
             return False, f'update_fail:{msg[:60]}'
         except Exception as e:
             return False, f'notes_update_exception:{str(e)[:60]}'
+
+    # ============================================================
+    # 🆕 [Sir 2026-05-26 19:48 Phase 1A] fire_nudge actionable
+    # ============================================================
+    # Sir 真问 "目前思考和真主动性距离" → 准则 6 极致版 audit:
+    # thought 只 update_concern/notes/publish_swm — 不能直接 trigger 主脑出声.
+    # 治本: 加 fire_nudge 让 thought 自决出声, 接 nudge_coordination yield
+    # (跟 5 sentinel 平等), 主脑 directive 可 [SILENCE] 反否决.
+    # 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 1A.
+    # ============================================================
+    FIRE_NUDGE_MIN_SAL = 0.85         # 严: sal 不够不 fire (防 daemon 过激)
+
+    def _do_fire_nudge_actionable(self, thought: InnerThought,
+                                     a: str) -> Tuple[bool, str]:
+        """thought 自决出声 — 接 nudge_coordination yield, 跟 5 sentinel 平等.
+
+        Format: fire_nudge:<kind>:<draft_text>
+          kind: 'thought_observation' / 'thought_concern' / 'thought_proactive' / ...
+          draft_text: 1-2 句草稿 (主脑可改写, 可 [SILENCE])
+
+        gate:
+          - sal >= 0.85 (严)
+          - evidence_link 真在 thought 中 (复用 _validate_evidence_link)
+          - 接 nudge_coordination.should_yield (跟 5 sentinel 平等)
+          - 主脑 directive 看到 type='inner_thought_fire' 可 [SILENCE]
+        """
+        if thought.salience < self.FIRE_NUDGE_MIN_SAL:
+            return False, (
+                f'gated:fire_nudge_requires_sal>={self.FIRE_NUDGE_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+        parts = a.split(':', 2)
+        if len(parts) < 3:
+            return False, 'parse_fail (expected fire_nudge:<kind>:<draft>)'
+        _, kind, draft = parts
+        kind = (kind or '').strip()[:40] or 'thought_observation'
+        draft = (draft or '').strip()[:200]
+        if not draft:
+            return False, 'empty_draft'
+
+        # nudge_coordination yield (跟 SmartNudge / ReturnSentinel / Conductor / ProactiveCare / CommitmentWatcher 平等)
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check,
+                publish_proactive_nudge_skipped as _pub_skip,
+            )
+            _should_yield, _yield_reason = _yield_check(
+                within_s=600.0,
+                current_kind=f'inner_thought_{kind}',
+                current_sentinel='InnerThought',
+            )
+            if _should_yield:
+                _pub_skip(
+                    kind=f'inner_thought_{kind}',
+                    sentinel='InnerThought',
+                    reason=_yield_reason,
+                )
+                return False, f'yielded:{_yield_reason}'
+        except Exception:
+            pass  # coordination 失败时仍 fire (向后兼容)
+
+        # dispatch __NUDGE__ (同 SmartNudge 路径, 但加 type='inner_thought_fire' 标记
+        # 让主脑 directive 知道这是 thought 提议, 优先 [SILENCE])
+        try:
+            import json as _json_fn
+            from jarvis_utils import resolve_worker_attr
+            worker = self.nerve
+            if worker is None:
+                return False, 'no_nerve'
+            context = {
+                'type': 'inner_thought_fire',
+                'kind': kind,
+                'channel': 'voice',
+                'nudge_directive': draft,
+                'source': 'InnerThought',
+                'thought_id': thought.id,
+                'thought_category': thought.category,
+                'thought_salience': thought.salience,
+                'thought_evidence_link': thought.evidence_link,
+                'thought_text': thought.thought[:200],
+            }
+            cmd = f"__NUDGE__:{_json_fn.dumps(context, ensure_ascii=False)}"
+            # nerve push_command (central_nerve has push_command)
+            if hasattr(worker, 'push_command'):
+                worker.push_command(cmd)
+            else:
+                return False, 'nerve_no_push_command'
+
+            # fire 后 publish (让别 sentinel yield)
+            try:
+                from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub
+                _pn_pub(
+                    kind=f'inner_thought_{kind}',
+                    sentinel='InnerThought',
+                    extra_metadata={
+                        'thought_id': thought.id,
+                        'thought_category': thought.category,
+                    },
+                )
+            except Exception:
+                pass
+
+            return True, f'fired:{kind} (sal={thought.salience:.2f})'
+        except Exception as e:
+            return False, f'fire_nudge_exception:{str(e)[:60]}'
+
+    # ============================================================
+    # 🆕 [Sir 2026-05-26 19:48 Phase 2A] propose_watch_task actionable
+    # ============================================================
+    # Sir 真意: thought 该能"设长期目标" (e.g. 每 2h check 项目进度).
+    # PromiseLog 已有 watch kind + trigger_pattern, 复用现有 schema 不新建 module.
+    # 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 2A.
+    # ============================================================
+    PROPOSE_WATCH_MIN_SAL = 0.75
+
+    def _do_propose_watch_task(self, thought: InnerThought,
+                                 a: str) -> Tuple[bool, str]:
+        """thought 提议长期 watch task — 直接调 PromiseLog watch kind.
+
+        Format: propose_watch_task:<trigger_kind>:<desc>
+          trigger_kind: 'cycle_hours:2' / 'cycle_minutes:30' / 'screen_keyword:interview'
+          desc: 1-2 句长目标描述 (e.g. "每 2h check Sir 面试准备进度")
+
+        gate:
+          - category in C/D (concern_evolution / proactive_seed)
+          - sal >= 0.75
+        """
+        if thought.category not in ('C', 'D'):
+            return False, (
+                f'gated:propose_watch_only_from_C_or_D '
+                f'(got {thought.category})'
+            )
+        if thought.salience < self.PROPOSE_WATCH_MIN_SAL:
+            return False, (
+                f'gated:propose_watch_requires_sal>={self.PROPOSE_WATCH_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+        # Format: propose_watch_task:<trigger_kind>:<trigger_value>:<desc>
+        # split 3 (max 4 parts: action, kind, value, desc)
+        parts = a.split(':', 3)
+        if len(parts) < 4:
+            return False, (
+                'parse_fail (expected propose_watch_task:<trigger_kind>:'
+                '<value>:<desc>)'
+            )
+        _, t_kind, t_val, desc = parts
+        t_kind = (t_kind or '').strip()[:30]
+        t_val = (t_val or '').strip()[:30]
+        desc = (desc or '').strip()[:200]
+        if not t_kind or not desc:
+            return False, 'empty_trigger_kind_or_desc'
+
+        try:
+            from jarvis_promise_log import get_default_log
+            plog = get_default_log()
+            trigger_pattern = {'kind': t_kind, 'value': t_val}
+
+            pid = plog.register(
+                description=desc,
+                kind='watch',
+                deadline_str='',  # watch kind 没 deadline
+                jarvis_reply=thought.thought[:200],
+                author='jarvis',
+            )
+            # 加 trigger_pattern (PromiseLog Promise dataclass 已有 field)
+            try:
+                p = plog.promises.get(pid)
+                if p is not None:
+                    p.trigger_pattern = trigger_pattern
+                    plog._dirty = True
+                    plog._persist()
+            except Exception:
+                pass
+            return True, f'watch_task:{pid} ({t_kind}:{t_val})'
+        except Exception as e:
+            return False, f'propose_watch_exception:{str(e)[:60]}'
+
+    # ============================================================
+    # 🆕 [Sir 2026-05-26 19:48 Phase 3] call_tool actionable (高风险)
+    # ============================================================
+    # Sir 真意: thought 真"行动" — 调 tool 直接做事 (set_reminder / commitment).
+    # 风险: 错调 tool 让 Sir 反感. 准则 7 Sir 元否决预留:
+    #   - allowlist 持久化 memory_pool/inner_thought_tool_allowlist.json
+    #   - 每次 fire 后 publish SWM 'inner_thought_tool_called' (Sir 看 dashboard)
+    #   - CLI scripts/inner_thought_tool_revert.py 1-click 撤
+    # 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 3.
+    # ============================================================
+    CALL_TOOL_MIN_SAL = 0.90          # 极严
+    CALL_TOOL_ALLOWLIST_PATH = 'memory_pool/inner_thought_tool_allowlist.json'
+
+    def _load_call_tool_allowlist(self) -> set:
+        """读 allowlist (持久化 + fallback)."""
+        try:
+            import json as _json
+            path = self.CALL_TOOL_ALLOWLIST_PATH
+            if not os.path.isabs(path):
+                root = os.path.dirname(os.path.abspath(__file__))
+                path = os.path.join(root, path)
+            if not os.path.exists(path):
+                return set(self._DEFAULT_CALL_TOOL_ALLOWLIST)
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            return set(data.get('allowlist') or self._DEFAULT_CALL_TOOL_ALLOWLIST)
+        except Exception:
+            return set(self._DEFAULT_CALL_TOOL_ALLOWLIST)
+
+    # default allowlist (preserve daemon 可用 if JSON missing)
+    _DEFAULT_CALL_TOOL_ALLOWLIST = (
+        'commitment_register',
+        'self_promise_register',
+        'milestone_register',
+    )
+
+    def _do_call_tool_actionable(self, thought: InnerThought,
+                                    a: str) -> Tuple[bool, str]:
+        """thought 真行动 — 调 TOOL_REGISTRY 中 allowlist 内 tool.
+
+        Format: call_tool:<tool_name>:<json_args>
+          tool_name: 必须 in allowlist (Sir 持久化 JSON 控)
+          json_args: tool 的参数 (dict, json 序列化)
+
+        gate:
+          - sal >= 0.90 (极严)
+          - tool_name in allowlist
+          - json_args 真 parse 成 dict
+          - 每次 fire 后 publish SWM 让 Sir 看 dashboard
+        """
+        if thought.salience < self.CALL_TOOL_MIN_SAL:
+            return False, (
+                f'gated:call_tool_requires_sal>={self.CALL_TOOL_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+        parts = a.split(':', 2)
+        if len(parts) < 3:
+            return False, 'parse_fail (expected call_tool:<tool_name>:<json_args>)'
+        _, tool_name, args_str = parts
+        tool_name = (tool_name or '').strip()
+        args_str = (args_str or '').strip()
+        if not tool_name:
+            return False, 'empty_tool_name'
+
+        # allowlist gate
+        allowlist = self._load_call_tool_allowlist()
+        if tool_name not in allowlist:
+            return False, (
+                f'tool_not_in_allowlist:{tool_name} '
+                f'(Sir CLI to add: scripts/inner_thought_tool_allowlist_dump.py)'
+            )
+
+        # parse args
+        try:
+            import json as _json
+            args_dict = _json.loads(args_str) if args_str else {}
+            if not isinstance(args_dict, dict):
+                return False, f'args_not_dict:{type(args_dict).__name__}'
+        except Exception as e:
+            return False, f'args_parse_fail:{str(e)[:60]}'
+
+        # dispatch via TOOL_REGISTRY
+        try:
+            from jarvis_tool_registry import get_tool_registry
+            registry = get_tool_registry()
+            tool_fn = registry.get(tool_name)
+            if tool_fn is None:
+                return False, f'tool_not_registered:{tool_name}'
+            result = tool_fn(**args_dict)
+            if not isinstance(result, dict):
+                return False, f'tool_returned_non_dict:{type(result).__name__}'
+            ok_flag = bool(result.get('ok', False))
+
+            # publish SWM 'inner_thought_tool_called' (Sir 看 dashboard + 可 revert)
+            try:
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    bus.publish(
+                        etype='inner_thought_tool_called',
+                        description=(
+                            f"thought {thought.id} called tool {tool_name} "
+                            f"(ok={ok_flag}): {(result.get('result') or result.get('error') or '')[:80]}"
+                        ),
+                        source='InnerThought',
+                        salience=0.85,
+                        metadata={
+                            'thought_id': thought.id,
+                            'tool_name': tool_name,
+                            'args': args_dict,
+                            'ok': ok_flag,
+                            'result': (result.get('result') or '')[:200],
+                            'error': (result.get('error') or '')[:200],
+                        },
+                        ttl=86400.0,
+                    )
+            except Exception:
+                pass
+
+            if ok_flag:
+                return True, f'called:{tool_name} → {(result.get("result") or "")[:60]}'
+            return False, f'tool_failed:{tool_name} → {(result.get("error") or "")[:60]}'
+        except Exception as e:
+            return False, f'call_tool_exception:{str(e)[:60]}'
+
+    # ==========================================================================
+    # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 治本] surface_to_sir handler
+    # ==========================================================================
+    # Sir 真痛: "思考层也没主动发声". thought 自决 surface 给 Sir 看, 不抢 voice.
+    # 两档 channel:
+    #   - terminal_pulse: bg_log "💭 [Thought→Sir] {summary}" — Sir 终端真看见
+    #   - next_turn_inject: publish SWM 'inner_thought_surface' — 主脑下轮 prompt
+    #     强提示 reference 这条 thought (主脑自决说不说, 不强出声)
+    # 阈值 + 频限 + channel allow list 全持久化 memory_pool/surface_to_sir_vocab.json
+    # (Sir CLI 可改). 准则 6 vocab + 准则 8 优雅 + 准则 1 高效 (低成本通道).
+    # ==========================================================================
+    def _do_surface_to_sir_actionable(self, thought: InnerThought,
+                                          a: str) -> Tuple[bool, str]:
+        """thought 主动 surface 给 Sir — terminal_pulse / next_turn_inject 两档.
+
+        Format: surface_to_sir:<channel>:<one-sentence summary>
+        gates: sal >= vocab.salience_threshold, channel in allowed_channels,
+               cooldown_global_s, cooldown_per_channel_s, max_per_hour.
+        """
+        cfg = _load_surface_to_sir_config()
+        sal_thr = float(cfg.get('salience_threshold', 0.7))
+        if thought.salience < sal_thr:
+            return False, (
+                f'gated:surface_requires_sal>={sal_thr} '
+                f'(got {thought.salience:.2f})'
+            )
+
+        parts = a.split(':', 2)
+        if len(parts) < 3:
+            return False, ('parse_fail (expected '
+                              'surface_to_sir:<channel>:<summary>)')
+        _, channel, summary = parts
+        channel = (channel or '').strip().lower()
+        summary = (summary or '').strip()
+        if not channel or not summary:
+            return False, 'empty_channel_or_summary'
+
+        allowed = list(cfg.get('allowed_channels') or [])
+        if channel not in allowed:
+            return False, (
+                f'channel_not_allowed:{channel} '
+                f'(allowed: {",".join(allowed)})'
+            )
+
+        # cooldown / hourly cap check (lazy init instance state)
+        now = time.time()
+        if not hasattr(self, '_surface_history'):
+            self._surface_history: List[Tuple[float, str]] = []
+        if not hasattr(self, '_surface_last_global_ts'):
+            self._surface_last_global_ts = 0.0
+        if not hasattr(self, '_surface_last_per_channel_ts'):
+            self._surface_last_per_channel_ts: dict = {}
+
+        cd_global = float(cfg.get('cooldown_global_s', 120))
+        if now - self._surface_last_global_ts < cd_global:
+            wait = int(cd_global - (now - self._surface_last_global_ts))
+            return False, f'gated:global_cooldown_{wait}s_left'
+
+        cd_ch = float(cfg.get('cooldown_per_channel_s', 300))
+        last_ch_ts = float(self._surface_last_per_channel_ts.get(channel, 0))
+        if now - last_ch_ts < cd_ch:
+            wait = int(cd_ch - (now - last_ch_ts))
+            return False, f'gated:channel_{channel}_cooldown_{wait}s_left'
+
+        max_h = int(cfg.get('max_per_hour', 6))
+        # prune history > 1h
+        cutoff_h = now - 3600
+        self._surface_history = [
+            (ts, ch) for ts, ch in self._surface_history if ts > cutoff_h
+        ]
+        if len(self._surface_history) >= max_h:
+            return False, f'gated:hourly_cap_{max_h}_reached'
+
+        # execute per channel
+        try:
+            if channel == 'terminal_pulse':
+                self._bg_log(
+                    f"💭 [Thought→Sir / sal={thought.salience:.2f}] {summary[:200]}"
+                )
+            elif channel == 'next_turn_inject':
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    bus.publish(
+                        etype='inner_thought_surface',
+                        description=(
+                            f"thought {thought.id} surfacing to next turn: "
+                            f"{summary[:160]}"
+                        ),
+                        source='InnerThoughtDaemon',
+                        salience=max(0.75, thought.salience),
+                        metadata={
+                            'thought_id': thought.id,
+                            'category': thought.category,
+                            'salience': thought.salience,
+                            'summary': summary[:200],
+                            'channel': channel,
+                        },
+                        ttl=900.0,  # 15min — 主脑下次 2-3 turn 都能看到
+                    )
+            else:
+                # 新 channel 已 in allowed (vocab 加了), 但 handler 未实现
+                return False, f'channel_unimplemented:{channel}'
+        except Exception as e:
+            return False, f'surface_exception:{channel}:{str(e)[:60]}'
+
+        # update cooldown state
+        self._surface_last_global_ts = now
+        self._surface_last_per_channel_ts[channel] = now
+        self._surface_history.append((now, channel))
+
+        # publish SWM 'inner_thought_surface_executed' 让 outcome worker (D) 可追踪
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='inner_thought_surface_executed',
+                    description=(
+                        f"thought {thought.id} surfaced via {channel}: "
+                        f"{summary[:120]}"
+                    ),
+                    source='InnerThoughtDaemon',
+                    salience=0.7,
+                    metadata={
+                        'thought_id': thought.id,
+                        'channel': channel,
+                        'summary': summary[:200],
+                    },
+                    ttl=86400.0,
+                )
+        except Exception:
+            pass
+
+        return True, f'surfaced:{channel}:{summary[:60]}'
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-27 00:11 M3 VisualPulse] subtle 💭 字幕区闪
+    # ----------------------------------------------------------
+    _PULSE_VOCAB_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'inner_thought_pulse_vocab.json',
+    )
+    _PULSE_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    _PULSE_VOCAB_CHECK_INTERVAL_S = 30.0
+    _PULSE_DEFAULT_VOCAB = {
+        'enabled': True,
+        'min_sal_to_pulse': 0.3,
+        'min_pulse_cooldown_s': 30,
+        'skip_if_main_convo_recent_s': 5,
+        'max_text_chars': 50,
+        'show_continuity_marker': True,
+        'show_category': True,
+    }
+
+    def _load_pulse_vocab(self) -> dict:
+        """Lazy load + 30s throttle. Fail-safe → default."""
+        now = time.time()
+        cache = self._PULSE_VOCAB_CACHE
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._PULSE_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        try:
+            if not os.path.exists(self._PULSE_VOCAB_PATH):
+                cache['data'] = dict(self._PULSE_DEFAULT_VOCAB)
+                return cache['data']
+            mtime = os.path.getmtime(self._PULSE_VOCAB_PATH)
+            if mtime == cache['mtime'] and cache['data']:
+                return cache['data']
+            with open(self._PULSE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            config = dict(self._PULSE_DEFAULT_VOCAB)
+            for k, v in (data or {}).items():
+                if k in self._PULSE_DEFAULT_VOCAB:
+                    config[k] = v
+            cache['data'] = config
+            cache['mtime'] = mtime
+            return config
+        except Exception:
+            return dict(self._PULSE_DEFAULT_VOCAB)
+
+    def _emit_thought_pulse(self, thought: InnerThought) -> None:
+        """字幕区 subtle 💭 闪 (Sir 真看见思考). vocab 节流.
+
+        节流条件 (ALL must pass):
+          (1) vocab enabled
+          (2) sal >= min_sal_to_pulse
+          (3) 距上次 pulse >= min_pulse_cooldown_s
+          (4) 距主对话最后 turn >= skip_if_main_convo_recent_s
+        失败 silent fallback (不阻 daemon).
+        """
+        vocab = self._load_pulse_vocab()
+        if not vocab.get('enabled', True):
+            return
+        if thought.salience < float(vocab.get('min_sal_to_pulse', 0.3)):
+            return
+        now = time.time()
+        last_pulse = getattr(self, '_last_pulse_ts', 0.0)
+        if now - last_pulse < float(vocab.get('min_pulse_cooldown_s', 30)):
+            return
+        # 主对话 N 秒内不闪 — 优先 Sir 真说话
+        skip_recent = float(vocab.get('skip_if_main_convo_recent_s', 5))
+        if skip_recent > 0:
+            try:
+                if self.nerve and getattr(self.nerve, 'short_term_memory', None):
+                    stm = list(self.nerve.short_term_memory)
+                    if stm and isinstance(stm[-1], dict):
+                        last_turn = stm[-1]
+                        last_t = last_turn.get('ts') or last_turn.get('time_ts') or 0
+                        if isinstance(last_t, (int, float)) and last_t > 0:
+                            if now - last_t < skip_recent:
+                                return
+            except Exception:
+                pass
+        # 构造 subtitle text
+        max_chars = int(vocab.get('max_text_chars', 50))
+        thought_preview = (thought.thought or '').strip()[:max_chars]
+        markers = []
+        if vocab.get('show_category', True):
+            markers.append(thought.category)
+        if vocab.get('show_continuity_marker', True):
+            cont = getattr(thought, 'continuity', '') or ''
+            if cont == 'same_thread':
+                markers.append('→thread')
+            elif cont == 'new_topic':
+                markers.append('•new')
+        marker_str = ('[' + '/'.join(markers) + '] ') if markers else ''
+        subtitle_text = f"{marker_str}{thought_preview}"
+        # 真发到 subtitle_queue (chat_bypass holds ref)
+        try:
+            if self.nerve and hasattr(self.nerve, 'chat_bypass'):
+                cb = self.nerve.chat_bypass
+                if cb and hasattr(cb, 'subtitle_queue'):
+                    cb.subtitle_queue.put(('thought_pulse', subtitle_text))
+                    self._last_pulse_ts = now
+        except Exception:
+            pass
 
     # ----------------------------------------------------------
     # SWM publish (jarvis_inner_thought event)
@@ -1428,34 +2884,142 @@ class InnerThoughtDaemon:
     # SOUL inject (called from central_nerve._build_layer_1b_*)
     # ----------------------------------------------------------
     def build_soul_block(self, max_chars: Optional[int] = None) -> str:
-        """返回 SOUL inject block. top N by salience in last 24h, time-ordered."""
+        """返回 SOUL inject block — Freshness-aware ranking.
+
+        🆕 [Sir 2026-05-26 20:55 真痛追根 方案 A 治本 / 准则 6 vocab 持久化]
+        =====================================================================
+        Sir 真痛: "想了一堆没体现在对话里" — 老 sal=0.9 thought 永远挤掉
+        新 sal=0.7 thought, 主脑 prompt 永远看到陈年老 thought.
+
+        修法 (准则 8 优雅): score = salience * w_sal + recency * w_rec.
+          recency = e^(-age / halflife_s) ∈ (0, 1], 越新越接近 1.
+          默认 w_sal=0.5 / w_rec=0.5 / halflife=1h → 60min 前 sal=0.9 (~0.5)
+          会输给 5min 前 sal=0.7 (~0.81). 老 thought 自然 decay.
+
+        权重 + cap 全持久化到 memory_pool/inner_thought_soul_block_vocab.json
+        (准则 6 不在 .py 硬编码), Sir CLI 可改.
+        =====================================================================
+        """
+        config = _load_soul_block_config()
+        max_age_s = float(config.get('max_age_s', 86400))
         if max_chars is None:
-            max_chars = self.SOUL_INJECT_MAX_CHARS
-        cutoff = time.time() - 86400.0
+            max_chars = int(config.get('max_chars', self.SOUL_INJECT_MAX_CHARS))
+        cutoff = time.time() - max_age_s
         with self._lock:
             recent = [t for t in self._thoughts if t.ts > cutoff]
         if not recent:
             return ''
-        # top N by salience
-        recent.sort(key=lambda t: -t.salience)
-        top = recent[:self.SOUL_INJECT_MAX]
-        # 时间排序 (旧到新) 让主脑看 narrative
-        top.sort(key=lambda t: t.ts)
 
-        lines = ["=== MY RECENT INNER THOUGHTS (last 24h, top by salience) ==="]
+        # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 B 治本] query-aware mode
+        # =================================================================
+        # 检 SWM 最近 60s 有 'sir_thought_query_detected' (directive trigger
+        # 在 directive evaluation 时 publish) → 切强化模式:
+        #   - recency 权重升 (老 thought 进一步 decay)
+        #   - max_inject 升 (给主脑更多 fresh thought 可选)
+        #   - 标题改 "[SIR JUST ASKED — SURFACE THESE]" 让主脑强 attention
+        # 不修永久 vocab 阈值, 只本次 build 临时 boost. 准则 6 evidence-driven.
+        # =================================================================
+        sir_asked = False
+        try:
+            from jarvis_utils import get_event_bus as _geb_q
+            _bus_q = _geb_q()
+            if _bus_q is not None:
+                _top_q = _bus_q.top_n(n=20) or []
+                for _ev_q in _top_q:
+                    if _ev_q.get('type') != 'sir_thought_query_detected':
+                        continue
+                    _age_raw = _ev_q.get('_age_s')
+                    _age_q = float(_age_raw if _age_raw is not None else 999999)
+                    if _age_q <= 60.0:  # 1 turn 内有效
+                        sir_asked = True
+                        break
+        except Exception:
+            pass
+
+        # Freshness-aware score (Sir 真痛治本)
+        weights = config.get('weights') or {}
+        w_sal = float(weights.get('salience', 0.5))
+        w_rec = float(weights.get('recency', 0.5))
+        halflife_s = float(config.get('recency_halflife_s', 3600))
+        # query-aware boost: recency 权重升到 0.8, halflife 短到 30min
+        if sir_asked:
+            w_sal = 0.2
+            w_rec = 0.8
+            halflife_s = 1800.0
         now = time.time()
-        for t in top:
+        scored = []
+        for t in recent:
+            age = max(0.0, now - t.ts)
+            recency = math.exp(-age / max(1.0, halflife_s))
+            score = t.salience * w_sal + recency * w_rec
+            scored.append((t, score))
+        scored.sort(key=lambda x: -x[1])
+
+        max_inject = int(config.get('max_inject', self.SOUL_INJECT_MAX))
+        if sir_asked:
+            max_inject = max(max_inject, 5)  # 给主脑至少 5 条选 (强化)
+        top_scored = scored[:max_inject]
+        # 时间排序 (旧到新) 让主脑看 narrative
+        top_scored.sort(key=lambda x: x[0].ts)
+
+        # query-aware mode → 标题改, 主脑强 attention
+        if sir_asked:
+            lines = ["=== MY RECENT INNER THOUGHTS — "
+                      "SIR JUST ASKED, SURFACE THE FRESHEST ==="]
+        else:
+            lines = ["=== MY RECENT INNER THOUGHTS "
+                      "(last 24h, ranked by freshness × salience) ==="]
+        for t, score in top_scored:
             age_min = max(1, int((now - t.ts) / 60))
             action_str = ''
             if t.actionable and t.actionable.lower() != 'none':
                 if t.actionable_done:
                     action_str = f" ✓ {t.actionable_result[:30]}"
                 else:
-                    action_str = f" → pending"
+                    action_str = " → pending"
             lines.append(
                 f"  [{t.category}/{age_min}min ago/sal {t.salience:.2f}] "
                 f"{t.thought[:140]}{action_str}"
             )
+        # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 衔接] inner_thought_surface event
+        # =================================================================
+        # 若最近 15min 有 thought 主动 surface (via _do_surface_to_sir_actionable
+        # next_turn_inject channel), block 末尾加一行强提示主脑 reference 这条.
+        # 准则 6: 全 SWM evidence-driven, 不教内容只给信号.
+        # =================================================================
+        try:
+            from jarvis_utils import get_event_bus as _geb_s
+            _bus_s = _geb_s()
+            if _bus_s is not None:
+                _top_s = _bus_s.top_n(n=20) or []
+                _surfaces = []
+                for _ev_s in _top_s:
+                    if _ev_s.get('type') != 'inner_thought_surface':
+                        continue
+                    _age_raw = _ev_s.get('_age_s')
+                    _age_s = float(_age_raw if _age_raw is not None else 999999)
+                    if _age_s > 900.0:  # 15min cap (matches publish ttl)
+                        continue
+                    _meta = _ev_s.get('metadata') or {}
+                    _surfaces.append({
+                        'tid': _meta.get('thought_id', '')[:30],
+                        'summary': str(_meta.get('summary', ''))[:120],
+                        'age_min': max(1, int(_age_s / 60)),
+                    })
+                if _surfaces:
+                    lines.append("")
+                    lines.append(
+                        "  ⚡ [DAEMON SURFACED THESE FOR YOUR ATTENTION — "
+                        "reference if natural, don't force]"
+                    )
+                    for _s in _surfaces[:3]:
+                        lines.append(
+                            f"     • [{_s['age_min']}min ago / "
+                            f"{_s['tid']}] {_s['summary']}"
+                        )
+        except Exception:
+            pass
+
         block = '\n'.join(lines)
         if len(block) > max_chars:
             block = block[:max_chars - 14].rstrip() + '\n…[truncated]'
@@ -1486,6 +3050,55 @@ class InnerThoughtDaemon:
         with self._lock:
             recent = sorted(self._thoughts, key=lambda t: -t.ts)[:max_n]
         return [asdict(t) for t in recent]
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 D 治本] outcome 闭环 API
+    # ----------------------------------------------------------
+    def record_outcome(self, thought_id: str, outcome: str) -> bool:
+        """OutcomeWatch worker 调 — 写 thought.outcome 字段 + persist.
+
+        Sir 真痛: outcome 字段就位但没人写 → thought 不知 Sir 关心不关心.
+        D 闭环: chat_bypass post-reply 检 detection → 调本 API 持久化.
+
+        Args:
+          thought_id: target InnerThought.id
+          outcome: 'sir_engaged' | 'sir_silenced' | 'sir_rejected' |
+                    'jarvis_referenced_no_reaction' | 'no_signal'
+
+        Returns: True 真改写; False 未找到 thought.
+        """
+        if not thought_id or not outcome:
+            return False
+        with self._lock:
+            target = None
+            for t in self._thoughts:
+                if t.id == thought_id:
+                    target = t
+                    break
+            if target is None:
+                return False
+            target.outcome = outcome[:60]
+        # 持久化 (append 一条 outcome update 行到 jsonl, 老 thought 不动)
+        try:
+            os.makedirs(os.path.dirname(self.PERSIST_PATH), exist_ok=True)
+            update_row = {
+                '_outcome_update': True,
+                'thought_id': thought_id,
+                'outcome': outcome,
+                'ts': time.time(),
+                'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
+            }
+            with open(self.PERSIST_PATH, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(update_row, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+        try:
+            self._bg_log(
+                f"💭 [Outcome] thought {thought_id[:30]} → {outcome}"
+            )
+        except Exception:
+            pass
+        return True
 
     # ----------------------------------------------------------
     # bg_log helper (lazy import to avoid circular)

@@ -78,16 +78,34 @@ class WriteReceipt:
         return asdict(self)
 
 
+# 🆕 [Sir 2026-05-26 21:50 真痛 BUG-I 治本] 明显非 field_path 的 tool/organ name
+# 主脑 LLM 经常误把 'memory_hands.modify_record' / 'reminder.set' 等 tool 调用名
+# 当 field_path 传给 MemoryGateway → 老逻辑 silent fail (layer=unknown).
+# 修: 显式识别 + publish 'mutation_router_field_misuse' SWM 让 monitor + 主脑下轮看.
+_TOOL_NAME_PREFIXES_NOT_FIELD = frozenset({
+    'memory_hands.', 'hippocampus.', 'reminder.', 'progress.',
+    'commitment_register.', 'self_promise_register.', 'profile_field_update.',
+    'milestone_register.', 'ui_control.', 'reflect.', 'text_hands.',
+    'mutation.', 'memory.',
+})
+
+
 def _detect_target_layer(field_path: str) -> str:
     """根据 field_path 前缀路由到正确 layer.
 
     🆕 [Reshape / 2026-05-24] 准则 8 宽容识别 (Sir 12:14 真测痛点):
       主脑常误写 'ledger.X' / 裸 'sir_X' 形式 → 原 unknown 失败.
       新加: 'ledger.' / 'sir_X' (concern_id 直名) → ConcernsLedger.
+
+    🆕 [Sir 2026-05-26 21:50 BUG-I 治本] tool name misuse 显式识别 →
+      return 'tool_name_misuse' 让上层 generate informative error 给 LLM 自纠.
     """
     if not field_path:
         return 'unknown'
     fp = field_path.lower()
+    # 🆕 显式检 tool name misuse — 主脑 emit 错时给清晰反馈
+    if any(fp.startswith(p) for p in _TOOL_NAME_PREFIXES_NOT_FIELD):
+        return 'tool_name_misuse'
     if fp.startswith(('biographic.', 'preferences.', 'traits.', 'profile.',
                        'persona.')):
         return 'ProfileCard'
@@ -219,6 +237,73 @@ class MemoryMutationGateway:
                 nerve = getattr(_cn, '_GLOBAL_NERVE', None)
             except Exception:
                 nerve = None
+
+        # 🆕 [Sir 2026-05-26 21:45 真痛 BUG-H 治本] Mutation Evidence Guard
+        # =================================================================
+        # Sir 真测 21:07 "d home" → Jarvis 凭空 "Stay safe" 写入 sir_profile.
+        # 治本: 任何 mutation 前 check new_value 是否在 Sir STM 中有 evidence
+        # (substring 或 jaccard 任一达标). 无 evidence → block_mode='block'
+        # 真拦 + audit log + publish SWM 'mutation_evidence_blocked'.
+        # 准则 6 vocab 持久化: memory_pool/mutation_evidence_vocab.json (Sir CLI 改).
+        # bypass list: sir_cli / fast_call_sir_explicit / skepticism_loop 等
+        # 显式 Sir 输入跳过.
+        # =================================================================
+        try:
+            from jarvis_mutation_evidence_guard import (
+                check_mutation_evidence as _meg_check,
+                publish_guard_event as _meg_pub,
+                _load_vocab as _meg_load_vocab,
+            )
+            guard_ok, guard_reason = _meg_check(
+                new_value=new_value,
+                field_path=field_path,
+                source=source,
+                nerve=nerve,
+                layer=layer,
+            )
+            _meg_pub(guard_ok, guard_reason, new_value, field_path, source)
+            if not guard_ok:
+                _vocab = _meg_load_vocab()
+                _block_mode = str(_vocab.get('block_mode', 'block')).lower()
+                if _block_mode == 'block':
+                    # 真拦截 — 不调 layer 路由, 返 blocked receipt
+                    try:
+                        from jarvis_utils import bg_log as _meg_bg
+                        _meg_bg(
+                            f"🛡️ [MutationEvidenceGuard] BLOCKED "
+                            f"{source} → {field_path[:40]}: {guard_reason[:120]}"
+                        )
+                    except Exception:
+                        pass
+                    return WriteReceipt(
+                        mutation_id=mutation_id,
+                        ts=now,
+                        iso=time.strftime('%Y-%m-%dT%H:%M:%S',
+                                            time.localtime(now)),
+                        field_path=field_path,
+                        new_value_excerpt=new_excerpt,
+                        old_value_excerpt=old_excerpt,
+                        source=source,
+                        confidence=confidence,
+                        layer_targeted=layer,
+                        ok=False,
+                        error=(f'evidence_guard_blocked: '
+                                  f'{guard_reason[:200]}'),
+                        turn_id=turn_id,
+                        physical_write=False,
+                    )
+                # block_mode == 'audit' → 不拦, 仅 log warn
+                try:
+                    from jarvis_utils import bg_log as _meg_bg2
+                    _meg_bg2(
+                        f"⚠️ [MutationEvidenceGuard/AUDIT-ONLY] would-block "
+                        f"{source} → {field_path[:40]}: {guard_reason[:120]}"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            # guard fail (e.g. module 不存在) → 不阻 mutation (defensive)
+            pass
 
         ok = False
         err = ''
@@ -540,6 +625,38 @@ class MemoryMutationGateway:
                                       f'<kind>.update.<id>.<field>)')
                     except Exception as _re:
                         err = f'relational mutation exception: {_re}'
+            elif layer == 'tool_name_misuse':
+                # 🆕 [Sir 2026-05-26 21:50 BUG-I 治本] 主脑误用 tool name 作 field_path
+                # 给清晰 err msg + publish SWM 'mutation_router_field_misuse' 监查可见.
+                err = (
+                    f"field_path '{field_path}' looks like a TOOL NAME, not a "
+                    f"profile/concerns field path. Use one of: profile.<field> / "
+                    f"concerns.<cid>[.<attr>] / ledger.<cid> / sir_<name> / "
+                    f"commitment.<op>.<id> / promise.<op>.<id> / inside_joke.<op>.<id>. "
+                    f"Did you mean to call the {field_path.split('.', 1)[0]} TOOL directly?"
+                )
+                try:
+                    from jarvis_utils import get_event_bus as _mb_geb
+                    _mb_bus = _mb_geb()
+                    if _mb_bus is not None:
+                        _mb_bus.publish(
+                            etype='mutation_router_field_misuse',
+                            description=(
+                                f"main brain emit tool-name '{field_path[:60]}' "
+                                f"as field_path (instead of calling tool)"
+                            ),
+                            source='MemoryGateway',
+                            salience=0.75,
+                            metadata={
+                                'field_path': field_path,
+                                'new_value_excerpt': new_excerpt,
+                                'source_caller': source,
+                                'mutation_id': mutation_id,
+                            },
+                            ttl=3600.0,
+                        )
+                except Exception:
+                    pass
             else:
                 # 🆕 [Reshape / 2026-05-24] 准则 8: 加 hint 让主脑下轮自纠
                 _hint = (

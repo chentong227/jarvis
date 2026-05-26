@@ -235,6 +235,34 @@ def _model_supports_vision(model_name: str) -> bool:
     return any(m.startswith(p) for p in _VISION_CAPABLE_MODEL_PREFIXES)
 
 
+# 🆕 [Sir 2026-05-26 23:24 真痛 BUG-1 治本 / 准则 8 优雅高效]
+# =============================================================================
+# Sir 截图 22:41:32: ZH "确实是个昂贵的疏" (8ch 末尾 '疏' 不合法) 先显在字幕,
+# 1-2s 后 truncate_continuation_worker 补 99ch 完整版替换 → Sir 体感"字幕变身闪烁".
+#
+# 治本 (准则 8 优雅): stream 末了 leftover ZH put 前 check 末尾合法性,
+# 不合法 → skip put (等 worker continuation 补一次完整 atomic 出, Sir 看 0ch → 99ch).
+# 合法 → 正常 put (无 worker continuation 需求, atomic 一次出全).
+#
+# _zh_endings 与 line 4610 同集 (修一处 = 修两处 一致). 提到 module level 复用.
+# =============================================================================
+_ZH_SUBTITLE_ENDINGS = set('.?!。？！…"\'""''」』）)')
+
+
+def _zh_subtitle_looks_truncated(zh_text: str, en_len: int) -> bool:
+    """check ZH text 末尾是否合法 (信赖 line 4612 same logic).
+
+    True = 不合法 (LLM stream 半途 stop), 应 defer put 等 worker continuation.
+    False = 合法 (末尾标点/引号收束), 正常 leftover put.
+    en_len < 30 → 短 reply 不检 (允许 ZH 末尾无标点 e.g. '好').
+    """
+    if not zh_text:
+        return False  # 空 ZH 由上游 logic 决定 (此 helper 不管空)
+    if en_len < 30:
+        return False  # 短 reply 不检
+    return zh_text[-1] not in _ZH_SUBTITLE_ENDINGS
+
+
 class ChatBypass:
     def __init__(self, key_router, vocal_cord, state_callback):
         self.key_router = key_router
@@ -2629,7 +2657,16 @@ Spoken English:"""
                     if clean_zh:
                         # [P0+18-c.12 / 2026-05-15] 多段 ZH (含 \n\n) 走 _box_newline,每行加 ║ 前缀
                         print("\n" + _box_newline(f"║ 📺  [Subtitle] {clean_zh}"))
-                        self.subtitle_queue.put(("zh", clean_zh))
+                        # 🆕 [Sir 23:24 BUG-1 治本] ZH 末尾不合法 → defer put (worker 补)
+                        _en_for_check = (final_clean.split('---ZH---')[0] if '---ZH---' in (final_clean or '') else (final_clean or ''))
+                        if _zh_subtitle_looks_truncated(clean_zh, len(_en_for_check.strip())):
+                            try:
+                                from jarvis_utils import bg_log as _zh_def_bg
+                                _zh_def_bg(f"⏸ [Subtitle/ZH-defer] leftover ZH 末尾不合法 ({len(clean_zh)}ch '{clean_zh[-20:]}'), 跳过 put, 等 truncate_continuation_worker 补完整 atomic put 防双段闪烁")
+                            except Exception:
+                                pass
+                        else:
+                            self.subtitle_queue.put(("zh", clean_zh))
 
                 if not getattr(self, 'is_interrupted', False):
                     print("")
@@ -2649,7 +2686,15 @@ Spoken English:"""
                     zh_text = full_text.split("---ZH---")[1].strip()
                     clean_zh = re.sub(r'<[^>]+>', '', zh_text).strip()
                     if clean_zh:
-                        self.subtitle_queue.put(("zh", clean_zh))
+                        # 🆕 [Sir 23:24 BUG-1 治本] 末尾不合法 → defer (worker continuation 补 atomic put)
+                        if _zh_subtitle_looks_truncated(clean_zh, len(final_reply)):
+                            try:
+                                from jarvis_utils import bg_log as _zh_def_bg2
+                                _zh_def_bg2(f"⏸ [Subtitle/ZH-defer] leftover ZH 末尾不合法 ({len(clean_zh)}ch '{clean_zh[-20:]}'), 跳过 put, 等 worker 补")
+                            except Exception:
+                                pass
+                        else:
+                            self.subtitle_queue.put(("zh", clean_zh))
 
                 if '_stream_key_name' in dir():
                     self.key_router.release(_stream_key_name)
@@ -2887,6 +2932,61 @@ Spoken English:"""
                 _pce = get_default_engine()
                 if _pce is not None and hasattr(_pce, 'notify_sir_response_post_nudge'):
                     _pce.notify_sir_response_post_nudge(clean_user_input or '')
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Sir Skepticism Learning Loop hook
+        # =====================================================================
+        # Sir 真意: "通过我跟他对话能动态调整 — 一个奇怪的 inside joke 我提质疑
+        # 时会降低使用权重, 多次质疑甚至考虑删除. 不希望调工具."
+        # Async fire-and-forget — Detector 检 keyword (vocab JSON) →
+        # AttributionEngine 找 30s 内最 plausible target (inside_joke / nudge /
+        # concern) → DecayEngine 累 skepticism_count + decay weight + publish SWM.
+        # 主脑下轮 prompt 看 SWM 'sir_skepticism' / 'item_skepticism_decay' /
+        # 'item_auto_archived' evidence 自决 (准则 6 evidence-driven).
+        # is_system_event skip (后台事件 [SYSTEM ALERT] 非 Sir 真话, 不算质疑).
+        # 详 jarvis_sir_skepticism.py + docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md.
+        # =====================================================================
+        try:
+            if not is_system_event and clean_user_input:
+                def _skepticism_worker(reply: str):
+                    try:
+                        from jarvis_sir_skepticism import process_sir_reply
+                        process_sir_reply(reply)
+                    except Exception:
+                        pass
+                threading.Thread(
+                    target=_skepticism_worker,
+                    args=(clean_user_input,),
+                    daemon=True,
+                    name='SirSkepticismDetect',
+                ).start()
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 D 治本] Thought Outcome Loop hook
+        # =====================================================================
+        # Sir 真痛 (Phase 2B 铺垫但没合环): InnerThought.outcome 字段就位但没人
+        # 写没人读. 这导致 thought 不知 Sir 关心不关心 → 长期看 "想了一堆没体现".
+        # D 闭环: chat_bypass post-reply hook 检 (a) 主脑上轮 reply 是否 reference
+        # 某 thought (vocab pattern + token overlap) + (b) Sir 本轮反应
+        # (engage/silence/reject). 综合判 outcome → 持久化 + publish SWM.
+        # 详 jarvis_thought_outcome.py + docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §D.
+        # =====================================================================
+        try:
+            if not is_system_event and clean_user_input:
+                def _outcome_worker(reply: str):
+                    try:
+                        from jarvis_thought_outcome import process_sir_reply as _tov_proc
+                        _tov_proc(reply)
+                    except Exception:
+                        pass
+                threading.Thread(
+                    target=_outcome_worker,
+                    args=(clean_user_input,),
+                    daemon=True,
+                    name='ThoughtOutcomeWatch',
+                ).start()
         except Exception:
             pass
 
@@ -4073,8 +4173,59 @@ Spoken English:"""
                     _pending_jarvis_header = True
                     
                     chat_history.append(types.Content(role="model", parts=[types.Part(text=spoken_so_far)]))
-                    
-                    continuation_prompt = f"""[SYSTEM TOOL RESULT for {command}]: {tool_result}
+
+                    # 🆕 [Sir 2026-05-26 22:03 真痛 BUG-Q+S 治本] tool fail 时主脑必须承认
+                    # =====================================================================
+                    # Sir 真测 22:03:15-22:03:24 痛点: concerns.dismiss fail (concern_id 不存在)
+                    # 但主脑 iter 2 又重复 iter 1 的 ack "I have archived" — 撒谎 + 双段 reply.
+                    # 治本 (准则 5 言出必行 + 准则 6 不硬编码句式 + 准则 8 优雅):
+                    # tool_result 以 ❌ 开头 → 注 dedup_directive 教主脑 acknowledge fail,
+                    # MUST NOT 重复 iter 1 ack. 不教具体句式, 给反例 + 正例让主脑自决.
+                    # =====================================================================
+                    _tool_failed = bool(tool_result and str(tool_result).startswith("❌"))
+                    _speak_already = bool(spoken_so_far and spoken_so_far.strip())
+                    _dedup_directive = ""
+                    if _tool_failed and _speak_already:
+                        _spoken_excerpt = spoken_so_far.strip()[:200]
+                        _dedup_directive = f"""
+
+🚨 [INTEGRITY ENFORCE — Sir 2026-05-26/27 BUG-Q+S+β] CRITICAL FAILURE HANDLING:
+The tool returned ❌ (failure). You ALREADY spoke this ack BEFORE the FAST_CALL:
+  "{_spoken_excerpt}"
+You MUST NOT repeat that ack. You MUST honestly acknowledge the failure:
+1. Apologize briefly (your own words, no formula).
+2. Explain what failed using the EXACT failure msg shown in [SYSTEM TOOL RESULT].
+3. ZH translation MUST match the apology+failure (not repeat earlier ack).
+
+🚨 准则 5 (INTEGRITY) — **NO PAST-TENSE COMPLETION CLAIMS** when tool failed:
+The tool DID NOT change any state. Therefore your next reply MUST NOT claim,
+in ANY tense or verb form, that a state change occurred. Reasoning rule:
+
+  "If state X was NOT modified, I cannot say 'I have <past-action> X'."
+
+This rule applies to ALL completion-style verbs (regardless of language):
+  archived / done / completed / dismissed / corrected / updated / saved /
+  written / set / changed / fixed / resolved / 修正 / 已更新 / 已记录 / ...
+
+If Sir 真意 was clearly conveyed (e.g. "I'm back from shower"), you may
+narrate the *observation* without claiming a *system mutation*:
+  ✓ "Welcome back, Sir." (observation, no claim of mutation)
+  ✗ "I have corrected your status from away to returned." (FALSE — guard blocked)
+
+Pattern to AVOID (Sir 真测 22:03 + 23:51 痛点):
+  ❌ Repeat earlier "Understood, Sir. I have archived..." → that is a lie now.
+  ❌ Output identical text to spoken_so_far above → Sir hears the same line twice.
+  ❌ Use a synonym verb to bypass this rule (e.g. "corrected" / "updated" /
+       "saved" 等). Sir 真测 23:51: 主脑用 "I have corrected your status"
+       绕开 "archived/done/completed/dismissed" forbidden list → 仍违准则 5.
+
+Pattern to FOLLOW (your own words; these are examples, not templates):
+  ✓ "Apologies Sir — that concern ID is not in my ledger; the dismiss did not go through."
+  ✓ "我搞错了, 先生 — 那条 concern_id 在我清单里找不到, 没归档成功."
+  ✓ "Welcome back, Sir. I noted the status verbally but the system mutation did not commit."
+"""
+
+                    continuation_prompt = f"""[SYSTEM TOOL RESULT for {command}]: {tool_result}{_dedup_directive}
 
 [CRITICAL CHAINING RULE]:
 If you need to perform ANOTHER action based on this result, output ONLY the next <FAST_CALL> block. DO NOT speak any words between chained tool calls! Stay completely silent until ALL tools are done.
@@ -4222,6 +4373,26 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         and len(_stripped_full or '') >= 30)  # 仅 reply 足够长 (>=30) 才抑制
                 )
             )
+
+            # 🆕 [Sir 2026-05-26 21:51 真痛 BUG-J 治本] wrap-up 不该 mutate full_text
+            # 当主 reply 已 >= 50 char + single_step_fast_path circuit:
+            # 老 BUG (21:07 真测): 主 reply 159 char 已出 → wrap-up 触发 → full_text
+            # 被改成 "Done, Sir." → 主对话框 + subtitle 看到第二段 "已完成。" → Sir 困惑
+            # 双段 reply. 治本: 主 reply 够长时, 短路 skip wrap-up (audio 已 suppress,
+            # subtitle 也跳, 主对话框保留主 reply 不变).
+            if (_need_synthesis and _suppress_wrap_audio
+                    and _circuit_broken_reason == 'single_step_fast_path'
+                    and _stripped_full and len(_stripped_full) >= 50):
+                try:
+                    from jarvis_utils import bg_log as _wrap_skip_bg
+                    _wrap_skip_bg(
+                        f"⏭️ [Wrap-up Skipped] main reply already complete "
+                        f"({len(_stripped_full)}ch) + single_step_fast_path + "
+                        f"audio suppressed → no synthesis needed (BUG-J fix)"
+                    )
+                except Exception:
+                    pass
+                _need_synthesis = False  # 短路, 不进 synthesis 分支
 
             if _need_synthesis:
                 last_ok = next((r for r in reversed(_tool_results) if r.startswith("✅")), None)
@@ -4389,7 +4560,25 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             if _tool_results:
                 print(f"╟─── 🛠️  [Action] " + "─"*44)
                 for r in _tool_results:
-                    print(_box_newline(f"║ {r}"))
+                    # 🆕 [Sir 2026-05-26 23:55 BUG-α 治本] friendly console format.
+                    # =========================================================
+                    # Sir 真痛: console 看 "❌ mutation.update fail: evidence_guard_
+                    # blocked: no_evidence_for_new_value: substring_match=False,
+                    # jaccard=0.00<0.15; new_value head='returned_fr...'" 内部
+                    # 错误信息泄漏到 chat 主框, 反 butler 风 (Sir 像看 Jarvis BUG).
+                    # 治本: console 显示用 friendly summary 替代内部 traceback,
+                    # 主脑 prompt 仍用完整 _tool_results 字符串 (主脑下轮 audit + 自决).
+                    # =========================================================
+                    _r_console = r
+                    if 'evidence_guard_blocked' in str(r):
+                        # 提取 field + 简化
+                        _field_m = re.search(r'\(layer=([^)]+)\)', str(r))
+                        _layer = _field_m.group(1) if _field_m else '?'
+                        _r_console = (
+                            f"⏸  mutation 暂未写入 (无 STM Sir 直接 evidence, "
+                            f"layer={_layer}); SWM 已 publish 让主脑下轮 audit + 自决补救"
+                        )
+                    print(_box_newline(f"║ {_r_console}"))
                 print("╟" + "─"*63)
 
             # [P1] 把熔断原因暴露给外层 JarvisWorker.B 守门人 —— 整轮收尾后再判一次
@@ -4495,15 +4684,27 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     re.IGNORECASE | re.DOTALL,
                 )
                 _zh_clean = _META_DETECT_RE.sub('', _zh_clean).strip()
-                _zh_endings = set('.?!。？！…')
+                # 🆕 [Sir 2026-05-26 21:50 真痛追根 BUG-K 治本]
+                # Sir 21:07 真测: ZH 末尾 '"That is home。"' (含末尾 quote mark)
+                # → 末尾 '"' 不在 endings → 误报 truncated. 修: 加 ASCII/CJK quotes
+                # 到 endings (引号收尾是合法 ZH 翻译收束模式, e.g. 引用电影台词).
+                _zh_endings = set('.?!。？！…"\'""''」』）)')
                 _zh_truncated = False
                 if _en_net and len(_en_net) >= 30:
                     if not _zh_clean:
                         _zh_truncated = True  # 完全没 ZH
                     elif _zh_clean[-1] not in _zh_endings:
-                        _zh_truncated = True  # 末尾不是收束标点
-                    elif len(_zh_clean) < len(_en_net) * 0.4:
-                        _zh_truncated = True  # ZH 显著短于 EN (中文一般为 EN 的 0.5~0.7 倍)
+                        _zh_truncated = True  # 末尾不是收束标点 = LLM stop 半途
+                    # 🆕 [Sir 2026-05-26 20:21 真测追根 BUG 治本 / 准则 8 优雅]
+                    # =====================================================================
+                    # 老 elif 'len(_zh_clean) < len(_en_net) * 0.4' 误伤正常翻译.
+                    # Sir 真测 (20:21:03): ZH=76ch / EN=216ch = 35% < 40% 触发 truncate,
+                    # 但 ends_ok=True (末尾 '。') → ZH 实际完整, 还误触 worker 补一次字幕.
+                    # 真根因: 中文译英文 0.25-0.5 都正常 (中文紧凑), ratio 0.4 太严.
+                    # 修法 (准则 8 优雅): 删 ratio elif, ends_ok 已是 LLM 完成的强证据.
+                    # 极端反例 ('好。' / 200ch EN) 不算 ZH truncate, 而是 LLM 翻译偷懒,
+                    # 由主脑下轮自纠 (不该 chat_bypass 这边误报 truncate 触发补字幕).
+                    # =====================================================================
                 if _zh_truncated:
                     # 含足够英文但 ZH 缺失/不完整 → 翻译被 LLM truncate
                     from jarvis_utils import bg_log as _zh_miss_bg
@@ -4775,7 +4976,15 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 zh_text = full_text.split("---ZH---")[1].strip()
                 clean_zh = re.sub(r'<[^>]+>', '', zh_text).strip()
                 if clean_zh:
-                    self.subtitle_queue.put(("zh", clean_zh))
+                    # 🆕 [Sir 23:24 BUG-1 治本] 末尾不合法 → defer (worker 补 atomic put)
+                    if _zh_subtitle_looks_truncated(clean_zh, len(final_reply)):
+                        try:
+                            from jarvis_utils import bg_log as _zh_def_bg3
+                            _zh_def_bg3(f"⏸ [Subtitle/ZH-defer] leftover ZH 末尾不合法 ({len(clean_zh)}ch '{clean_zh[-20:]}'), 跳过 put, 等 worker 补")
+                        except Exception:
+                            pass
+                    else:
+                        self.subtitle_queue.put(("zh", clean_zh))
             
         except Exception as e:
             import traceback as _tb
@@ -4866,6 +5075,46 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         user_input=clean_user_input,
                         jarvis_reply=_eval_reply,
                     )
+        except Exception:
+            pass
+
+        # 🆕 [Sir 2026-05-26 22:03 真痛 BUG-S 治本] FAST_CALL 路径补 publish SWM 'tool_called'
+        # =====================================================================
+        # Sir 真测: concerns.dismiss 返 ❌, INTEGRITY/Alert gated_silent (SWM 无 evidence).
+        # 老路径 chat_bypass FAST_CALL execute 后只 append _tool_results, 没 publish SWM.
+        # 而 IntentResolver/InnerThought 路径 publish 'tool_called' SWM. 现补 chat_bypass
+        # FAST_CALL 路径也 publish, 让 INTEGRITY/Alert 第 3 trigger (tool_failed_recent)
+        # 看到 evidence → force inject ALERT → 主脑下轮道歉.
+        # =====================================================================
+        try:
+            if '_tool_results' in dir() and _tool_results:
+                from jarvis_utils import get_event_bus as _geb_tc
+                _bus_tc_chat = _geb_tc()
+                if _bus_tc_chat is not None:
+                    for _tr_item in _tool_results:
+                        _tr_str = str(_tr_item or '')
+                        if not _tr_str:
+                            continue
+                        _tr_ok = _tr_str.startswith('✅')
+                        _tr_failed = (_tr_str.startswith('❌')
+                                       or _tr_str.startswith('🛡️'))
+                        _bus_tc_chat.publish(
+                            etype='tool_called',
+                            description=(
+                                ('✓ ' if _tr_ok else ('✗ ' if _tr_failed else '? '))
+                                + _tr_str[:120]
+                            ),
+                            source='chat_bypass.fast_call',
+                            salience=0.85 if _tr_failed else 0.75,
+                            metadata={
+                                'ok': _tr_ok if (_tr_ok or _tr_failed) else None,
+                                'result_summary': _tr_str[:200],
+                                'turn_id': str(
+                                    (lambda: __import__('jarvis_utils')
+                                     .TraceContext.get_turn_id() or '')()
+                                ),
+                            },
+                        )
         except Exception:
             pass
 
@@ -5224,6 +5473,11 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         _issues = _verdict.get('issues', []) or []
                         _bus = get_event_bus()
                         if _bus is not None:
+                            # 🆕 [Sir 2026-05-26 21:55 真痛 BUG-J 治本] PreFlight publish
+                            # 加 edited_reply + scrap_reason → 主脑下轮 prompt 看到
+                            # "PreFlight 给的修正建议" 自动 self-correct. 老 BUG:
+                            # 只 publish verdict + issues, 没 publish edited_reply →
+                            # 主脑下轮看到 verdict=edit 但不知改成什么 → 不会自纠.
                             _bus.publish(
                                 etype='preflight_verdict',
                                 description=(
@@ -5240,6 +5494,13 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                     'draft_excerpt': str(final_reply or '')[:120],
                                     'latency_ms': _verdict.get('latency_ms', 0),
                                     'fallback': bool(_verdict.get('_fallback')),
+                                    # 🆕 BUG-J: 主脑下轮 prompt evidence 看修正建议
+                                    'edited_reply': str(
+                                        _verdict.get('edited_reply', '') or ''
+                                    )[:300],
+                                    'scrap_reason': str(
+                                        _verdict.get('scrap_reason', '') or ''
+                                    )[:200],
                                 },
                             )
                         # log
@@ -5661,6 +5922,30 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
         _explicit_directive = nudge_context.get('nudge_directive', '') or ''
         if _explicit_directive and isinstance(_explicit_directive, str) and len(_explicit_directive) > 30:
             nudge_directive = _explicit_directive
+
+        # 🆕 [Sir 2026-05-26 19:48 Phase 1A] inner_thought_fire 特殊 wrap
+        # =====================================================================
+        # 当 type='inner_thought_fire': thought 自决出声 (sal>=0.85 + nudge_coordination
+        # yield 已过). 但这是 daemon 慢反思的提议, 优先级最低 — 主脑应特别考虑 [SILENCE]
+        # 除非 evidence_link 真强 + Sir 当前真需要这条信息.
+        # =====================================================================
+        if nudge_context.get('type') == 'inner_thought_fire':
+            _thought_cat = nudge_context.get('thought_category', '?')
+            _thought_sal = nudge_context.get('thought_salience', 0.0)
+            _thought_ev = nudge_context.get('thought_evidence_link', '')
+            _thought_text = nudge_context.get('thought_text', '')
+            nudge_directive = (
+                f"[INNER THOUGHT FIRE — daemon 自决出声, 你可拒]\n"
+                f"  draft (主脑可改写/拒): \"{_explicit_directive[:200]}\"\n"
+                f"  thought category: {_thought_cat} (A=obs/B=self-reflect/C=concern/D=proactive/E=relationship)\n"
+                f"  thought salience: {_thought_sal:.2f} (>=0.85 才到这里)\n"
+                f"  thought evidence_link: \"{_thought_ev[:80]}\"\n"
+                f"  thought 内文: \"{_thought_text[:140]}\"\n\n"
+                f"决策 (准则 7 你元否决权):\n"
+                f"  - 若 Sir 当前真需要 + evidence 强 → 改写为 1-2 句 natural remark\n"
+                f"  - 若 evidence 弱 / Sir 在做别的事 / thought 像哲学独白 → [SILENCE]\n"
+                f"  - 若 thought 跟 Sir 历史不一致 → [SILENCE] + publish 'thought_self_doubted' SWM"
+            )
 
         conductor_msg = nudge_context.get('conductor_message', '')
         if conductor_msg:
@@ -6260,9 +6545,18 @@ No ZH translation. No closing remark. Nothing else.
                 zh_text = full_text.split("---ZH---")[1].strip()
                 clean_zh = re.sub(r'<[^>]+>', '', zh_text).strip()
                 if clean_zh:
-                    self.subtitle_queue.put(("zh", clean_zh))
-                    # [P0+18-c.12 / 2026-05-15] 多段 ZH (含 \n\n) 走 _box_newline,每行加 ║ 前缀
-                    print("\n" + _box_newline(f"║ 📺  [Subtitle] {clean_zh}"))
+                    # 🆕 [Sir 23:24 BUG-1 治本] nudge stream 末了 ZH 末尾不合法 → defer
+                    _final_for_check = full_text.split('---ZH---')[0].strip() if '---ZH---' in full_text else ''
+                    if _zh_subtitle_looks_truncated(clean_zh, len(_final_for_check)):
+                        try:
+                            from jarvis_utils import bg_log as _zh_def_bg5
+                            _zh_def_bg5(f"⏸ [Subtitle/ZH-defer/nudge] leftover ZH 末尾不合法 ({len(clean_zh)}ch '{clean_zh[-20:]}'), 跳过 put")
+                        except Exception:
+                            pass
+                    else:
+                        self.subtitle_queue.put(("zh", clean_zh))
+                        # [P0+18-c.12 / 2026-05-15] 多段 ZH (含 \n\n) 走 _box_newline,每行加 ║ 前缀
+                        print("\n" + _box_newline(f"║ 📺  [Subtitle] {clean_zh}"))
 
             # 🩹 [P0+20-β.1.25 / 2026-05-16] 记录本轮 reply 开头到 anti-repeat 历史
             # 下次同 nudge_type 触发时塞进 prompt 显式 FORBIDDEN，防固定句式复用

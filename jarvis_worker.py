@@ -1983,15 +1983,20 @@ class JarvisWorkerThread(QThread):
                             self.voice_thread.in_active_conversation = True
                             self.voice_thread.last_interaction_time = time.time()
 
-                    # 🩹 [P0+20-β.5.17 / 2026-05-19] Sir 22:21 实测 - proactive_care 也加入 focus.
-                    # 原 list ("offer_help", "commitment_check") 不含 proactive_care 让 Sir
-                    # 听完 ProactiveCare 主动关心后没机会回应 (没 90s 软焦点窗口). 既然 β.5.13
-                    # 已把 ProactiveCare silent_text/visual_pulse 也走主脑 reaction_space, 主脑
-                    # 决定要 voice 发声的 proactive_care 应当跟 offer_help 等同待遇 (用户期望回应).
-                    # 🩹 [β.5.22-D / 2026-05-19] sleep_due (β.5.22-G 新类型) 也加入 focus list -
-                    # 到点提醒 Sir "您说的时间到了" 主脑期待 Sir 回应 ("好我马上睡" / "再 10 分钟").
-                    # 🩹 [P4-edge-C / 2026-05-21 00:05] 加 'late_night' (Sir 23:32 真测无 focus)
-                    if nudge_type in ("offer_help", "commitment_check", "proactive_care", "sleep_due", "late_night") and hasattr(self, 'return_sentinel') and self.return_sentinel:
+                    # 🆕 [Sir 2026-05-26 22:05 真痛 BUG-T 治本] 任何 nudge fire 都默认 90s focus lock
+                    # =====================================================================
+                    # Sir 真意 anchor: "其他的贾维斯主动发声入口都该有一个让我回复的时间"
+                    # 老 list (offer_help/commitment_check/proactive_care/sleep_due/late_night)
+                    # 漏: dormant_project / screen_tease / atmosphere / wellness / etc.
+                    # Sir 真测 22:02:25 dormant_project fire → 没 focus lock → Sir 没机会回复.
+                    # 修法 (准则 8 优雅): 删 list 条件, 让所有 nudge_type 默认进 focus lock.
+                    # 准则 6 持久化 opt-out: NUDGE_FOCUS_LOCK_OPT_OUT env var 逗号分隔 e.g.
+                    #   'wake_only,system_silent' — 反例少 (默认空 = 全部 lock).
+                    # =====================================================================
+                    _opt_out = set(os.environ.get('NUDGE_FOCUS_LOCK_OPT_OUT', '').split(','))
+                    _opt_out.discard('')
+                    if (nudge_type and nudge_type not in _opt_out
+                            and hasattr(self, 'return_sentinel') and self.return_sentinel):
                         self.return_sentinel.soft_focus_active = True
                         self.return_sentinel.soft_focus_until = time.time() + 90.0
                         self.return_sentinel._soft_focus_reason = nudge_type

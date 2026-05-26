@@ -9,19 +9,45 @@
     "auto_propose": "INTEGRITY_STACK L7 WeeklyReflector 扩展 type/keyword",
     "consumer": "jarvis_claim_classifier.classify",
     "schema_note": "每条 pattern = 1 个 (claim_type, kinds_hard_map, keywords) 三元组. 多 pattern 同 claim_type 在 loader 合并. kinds_hard_map 中 kind 命中 → 直接返该 claim_type (优先级最高). keywords 命中 → 也返该 claim_type. 都没命中 → 'Unknown'.",
-    "claim_types_canonical": ["Past", "Future", "State", "Recall", "Social", "Tool"],
+    "claim_types_canonical": [
+      "Past",
+      "Future",
+      "State",
+      "Recall",
+      "Social",
+      "Tool"
+    ],
     "design_note": "kind ('time'/'past_action'/'count'/'percent'/'quote'/'multiplier') 是 extract_claims 产出, claim_type ('Past'/'Future'/...) 是 L1 分类. 前者细粒度命中 regex, 后者粗粒度供 L2 evidence_requirements 表查."
   },
   "patterns": [
     {
       "id": "past_default",
       "claim_type": "Past",
-      "kinds_hard_map": ["past_action"],
+      "kinds_hard_map": [
+        "past_action"
+      ],
       "keywords": [
-        "already", "i've", "i have", "i opened", "i launched", "i started",
-        "i closed", "i muted", "i sent", "i set", "i updated", "i saved",
-        "i deleted", "i cancelled",
-        "已经", "已", "完成了", "做完了", "刚才完成", "刚搞定", "处理完了"
+        "already",
+        "i've",
+        "i have",
+        "i opened",
+        "i launched",
+        "i started",
+        "i closed",
+        "i muted",
+        "i sent",
+        "i set",
+        "i updated",
+        "i saved",
+        "i deleted",
+        "i cancelled",
+        "已经",
+        "已",
+        "完成了",
+        "做完了",
+        "刚才完成",
+        "刚搞定",
+        "处理完了"
       ],
       "state": "active",
       "source": "seed",
@@ -33,11 +59,31 @@
       "claim_type": "Future",
       "kinds_hard_map": [],
       "keywords": [
-        "i will", "i'll", "i plan", "i'm going to", "let me",
-        "i'll try", "i'll see", "i can take", "i can do", "i'll set",
-        "i'll look", "i'll check", "i'll get back", "let me know",
-        "我会", "我准备", "我打算", "我之后", "稍后我", "我去做",
-        "我看看", "我尝试", "我帮你", "我帮您", "等我"
+        "i will",
+        "i'll",
+        "i plan",
+        "i'm going to",
+        "let me",
+        "i'll try",
+        "i'll see",
+        "i can take",
+        "i can do",
+        "i'll set",
+        "i'll look",
+        "i'll check",
+        "i'll get back",
+        "let me know",
+        "我会",
+        "我准备",
+        "我打算",
+        "我之后",
+        "稍后我",
+        "我去做",
+        "我看看",
+        "我尝试",
+        "我帮你",
+        "我帮您",
+        "等我"
       ],
       "state": "active",
       "source": "seed",
@@ -47,12 +93,25 @@
     {
       "id": "recall_default",
       "claim_type": "Recall",
-      "kinds_hard_map": ["quote"],
+      "kinds_hard_map": [
+        "quote"
+      ],
       "keywords": [
-        "you said", "you told me", "you mentioned", "you noted",
-        "as you said", "as you mentioned", "you recall",
-        "您说", "您说过", "您告诉我", "您提到", "您表示",
-        "我记得您", "正如您说", "您之前说"
+        "you said",
+        "you told me",
+        "you mentioned",
+        "you noted",
+        "as you said",
+        "as you mentioned",
+        "you recall",
+        "您说",
+        "您说过",
+        "您告诉我",
+        "您提到",
+        "您表示",
+        "我记得您",
+        "正如您说",
+        "您之前说"
       ],
       "state": "active",
       "source": "seed",
@@ -64,9 +123,23 @@
       "claim_type": "Social",
       "kinds_hard_map": [],
       "keywords": [
-        "you like", "you prefer", "you enjoy", "you tend to", "you usually",
-        "you always", "you never", "you typically", "sir likes", "sir prefers",
-        "您喜欢", "您偏爱", "您习惯", "您通常", "您总是", "您从不", "您往往"
+        "you like",
+        "you prefer",
+        "you enjoy",
+        "you tend to",
+        "you usually",
+        "you always",
+        "you never",
+        "you typically",
+        "sir likes",
+        "sir prefers",
+        "您喜欢",
+        "您偏爱",
+        "您习惯",
+        "您通常",
+        "您总是",
+        "您从不",
+        "您往往"
       ],
       "state": "active",
       "source": "seed",
@@ -78,10 +151,25 @@
       "claim_type": "Tool",
       "kinds_hard_map": [],
       "keywords": [
-        "opening", "launching", "calling", "executing", "running",
-        "fetching", "querying", "pulling up", "checking",
-        "正在打开", "正在调用", "正在执行", "正在运行", "正在查",
-        "在打开", "在调用", "在查", "帮您打开", "帮您查"
+        "opening",
+        "launching",
+        "calling",
+        "executing",
+        "running",
+        "fetching",
+        "querying",
+        "pulling up",
+        "checking",
+        "正在打开",
+        "正在调用",
+        "正在执行",
+        "正在运行",
+        "正在查",
+        "在打开",
+        "在调用",
+        "在查",
+        "帮您打开",
+        "帮您查"
       ],
       "state": "active",
       "source": "seed",
@@ -91,7 +179,9 @@
     {
       "id": "state_time_default",
       "claim_type": "State",
-      "kinds_hard_map": ["time"],
+      "kinds_hard_map": [
+        "time"
+      ],
       "keywords": [],
       "state": "active",
       "source": "seed",
@@ -101,16 +191,39 @@
     {
       "id": "state_quant_default",
       "claim_type": "State",
-      "kinds_hard_map": ["percent", "multiplier", "count"],
+      "kinds_hard_map": [
+        "percent",
+        "multiplier",
+        "count"
+      ],
       "keywords": [
-        "is currently", "currently", "right now",
-        "处于", "当前状态", "目前状态",
-        "状态是", "数据显示", "stats show"
+        "is currently",
+        "currently",
+        "right now",
+        "处于",
+        "当前状态",
+        "目前状态",
+        "状态是",
+        "数据显示",
+        "stats show"
       ],
       "state": "active",
       "source": "seed",
       "created_at": 1779999600.0,
       "note": "State 量化类 (百分比/倍数/计数/状态描述). β.4.3.4 移除 “正在/当前/目前/现在” 等过广 keyword (与 Tool 冲突), 只留明确状态描述"
+    },
+    {
+      "id": "percent_claims",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "%",
+        "percent"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779798637.207712,
+      "note": "Specific percentage values are often factual states rather than past or future actions."
     }
   ]
 }

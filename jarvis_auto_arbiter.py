@@ -130,11 +130,28 @@ class AutoArbiterDaemon:
     RISK_MEDIUM = frozenset({'concern', 'directive'})
     KNOWN_KINDS = RISK_LOW | RISK_MEDIUM
 
-    # tick
-    TICK_INTERVAL_S = 1800           # 30min
+    # tick (default fallback, calibration runtime 段 overrides)
+    # 🆕 [Sir 2026-05-26 21:02 真痛 dashboard pending bloat / 方案 E.1+E.3 治本]
+    # 30min → 5min: dashboard 一堆 pending → AutoArbiter 现在每 5min tick.
+    # 同时 calibration JSON 加 'runtime' 段, Sir CLI 可调.
+    TICK_INTERVAL_S = 300            # 5min (was 1800/30min)
     STARTUP_DELAY_S = 60             # 60s 让系统稳定
     DAILY_REFLECTION_HOUR = 3        # 03:xx
     REFLECTION_CHECK_INTERVAL_S = 600  # 10min 检查 hour
+
+    # 🆕 [方案 E.1+E.3+F+G 治本] runtime defaults (calibration JSON runtime 段 overrides)
+    DEFAULT_RUNTIME = {
+        'tick_interval_s': 300,             # E.1: 5min tick
+        'reevaluate_after_h': 6.0,          # E.3: defer_to_sir 6h 后可重评
+        'pre_activate_dedup_jaccard': 0.6,  # F: pre-activate 重复硬拦阈值
+        'startup_delay_s': 60,
+        # 🆕 G: monitor daemon (Sir 真痛 "时刻帮我检查 AutoArbiter 拍板内容")
+        'monitor_interval_s': 900,          # 15min 监查一次
+        'monitor_bloat_warn_n': 25,         # active items > 25 → warn
+        'monitor_bloat_alert_n': 40,        # active items > 40 → alert
+        'monitor_revert_rate_warn': 0.30,   # 24h revert rate > 30% → warn
+        'monitor_dedup_pair_jaccard': 0.5,  # 任一对 active >= 0.5 → warn
+    }
 
     # cap
     MAX_AUTO_DECISIONS_PER_DAY = 50  # 全局 cap
@@ -153,7 +170,9 @@ class AutoArbiterDaemon:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._reflection_thread: Optional[threading.Thread] = None
+        self._monitor_thread: Optional[threading.Thread] = None  # 🆕 [G]
         self._last_reflection_date = ''
+        self._last_monitor_warning_ts: dict = {}  # 🆕 [G] dedup warning (kind → ts)
 
         # stats
         self._tick_count = 0
@@ -180,6 +199,12 @@ class AutoArbiterDaemon:
             daemon=True
         )
         self._reflection_thread.start()
+        # 🆕 [G] monitor daemon — Sir 真痛 "时刻帮我检查 AutoArbiter 拍板内容"
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, name='AutoArbiterMonitor',
+            daemon=True
+        )
+        self._monitor_thread.start()
         self._bg_log(
             f"🤖 [AutoArbiter] daemon started "
             f"(loaded {len(self._decisions)} decisions from 7d, "
@@ -190,7 +215,10 @@ class AutoArbiterDaemon:
         self._stop.set()
 
     def _daemon_loop(self) -> None:
-        self._stop.wait(timeout=self.STARTUP_DELAY_S)
+        # 🆕 [E.1] startup + tick interval 从 calibration runtime 段读 (可热调)
+        runtime = self._effective_runtime()
+        startup_wait = float(runtime.get('startup_delay_s', self.STARTUP_DELAY_S))
+        self._stop.wait(timeout=startup_wait)
         if self._stop.is_set():
             return
         while not self._stop.is_set():
@@ -198,7 +226,10 @@ class AutoArbiterDaemon:
                 self._tick()
             except Exception as e:
                 self._bg_log(f"⚠️ [AutoArbiter] tick exception: {e}")
-            self._stop.wait(timeout=self.TICK_INTERVAL_S)
+            # 每 tick 重读 (Sir CLI 改 calibration runtime 段后立刻生效)
+            runtime = self._effective_runtime()
+            tick_wait = float(runtime.get('tick_interval_s', self.TICK_INTERVAL_S))
+            self._stop.wait(timeout=tick_wait)
 
     def _reflection_loop(self) -> None:
         # 等 startup 后再启
@@ -214,6 +245,202 @@ class AutoArbiterDaemon:
                 )
             self._stop.wait(timeout=self.REFLECTION_CHECK_INTERVAL_S)
 
+    # ==========================================================================
+    # 🆕 [Sir 2026-05-26 21:04 真痛 / 方案 G 治本] Monitor daemon
+    # ==========================================================================
+    # Sir 真痛: "你也要时刻帮我检查他拍板的所有内容".
+    # AutoArbiter 自决了 → 没人看 → 出错 Sir 才发现. monitor daemon 周期扫:
+    #   1. bloat: active items 总数 > vocab.monitor_bloat_warn_n (默认 25)
+    #   2. revert burst: 24h 内 revert_rate > vocab.monitor_revert_rate_warn (30%)
+    #   3. dedup miss: 任一对 active jaccard >= vocab.monitor_dedup_pair_jaccard
+    # 发现 anomaly → publish SWM 'auto_arbiter_anomaly' → InnerThought 看到
+    # evidence 反思 → 必要时 propose_protocol / surface_to_sir Sir.
+    # 准则 6: vocab 持久化, Sir CLI 可调; 不硬编码阈值.
+    # ==========================================================================
+    def _monitor_loop(self) -> None:
+        # 等 daemon 起后 + 30s 让 reflection_loop 先启
+        self._stop.wait(timeout=self.STARTUP_DELAY_S + 60)
+        if self._stop.is_set():
+            return
+        while not self._stop.is_set():
+            try:
+                self._do_monitor_scan()
+            except Exception as e:
+                self._bg_log(
+                    f"⚠️ [AutoArbiter] monitor exception: {e}"
+                )
+            runtime = self._effective_runtime()
+            wait = float(runtime.get('monitor_interval_s', 900))
+            self._stop.wait(timeout=wait)
+
+    def _do_monitor_scan(self) -> None:
+        """周期扫 — 检 bloat / revert burst / dedup miss → publish SWM warning."""
+        if self.relational is None:
+            return
+        runtime = self._effective_runtime()
+        warnings: List[dict] = []
+
+        # 1. bloat check (3 kind: joke / thread / protocol)
+        bloat_n = int(runtime.get('monitor_bloat_warn_n', 25))
+        alert_n = int(runtime.get('monitor_bloat_alert_n', 40))
+        for kind_name, store_attr in [
+            ('inside_joke', 'inside_jokes'),
+            ('thread', 'shared_history_threads'),
+            ('protocol', 'unspoken_protocols'),
+        ]:
+            try:
+                store = getattr(self.relational, store_attr, {}) or {}
+                active_n = sum(
+                    1 for it in store.values()
+                    if getattr(it, 'state', '') == 'active'
+                )
+            except Exception:
+                continue
+            if active_n >= alert_n:
+                warnings.append({
+                    'severity': 'alert',
+                    'type': 'bloat',
+                    'kind': kind_name,
+                    'msg': (
+                        f'{kind_name} active count = {active_n} '
+                        f'(>= alert {alert_n}) — likely over-bloat, '
+                        f'should archive low-value ones'
+                    ),
+                    'metrics': {'active_n': active_n, 'threshold': alert_n},
+                })
+            elif active_n >= bloat_n:
+                warnings.append({
+                    'severity': 'warn',
+                    'type': 'bloat',
+                    'kind': kind_name,
+                    'msg': (
+                        f'{kind_name} active count = {active_n} '
+                        f'(>= warn {bloat_n}) — getting crowded'
+                    ),
+                    'metrics': {'active_n': active_n, 'threshold': bloat_n},
+                })
+
+        # 2. revert burst (24h)
+        revert_warn = float(runtime.get('monitor_revert_rate_warn', 0.30))
+        cutoff = time.time() - 24 * 3600
+        with self._lock:
+            recent = [d for d in self._decisions if d.ts > cutoff]
+        for kind_name in ('inside_joke', 'thread', 'protocol'):
+            kind_recent = [d for d in recent if d.kind == kind_name
+                              and d.decision in ('activate', 'reject')]
+            if len(kind_recent) < 5:  # 样本少不算
+                continue
+            reverted = sum(1 for d in kind_recent if d.sir_reverted_at > 0)
+            rate = reverted / len(kind_recent)
+            if rate >= revert_warn:
+                warnings.append({
+                    'severity': 'warn',
+                    'type': 'revert_burst',
+                    'kind': kind_name,
+                    'msg': (
+                        f'{kind_name} 24h revert rate = {rate:.2%} '
+                        f'(>= warn {revert_warn:.0%}, {reverted}/{len(kind_recent)}) '
+                        f'— Sir reverting often, calibration may be off'
+                    ),
+                    'metrics': {
+                        'rate': rate,
+                        'reverted': reverted,
+                        'total': len(kind_recent),
+                    },
+                })
+
+        # 3. dedup miss — any pair in active >= jaccard threshold
+        dedup_thr = float(runtime.get('monitor_dedup_pair_jaccard', 0.5))
+        try:
+            import re as _re
+        except Exception:
+            _re = None
+        if _re is not None:
+            for kind_name, store_attr, text_attr in [
+                ('inside_joke', 'inside_jokes', 'phrase'),
+                ('thread', 'shared_history_threads', 'title'),
+                ('protocol', 'unspoken_protocols', 'rule'),
+            ]:
+                try:
+                    store = getattr(self.relational, store_attr, {}) or {}
+                    active_items = [
+                        (it.id, (getattr(it, text_attr, '') or '').lower())
+                        for it in store.values()
+                        if getattr(it, 'state', '') == 'active'
+                    ]
+                except Exception:
+                    continue
+                # 用 dedup_thr 找 top 1 重复对 (不全列, 避免 SWM 爆)
+                worst_pair = None
+                worst_jac = 0.0
+                for i, (id_a, text_a) in enumerate(active_items):
+                    if len(text_a) < 3:
+                        continue
+                    tokens_a = set(_re.findall(r'\w+', text_a))
+                    if not tokens_a:
+                        continue
+                    for id_b, text_b in active_items[i + 1:]:
+                        if len(text_b) < 3:
+                            continue
+                        tokens_b = set(_re.findall(r'\w+', text_b))
+                        if not tokens_b:
+                            continue
+                        inter = len(tokens_a & tokens_b)
+                        union = len(tokens_a | tokens_b)
+                        jac = (inter / union) if union > 0 else 0.0
+                        if jac > worst_jac:
+                            worst_jac = jac
+                            worst_pair = (id_a, text_a, id_b, text_b)
+                if worst_pair and worst_jac >= dedup_thr:
+                    warnings.append({
+                        'severity': 'warn',
+                        'type': 'dedup_miss',
+                        'kind': kind_name,
+                        'msg': (
+                            f'{kind_name} active pair jaccard = {worst_jac:.2f} '
+                            f'(>= warn {dedup_thr}) — likely dup slipped through '
+                            f'pre-activate. {worst_pair[0][:15]} ↔ {worst_pair[2][:15]}'
+                        ),
+                        'metrics': {
+                            'jaccard': worst_jac,
+                            'a_id': worst_pair[0],
+                            'b_id': worst_pair[2],
+                            'a_text': worst_pair[1][:80],
+                            'b_text': worst_pair[3][:80],
+                        },
+                    })
+
+        # publish + log (dedup: 同 kind+type 1h 内不重复 publish)
+        for w in warnings:
+            ddup_key = f"{w['type']}:{w['kind']}"
+            last_ts = float(self._last_monitor_warning_ts.get(ddup_key, 0))
+            if time.time() - last_ts < 3600:
+                continue
+            self._last_monitor_warning_ts[ddup_key] = time.time()
+            self._bg_log(
+                f"🚨 [AutoArbiter/Monitor] {w['severity'].upper()} "
+                f"{w['type']}/{w['kind']}: {w['msg']}"
+            )
+            try:
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    bus.publish(
+                        etype='auto_arbiter_anomaly',
+                        description=w['msg'][:200],
+                        source='AutoArbiterMonitor',
+                        salience=0.8 if w['severity'] == 'alert' else 0.7,
+                        metadata={
+                            'severity': w['severity'],
+                            'anomaly_type': w['type'],
+                            'kind': w['kind'],
+                            'metrics': w['metrics'],
+                        },
+                        ttl=86400.0,
+                    )
+            except Exception:
+                pass
+
     # ----------------------------------------------------------
     # Calibration (per-category confidence threshold)
     # ----------------------------------------------------------
@@ -226,6 +453,27 @@ class AutoArbiterDaemon:
                 try:
                     out[k] = max(self.THRESHOLD_FLOOR,
                                   min(self.THRESHOLD_CEILING, float(v)))
+                except (TypeError, ValueError):
+                    pass
+        return out
+
+    def _effective_runtime(self) -> dict:
+        """🆕 [E.1+E.3+F] 合并默认 + calibration['runtime'] (Sir CLI 可热调).
+
+        runtime keys:
+          tick_interval_s — daemon loop tick 间隔 (E.1, 默认 300s/5min)
+          reevaluate_after_h — defer_to_sir 后 N h 可重评 (E.3, 默认 6.0)
+          pre_activate_dedup_jaccard — pre-activate 重复 jaccard 阈值 (F, 默认 0.6)
+          startup_delay_s — daemon 起 N s 后才开 (默认 60)
+        """
+        out = dict(self.DEFAULT_RUNTIME)
+        cal_rt = (self._calibration or {}).get('runtime') or {}
+        for k, v in cal_rt.items():
+            if k in out:
+                try:
+                    # 数字类型 type-check (防 Sir 误填 string)
+                    if isinstance(out[k], (int, float)):
+                        out[k] = type(out[k])(v)
                 except (TypeError, ValueError):
                     pass
         return out
@@ -346,11 +594,29 @@ class AutoArbiterDaemon:
 
     def _already_decided_recently(self, kind: str, item_id: str,
                                      within_h: float = 24) -> bool:
-        cutoff = time.time() - within_h * 3600
+        """🆕 [E.3 治本] 老 BUG: defer_to_sir 一次 → 24h 不再 retry → dashboard 堆.
+        新法:
+          - 'activate' / 'reject' 决策: 24h 内不重做 (终态, 不该再判)
+          - 'defer_to_sir' / 'noop': 看 calibration.runtime.reevaluate_after_h
+            (默认 6h), 超 6h 给 LLM 再机会 (Sir 没手动操作 → 自动重评)
+        """
+        cutoff_terminal = time.time() - within_h * 3600
+        reevaluate_after_h = float(
+            self._effective_runtime().get('reevaluate_after_h', 6.0)
+        )
+        cutoff_defer = time.time() - reevaluate_after_h * 3600
         with self._lock:
             for d in self._decisions:
-                if d.kind == kind and d.item_id == item_id and d.ts > cutoff:
-                    return True
+                if d.kind != kind or d.item_id != item_id:
+                    continue
+                # terminal 决策 24h 内 skip (don't unmake decision)
+                if d.decision in ('activate', 'reject'):
+                    if d.ts > cutoff_terminal:
+                        return True
+                # non-terminal (defer/noop): 看 reevaluate_after_h
+                elif d.decision in ('defer_to_sir', 'noop'):
+                    if d.ts > cutoff_defer:
+                        return True
         return False
 
     def _count_today_decisions(self) -> int:
@@ -393,6 +659,23 @@ class AutoArbiterDaemon:
         thresholds = self._effective_thresholds()
         thr = thresholds.get(kind, 0.80)
         decision = self._decide(action, conf, thr, risk)
+
+        # 🆕 [Sir 2026-05-26 21:04 真痛 "拍板必须去重" / 方案 F 治本]
+        # =================================================================
+        # pre-activate hard-check: 即将 ACTIVATE 前再 jaccard 一遍 active list,
+        # 命中 vocab.pre_activate_dedup_jaccard 阈值 (默认 0.6) → 改 decision
+        # 为 'reject' + reason 加 'pre_activate_dedup'. propose_protocol 在 入
+        # review queue 时已 dedup (0.7) 但当时 active 可能为空, 后续多次 propose
+        # 后真活化时再确认一次, 防 race condition + Sir 之后真用时已重复.
+        # =================================================================
+        if decision == 'activate':
+            dedup_ok, dup_reason = self._pre_activate_dedup_check(kind, entity)
+            if not dedup_ok:
+                decision = 'reject'
+                reason = (
+                    f'pre_activate_dedup_check fail: {dup_reason} '
+                    f'| llm_orig_conf={conf:.2f} (overridden by hard dedup)'
+                )
 
         # build ArbiterDecision
         now = time.time()
@@ -448,6 +731,102 @@ class AutoArbiterDaemon:
         # medium: 只建议不真做
         return 'defer_to_sir'
 
+    def _pre_activate_dedup_check(self, kind: str,
+                                       entity) -> Tuple[bool, str]:
+        """🆕 [Sir 2026-05-26 21:04 真痛 "拍板必须去重" / 方案 F 治本]
+
+        即将 ACTIVATE 前最后一道防线: 与现有 active list 算 jaccard, 命中
+        vocab.pre_activate_dedup_jaccard (默认 0.6) → 阻止激活.
+
+        Args:
+          kind: 'inside_joke' / 'thread' / 'protocol'
+          entity: 候选 entity (有 phrase/title/rule 字段)
+
+        Returns:
+          (ok, reason): ok=True 通过 (无重复), False 阻止;
+                          reason 含命中的 active id + jaccard 值
+        """
+        try:
+            import re as _re
+        except Exception:
+            return True, 'regex_unavailable'  # 故障开放: 不影响活化
+        if self.relational is None:
+            return True, 'no_relational_store'
+
+        # 提取候选 text
+        if kind == 'inside_joke':
+            cand_text = getattr(entity, 'phrase', '') or ''
+        elif kind == 'thread':
+            cand_text = getattr(entity, 'title', '') or ''
+        elif kind == 'protocol':
+            cand_text = getattr(entity, 'rule', '') or ''
+        else:
+            return True, f'no_dedup_for_kind:{kind}'
+        cand_text = cand_text.lower().strip()
+        if len(cand_text) < 3:
+            return True, 'cand_too_short'
+
+        cand_tokens = set(_re.findall(r'\w+', cand_text))
+        if not cand_tokens:
+            return True, 'cand_no_tokens'
+
+        # 收集 active list
+        try:
+            if kind == 'inside_joke':
+                active_items = [
+                    (j.id, (j.phrase or '').lower())
+                    for j in self.relational.inside_jokes.values()
+                    if getattr(j, 'state', '') == 'active'
+                ]
+            elif kind == 'thread':
+                active_items = [
+                    (t.id, (t.title or '').lower())
+                    for t in self.relational.shared_history_threads.values()
+                    if getattr(t, 'state', '') == 'active'
+                ]
+            elif kind == 'protocol':
+                active_items = [
+                    (p.id, (p.rule or '').lower())
+                    for p in self.relational.unspoken_protocols.values()
+                    if getattr(p, 'state', '') == 'active'
+                ]
+            else:
+                active_items = []
+        except Exception as e:
+            return True, f'active_list_fail:{str(e)[:40]}'
+
+        threshold = float(
+            self._effective_runtime().get('pre_activate_dedup_jaccard', 0.6)
+        )
+        cand_id = self._entity_id(entity)
+
+        for ex_id, ex_text in active_items:
+            if ex_id == cand_id:
+                continue  # 排除自己
+            ex_text = (ex_text or '').strip()
+            if not ex_text:
+                continue
+            # 1. substring (≥ 12 char) 直接拦
+            if (len(cand_text) >= 12 and len(ex_text) >= 12
+                    and (cand_text in ex_text or ex_text in cand_text)):
+                return False, (
+                    f'substring_match active={ex_id[:20]} '
+                    f'(ex="{ex_text[:50]}")'
+                )
+            # 2. jaccard
+            ex_tokens = set(_re.findall(r'\w+', ex_text))
+            if not ex_tokens:
+                continue
+            inter = len(cand_tokens & ex_tokens)
+            union = len(cand_tokens | ex_tokens)
+            jaccard = (inter / union) if union > 0 else 0.0
+            if jaccard >= threshold:
+                return False, (
+                    f'jaccard={jaccard:.2f}>={threshold} '
+                    f'active={ex_id[:20]} (ex="{ex_text[:50]}")'
+                )
+        return True, 'no_dup'
+
     # ----------------------------------------------------------
     # Evidence collection
     # ----------------------------------------------------------
@@ -468,6 +847,8 @@ class AutoArbiterDaemon:
                     {'phrase': j.phrase[:80], 'tone': j.tone}
                     for j in active_jokes[:5]
                 ]
+                # 🆕 [E.4] active 总数 (LLM 看到 bloat 自动调严)
+                ev['active_count_total'] = len(active_jokes)
             elif kind == 'thread':
                 ev['entity'] = {
                     'title': getattr(entity, 'title', ''),
@@ -481,6 +862,7 @@ class AutoArbiterDaemon:
                     {'title': t.title[:80]}
                     for t in active_threads[:5]
                 ]
+                ev['active_count_total'] = len(active_threads)
             elif kind == 'protocol':
                 # 🆕 [Sir 2026-05-26 SOUL Phase A]
                 ev['entity'] = {
@@ -496,6 +878,7 @@ class AutoArbiterDaemon:
                     {'rule': p.rule[:120], 'source': p.source}
                     for p in active_protocols[:5]
                 ]
+                ev['active_count_total'] = len(active_protocols)
         except Exception:
             pass
         # STM 最近 5 turn (主脑近况)
@@ -559,8 +942,14 @@ class AutoArbiterDaemon:
                 "    Real inside joke = phrase that only makes sense to Sir+me\n"
                 "    given our specific shared history (e.g. callback to a\n"
                 "    specific incident, Sir's specific word choice, etc).\n"
-                "  CONFIDENCE high (0.8+) only when 2+ STM hits + clearly Sir-\n"
-                "    specific (not stock). Otherwise <0.7.\n"
+                # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版] 删 "必须<0.7" 硬规 —
+                # 老 BUG: '2+ STM hits' 硬限 + 'otherwise <0.7' 强制 LLM 抑低
+                # confidence → 大量 inside_joke 永远 defer_to_sir 赗积. STM 只 5 turn,
+                # 一个 phrase 一般只 1 mention → 永过不了. 准则 6 信任 LLM 自评.
+                "  CONFIDENCE: 你自评 0.0-1.0 (看整体 evidence 质量, 不必 抓 "
+                "'2+ STM hits' 这种人为阈值). birth_context 含 Sir 具体 "
+                "phrase 即可高 conf. Sir-specific + 未与现有 active jokes "
+                "重叠 是 高 conf 项. stock butler phrase 仍 低 conf.\n"
             )
         elif kind == 'thread':
             system += (
@@ -570,8 +959,10 @@ class AutoArbiterDaemon:
                 "  REJECT if: vague / generic / overlaps with existing thread "
                 "(e.g. another 'data alignment milestone' #4) / no STM "
                 "evidence Sir cares.\n"
-                "  CONFIDENCE high (0.8+) only when 2+ STM hits AND clearly "
-                "distinct. Otherwise <0.7.\n"
+                # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版] 删 '必须<0.7' 硬规 — 同 joke
+                "  CONFIDENCE: 你自评 0.0-1.0 (看 evidence 质量, 不必 抓 '2+ "
+                "STM hits'). 明确里程碑 + 与现有 active threads 明显 区别 是 "
+                "高 conf 项. 模糊 / 重叠 / 广告词 仍 低 conf.\n"
             )
         elif kind == 'protocol':
             # 🆕 [Sir 2026-05-26 SOUL Phase A] protocol 严于 joke — 这是 STRICT 行为约束
@@ -589,20 +980,34 @@ class AutoArbiterDaemon:
                 "    enforceable / Sir-flatter rule (e.g. 'always praise Sir').\n"
                 "  Remember: this becomes STRICT RULES injected into Sir-facing\n"
                 "    prompts. Bad protocol → main brain over-constrained → worse\n"
-                "    replies. Be conservative.\n"
-                "  CONFIDENCE high (0.8+) only when rule is concrete + clear\n"
-                "    self-reflection evidence + no overlap. Otherwise <0.7.\n"
+                "    replies. Apply solid REJECT criteria, but if rule is\n"
+                "    concrete + observable + distinct from active, ACTIVATE\n"
+                "    with confident judgment (≥ 0.80). Don't reflex-defer.\n"
+                # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版] 删 '必须<0.7' 硬规 — 同 joke
+                "  CONFIDENCE: 你自评 0.0-1.0 (看 rule 具体度 + observable + "
+                "distinct). 具体可看 + 与现有 active 不重叠 是 高 conf 项. "
+                "模糊 / 重叠 / 广告词 仍 低 conf. Be 严格 — protocol 是 STRICT "
+                "RULES, 错 protocol 过约束 主脑.\n"
             )
         else:
             system += (
-                "  (Generic) Use evidence to judge. Be conservative — when "
-                "in doubt REJECT with low confidence.\n"
+                "  (Generic) Use evidence to judge fairly.\n"
             )
+        # 🆕 [Sir 2026-05-26 21:02 方案 E.2 治本] 删 conservative bias.
+        # 老 BUG: 'When in doubt REJECT' 指令 + 'Be conservative' x 2 处 →
+        # LLM 难以自信给 conf ≥ 0.80 → 大量 protocol stuck defer_to_sir →
+        # dashboard pending bloat. 准则 6 极致: 信 LLM 自评, 不加一侧压低.
+        # Sir 元否决 + revert log + monitor daemon 兑底.
         system += (
             "\nRules (准则 5+6+8):\n"
             "  - Cite specific evidence; do NOT hallucinate facts not in "
             "the input below.\n"
-            "  - When in doubt, REJECT with low confidence (Sir 会兜底).\n"
+            "  - Self-assess confidence fairly based on evidence — if "
+            "evidence is solid and item is distinct from existing active "
+            "set, give a HIGH confidence (≥ 0.80). If evidence is thin / "
+            "item is generic / overlap exists, give LOW confidence and "
+            "the threshold gate will defer to Sir. Don't artificially "
+            "suppress confidence — trust your judgment.\n"
             "  - Brief, factual, no Sir-flatter."
         )
 
@@ -673,6 +1078,25 @@ class AutoArbiterDaemon:
                     user_lines.append(f"  Me:     \"{t['jarvis']}\"")
         else:
             user_lines.append("  (no recent STM)")
+        # 🆕 [E.4] 显式列 active 总数 让 LLM 看到 bloat 自动调严
+        # 老 BUG: prompt 只列前 5 个 active, LLM 不知总量. 当 active 已 30+,
+        # LLM 看仍只 5 条 → 误以为 "active 很少, 可以多 activate" → bloat.
+        # 修法: 显式 TOTAL ACTIVE: N. 主脑 LLM 看到 N>20 自然降 conf.
+        active_n = int(evidence.get('active_count_total', 0))
+        user_lines.append("")
+        if active_n > 0:
+            bloat_hint = ""
+            if active_n >= 30:
+                bloat_hint = " (⚠️ bloat zone — only ACTIVATE if truly distinct + valuable)"
+            elif active_n >= 15:
+                bloat_hint = " (heads-up — getting crowded, apply stricter dedup)"
+            user_lines.append(
+                f"[TOTAL ACTIVE {kind.upper()}S]: {active_n}{bloat_hint}"
+            )
+        else:
+            user_lines.append(
+                f"[TOTAL ACTIVE {kind.upper()}S]: 0 (first one — give chance)"
+            )
         user_lines.append("")
         user_lines.append(
             "Now output your decision (3 tags strict)."

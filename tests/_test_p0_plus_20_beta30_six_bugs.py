@@ -91,10 +91,12 @@ class TestBUG4PastActionHonesty(unittest.TestCase):
     def test_past_action_no_tool_unverified(self):
         """Sir 14:00 真实场景: 主脑说'已打开'但 tool 没 ✅ → unverified"""
         from jarvis_claim_tracer import trace_reply
+        # 🆕 [Sir 2026-05-26 22:33 fix] include_swm_tool_called=False 防老 SWM ok events 干扰
         result = trace_reply(
             jarvis_reply="已经帮您打开了 dashboard.",
             tool_results=[],  # 工具失败/未调用
             stm_recent=[],
+            include_swm_tool_called=False,
         )
         self.assertGreater(result['n_unverified'], 0,
                             "past_action 无 tool ✅ 必须 unverified")

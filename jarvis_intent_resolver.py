@@ -594,8 +594,16 @@ class IntentResolver:
             # 🩹 [β.5.43-F + P5-fix30] LLM fail → ErrorBus.
             # fix30: '_error' 含 'recoverable, treating as no-tool' (parse rescue)
             # 不报 ErrorBus — 这是常见 case, 主路径已 graceful 处理. 报会刷噪.
+            # 🆕 [Sir 2026-05-26 23:55 真测 BUG-ε] 加 "所有 OR Key 均不可用" 静默.
+            # Sir 真测 23:51:09: google_3 quota → KeyRouter 全挂 → intent_resolver
+            # LLM fail. 主路径已 fallback (主对话不阻), ErrorBus 报警 console 噪音.
             _err = plan['_error']
-            _silent = 'treating as no-tool' in _err
+            _silent = (
+                'treating as no-tool' in _err
+                or '所有 OpenRouter Key 均不可用' in _err  # Sir BUG-ε
+                or 'OpenRouter Key 均不可用' in _err  # 容错
+                or '所有 Google Key 均不可用' in _err  # 同步 Google
+            )
             if not _silent:
                 try:
                     from jarvis_error_bus import report_error, SEVERITY_MODERATE

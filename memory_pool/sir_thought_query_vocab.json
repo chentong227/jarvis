@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T20:55:00",
+    "purpose": "Sir 问 Jarvis 在想什么 / 在思考什么 — 触发 L2 directive 让主脑去读 Inner Thoughts block 回答",
+    "consumer": "jarvis_directives._trigger_inner_thoughts_on_query",
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §B + jarvis_directives.py inner_thoughts_on_query",
+    "philosophy": "Sir 自然问 → directive fire → 主脑 prompt 强化 Inner Thoughts block 阅读 (不再泛泛 'monitoring you, Sir'). 同时 publish SWM 'sir_thought_query_detected' 让 build_soul_block 切到 query-aware 强化模式 (标题改 + recency 权重升).",
+    "rules": [
+      "(1) 关键词命中 = 当前轮 Sir 想知道思考层在干什么, 主脑必须真摘要 fresh thought 回答",
+      "(2) Sir 'what are you thinking' / '你在想什么' 这种是元意图 (问 Jarvis 的内心), 不是普通 chat",
+      "(3) 命中 publish SWM event, build_soul_block 改 weights 偏 freshness (老 sal=0.9 不再挤新 sal=0.7)"
+    ],
+    "extensible": "L7 reflector daemon 后期 LLM-propose 新 keyword 入 review_queue"
+  },
+  "query_keywords_zh": [
+    "你在想什么",
+    "你在想啥",
+    "在想什么呢",
+    "想什么呢",
+    "你刚才在想什么",
+    "你刚才想什么",
+    "你刚才在想啥",
+    "你在思考什么",
+    "在思考什么",
+    "你在琢磨什么",
+    "脑子里在想什么",
+    "你脑子里在想什么",
+    "你现在想什么",
+    "你最近在想什么",
+    "你心里在想什么",
+    "你在想点什么",
+    "想点啥呢"
+  ],
+  "query_keywords_en": [
+    "what are you thinking",
+    "what are you thinking about",
+    "what were you thinking",
+    "what's on your mind",
+    "what is on your mind",
+    "what's going through your mind",
+    "what are you pondering",
+    "what's been on your mind",
+    "what have you been thinking",
+    "what are you reflecting on"
+  ],
+  "history": []
+}

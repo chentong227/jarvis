@@ -298,11 +298,13 @@ class TestTraceReplyWritesAudit(unittest.TestCase):
 
     def test_past_action_no_tool_writes_audit(self):
         from jarvis_claim_tracer import trace_reply
+        # 🆕 [Sir 2026-05-26 22:35 fix] include_swm_tool_called=False 防老 SWM events 干扰
         result = trace_reply(
             jarvis_reply='已经打开 dashboard 了, Sir.',
             tool_results=[],  # 无 ✅ → past_action unverified
             stm_recent=[],
             turn_id='turn_pe_001',
+            include_swm_tool_called=False,
         )
         self.assertGreater(result['n_unverified'], 0)
         # audit jsonl 应有 entry

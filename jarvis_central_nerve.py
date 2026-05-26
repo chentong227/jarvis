@@ -3119,10 +3119,46 @@ User: {user_input}
                                 break
                 except Exception:
                     pass
+
+                # 🆕 [Sir 2026-05-26 22:03 真痛 BUG-S 治本] 第 3 trigger: tool 真 fail
+                # =====================================================================
+                # Sir 真测痛点: chat_bypass FAST_CALL concerns.dismiss 返 ❌, 但主脑
+                # 撒谎 "I have archived". gating 现 (a)(b) 都 False → silent skip →
+                # 主脑下轮没看到自己撒谎 → 继续撒谎.
+                # 治本 (准则 5 言出必行): SWM 300s 内有 tool_called.ok=False
+                #   → severe INTEGRITY 违规, 必 force inject (不 gate).
+                # 数据源: jarvis_intent_resolver / inner_thought_daemon publish 的
+                # 'tool_called' SWM event (metadata.ok=False). chat_bypass FAST_CALL
+                # 路径不直接 publish, 但 _integrity_alert 来源 ClaimTracer audit jsonl
+                # 已记录 past_action claim unverified (tool_results 含 ❌).
+                # 此处只看 SWM tool_called.ok=False 作辅助 trigger.
+                # =====================================================================
+                _ia_tool_failed_recent = False
+                try:
+                    _bus_tf_ia = getattr(self, 'event_bus', None)
+                    if _bus_tf_ia is not None:
+                        _tc_events_ia = _bus_tf_ia.recent_events(
+                            within_seconds=300.0,
+                            types={'tool_called', 'inner_thought_tool_called'},
+                        )
+                        for _ev_tc in (_tc_events_ia or []):
+                            _meta_tc = _ev_tc.get('metadata') or {}
+                            _ok_tc = _meta_tc.get('ok', None)
+                            _desc_tc = str(_ev_tc.get('description') or '')
+                            # ok=False 显式标记, 或 description 含 ✗/❌ marker
+                            if (_ok_tc is False
+                                    or '✗' in _desc_tc
+                                    or '❌' in _desc_tc):
+                                _ia_tool_failed_recent = True
+                                break
+                except Exception:
+                    pass
+
                 _ia_reason = ('summon' if _ia_summoned
                               else ('preflight_fail' if _ia_preflight_failed
-                                    else 'silent'))
-                if _ia_summoned or _ia_preflight_failed:
+                                    else ('tool_failed' if _ia_tool_failed_recent
+                                          else 'silent')))
+                if _ia_summoned or _ia_preflight_failed or _ia_tool_failed_recent:
                     system_alert_text = (
                         _integrity_alert + '\n\n' + system_alert_text
                         if system_alert_text else _integrity_alert

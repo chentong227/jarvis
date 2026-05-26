@@ -501,6 +501,37 @@ class ReturnSentinel(threading.Thread):
                 "via_return_sentinel": True,
                 "source": "ReturnSentinel",
             }
+            # 🆕 [Sir 2026-05-26 13:42 真痛 BUG 治本] β.5.0 nudge coordination yield check
+            # =====================================================================
+            # 源 BUG 8: 13:42:48 return_greeting fire 后, 7s 内 (13:42:55) dormant_project
+            # 也 fire — ReturnSentinel 没查 SWM 'proactive_nudge_fired' 让位其他 sentinel.
+            # 此 path 实际是 ReturnSentinel fire 前查 — fire 后再 publish (L562 已存在).
+            # 治本: fire 前查 SWM 已有 nudge fire 600s 内 → 退化 publish-only.
+            # =====================================================================
+            try:
+                from jarvis_nudge_coordination import (
+                    should_yield_to_recent_proactive_nudge as _yield_check_rs,
+                    publish_proactive_nudge_skipped as _pub_skip_rs,
+                )
+                _should_yield_rs, _yield_reason_rs = _yield_check_rs(
+                    within_s=600.0,
+                    current_kind='return_greeting',
+                    current_sentinel='ReturnSentinel',
+                )
+                if _should_yield_rs:
+                    _pub_skip_rs(
+                        kind='return_greeting',
+                        sentinel='ReturnSentinel',
+                        reason=_yield_reason_rs,
+                    )
+                    _log(
+                        f"🤝 [ReturnSentinel/Yield] skip return_greeting — "
+                        f"{_yield_reason_rs} (publish-only, 让位最近 fire)"
+                    )
+                    return
+            except Exception:
+                pass
+
             if self.gate and not self.gate.can_speak('guardian', nudge_type='return_greeting'):
                 _log(f"📞 [ReturnSentinel/Blocked] NudgeGate.can_speak 拒绝 (hard_freeze 或冲突)，未发出问候")
                 return

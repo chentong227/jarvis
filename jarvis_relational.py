@@ -101,6 +101,16 @@ class InsideJoke:
     # 配置
     ttl_days: int = DEFAULT_TTL_DAYS
 
+    # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Skepticism Learning Loop fields
+    # ========================================================================
+    # Sir 自然质疑 "这梗好奇怪" → SirSkepticismDetector → AttributionEngine 匹到此
+    # joke (30s 内 inject) → DecayEngine 累 skepticism_count + 降 use_weight.
+    # count=3 → auto archive (state='archived' + use_weight=0).
+    # Sir 反悔 (reactivation) → count -= 1, weight 恢复 ÷ 0.7 (cap 1.0).
+    # 详 jarvis_sir_skepticism.py + docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §3.
+    skepticism_count: int = 0
+    use_weight: float = 1.0  # 1.0 = 全权重, 0.7/0.5 = 减权, 0.0 = archived
+
     def mark_used(self) -> None:
         self.last_used = time.time()
         self.use_count += 1
@@ -151,6 +161,14 @@ class UnspokenProtocol:
     #         trigger_sir_state: 'active' / 'afk_short' / 'afk_deep' / 'sleep'
     trigger_tier: List[str] = field(default_factory=list)
     trigger_sir_state: List[str] = field(default_factory=list)
+
+    # 🆕 [Sir 2026-05-26 20:14 真意 anchor 3] Skepticism Learning Loop fields
+    # ========================================================================
+    # Sir 质疑某条 protocol (e.g. "你这规则我不喜欢") → AttributionEngine 匹到 →
+    # skepticism_count += 1 + rejected += 1. count=3 → auto archive.
+    # 详 jarvis_sir_skepticism.py.
+    skepticism_count: int = 0
+    rejected: int = 0  # Sir 拒绝此 protocol 累计次数 (含 skepticism + active rejection)
 
     def matches_context(self, current_tier: str = '',
                           current_sir_state: str = '') -> bool:
@@ -1086,7 +1104,8 @@ class RelationalStateStore:
                         top_threads: int = 2,
                         max_chars: int = PROMPT_BLOCK_DEFAULT_MAX,
                         current_tier: str = '',
-                        current_sir_state: str = '') -> str:
+                        current_sir_state: str = '',
+                        top_pending_review: int = 3) -> str:
         """构造注入 prompt 的 [BETWEEN US] 块。
 
         结构（参考 Layer 0/1 风格）：
@@ -1117,7 +1136,25 @@ class RelationalStateStore:
         unfinished = self._rank_unfinished(top_unfinished)
         threads = self._rank_threads(top_threads)
 
-        if not jokes and not protocols and not unfinished and not threads:
+        # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版 FIX C] PENDING REVIEW —
+        # =====================================================================
+        # Sir 真意 anchor: "怎么这些都没自动拍板, 思考没生效吗?" AutoArbiter daemon
+        # 30min tick, LLM confidence < threshold → defer_to_sir → 累积 review queue.
+        # 治本: 把 review queue 拿到主脑 prompt, 让 LLM 在交互时**主动问 Sir**
+        # "上次我提议 '地基要打牢' 算 inside joke 吗?" Sir 自然 yes/no 拍板,
+        # 不必去 dashboard. 准则 6 数据驱动 + 让 LLM 自决何时问.
+        # =====================================================================
+        review_jokes = []
+        review_protos = []
+        try:
+            if top_pending_review > 0:
+                review_jokes = (self.list_inside_jokes_review() or [])[:top_pending_review]
+                review_protos = (self.list_protocols_review() or [])[:top_pending_review]
+        except Exception:
+            pass
+
+        if (not jokes and not protocols and not unfinished and not threads
+                and not review_jokes and not review_protos):
             return ''
 
         lines: List[str] = ["=== BETWEEN US — OUR RELATIONAL CONTEXT ==="]
@@ -1170,6 +1207,29 @@ class RelationalStateStore:
                 if age_days > 7:
                     seg += f" ({int(age_days)}d ago)"
                 lines.append(seg[:200])
+
+        # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版 FIX C] PENDING REVIEW block —
+        # 让 LLM 在 natural 交互中主动问 Sir 确认 (替代 dashboard 手动拍板).
+        # 显示 id 让主脑能精确调 confirm_pending_review tool.
+        if review_jokes or review_protos:
+            lines.append(
+                "[PENDING REVIEW — I proposed these, waiting Sir's verdict]"
+            )
+            for j in review_jokes:
+                lines.append(
+                    f"  - id={j.id} | inside_joke: \"{j.phrase[:60]}\" "
+                    f"(birth: {(j.birth_context or '')[:60]})"[:240]
+                )
+            for p in review_protos:
+                lines.append(
+                    f"  - id={p.id} | protocol: {p.rule[:100]}"[:240]
+                )
+            lines.append(
+                "  (when natural in this turn, ask Sir to confirm — "
+                "e.g. \"Sir, 我之前注意到 '<phrase>', 算我们之间的小默契吗?\""
+                " Sir yes/no 后用 confirm_pending_review tool "
+                "{item_id, decision: 'activate'|'reject', reason})"
+            )
 
         out = "\n".join(lines)
         if len(out) > max_chars:

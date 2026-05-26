@@ -1,0 +1,19 @@
+{
+  "_doc": "[Sir 2026-05-27 00:11 M3 VisualPulse] InnerThought 字幕区 subtle 💭 闪烁配置 (可 CLI 改).",
+  "enabled": true,
+  "min_sal_to_pulse": 0.3,
+  "min_pulse_cooldown_s": 30,
+  "skip_if_main_convo_recent_s": 5,
+  "max_text_chars": 50,
+  "show_continuity_marker": true,
+  "show_category": true,
+  "_field_doc": {
+    "enabled": "总开关; false 则完全静默",
+    "min_sal_to_pulse": "salience 低于此值不闪 (省字幕区噪音, mediocre thought 不打扰 Sir)",
+    "min_pulse_cooldown_s": "两次闪之间最小间隔 (防 30s tick 频繁闪)",
+    "skip_if_main_convo_recent_s": "主对话 N 秒内不闪 (主对话比 thought 重要)",
+    "max_text_chars": "字幕显示最多字符数 (太长污染字幕)",
+    "show_continuity_marker": "是否显示 thread/new_topic 标记",
+    "show_category": "是否显示 category (A/B/C/D/E)"
+  }
+}

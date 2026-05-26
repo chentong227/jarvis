@@ -240,8 +240,12 @@ class TestL4InnerThoughtConcernsList(unittest.TestCase):
         # 真含所有 8 个 id
         for i in range(8):
             self.assertIn(f'sir_concern_{i:02d}', user_p)
-        self.assertIn('Inventing IDs will fail', user_p,
-            '必须警告 LLM 别 invent id')
+        # 🔧 [Sir 2026-05-26 20:47] prompt 措辞已升级 — 旧 "Inventing IDs will fail"
+        # 变成更明确的 "Inventing IDs like ... will be REJECTED". 测仍验同一语义.
+        self.assertIn('Inventing IDs', user_p,
+            '必须警告 LLM 别 invent id (新措辞: "Inventing IDs like ... will be REJECTED")')
+        self.assertIn('REJECTED', user_p,
+            '必须明确告知 invent id 会被 REJECTED')
 
 
 # ==========================================================================

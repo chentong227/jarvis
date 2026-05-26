@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T21:45:00",
+    "purpose": "Mutation evidence guard — 防主脑 fabricate fact 写入持久记忆.",
+    "anchor": "Sir 21:07 真测: 'd home' → Jarvis 凭空 'Stay safe' 写入 sir_profile.idiosyncrasies — 0 evidence in Sir STM.",
+    "philosophy_准则_5+6+8": "准则 5 INTEGRITY ABSOLUTE: 任何 specific factual claim must trace evidence. 准则 6 evidence-driven: 不在 .py 写死阈值, vocab JSON 持久化. 准则 8 优雅: 集中守卫 in MemoryGateway 入口, 拦在最底层, 不在每个 caller 分散.",
+    "consumer": "jarvis_mutation_evidence_guard.check_mutation_evidence() called by jarvis_memory_hub.update_sir_field()",
+    "rules": [
+      "(1) new_value 中必须有 substring (>= min_substring_chars) 在 Sir 最近 stm_window_turns 的 user utterance 中",
+      "(2) 或 new_value 与 STM Sir text 的 token jaccard >= min_jaccard_with_stm",
+      "(3) bypass_field_prefixes / bypass_sources 跳过 (低风险或显式 Sir 输入)",
+      "(4) 不通过 → block (block_mode='block') 或 audit-only warn (block_mode='audit')",
+      "(5) 通过 → 正常 mutation, publish 'mutation_evidence_pass' SWM"
+    ],
+    "extensible": "L7 reflector daemon 后期 LLM-propose 调整阈值 / 加 bypass"
+  },
+  "min_jaccard_with_stm": 0.15,
+  "min_substring_chars": 6,
+  "stm_window_turns": 6,
+  "block_mode": "block",
+  "bypass_field_prefixes": [
+    "preferences.user_correction",
+    "biographic.last_modified"
+  ],
+  "bypass_sources": [
+    "sir_cli",
+    "fast_call_sir_explicit",
+    "system_init",
+    "skepticism_loop"
+  ],
+  "exempt_layers": [],
+  "history": []
+}

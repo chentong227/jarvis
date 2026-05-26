@@ -1,0 +1,110 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T20:55:00",
+    "purpose": "InnerThought outcome 闭环检测 vocab — 主脑 reference / Sir engage 信号",
+    "consumer": "OutcomeWatcher (chat_bypass post-reply hook)",
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §D + jarvis_inner_thought_daemon.py outcome 字段",
+    "philosophy": "Sir 真痛 (Phase 2B 铺垫): outcome 字段就位但没人写没人读, thought 不知道 Sir 关心不关心. 解: chat_bypass post-reply 检 (1) 主脑 reply 是否 reference 某 thought (vocab pattern + 内容相似度) + (2) Sir 当前 reply 是否含 engage/silence/reject 信号 (vocab keyword). 综合判 outcome → 持久化 + publish SWM 'thought_outcome_observed' → 后续 WeeklyReflector 学习调阈值.",
+    "rules": [
+      "(1) 主脑 reply 含 thought_reference_patterns (e.g. 'I noticed' / 'I was thinking') + thought 关键词命中 → matched_thought=this",
+      "(2) Sir reply 含 sir_engaged 词 → outcome='sir_engaged' (高价值: thought 有用, 增 surface 置信)",
+      "(3) Sir reply 含 sir_silenced 词 → outcome='sir_silenced' (该 thought 该 archive 这类 topic)",
+      "(4) Sir reply 含 sir_rejected 词 → outcome='sir_rejected' (强烈不喜欢, 影响 thought 类 sal 评估)",
+      "(5) 无信号 → outcome='no_signal' (默认, 不影响置信)"
+    ],
+    "extensible": "L7 reflector daemon 后期 LLM-propose 新 keyword 入 review_queue"
+  },
+  "thought_reference_patterns_zh": [
+    "我刚才在想",
+    "我刚在想",
+    "刚才想到",
+    "我注意到",
+    "我留意到",
+    "我意识到",
+    "我察觉",
+    "我反思",
+    "想了想",
+    "琢磨着",
+    "心里在想"
+  ],
+  "thought_reference_patterns_en": [
+    "i was thinking",
+    "i noticed",
+    "i was reflecting",
+    "i was pondering",
+    "it crossed my mind",
+    "i was considering",
+    "on reflection",
+    "i caught myself",
+    "i realised",
+    "i realized"
+  ],
+  "sir_engaged_keywords_zh": [
+    "不错",
+    "好想法",
+    "有意思",
+    "对的",
+    "没错",
+    "确实",
+    "正是",
+    "就是",
+    "说得好",
+    "说得对",
+    "你想得没错",
+    "这点对",
+    "继续说",
+    "展开说"
+  ],
+  "sir_engaged_keywords_en": [
+    "good point",
+    "nice catch",
+    "interesting",
+    "exactly",
+    "you're right",
+    "true",
+    "indeed",
+    "tell me more",
+    "go on",
+    "nicely put",
+    "fair point",
+    "agreed"
+  ],
+  "sir_silenced_keywords_zh": [
+    "别提了",
+    "别说了",
+    "不用提",
+    "不重要",
+    "跳过",
+    "下次别说",
+    "不需要"
+  ],
+  "sir_silenced_keywords_en": [
+    "drop it",
+    "let it go",
+    "skip that",
+    "no need to mention",
+    "don't bring that up",
+    "not important",
+    "stop bringing"
+  ],
+  "sir_rejected_keywords_zh": [
+    "不对",
+    "错了",
+    "不是这样",
+    "误解了",
+    "想错了",
+    "不准确",
+    "完全不对"
+  ],
+  "sir_rejected_keywords_en": [
+    "that's wrong",
+    "incorrect",
+    "you got it wrong",
+    "no it's not",
+    "you misread",
+    "not really",
+    "not quite"
+  ],
+  "history": []
+}

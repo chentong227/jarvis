@@ -1,0 +1,17 @@
+{
+  "thresholds": {
+    "inside_joke": 0.65,
+    "thread": 0.65,
+    "protocol": 0.70,
+    "concern": 0.85,
+    "directive": 0.9
+  },
+  "revert_history_24h": {
+    "inside_joke": {
+      "total": 2,
+      "reverted": 0
+    }
+  },
+  "last_calibrated_at": 1779735954.8777015,
+  "last_calibrated_iso": "2026-05-26T03:05:54"
+}

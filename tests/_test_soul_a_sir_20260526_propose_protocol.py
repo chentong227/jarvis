@@ -256,18 +256,23 @@ class TestL8L9InnerThoughtProposeProtocol(unittest.TestCase):
         self.rs = _empty_relational()
         self.d = _empty_daemon(relational=self.rs)
 
-    def test_l8_b_class_gate_non_b_rejected(self):
-        """gated: 非 B 类 propose_protocol → rejected."""
+    def test_l8_cross_class_with_high_sal_accepted(self):
+        """🆕 [Sir 2026-05-26 23:17 BUG-4/A 准则 6] 删 B-class hard gate.
+        cross-class propose_protocol 允许, 只要 sal ≥ 0.75 + rule 合法.
+        (老 hard gate 拦 A/C/D/E 不合理, LLM 自决类别用法.)
+        """
         t = _mk_thought(
             'Sir is coding rapidly without proper breaks now',
             actionable='propose_protocol:Do not let Sir skip breaks',
             evidence_link='without proper breaks',
-            category='A',  # 不是 B
-            salience=0.8,
+            category='A',  # 非 B — 新 design 允许 cross-class
+            salience=0.8,  # 高 sal → 通过 sal gate
         )
         ok, result = self.d._do_propose_protocol(t, t.actionable)
-        self.assertFalse(ok)
-        self.assertIn('gated:protocol_only_from_B_reflect', result)
+        # 新 design: A-class + sal=0.8 → 不被 category gate 拦
+        # (可能被 relational_state propose_protocol 内部 dedup, 但 not gated:protocol_only_from_B)
+        self.assertNotIn('gated:protocol_only_from_B_reflect', result,
+            '准则 6: cross-class propose_protocol 不应被 hard gate 拦')
 
     def test_l8_sal_gate_low_sal_rejected(self):
         """gated: B 类但 sal<0.75 → rejected."""
@@ -379,21 +384,25 @@ class TestL11L12EndToEnd(unittest.TestCase):
         # 真在 review queue
         self.assertEqual(len(rs.list_protocols_review()), 1)
 
-    def test_l12_end_to_end_non_b_blocked(self):
-        """端到端: 非 B 类 propose_protocol → review queue 空 (gate work)."""
+    def test_l12_end_to_end_cross_class_accepted(self):
+        """🆕 [Sir 2026-05-26 23:17 BUG-4/A 准则 6] 删 B-class hard gate.
+        端到端: A 类 + sal=0.85 propose_protocol → review queue 应有 1 (跨类允许).
+        老 design: A class 被拦 → queue 0; 新 design: cross-class OK → queue 1.
+        """
         rs = _empty_relational()
         d = _empty_daemon(relational=rs)
         t = _mk_thought(
             'Sir is coding rapidly with general tasks switching frequently',
             actionable='propose_protocol:Stop interrupting when Sir is in deep work',
             evidence_link='coding rapidly',
-            category='A',  # 不是 B
-            salience=0.85,
+            category='A',  # 非 B — 新 design 允许 cross-class
+            salience=0.85,  # 高 sal → 通过 sal gate
         )
         ok, _ = d._execute_actionable(t)
-        self.assertFalse(ok)
-        # review queue 应为空
-        self.assertEqual(len(rs.list_protocols_review()), 0)
+        # 跨类 + 高 sal → 应成功进 review queue
+        self.assertTrue(ok, '准则 6: cross-class propose_protocol with high sal 应成功')
+        self.assertEqual(len(rs.list_protocols_review()), 1,
+            'review queue 应有 1 个 protocol (cross-class accepted)')
 
 
 if __name__ == '__main__':

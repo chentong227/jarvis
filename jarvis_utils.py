@@ -3547,7 +3547,8 @@ def network_retry(max_retries=3, base_delay=2):
 
 def safe_gemini_call(key_router, caller: str, model_tier: str,
                      call_func, max_retries: int = 3, base_delay: float = 1.5,
-                     model_name: str = None, contents_text: str = None):
+                     model_name: str = None, contents_text: str = None,
+                     google_tier_filter: str = 'paid'):
     """
     🛡️ 金刚级 API 调用装甲：Google / OpenRouter 双通道随机 + 失败秒切
     
@@ -3584,7 +3585,10 @@ def safe_gemini_call(key_router, caller: str, model_tier: str,
         for attempt in range(max_retries * 2):
             limiter.acquire()
             try:
-                _key, _key_name = key_router.get_google_key(caller)
+                # 🆕 [Sir 2026-05-26 22:50] tier_filter 透传 — default 'paid' 只用 google_1
+                _key, _key_name = key_router.get_google_key(
+                    caller, tier_filter=google_tier_filter
+                )
             except RuntimeError:
                 limiter.release()
                 break

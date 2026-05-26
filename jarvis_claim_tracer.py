@@ -524,7 +524,9 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
         results = []
         for ev in events:
             meta = ev.get('metadata') or {}
-            etype = ev.get('etype', '')
+            # 🆕 [Sir 2026-05-26 22:35 fix] publish 内部 store 用 'type' key (line 1600).
+            # 老 BUG: 用 'etype' 永远空 → 全走 else fallback → '✅ (...)' 不分 ok/fail.
+            etype = ev.get('type', '') or ev.get('etype', '')  # bw-compat 兜底
             # tool_called 类: 老格式 (name + args + ok)
             if etype == 'tool_called':
                 name = meta.get('name', '?')

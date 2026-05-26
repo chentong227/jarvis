@@ -14,12 +14,12 @@
     "history_max_days": 60
   },
   "typical_sleep_hour": {
-    "weekday": null,
+    "weekday": 23.6,
     "weekend": null,
     "tolerance_hours": 1.0,
-    "last_computed_ts": 0,
-    "data_points_used": 0,
-    "source": "未填充 — Sir 实测一周 + L7 reflector 自动采集后生效"
+    "last_computed_ts": 1779737124.8579082,
+    "data_points_used": 5,
+    "source": "l7_reflector_auto"
   },
   "history": [
     {
@@ -40,6 +40,20 @@
       "date": "2026-05-22",
       "sleep_ts": 1779381023.577488,
       "sleep_hour": 24.5,
+      "weekday": 1,
+      "source": "nerve_trigger_sleep_mode"
+    },
+    {
+      "date": "2026-05-25",
+      "sleep_ts": 1779685005.953192,
+      "sleep_hour": 12.93,
+      "weekday": 1,
+      "source": "nerve_trigger_sleep_mode"
+    },
+    {
+      "date": "2026-05-26",
+      "sleep_ts": 1779726419.155271,
+      "sleep_hour": 24.43,
       "weekday": 1,
       "source": "nerve_trigger_sleep_mode"
     }

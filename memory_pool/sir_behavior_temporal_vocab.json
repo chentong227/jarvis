@@ -1,0 +1,8 @@
+{
+  "patterns": {},
+  "patterns_by_hour": {},
+  "learned_routines": [],
+  "last_reflector_run": "2026-05-27T00:21:57",
+  "reflector_min_interval_s": 3600,
+  "min_sample_count_to_surface": 3
+}

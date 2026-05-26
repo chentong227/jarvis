@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T20:55:00",
+    "purpose": "InnerThought 主动 surface to Sir 的阈值 + 通道 + 频限 vocab",
+    "consumer": "InnerThoughtDaemon._do_surface_to_sir_actionable",
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §C + jarvis_inner_thought_daemon.py",
+    "philosophy": "Sir 真痛: '思考层也没主动发声'. 给 thought 一档 surface_to_sir actionable, LLM 自决用 terminal_pulse (终端 bg_log 显, Sir 看见) 或 next_turn_inject (SWM event, 主脑下轮 prompt 看到强提示). 不抢 voice channel (NudgeGate / Conductor / SmartNudge 仍管). 阈值持久化, Sir 可调.",
+    "rules": [
+      "(1) salience >= salience_threshold 才允许 surface (默认 0.7, 防低质 thought 噪音)",
+      "(2) 同 channel cooldown_per_channel_s (默认 5min) 防 burst",
+      "(3) 全局 cooldown_global_s (默认 2min) 防多 channel 同时 surface 淹 Sir",
+      "(4) max_per_hour 限上限 (默认 6) 防一小时全是思考层 chatter",
+      "(5) allowed_channels 白名单 (Sir CLI 可调, 加 dashboard_card / visual_pulse 等)"
+    ],
+    "extensible": "L7 reflector 后期可 propose 新 channel 入 review_queue"
+  },
+  "salience_threshold": 0.7,
+  "cooldown_global_s": 120,
+  "cooldown_per_channel_s": 300,
+  "max_per_hour": 6,
+  "allowed_channels": [
+    "terminal_pulse",
+    "next_turn_inject"
+  ],
+  "channel_descriptions": {
+    "terminal_pulse": "终端 bg_log 显示 '💭 [Thought→Sir] X', Sir 真看见 (低成本, 不抢 voice)",
+    "next_turn_inject": "publish SWM 'inner_thought_surface', 主脑下轮 prompt 强提示 reference 这条 thought (主脑自决说不说)"
+  },
+  "history": []
+}

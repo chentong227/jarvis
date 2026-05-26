@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T20:55:00",
+    "purpose": "InnerThought soul block 排序权重 + cap (主脑 Layer 1.5 inject)",
+    "philosophy": "防 'old thought sal=0.9 挤掉 new thought sal=0.7' BUG. Score = salience*w_sal + recency*w_rec. recency = e^(-age/halflife). 全可调 vocab, 不在 .py 硬编码.",
+    "consumer": "InnerThoughtDaemon.build_soul_block",
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §A + jarvis_inner_thought_daemon.py",
+    "rules": [
+      "(1) Fresh thought + medium sal 应该赢 old thought + high sal (Sir 真痛: 想了一堆没体现)",
+      "(2) max_inject 5 让主脑看更多 thought, 不只 3 条 (老 cap 太严)",
+      "(3) max_chars 800 (老 500 cap 太严, 4-5 条 thought 各 ~140char 需 ~700)",
+      "(4) max_age_s 24h cap (老 thought 自然 decay, 不挤新)"
+    ],
+    "extensible": "Sir CLI scripts/inner_thought_soul_block_dump.py 可改权重 / halflife"
+  },
+  "weights": {
+    "salience": 0.5,
+    "recency": 0.5
+  },
+  "recency_halflife_s": 3600,
+  "max_inject": 5,
+  "max_chars": 800,
+  "max_age_s": 86400,
+  "history": []
+}

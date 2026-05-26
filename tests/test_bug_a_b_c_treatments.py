@@ -17,11 +17,21 @@ class TestBugATTSEmergencyCleanup(unittest.TestCase):
     """BUG-A: TTS render 慢自动 emergency GPU cleanup + SWM publish."""
 
     def test_emergency_threshold_present(self):
-        """jarvis_vocal_cord.py 含 12s 阈值 + emergency cleanup."""
+        """jarvis_vocal_cord.py 含 emergency 阈值 + emergency cleanup.
+
+        🆕 [Sir 2026-05-27 00:05 BUG-2 加严] 阈值 12s → 8s (准则 1 pipeline < 8s).
+        test 检 _render_dur > <NUM>.0 (NUM <= 12) — Sir 实测 14.7s slow 真痛.
+        """
         with open(os.path.join(ROOT, 'jarvis_vocal_cord.py'), 'r', encoding='utf-8') as f:
             src = f.read()
         self.assertIn('BUG-A 治本', src, 'BUG-A 治本标识缺失')
-        self.assertIn('_render_dur > 12.0', src, 'emergency 阈值 12s 缺失')
+        # 12s 或 8s (加严后 8s); 至少有一个 _render_dur > N.0 满足 N<=12
+        import re as _re_t
+        m = _re_t.search(r'_render_dur > (\d+(?:\.\d+)?)\b', src)
+        self.assertIsNotNone(m, 'emergency 阈值 _render_dur > N 表达式缺失')
+        thresh = float(m.group(1))
+        self.assertLessEqual(thresh, 12.0,
+            f'emergency 阈值应 <= 12s, 实际 {thresh}s')
         self.assertIn('emergency GPU cleanup', src, 'emergency cleanup log msg 缺失')
 
     def test_swm_publish_on_slow_render(self):

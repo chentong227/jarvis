@@ -209,23 +209,50 @@ class VocalCord:
             #
             # 修法: 阈值 10 → 3 (更频繁清). 不动 stream=False (避免 cascading 改动).
             # 每次 render 后轻 empty_cache (无 gc.collect 重负担).
+            # 🆕 [Sir 2026-05-27 00:05 真测 BUG-2 加严] Sir 14.7s slow 真测 — 阈值
+            # 3 → 2 (更激进 GC), 配合 pre-render GPU mem 检 (>85% 主动重 cleanup).
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()  # 轻 cache 清理 (无 gc.collect 重负担)
-            if self._render_count >= 3:
+            if self._render_count >= 2:  # 老 3, 现 2 更激进
                 self._render_count = 0
                 import gc
-                gc.collect()  # 重 GC 每 3 次 (vs 老 10 次)
+                gc.collect()  # 重 GC 每 2 次 (vs 老 3 次)
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+            # 🆕 [Sir 2026-05-27 00:05 BUG-2 加严] pre-next-render GPU mem 检.
+            # 若 GPU 占用 > 85% → 立即 emergency cleanup, 防下次 render 卡.
+            try:
+                if torch.cuda.is_available():
+                    _free, _total = torch.cuda.mem_get_info()
+                    _used_ratio = 1.0 - (_free / max(1, _total))
+                    if _used_ratio > 0.85:
+                        try:
+                            from jarvis_utils import bg_log as _gpu_bg
+                            _gpu_bg(
+                                f"⚠️ [GPU/Preempt] mem_used={_used_ratio*100:.1f}% "
+                                f"> 85% → emergency cleanup 防下次 render 卡"
+                            )
+                        except Exception:
+                            pass
+                        import gc as _gc_pre
+                        _gc_pre.collect()
+                        torch.cuda.empty_cache()
+                        if hasattr(torch.cuda, 'ipc_collect'):
+                            torch.cuda.ipc_collect()
+                        torch.cuda.empty_cache()
+            except Exception:
+                pass
 
         # 🆕 [BUG-A 治本 / 2026-05-24 19:50] post-render duration check + emergency cleanup
+        # 🆕 [Sir 2026-05-27 00:05 BUG-2 加严] 阈值 12s → 8s (准则 1 pipeline < 8s).
+        # Sir 真测 14.7s, 加严 = 提前报警 + 立即 emergency cleanup, 救下次 render.
         _render_dur = time.time() - _render_start
-        if _render_dur > 12.0:  # Sir 16:23 真测 turn 3 = 16.4s, 阈值 12s 提前报警
+        if _render_dur > 8.0:  # Sir BUG-2 加严: 12s → 8s
             try:
                 from jarvis_utils import bg_log as _slow_bg
                 _slow_bg(
                     f"⚠️ [TTS Slow] render took {_render_dur:.1f}s "
-                    f"(threshold 12s) — emergency GPU cleanup. "
+                    f"(threshold 8s) — emergency GPU cleanup. "
                     f"text='{safe_text[:60]}'"
                 )
             except Exception:

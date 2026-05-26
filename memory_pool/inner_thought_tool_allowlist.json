@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T19:50:00",
+    "purpose": "Phase 3 — InnerThoughtDaemon call_tool actionable 的 tool allowlist (Sir 元否决预留)",
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 3",
+    "consumer": [
+      "jarvis_inner_thought_daemon._load_call_tool_allowlist (sal>=0.90 + tool in this list)",
+      "scripts/inner_thought_tool_allowlist_dump.py (Sir CLI add/remove)"
+    ],
+    "philosophy": "Sir 准则 7 元否决权 — 默认只允许 read-only 或 register-only tool, NOT mutate Sir profile / hippocampus / promise 等不可逆数据. 慎之又慎.",
+    "default_allowed": [
+      "commitment_register: 注册新 commitment (低风险, Sir 可看 dashboard 删)",
+      "self_promise_register: 注册 Jarvis 自承诺 (Sir 看到 Promise log)",
+      "milestone_register: 加 project milestone (低风险)"
+    ],
+    "explicitly_forbidden": [
+      "memory_correction_apply (Sir profile mutation, 不可逆)",
+      "profile_field_update (Sir profile mutation, 不可逆)",
+      "project_hold (Hippocampus state mutation, Sir 可能反感)",
+      "confirm_pending_review (这是 Sir 自己确认的事, thought 不能代)"
+    ],
+    "history_note": "添加/删除会写入 history. Sir 真用一段后, 看 history + Sir 撤销率反思调整"
+  },
+  "allowlist": [
+    "commitment_register",
+    "self_promise_register",
+    "milestone_register"
+  ],
+  "history": [],
+  "review_queue": []
+}

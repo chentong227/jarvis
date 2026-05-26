@@ -739,6 +739,41 @@ Answer ONLY the nudge type name, nothing else."""
             self._last_help_fingerprint = fingerprint
             self._last_help_fingerprint_time = time.time()
 
+        # 🆕 [Sir 2026-05-26 13:42 真痛 BUG 治本] β.5.0 nudge coordination yield check
+        # =====================================================================
+        # 源 BUG 8: 13:42 6 秒内 3 nudge 连发 (commitment_check @40, return_greeting @48,
+        # dormant_project @55). SmartNudge / ReturnSentinel / CommitmentWatcher 各自 fire
+        # 抢话筒. 治本: SmartNudge fire 前查 SWM 'proactive_nudge_fired' 最近 600s,
+        # 命中 → publish_only 退化 (不 push __NUDGE__). β.5.0 行为弱耦合.
+        # =====================================================================
+        try:
+            from jarvis_nudge_coordination import (
+                should_yield_to_recent_proactive_nudge as _yield_check_sn,
+                publish_proactive_nudge_skipped as _pub_skip_sn,
+            )
+            _should_yield_sn, _yield_reason_sn = _yield_check_sn(
+                within_s=600.0,
+                current_kind=nudge_type,
+                current_sentinel='SmartNudge',
+            )
+            if _should_yield_sn:
+                _pub_skip_sn(
+                    kind=nudge_type,
+                    sentinel='SmartNudge',
+                    reason=_yield_reason_sn,
+                )
+                try:
+                    from jarvis_utils import bg_log as _yield_bg_sn
+                    _yield_bg_sn(
+                        f"🤝 [SmartNudge/Yield] skip {nudge_type} — "
+                        f"{_yield_reason_sn} (publish-only)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         if self.gate and not self.gate.can_speak('companion', nudge_type=nudge_type):
             return
 
@@ -770,6 +805,18 @@ Answer ONLY the nudge type name, nothing else."""
         # [P0+18-f.3 / 2026-05-15] 记最新 nudge_type, 拒绝时用来 mute
         self._last_nudge_type = nudge_type
         self._last_nudge_time = time.time()
+
+        # 🆕 [Sir 2026-05-26 13:42 真痛 BUG 治本] β.5.0 fire 后 publish, 让别的 sentinel
+        # 看 evidence 自决退化 publish-only (BUG 8 治本 — SmartNudge 也加入协调网).
+        try:
+            from jarvis_nudge_coordination import publish_proactive_nudge_fired as _pn_pub_sn
+            _pn_pub_sn(
+                kind=nudge_type,
+                sentinel='SmartNudge',
+                extra_metadata={'nudge_type': nudge_type},
+            )
+        except Exception:
+            pass
 
         # [R6/Bus] 投递到对话事件总线 —— 让 Conductor / 主脑 / 其他中心都能"看见"
         # SmartNudge 刚发了什么，避免主脑下一轮 prompt 不知道刚刚有过 offer_help。

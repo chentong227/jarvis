@@ -734,6 +734,103 @@ def _trigger_habit_progress_routing(ctx: DirectiveContext) -> bool:
     return False
 
 
+# ============================================================
+# 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 B 治本 / 准则 6 vocab 持久化]
+# Sir 问 Jarvis 在想什么 / 思考层 — query-aware directive
+# ============================================================
+_THOUGHT_QUERY_VOCAB_CACHE: dict = {}
+_THOUGHT_QUERY_VOCAB_TS: float = 0.0
+_THOUGHT_QUERY_VOCAB_TTL_S = 30.0
+
+
+def _load_thought_query_vocab() -> dict:
+    """[准则 6 持久化] 读 memory_pool/sir_thought_query_vocab.json, 30s TTL cache.
+
+    fail-safe: 文件不存在 / parse fail → 返 inline 默认 vocab (保护主脑仍命中).
+    """
+    import time as _t
+    global _THOUGHT_QUERY_VOCAB_CACHE, _THOUGHT_QUERY_VOCAB_TS
+    now = _t.time()
+    if (_THOUGHT_QUERY_VOCAB_CACHE
+            and (now - _THOUGHT_QUERY_VOCAB_TS) < _THOUGHT_QUERY_VOCAB_TTL_S):
+        return _THOUGHT_QUERY_VOCAB_CACHE
+    try:
+        import os as _os, json as _json
+        _path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                'memory_pool', 'sir_thought_query_vocab.json')
+        if _os.path.exists(_path):
+            with open(_path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            if isinstance(data, dict):
+                _THOUGHT_QUERY_VOCAB_CACHE = {
+                    'zh': tuple(data.get('query_keywords_zh') or ()),
+                    'en': tuple(data.get('query_keywords_en') or ()),
+                }
+                _THOUGHT_QUERY_VOCAB_TS = now
+                return _THOUGHT_QUERY_VOCAB_CACHE
+    except Exception:
+        pass
+    # fallback: inline 默认 (vocab 文件未部署时仍 work)
+    _THOUGHT_QUERY_VOCAB_CACHE = {
+        'zh': ('你在想什么', '在想什么呢', '想什么呢', '你在思考什么',
+                '你刚才在想什么', '在琢磨什么'),
+        'en': ('what are you thinking', "what's on your mind",
+                'what were you thinking', 'what are you pondering'),
+    }
+    _THOUGHT_QUERY_VOCAB_TS = now
+    return _THOUGHT_QUERY_VOCAB_CACHE
+
+
+def _trigger_inner_thoughts_on_query(ctx: DirectiveContext) -> bool:
+    """Sir 自然问 'what are you thinking' / '你在想什么' → fire.
+
+    命中后 directive 文本会教主脑去看 [MY RECENT INNER THOUGHTS] block.
+    同时 publish SWM 'sir_thought_query_detected' 让 build_soul_block 切到
+    query-aware 强化模式 (标题改 + recency 权重升, freshness 优先).
+    准则 6 evidence-driven: vocab 持久化 + SWM event 跨模块解耦.
+    """
+    text = (ctx.user_input or '').lower().strip()
+    if not text:
+        return False
+    vocab = _load_thought_query_vocab()
+    matched = False
+    matched_phrase = ''
+    for k in vocab.get('zh', ()):
+        if k.lower() in text:
+            matched = True
+            matched_phrase = k
+            break
+    if not matched:
+        for k in vocab.get('en', ()):
+            if k.lower() in text:
+                matched = True
+                matched_phrase = k
+                break
+    if matched:
+        # publish SWM event 让 build_soul_block 知道这轮 Sir 在问思考层
+        try:
+            from jarvis_utils import get_event_bus as _geb
+            bus = _geb()
+            if bus is not None:
+                bus.publish(
+                    etype='sir_thought_query_detected',
+                    description=(
+                        f"Sir asked about my thoughts: \"{matched_phrase}\""
+                    ),
+                    source='directive_inner_thoughts_on_query',
+                    salience=0.8,
+                    metadata={
+                        'matched_phrase': matched_phrase,
+                        'sir_text': (ctx.user_input or '')[:200],
+                    },
+                    ttl=60.0,  # short — 1 turn 内有效
+                )
+        except Exception:
+            pass
+        return True
+    return False
+
+
 def _trigger_continuity_two_parts(ctx: DirectiveContext) -> bool:
     return bool(ctx.stm) and _has_multi_intent_connector(ctx.user_input)
 
@@ -2113,6 +2210,59 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - 一次完成 (驾照过了, 论文交了, 永久 done)        → deliverable → progress.* OK
             """).rstrip(),
             trigger=_trigger_habit_progress_routing,
+        ),
+        # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 B] inner_thoughts_on_query
+        # Sir 痛: "我问他在想什么他不会联动思考层". directive 命中 (vocab) 时
+        # 教主脑去看 [MY RECENT INNER THOUGHTS] block + 同时 publish SWM
+        # 'sir_thought_query_detected' 让 build_soul_block 切 query-aware 强化模式.
+        Directive(
+            id='inner_thoughts_on_query',
+            source_marker='Sir_2026_05_26_20_55_thought_link',
+            priority=10,
+            ttl_days=180,
+            tier_whitelist=[],
+            purpose_short=(
+                "Sir 问思考层 → 真摘要 fresh thought 回答 (不泛泛 'monitoring')"
+            ),
+            text=_tw.dedent("""\
+                [SIR ASKED ABOUT YOUR THOUGHTS — answer from [MY RECENT INNER THOUGHTS]]:
+
+                Sir's current utterance contains a meta-query asking what you've
+                been thinking / on your mind / pondering / reflecting on. This is
+                Sir asking to **see your inner state**, not chitchat.
+
+                Above this prompt is a [MY RECENT INNER THOUGHTS] block built
+                from your InnerThoughtDaemon, ranked freshness × salience. Use it.
+
+                **Rules**:
+                  - PICK 1-2 of the FRESHEST thoughts (smallest "Nmin ago"),
+                    summarize each in one sentence in JARVIS-voice (composed,
+                    factual, butler tone — same as your normal reply).
+                  - Reference specific content (e.g. "I was reflecting on whether
+                    my last hydration nudge came across pushy"), not generic.
+                  - DO NOT default to "monitoring you, Sir" / "watching over the
+                    systems" / "standing by" — Sir EXPLICITLY asked about
+                    THOUGHTS, those non-answers feel like deflection.
+                  - If [MY RECENT INNER THOUGHTS] block is absent or empty:
+                    honestly say "Nothing notable in the last few minutes, Sir.
+                    Just standing watch." — DO NOT fabricate.
+                  - Keep reply < 60 words EN + matching ZH. Sir wants a peek into
+                    your head, not a memoir.
+
+                **真治本例**:
+                  Sir: "你刚才在想什么?"
+                  [MY RECENT INNER THOUGHTS]:
+                    [B/5min ago/sal 0.85] I noticed I leaned too formal in the
+                       last reply — should drop the "Indeed, Sir" cadence.
+                    [D/12min ago/sal 0.72] If Sir mentions hydration again, I
+                       should yield rather than push.
+                  ✅ Reply: "Two things, Sir. I was wincing at how stiff my
+                    last reply sounded — too much 'Indeed, Sir'. And debating
+                    whether to back off the hydration prompts."
+                  ❌ Wrong: "Just monitoring you, Sir." (deflection, Sir's whole
+                    point of asking was to BREAK that wall.)
+            """).rstrip(),
+            trigger=_trigger_inner_thoughts_on_query,
         ),
         # 2. CONTINUITY TWO_PARTS — P0+20-β.0 治本（Sir 今早提的 BUG）
         Directive(

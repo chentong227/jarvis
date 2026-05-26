@@ -707,6 +707,32 @@ class CommitmentWatcher(threading.Thread):
     _DAYTIME_VOCAB = ('dinner', 'lunch', 'supper', 'meeting',
                       '晚饭', '晚餐', '午饭', '午餐', '会议', '下午茶')
 
+    # 🆕 [Sir 2026-05-26 13:32 真痛 BUG 治本] alarm-style commitment 识别
+    # ==========================================================================
+    # 源 BUG: Sir 13:32 说"我睡觉了" + register "wake me at 13:30" commitment, 1:30 PM
+    # 没准点 fire. 12min 后 SmartNudge 才补救. 真因: _dispatch_commitment_nudge AFK skip
+    # 5min+ 不 dispatch — 但 wake-up commitment 正是要在 Sir 不在场 (睡) 时 fire!
+    # 治本 (准则 6 vocab 驱动): alarm-style commitment (wake/起床/叫醒/alarm) bypass
+    # AFK skip + bypass idle<2min check. 这是闹钟的真意 — Sir 不在场才 fire.
+    # ==========================================================================
+    # 精确 vocab: 避免单字 '醒' match '提醒' 类 false positive (test_non_alarm_commitment)
+    _ALARM_STYLE_VOCAB = ('wake', 'alarm',
+                          '起床', '叫醒', '叫我', '闹钟', '睡醒', '清醒')
+
+    def _is_alarm_style_commitment(self, c: dict) -> bool:
+        """alarm-style commitment 即"Sir 不在场时该 fire"的提醒 (闹钟/起床).
+        
+        准则 6: vocab 驱动, desc + source_text 含 alarm/wake keyword 即认定.
+        这类 commitment 不被 AFK skip / idle check 拦.
+        """
+        try:
+            desc = (c.get('description', '') or '').lower()
+            src = (c.get('source_text', '') or '').lower()
+            ctx = f"{desc} {src}"
+            return any(kw in ctx for kw in self._ALARM_STYLE_VOCAB)
+        except Exception:
+            return False
+
     def _infer_hour_from_context(self, hour: int, ctx: str, now_ts: float) -> int:
         """单数字 hour (0-23) + 上下文 → 24h hour. 准则 6: vocab 驱动, 不硬编码 if 链.
 
@@ -1700,7 +1726,11 @@ class CommitmentWatcher(threading.Thread):
                         if not _fulfillment_done_pre_check and now > c['deadline_ts'] + c['grace_minutes'] * 60:
                             try:
                                 idle_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
-                                if idle_ms < 120000:
+                                # 🆕 [Sir 2026-05-26 13:32 真痛 BUG 治本] alarm-style bypass
+                                # 闹钟 / 起床 commitment: Sir 不在场 (睡) 才是 fire 时机.
+                                # 不该被 idle<2min check 拦. 准则 6 vocab 驱动.
+                                _is_alarm = self._is_alarm_style_commitment(c)
+                                if idle_ms < 120000 or _is_alarm:
                                     c['nudged'] = True
                                     # [P0+18-e.3] 同步到 SQLite，重启后避免再 nudge
                                     # [M4.5.3] dual-mark SQLite + PromiseLog evidence
@@ -2029,12 +2059,16 @@ class CommitmentWatcher(threading.Thread):
         # 治本: 主动查 win32api idle_ms, AFK ≥ 5min → publish 'commitment_nudge_skipped'
         # SWM evidence + skip dispatch. commitment 不退栈 (nudged=False), Sir 回来
         # 下个 tick 再 evaluate.
+        #
+        # 🆕 [Sir 2026-05-26 13:32 真痛 BUG 治本] alarm-style bypass AFK skip:
+        # wake-up / 闹钟 commitment 正是要在 Sir 不在场 (睡) 时 fire. 不该被 AFK 拦.
         # =====================================================================
         try:
             import win32api as _wapi_cw
             _idle_ms_cw = _wapi_cw.GetTickCount() - _wapi_cw.GetLastInputInfo()
             _idle_s_cw = _idle_ms_cw / 1000.0
-            if _idle_s_cw >= 300.0:  # 5min+ AFK
+            _is_alarm_dispatch = self._is_alarm_style_commitment(commitment)
+            if _idle_s_cw >= 300.0 and not _is_alarm_dispatch:  # 5min+ AFK
                 try:
                     from jarvis_utils import bg_log as _afk_cw_bg
                     _afk_cw_bg(

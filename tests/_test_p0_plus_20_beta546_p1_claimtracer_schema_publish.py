@@ -23,8 +23,9 @@ class TestA_ClaimTracerSWM(unittest.TestCase):
 
     def setUp(self):
         # reset global bus
+        # 🆕 [Sir 2026-05-26 22:33 fix] restore=False 防 swm_history.jsonl 老 events 污染
         from jarvis_utils import ConversationEventBus
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
         ConversationEventBus.register_global(self.bus)
 
     def test_fetch_swm_tool_results_empty(self):
@@ -190,8 +191,9 @@ class TestB_ToolSchemaIntrospect(unittest.TestCase):
 class TestC_ProfileCardPublishIntent(unittest.TestCase):
 
     def setUp(self):
+        # 🆕 [Sir 2026-05-26 22:33 fix] restore=False 防 swm_history.jsonl 老 events 污染
         from jarvis_utils import ConversationEventBus
-        self.bus = ConversationEventBus()
+        self.bus = ConversationEventBus(restore=False)
         ConversationEventBus.register_global(self.bus)
 
     def test_apply_correction_publishes_intent(self):
