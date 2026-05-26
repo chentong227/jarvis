@@ -5206,14 +5206,31 @@ _WEEKLY_INSIGHTS_HTML = r"""
                 </div>` : (r.sir_decision_reason ? `
                 <div class="insight-meta">Sir 理由: ${escapeHtml(r.sir_decision_reason)}</div>`
                 : '');
+              // 🆕 [Sir 2026-05-27 00:30 Phase 2B 后半] insight_type 区分两条 reflector path
+              const itype = r.insight_type || 'self_reflection_pattern';
+              const typeBadge = itype === 'inner_thought_vocab_tune'
+                ? '<span style="background:#ec489922;color:#ec4899;padding:0.15rem 0.55rem;border-radius:4px;font-size:0.75rem;margin-right:0.3rem;">🎚️ 思考阈值调</span>'
+                : '<span style="background:#3fb95022;color:#3fb950;padding:0.15rem 0.55rem;border-radius:4px;font-size:0.75rem;margin-right:0.3rem;">🪞 反思 pattern</span>';
+              // vocab tune 详情 — 真显具体 field + old/new value 让 Sir 一眼看改啥
+              const vocabTuneHtml = (itype === 'inner_thought_vocab_tune' && r.target_field) ? `
+                <div style="background:#0d1117;padding:0.6rem 0.8rem;border-radius:4px;margin-top:0.5rem;border-left:3px solid #ec4899;">
+                  <div style="color:#ec4899;font-size:0.83rem;font-weight:600;margin-bottom:0.3rem;">建议修改 (Sir 元否决: accept 后 Sir 手工改 JSON)</div>
+                  <div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;">
+                    <span style="color:#8b949e;">file:</span> ${escapeHtml(r.target_vocab_path||'')}<br>
+                    <span style="color:#8b949e;">field:</span> <span style="color:#79c0ff;">${escapeHtml(r.target_field)}</span><br>
+                    <span style="color:#8b949e;">old:</span> <span style="color:#f85149;">${escapeHtml(String(r.proposed_old_value))}</span> →
+                    <span style="color:#8b949e;">new:</span> <span style="color:#3fb950;">${escapeHtml(String(r.proposed_new_value))}</span>
+                  </div>
+                </div>` : '';
               return `
                 <div class="insight">
                   <div class="insight-head">
-                    <span class="insight-state ${stateCls}">${stateLabel}</span>
+                    <span>${typeBadge}<span class="insight-state ${stateCls}">${stateLabel}</span></span>
                     <span class="insight-ts">${escapeHtml(r.ts_iso||'')} · ${escapeHtml(r.week_range_iso||'')}</span>
                   </div>
                   <div class="insight-pattern">${escapeHtml(r.pattern_summary||'')}</div>
                   <div class="insight-action">💡 ${escapeHtml(r.suggested_action||'')}</div>
+                  ${vocabTuneHtml}
                   <div class="insight-meta">置信度 ${conf} · evidence ${r.evidence_count||0} 条</div>
                   ${excerpts ? `<div class="insight-excerpts">证据节选:<ul>${excerpts}</ul></div>` : ''}
                   ${actionsHtml}

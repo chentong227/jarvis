@@ -54,6 +54,18 @@ class WeeklyInsight:
     state: str = 'review'         # 'review' / 'accepted' / 'rejected'
     sir_decision_at: float = 0.0
     sir_decision_reason: str = ''
+    # 🆕 [Sir 2026-05-27 00:30 Phase 2B 后半] insight 类型区分两条 reflector path:
+    #   'self_reflection_pattern' (老) — 从 Hippocampus self_reflection 提 pattern
+    #   'inner_thought_vocab_tune' (新) — 从 inner_thoughts.jsonl 7d outcome 统计
+    #                                     propose 调 surface_to_sir_vocab 阈值
+    # 准则 7: Sir 元否决, accept 仍不 mutate vocab, Sir 手工改 JSON 升级
+    insight_type: str = 'self_reflection_pattern'
+    # 🆕 [Sir 2026-05-27 00:30] vocab_tune 专用: 具体改的 vocab field + old/new value
+    # (self_reflection_pattern 时 = '', 老 record load 兼容)
+    target_vocab_path: str = ''   # e.g. 'memory_pool/surface_to_sir_vocab.json'
+    target_field: str = ''        # e.g. 'salience_threshold'
+    proposed_old_value: Any = None
+    proposed_new_value: Any = None
 
 
 class WeeklyReflectionConsolidator:
@@ -131,7 +143,22 @@ class WeeklyReflectionConsolidator:
         if week_key == self._last_fired_week_key:
             return
         self._last_fired_week_key = week_key
-        self._do_weekly_consolidation(week_key)
+        # 🆕 [Sir 2026-05-27 00:30 Phase 2B 后半] 同周 fire 两条 reflector path:
+        #   1. self_reflection_pattern (老) — Hippocampus 7d self_reflection
+        #   2. inner_thought_vocab_tune (新) — inner_thoughts.jsonl 7d outcome
+        # 准则 8 优雅: 并行 fire, 任一 fail 不阻另一条 (try/except each).
+        try:
+            self._do_weekly_consolidation(week_key)
+        except Exception as e:
+            self._bg_log(
+                f"⚠️ [WeeklyConsolidator] self_reflection path fail: {e}"
+            )
+        try:
+            self._do_inner_thought_outcome_consolidation(week_key)
+        except Exception as e:
+            self._bg_log(
+                f"⚠️ [WeeklyConsolidator] thought_outcome path fail: {e}"
+            )
 
     def _do_weekly_consolidation(self, week_key: str) -> None:
         # 1. evidence: 从 Hippocampus search 7d self_reflection
@@ -187,6 +214,338 @@ class WeeklyReflectionConsolidator:
             f"'{pattern[:80]}' (conf {confidence:.2f}, "
             f"evidence={len(evidence)})"
         )
+
+    # ==========================================================
+    # 🆕 [Sir 2026-05-27 00:30 Phase 2B 后半] thought_outcome 反思路径
+    # =================================================================
+    # 真痛 (design doc §2.B): thought 现已经写 outcome 字段 (M5 OutcomeTracker),
+    # 但**没人看**. WRC 7d 反思 → LLM propose surface_to_sir_vocab 阈值调.
+    # 准则 6 数据强耦合: 读 jsonl, publish review queue.
+    # 准则 7 Sir 元否决: propose 不 mutate vocab, Sir 手工改.
+    # 准则 8 优雅: 复用 long_term_insights.jsonl + WeeklyInsight schema,
+    #            加 insight_type='inner_thought_vocab_tune' 区分.
+    # =================================================================
+
+    INNER_THOUGHT_PERSIST_PATH = 'memory_pool/inner_thoughts.jsonl'
+    SURFACE_VOCAB_PATH = 'memory_pool/surface_to_sir_vocab.json'
+    # 真反思最少 thought 数 (低于不 propose, 准则 6 evidence-driven)
+    MIN_THOUGHT_COUNT_FOR_TUNE = 20
+    # 至少多少 outcome != pending 才有信号 (low signal 噪音不调)
+    MIN_OUTCOME_RESOLVED_RATE = 0.3
+
+    def _do_inner_thought_outcome_consolidation(self, week_key: str) -> None:
+        """周反思 inner_thoughts.jsonl 7d outcome → propose vocab tune."""
+        stats = self._collect_thought_outcome_stats()
+        n_total = stats.get('total', 0)
+        n_resolved = (stats.get('outcomes', {}).get('sir_engaged', 0) +
+                      stats.get('outcomes', {}).get('sir_silenced', 0) +
+                      stats.get('outcomes', {}).get('sir_rejected', 0))
+        if n_total < self.MIN_THOUGHT_COUNT_FOR_TUNE:
+            self._bg_log(
+                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
+                f"only {n_total} thoughts in 7d "
+                f"(min {self.MIN_THOUGHT_COUNT_FOR_TUNE}), skip"
+            )
+            return
+        resolved_rate = n_resolved / float(n_total) if n_total > 0 else 0.0
+        if resolved_rate < self.MIN_OUTCOME_RESOLVED_RATE:
+            self._bg_log(
+                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
+                f"only {resolved_rate * 100:.0f}% outcomes resolved "
+                f"(min {self.MIN_OUTCOME_RESOLVED_RATE * 100:.0f}%), "
+                f"signal too low to tune, skip"
+            )
+            return
+        # LLM propose tune
+        cur_vocab = self._load_surface_vocab()
+        tune = self._llm_propose_vocab_tune(stats, cur_vocab)
+        if not tune or not tune.get('target_field'):
+            self._bg_log(
+                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
+                f"LLM 没 propose 有效 vocab tune, skip"
+            )
+            return
+        # 建 WeeklyInsight (type=vocab_tune)
+        now = time.time()
+        end_d = time.strftime('%Y-%m-%d', time.localtime(now))
+        start_d = time.strftime(
+            '%Y-%m-%d', time.localtime(now - 7 * 86400)
+        )
+        # 准备 evidence excerpts (per-cat 简要 stats)
+        ex = []
+        for cat in 'ABCDE':
+            cs = stats.get('by_category', {}).get(cat, {})
+            if cs.get('total', 0) == 0:
+                continue
+            ex.append(
+                f"{cat}: {cs['total']} thoughts, "
+                f"engaged={cs.get('sir_engaged', 0)} "
+                f"silenced={cs.get('sir_silenced', 0)} "
+                f"rejected={cs.get('sir_rejected', 0)}"
+            )
+        insight = WeeklyInsight(
+            id=f'wi_voc_{time.strftime("%Y%m%d_%H%M%S")}_'
+                f'{int(now * 1000) % 10000:04x}',
+            ts=now,
+            ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S',
+                                   time.localtime(now)),
+            week_range_iso=f'{start_d} → {end_d}',
+            pattern_summary=tune.get('pattern_summary', '')[:200],
+            suggested_action=tune.get('suggested_action', '')[:300],
+            evidence_count=n_total,
+            evidence_excerpts=ex[:3],
+            confidence=tune.get('confidence', 0.0),
+            insight_type='inner_thought_vocab_tune',
+            target_vocab_path=self.SURFACE_VOCAB_PATH,
+            target_field=tune.get('target_field', ''),
+            proposed_old_value=tune.get('old_value'),
+            proposed_new_value=tune.get('new_value'),
+        )
+        with self._lock:
+            self._insights.append(insight)
+        self._persist_insight(insight)
+        self._publish_swm(insight)
+        self._bg_log(
+            f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
+            f"proposed vocab tune {tune.get('target_field')}: "
+            f"{tune.get('old_value')} → {tune.get('new_value')} "
+            f"(conf {insight.confidence:.2f}, "
+            f"based on {n_total} thoughts, {n_resolved} resolved)"
+        )
+
+    def _collect_thought_outcome_stats(self) -> dict:
+        """从 inner_thoughts.jsonl 读 7d thought, 统计 per-cat outcome."""
+        path = self.INNER_THOUGHT_PERSIST_PATH
+        if not os.path.exists(path):
+            return {'total': 0}
+        cutoff = time.time() - 7 * 86400
+        outcomes = {'pending': 0, 'sir_engaged': 0,
+                    'sir_silenced': 0, 'sir_rejected': 0}
+        by_category = {}  # cat → {total, sir_engaged, sir_silenced, sir_rejected, pending, avg_sal}
+        total = 0
+        sal_sum = 0.0
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        t = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if float(t.get('ts', 0)) < cutoff:
+                        continue
+                    total += 1
+                    sal_sum += float(t.get('salience', 0) or 0)
+                    oc = t.get('outcome', 'pending')
+                    outcomes[oc] = outcomes.get(oc, 0) + 1
+                    cat = t.get('category', '?')
+                    if cat not in by_category:
+                        by_category[cat] = {
+                            'total': 0, 'pending': 0,
+                            'sir_engaged': 0, 'sir_silenced': 0,
+                            'sir_rejected': 0, 'sal_sum': 0.0,
+                        }
+                    by_category[cat]['total'] += 1
+                    by_category[cat][oc] = by_category[cat].get(oc, 0) + 1
+                    by_category[cat]['sal_sum'] += float(
+                        t.get('salience', 0) or 0
+                    )
+        except Exception as e:
+            self._bg_log(
+                f"⚠️ [WeeklyConsolidator/thought_outcome] read fail: {e}"
+            )
+            return {'total': 0}
+        # avg_sal per cat
+        for cat, cs in by_category.items():
+            if cs['total'] > 0:
+                cs['avg_sal'] = cs['sal_sum'] / cs['total']
+            else:
+                cs['avg_sal'] = 0.0
+        return {
+            'total': total,
+            'avg_salience': sal_sum / total if total > 0 else 0.0,
+            'outcomes': outcomes,
+            'by_category': by_category,
+        }
+
+    def _load_surface_vocab(self) -> dict:
+        """读 surface_to_sir_vocab.json (fail-safe)."""
+        try:
+            if not os.path.exists(self.SURFACE_VOCAB_PATH):
+                return {}
+            with open(self.SURFACE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f) or {}
+        except Exception:
+            return {}
+
+    def _llm_propose_vocab_tune(self, stats: dict, cur_vocab: dict
+                                  ) -> dict:
+        """LLM 看 outcome stats + 现 vocab → propose 1 个 tune (JSON dict).
+
+        Returns dict: {
+          'pattern_summary': str,  # 1-2 sentence 描述真现状
+          'suggested_action': str, # 具体建议改什么
+          'target_field': str,     # vocab key e.g. 'salience_threshold'
+          'old_value': Any,
+          'new_value': Any,
+          'confidence': float,
+        }
+        空 dict (or 没 target_field) = 没 propose.
+        """
+        try:
+            from jarvis_llm_reflector import LlmReflector
+            from jarvis_key_router import KeyRouter
+            reflector = LlmReflector(key_router=self.key_router)
+        except Exception:
+            return {}
+        # 准备 stats summary (给 LLM 看)
+        outcomes = stats.get('outcomes', {})
+        total = stats.get('total', 0)
+        by_cat = stats.get('by_category', {})
+        cur_thr = cur_vocab.get('salience_threshold', 0.7)
+        cur_max_h = cur_vocab.get('max_per_hour', 6)
+        cur_cd_g = cur_vocab.get('cooldown_global_s', 120)
+        # build stats block
+        stats_lines = [
+            f"[OUTCOME STATS — 7d, {total} thoughts]",
+            f"  pending: {outcomes.get('pending', 0)}",
+            f"  sir_engaged: {outcomes.get('sir_engaged', 0)}",
+            f"  sir_silenced: {outcomes.get('sir_silenced', 0)}",
+            f"  sir_rejected: {outcomes.get('sir_rejected', 0)}",
+            "",
+            "[PER-CATEGORY BREAKDOWN]",
+        ]
+        for cat in 'ABCDE':
+            cs = by_cat.get(cat, {})
+            if cs.get('total', 0) == 0:
+                continue
+            n = cs['total']
+            eng = cs.get('sir_engaged', 0)
+            sil = cs.get('sir_silenced', 0)
+            rej = cs.get('sir_rejected', 0)
+            avg_s = cs.get('avg_sal', 0.0)
+            eng_rate = eng / float(n) if n > 0 else 0.0
+            stats_lines.append(
+                f"  {cat}: n={n} avg_sal={avg_s:.2f} "
+                f"engaged={eng}({eng_rate*100:.0f}%) "
+                f"silenced={sil} rejected={rej}"
+            )
+        stats_lines.append("")
+        stats_lines.append(
+            f"[CURRENT surface_to_sir_vocab]"
+        )
+        stats_lines.append(
+            f"  salience_threshold: {cur_thr} "
+            f"(thought must >= this to surface to Sir)"
+        )
+        stats_lines.append(
+            f"  cooldown_global_s: {cur_cd_g} (anti-burst)"
+        )
+        stats_lines.append(
+            f"  max_per_hour: {cur_max_h} (cap per hour)"
+        )
+
+        system = (
+            "You are J.A.R.V.I.S., weekly reviewing your own inner-thought "
+            "outcomes vs Sir's reactions, to propose a single tweak to your "
+            "surface_to_sir vocabulary (your own threshold for speaking up).\n\n"
+            "Read the stats and decide if ONE field needs adjustment. "
+            "Examples of good logic:\n"
+            "  - If engaged rate >= 50% across categories → Sir likes your "
+            "thoughts, LOWER salience_threshold (more chatter welcomed).\n"
+            "  - If silenced rate >= 60% → Sir tolerates but ignores, RAISE "
+            "salience_threshold (be pickier).\n"
+            "  - If rejected rate >= 30% → Sir actively dislikes, RAISE "
+            "threshold significantly AND propose cooldown extension.\n"
+            "  - If most outcomes still 'pending' (Sir hasn't reacted) → "
+            "wait, output (no_tune).\n\n"
+            "Output FORMAT (strict, 6 tags required):\n"
+            "<PATTERN_SUMMARY>1-2 sentences describing the dominant outcome "
+            "pattern observed (≤200 char).</PATTERN_SUMMARY>\n"
+            "<SUGGESTED_ACTION>1-2 sentences explaining what to adjust and "
+            "why (≤300 char). Be specific about WHICH field + WHY.</SUGGESTED_ACTION>\n"
+            "<TARGET_FIELD>one of: salience_threshold | max_per_hour | "
+            "cooldown_global_s | (no_tune)</TARGET_FIELD>\n"
+            "<OLD_VALUE>current value (number)</OLD_VALUE>\n"
+            "<NEW_VALUE>proposed new value (number). For salience_threshold "
+            "stay in [0.5, 0.95]. For max_per_hour stay in [2, 20]. For "
+            "cooldown_global_s stay in [60, 600].</NEW_VALUE>\n"
+            "<CONFIDENCE>0.0-1.0 — how clear is the signal. ≥0.7 only if "
+            "the dominant pattern is consistent across 3+ categories.</CONFIDENCE>\n\n"
+            "Rules (准则 5 + 6 + 7 + 8):\n"
+            "  - DO NOT invent. Only base on the stats shown.\n"
+            "  - Propose at most ONE field change (Sir wants minimal "
+            "perturbation per week).\n"
+            "  - If signal is weak/ambiguous → output TARGET_FIELD=(no_tune) "
+            "and CONFIDENCE=0.0.\n"
+            "  - Sir has veto: even if you propose, Sir manually edits the "
+            "JSON. You only suggest."
+        )
+        user_prompt = '\n'.join(stats_lines)
+        try:
+            res = reflector.reflect(
+                model='flash_lite',
+                system_prompt=system,
+                user_prompt=user_prompt,
+                force=True,
+                caller=getattr(KeyRouter, 'CALLER_INNER_THOUGHT',
+                                 'inner_thought'),
+            )
+            if not res.get('success'):
+                return {}
+            raw = res.get('raw_text', '') or ''
+        except Exception as e:
+            self._bg_log(
+                f"⚠️ [WeeklyConsolidator/thought_outcome] LLM fail: {e}"
+            )
+            return {}
+        # parse
+        def _g(tag: str) -> str:
+            m = re.search(
+                rf'<{tag}>(.*?)</{tag}>', raw, re.DOTALL | re.IGNORECASE
+            )
+            return m.group(1).strip() if m else ''
+        target = _g('TARGET_FIELD').lower()
+        if not target or target == 'no_tune' or target == '(no_tune)':
+            return {}
+        if target not in (
+            'salience_threshold', 'max_per_hour', 'cooldown_global_s'
+        ):
+            return {}
+        try:
+            old_v_str = _g('OLD_VALUE')
+            new_v_str = _g('NEW_VALUE')
+            conf_str = _g('CONFIDENCE')
+            old_v = float(old_v_str) if old_v_str else None
+            new_v = float(new_v_str) if new_v_str else None
+            conf = max(0.0, min(1.0, float(conf_str))) if conf_str else 0.0
+            # 整数 fields
+            if target in ('max_per_hour', 'cooldown_global_s'):
+                if new_v is not None:
+                    new_v = int(round(new_v))
+                if old_v is not None:
+                    old_v = int(round(old_v))
+            # clamp 安全范围
+            if target == 'salience_threshold' and new_v is not None:
+                new_v = max(0.5, min(0.95, new_v))
+            elif target == 'max_per_hour' and new_v is not None:
+                new_v = max(2, min(20, int(new_v)))
+            elif target == 'cooldown_global_s' and new_v is not None:
+                new_v = max(60, min(600, int(new_v)))
+        except (ValueError, TypeError):
+            return {}
+        if conf < 0.4 or old_v == new_v or new_v is None:
+            return {}
+        return {
+            'pattern_summary': _g('PATTERN_SUMMARY'),
+            'suggested_action': _g('SUGGESTED_ACTION'),
+            'target_field': target,
+            'old_value': old_v,
+            'new_value': new_v,
+            'confidence': conf,
+        }
 
     def _collect_reflection_evidence(self) -> List[dict]:
         """从 Hippocampus search self_reflection events (7d)."""
