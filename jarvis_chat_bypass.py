@@ -5783,7 +5783,12 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
         # commitment 原话等) 和 anti-hallucination (commitment_check / offer_help 的
         # tool name 禁令 — 这是 integrity 规则, 不是句式锁).
         nudge_directives = {
-            "hydration": "Sir has been working for a while without an obvious break — could be time to mention water.",
+            # 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness 真痛修] Sir 00:50:
+            # "凌晨 hydration fire 时该说该睡, 不该说该喝水, 不要硬编码, 知道时间就会
+            # 说对". 准则 6 反例 #4 修法: 删 prescribe ("mention water"), 留 evidence
+            # only. 主脑看 Layer 1.5 lifetime block (含 hour + Alive uptime) + 这条
+            # raw evidence, 自决合适反应 (下午 → 水; 凌晨 → 睡; 深夜 flow → 静默).
+            "hydration": "Sir has been working for a while without an obvious break.",
             "stretch": "Sir has been at this for a long stretch.",
             "late_night": late_night_directive,
             "atmosphere": (

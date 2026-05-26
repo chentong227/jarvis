@@ -3774,6 +3774,96 @@ def api_inner_thoughts():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ============================================================
+# 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] /api/lifetime_state
+# Sir 真意: dashboard 看 Jarvis 7 维生命体感快照
+#   - process uptime / 今日 turn 数 / 跨 session 数
+#   - 几分钟前 recent thoughts (last 15min, time-ordered)
+#   - 几小时前 recent actions (last 2h)
+#   - 上一 sleep ago / yesterday recap narrative
+# 数据全 from daemon.get_stats() + daemon.build_lifetime_block(mode='full')
+# 复用准则 6 vocab tier_mode (jarvis_lifetime_block_vocab.json).
+# ============================================================
+@app.route('/api/lifetime_state')
+def api_lifetime_state():
+    """Jarvis lifetime 7 维生命体感 snapshot for dashboard."""
+    try:
+        result: dict = {
+            'ok': True,
+            'lifetime_block_full': '',
+            'lifetime_block_mini': '',
+            'stats': {},
+            'yesterday_recap': None,
+            'vocab_tier_mode': {},
+        }
+        # 1. daemon snapshot
+        try:
+            from jarvis_inner_thought_daemon import get_default_daemon
+            daemon = get_default_daemon()
+            if daemon is not None:
+                try:
+                    result['lifetime_block_full'] = (
+                        daemon.build_lifetime_block(mode='full') or ''
+                    )
+                except Exception as e:
+                    result['lifetime_block_full'] = f"(error: {e})"
+                try:
+                    result['lifetime_block_mini'] = (
+                        daemon.build_lifetime_block(mode='mini') or ''
+                    )
+                except Exception as e:
+                    result['lifetime_block_mini'] = f"(error: {e})"
+                try:
+                    stats = daemon.get_stats() or {}
+                    result['stats'] = {
+                        'tick_count': stats.get('tick_count', 0),
+                        'thought_count': stats.get('thought_count', 0),
+                        'today_thought_count': getattr(
+                            daemon, '_today_thought_count', 0
+                        ),
+                        'cross_session_records': len(getattr(
+                            daemon, '_cross_session_index', []
+                        )),
+                        'current_state': stats.get(
+                            'current_sir_state', 'unknown'
+                        ),
+                        'current_interval_s': stats.get(
+                            'current_interval_s', 0
+                        ),
+                        'cooldown_skip_count': stats.get(
+                            'cooldown_skip_count', 0
+                        ),
+                        'llm_fail_count': stats.get('llm_fail_count', 0),
+                    }
+                except Exception:
+                    pass
+                # vocab tier_mode (准则 6 可视化)
+                try:
+                    vocab = daemon._load_lifetime_vocab() or {}
+                    result['vocab_tier_mode'] = vocab.get('tier_mode', {})
+                except Exception:
+                    pass
+                # yesterday recap (last record)
+                try:
+                    yest = daemon._load_yesterday_recap()
+                    if yest:
+                        result['yesterday_recap'] = {
+                            'date': yest.get('date'),
+                            'narrative': yest.get('narrative'),
+                            'ts_iso': yest.get('ts_iso'),
+                            'thought_count': yest.get('thought_count'),
+                            'action_count': yest.get('action_count'),
+                        }
+                except Exception:
+                    pass
+        except Exception as e:
+            result['ok'] = False
+            result['error'] = str(e)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 _INNER_THOUGHTS_HTML = r"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -3964,6 +4054,26 @@ _INNER_THOUGHTS_HTML = r"""
   </div>
 
   <div id="health-banner"></div>
+
+  <!-- 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] Jarvis 7 维生命体感面板 -->
+  <div id="lifetime-panel" style="background:#161b22; border:1px solid #30363d;
+       border-radius:10px; padding:1rem 1.2rem; margin-bottom:1rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.6rem;">
+      <h3 style="margin:0; color:#f97316; font-size:1.05rem;">
+        🌙 Jarvis 生命体感 <span style="color:#6e7681; font-size:0.85rem; font-weight:normal;">
+          (7 维生命体感 — 主脑/思考脑同时看, 准则 6 vocab 持久化)</span>
+      </h3>
+      <button class="refresh-btn" onclick="loadLifetime()" style="padding:0.2rem 0.6rem; font-size:0.85rem;">🔄</button>
+    </div>
+    <pre id="lifetime-block" style="background:#0d1117; padding:0.8rem; border-radius:6px;
+         color:#9ad1be; font-size:0.85rem; line-height:1.5; max-height:280px; overflow:auto;
+         white-space:pre-wrap; word-break:break-word; margin:0;">加载中...</pre>
+    <div id="lifetime-meta" style="margin-top:0.6rem; color:#8b949e; font-size:0.82rem;
+         display:flex; gap:1.2rem; flex-wrap:wrap;"></div>
+    <div id="yesterday-recap" style="margin-top:0.6rem; padding:0.5rem 0.7rem;
+         background:#0d1117; border-left:3px solid #f97316; border-radius:4px;
+         color:#d1d5db; font-size:0.85rem; display:none;"></div>
+  </div>
 
   <div class="stats" id="stats-box">
     <div class="stat-box"><div class="num" id="n-total">-</div>
@@ -4262,8 +4372,54 @@ _INNER_THOUGHTS_HTML = r"""
           document.getElementById('status').textContent = '';
         });
     }
+    // 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] Jarvis 生命体感面板加载
+    function loadLifetime() {
+      fetch('/api/lifetime_state')
+        .then(r => r.json())
+        .then(data => {
+          if (!data.ok) {
+            document.getElementById('lifetime-block').textContent =
+              '(error: ' + (data.error || 'unknown') + ')';
+            return;
+          }
+          const block = data.lifetime_block_full || '(no data — daemon not running?)';
+          document.getElementById('lifetime-block').textContent = block;
+          const st = data.stats || {};
+          const meta = [];
+          if (st.tick_count !== undefined) meta.push('🫀 tick=' + st.tick_count);
+          if (st.thought_count !== undefined) meta.push('💭 thoughts=' + st.thought_count);
+          if (st.today_thought_count !== undefined) meta.push('📅 today=' + st.today_thought_count);
+          if (st.cross_session_records !== undefined) meta.push('🔄 sessions=' + st.cross_session_records);
+          if (st.current_state) meta.push('🎯 state=' + st.current_state);
+          if (st.current_interval_s) meta.push('⏱ next=' + st.current_interval_s + 's');
+          if (st.cooldown_skip_count !== undefined) meta.push('⏸ skip=' + st.cooldown_skip_count);
+          if (st.llm_fail_count !== undefined) meta.push('⚠️ fail=' + st.llm_fail_count);
+          document.getElementById('lifetime-meta').innerHTML =
+            meta.map(m => '<span>' + m + '</span>').join('');
+          // yesterday recap
+          const yr = data.yesterday_recap;
+          const yrEl = document.getElementById('yesterday-recap');
+          if (yr && yr.narrative) {
+            yrEl.style.display = 'block';
+            yrEl.innerHTML = '<strong style="color:#f97316;">📜 昨日回忆 (' +
+              (yr.date || '?') + ')</strong>: ' + yr.narrative +
+              ' <span style="color:#6e7681;">(' +
+              (yr.thought_count || 0) + ' thoughts, ' +
+              (yr.action_count || 0) + ' actions)</span>';
+          } else {
+            yrEl.style.display = 'none';
+          }
+        })
+        .catch(e => {
+          document.getElementById('lifetime-block').textContent =
+            '(fetch error: ' + e.message + ')';
+        });
+    }
+
     loadRecords();
+    loadLifetime();
     setInterval(loadRecords, 30000);  // 30s 自动刷新
+    setInterval(loadLifetime, 60000);  // 60s 刷生命体感
   </script>
 </body>
 </html>

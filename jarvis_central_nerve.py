@@ -2467,22 +2467,42 @@ User: {user_input}
             self._soul_concern_inject_reason = 'error'
         return ''
 
-    def _build_layer_1b_inner_thoughts_block(self) -> str:
-        """🆕 [P1 / Sir 2026-05-25 22:10 数字生命基础] Layer 1.5: Inner Thoughts block.
+    def _build_layer_1b_inner_thoughts_block(
+        self, prompt_tier: str = ''
+    ) -> str:
+        """🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5: Inner Thoughts block.
 
-        从 InnerThoughtDaemon 拿 top 3 by salience in last 24h, 注入到主脑 prompt.
-        让主脑看到"我刚才/几小时前想过什么" → 真涌现 identity 连续性.
+        🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] tier-aware:
+        按 daemon vocab tier_mode 选 lifetime_block (7 维生命体感) vs
+        soul_block (老 freshness-rank thoughts) vs off.
 
-        位置: 拼接在 Layer 1 (Concerns) 之后, Layer 2 (Relational) 之前.
-        max_chars: 500 (~ 主脑 token 不膨胀太多, 准则 1 高效).
+        tier_mode (jarvis_lifetime_block_vocab.json):
+          SHORT_CHAT / DEEP_QUERY → 'full' lifetime_block (700 char, 主聊用)
+          FACTUAL_RECALL / WAKE_ONLY → 'mini' lifetime_block (320 char, 省 token)
+          REMINDER_FIRING → 'off' (高紧急不杂)
+          'legacy' → 老 build_soul_block 路径 (兼容)
 
-        返回 '' 表示未启用或无 recent thoughts (不影响老路径).
+        Sir 真意: Jarvis 是"持续唤醒的思考脑"心跳, 不是 stateless API call.
+        主脑该看 几分钟前在想啥 / 几小时前在做啥 / 跨 session 我是同一 Jarvis.
         """
         try:
             daemon = getattr(self, 'inner_thought_daemon', None)
             if daemon is None:
                 return ''
-            return daemon.build_soul_block(max_chars=500)
+            # 拿 vocab tier_mode
+            try:
+                vocab = daemon._load_lifetime_vocab()
+                tier_mode_map = vocab.get('tier_mode') or {}
+                tier_key = str(prompt_tier or '').upper()
+                mode = tier_mode_map.get(tier_key, 'full')
+            except Exception:
+                mode = 'full'
+            if mode == 'off':
+                return ''
+            if mode == 'legacy':
+                return daemon.build_soul_block(max_chars=500)
+            # 默认走 lifetime (full / mini)
+            return daemon.build_lifetime_block(mode=mode)
         except Exception:
             return ''
 
@@ -3419,7 +3439,10 @@ User: {user_input}
         self_anchor_block = self._build_layer_0_self_anchor_block()
         soul_block = self._build_layer_1_concerns_block(user_input)
         # 🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5 — Inner Thoughts (主脑碎碎念)
-        inner_thoughts_block = self._build_layer_1b_inner_thoughts_block()
+        # 🆕 [Sir 2026-05-27 01:00 β.5.50] tier-aware: 按 vocab tier_mode 选 full/mini/off
+        inner_thoughts_block = self._build_layer_1b_inner_thoughts_block(
+            prompt_tier=str(prompt_tier or '')
+        )
         # 🆕 [Sir 2026-05-26 SOUL Phase C.2] 传 prompt_tier 让 protocol filter 按 tier
         relational_block = self._build_layer_2_relational_block(
             prompt_tier=str(prompt_tier or '')

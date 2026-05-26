@@ -1,17 +1,21 @@
 {
   "thresholds": {
-    "inside_joke": 0.65,
+    "inside_joke": 0.63,
     "thread": 0.65,
-    "protocol": 0.70,
+    "protocol": 0.6799999999999999,
     "concern": 0.85,
     "directive": 0.9
   },
   "revert_history_24h": {
+    "protocol": {
+      "total": 51,
+      "reverted": 0
+    },
     "inside_joke": {
-      "total": 2,
+      "total": 5,
       "reverted": 0
     }
   },
-  "last_calibrated_at": 1779735954.8777015,
-  "last_calibrated_iso": "2026-05-26T03:05:54"
+  "last_calibrated_at": 1779822413.5668705,
+  "last_calibrated_iso": "2026-05-27T03:06:53"
 }

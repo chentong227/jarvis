@@ -14,11 +14,11 @@
     "history_max_days": 60
   },
   "typical_sleep_hour": {
-    "weekday": 23.6,
+    "weekday": 24.02,
     "weekend": null,
     "tolerance_hours": 1.0,
-    "last_computed_ts": 1779737124.8579082,
-    "data_points_used": 5,
+    "last_computed_ts": 1779825384.5758297,
+    "data_points_used": 6,
     "source": "l7_reflector_auto"
   },
   "history": [
@@ -54,6 +54,13 @@
       "date": "2026-05-26",
       "sleep_ts": 1779726419.155271,
       "sleep_hour": 24.43,
+      "weekday": 1,
+      "source": "nerve_trigger_sleep_mode"
+    },
+    {
+      "date": "2026-05-27",
+      "sleep_ts": 1779814924.341015,
+      "sleep_hour": 25.03,
       "weekday": 1,
       "source": "nerve_trigger_sleep_mode"
     }

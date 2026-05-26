@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "created_by": "Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness",
+    "purpose": "Jarvis 自我连续生命体感 — 主脑 + 思考脑装的 lifetime block 配置",
+    "principle": "准则 6 持久化 / 6.4 公共子集 / 8 优雅. daemon 是心跳 keeper.",
+    "cli_tool": "scripts/lifetime_dump.py (TODO)"
+  },
+  "tier_mode": {
+    "SHORT_CHAT": "full",
+    "DEEP_QUERY": "full",
+    "FACTUAL_RECALL": "mini",
+    "WAKE_ONLY": "mini",
+    "REMINDER_FIRING": "off"
+  },
+  "mode_limits": {
+    "mini": {
+      "max_chars": 320,
+      "recent_thoughts_n": 2,
+      "recent_actions_n": 2
+    },
+    "full": {
+      "max_chars": 700,
+      "recent_thoughts_n": 4,
+      "recent_actions_n": 4
+    }
+  },
+  "recent_thoughts_lookback_s": 900,
+  "recent_actions_lookback_s": 7200,
+  "cross_session_max_records": 12,
+  "yesterday_recap_enabled": true,
+  "yesterday_recap_hour": 23,
+  "yesterday_recap_cooldown_s": 82800
+}

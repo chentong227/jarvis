@@ -451,6 +451,25 @@ class InnerThoughtDaemon:
         # 启动时载入近 24h thoughts (重启后 SOUL 仍有上下文)
         self._load_persist()
 
+        # 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] daemon 是心跳 keeper
+        # =====================================================================
+        # Sir 真反问 "这是独立架构, 还是持续唤醒思考脑带来的能力?" → 后者真.
+        # daemon 已 60s tick + 持久化 jsonl, 它本就是 lifetime keeper. 扩 API 即可.
+        # 不抽独立 module (准则 8 优雅 + 6.4 公共子集).
+        # =====================================================================
+        self._process_start_ts = time.time()  # daemon init 近似 nerve cold-start
+        self._today_date = time.strftime('%Y-%m-%d')  # 跨日 reset baseline
+        self._today_thought_count = 0
+        # yesterday recap cache (LLM 生成的昨日 narrative)
+        self._yesterday_recap_cached: Optional[Dict[str, Any]] = None
+        self._yesterday_recap_last_check_ts = 0.0
+        self._yesterday_recap_last_written_ts = 0.0
+        # cold_starts.jsonl append (daemon init 真发生)
+        try:
+            self._append_cold_start_record()
+        except Exception:
+            pass
+
     # ----------------------------------------------------------
     # Lifecycle
     # ----------------------------------------------------------
@@ -501,6 +520,12 @@ class InnerThoughtDaemon:
                     self._next_tick_interval_s = 0  # consumed
             except Exception as e:
                 self._bg_log(f"⚠️ [InnerThought] tick exception: {e}")
+            # 🆕 [Sir 2026-05-27 01:00 β.5.50] yesterday_recap sub-reflector
+            # daemon tick 后 check (低频 — 内部 23h cooldown 真守住)
+            try:
+                self._maybe_write_yesterday_recap()
+            except Exception:
+                pass
             self._stop.wait(timeout=interval)
 
     # ----------------------------------------------------------
@@ -706,6 +731,15 @@ class InnerThoughtDaemon:
             self._thoughts.append(thought)
             self._last_category_ts[thought.category] = thought.ts
             self._thought_count += 1
+            # 🆕 [Sir 2026-05-27 01:00 β.5.50] today_thought_count 跨日 reset
+            try:
+                today = time.strftime('%Y-%m-%d')
+                if today != self._today_date:
+                    self._today_date = today
+                    self._today_thought_count = 0
+                self._today_thought_count += 1
+            except Exception:
+                pass
 
         # actionable execute (before persist for actionable_result)
         ok, result = self._execute_actionable(thought)
@@ -1412,7 +1446,25 @@ class InnerThoughtDaemon:
         )
 
         # User block — give LLM evidence to ground thought
-        lines = ["[CURRENT MOMENT]"]
+        lines: List[str] = []
+        # 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] daemon 自己也知"心跳"
+        # ===================================================================
+        # 思考脑 prompt 起头注入 mini lifetime block — 让它知道:
+        #   - 几分钟前在想啥 (recent thoughts time-ordered)
+        #   - 几小时前在做啥 (recent actions)
+        #   - process 跑多久 / 今日 turn 数 / 跨 session 数
+        # 让"思考脑"也守 continuity 防自相矛盾 / 重复 propose 同 protocol.
+        # 准则 6 vocab 持久化 (mode='mini' 320 char cap 省 token, 准则 1).
+        # ===================================================================
+        try:
+            lifetime_mini = self.build_lifetime_block(mode='mini')
+            if lifetime_mini:
+                for ln in lifetime_mini.splitlines():
+                    lines.append(ln)
+                lines.append("")
+        except Exception:
+            pass
+        lines.append("[CURRENT MOMENT]")
         lines.append(f"  - Sir state: {evidence.get('sir_state')}")
         lines.append(f"  - idle: {evidence.get('idle_seconds')}s")
         lines.append(f"  - hour: {evidence.get('hour')}:00")
@@ -3228,6 +3280,554 @@ class InnerThoughtDaemon:
         if len(block) > max_chars:
             block = block[:max_chars - 14].rstrip() + '\n…[truncated]'
         return block
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] daemon 是心跳 keeper
+    # ----------------------------------------------------------
+    # 设计原则 (Sir 反问校准 — 走 daemon 扩 API, 不抽独立 module):
+    #   - daemon 已 60s tick + 持久化 _thoughts jsonl, 它本就 own 时间数据
+    #   - 主脑 Layer 1.5 升级为调本 build_lifetime_block (按 tier_mode 选)
+    #   - daemon 自己 _build_prompt 也接 mini lifetime (思考脑也知道几分钟前)
+    #   - cold_starts.jsonl + yesterday_recap.jsonl 都 daemon own (心跳 keeper)
+    # 准则 6.4 公共子集 + 8 优雅 (不重复发明)
+    # ----------------------------------------------------------
+    _COLD_STARTS_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'jarvis_cold_starts.jsonl',
+    )
+    _YESTERDAY_RECAP_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'jarvis_yesterday_recap.jsonl',
+    )
+    _LIFETIME_VOCAB_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'jarvis_lifetime_block_vocab.json',
+    )
+    _LIFETIME_VOCAB_CACHE: dict = {
+        'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+    }
+    _LIFETIME_DEFAULT_VOCAB = {
+        'tier_mode': {
+            'SHORT_CHAT': 'full', 'DEEP_QUERY': 'full',
+            'FACTUAL_RECALL': 'mini', 'WAKE_ONLY': 'mini',
+            'REMINDER_FIRING': 'off',
+        },
+        'mode_limits': {
+            'mini': {'max_chars': 320, 'recent_thoughts_n': 2,
+                       'recent_actions_n': 2},
+            'full': {'max_chars': 700, 'recent_thoughts_n': 4,
+                       'recent_actions_n': 4},
+        },
+        'recent_thoughts_lookback_s': 900,   # 15min
+        'recent_actions_lookback_s': 7200,   # 2h
+        'cross_session_max_records': 12,     # 跨 session 显前 N (最近优先)
+        'yesterday_recap_enabled': True,
+        'yesterday_recap_hour': 23,          # 23 点窗 LLM 写昨日 recap
+        'yesterday_recap_cooldown_s': 82800, # 23h
+    }
+
+    def _load_lifetime_vocab(self) -> dict:
+        """Lazy load + 30s throttle. Fail-safe → default."""
+        now = time.time()
+        cache = self._LIFETIME_VOCAB_CACHE
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < 30.0):
+            return cache['data']
+        cache['checked_at'] = now
+        try:
+            if not os.path.exists(self._LIFETIME_VOCAB_PATH):
+                cache['data'] = dict(self._LIFETIME_DEFAULT_VOCAB)
+                return cache['data']
+            mtime = os.path.getmtime(self._LIFETIME_VOCAB_PATH)
+            if mtime == cache['mtime'] and cache['data']:
+                return cache['data']
+            with open(self._LIFETIME_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            cfg = dict(self._LIFETIME_DEFAULT_VOCAB)
+            # deep-merge 1 层
+            for k, v in (data or {}).items():
+                if k in cfg and isinstance(cfg[k], dict) and isinstance(v, dict):
+                    merged = dict(cfg[k]); merged.update(v); cfg[k] = merged
+                else:
+                    cfg[k] = v
+            cache['data'] = cfg
+            cache['mtime'] = mtime
+            return cfg
+        except Exception:
+            return dict(self._LIFETIME_DEFAULT_VOCAB)
+
+    def _append_cold_start_record(self) -> None:
+        """daemon init 时 append 一条 cold_start record (跨 session 持久)."""
+        try:
+            sess_id = ''
+            try:
+                from jarvis_utils import TraceContext
+                sess_id = TraceContext.get_session_id() or ''
+            except Exception:
+                pass
+            # 读上一条算 prev_session_age_s
+            prev_age = None
+            try:
+                if os.path.exists(self._COLD_STARTS_PATH):
+                    with open(self._COLD_STARTS_PATH, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                    if lines:
+                        last = json.loads(lines[-1].strip())
+                        prev_ts = float(last.get('ts', 0))
+                        if prev_ts > 0:
+                            prev_age = int(time.time() - prev_ts)
+            except Exception:
+                pass
+            record = {
+                'ts': time.time(),
+                'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                          time.localtime()),
+                'session_id': sess_id,
+                'prev_cold_start_age_s': prev_age,
+                'reason': 'first_run' if prev_age is None else 'restart',
+            }
+            os.makedirs(os.path.dirname(self._COLD_STARTS_PATH),
+                          exist_ok=True)
+            with open(self._COLD_STARTS_PATH, 'a',
+                       encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+    def _load_cold_starts(self, max_n: int = 12) -> List[dict]:
+        """读末 N 条 cold_start record (最近优先)."""
+        try:
+            if not os.path.exists(self._COLD_STARTS_PATH):
+                return []
+            with open(self._COLD_STARTS_PATH, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            recs = []
+            for ln in lines[-max_n * 2:]:  # 略多读防 broken line
+                try:
+                    recs.append(json.loads(ln.strip()))
+                except Exception:
+                    continue
+            recs.sort(key=lambda r: -float(r.get('ts', 0)))
+            return recs[:max_n]
+        except Exception:
+            return []
+
+    def _load_yesterday_recap(self) -> Optional[dict]:
+        """读末行 yesterday recap (1 day cache mtime)."""
+        now = time.time()
+        if (self._yesterday_recap_cached is not None and
+                now - self._yesterday_recap_last_check_ts < 3600):
+            return self._yesterday_recap_cached
+        self._yesterday_recap_last_check_ts = now
+        try:
+            if not os.path.exists(self._YESTERDAY_RECAP_PATH):
+                self._yesterday_recap_cached = None
+                return None
+            with open(self._YESTERDAY_RECAP_PATH, 'r',
+                       encoding='utf-8') as f:
+                lines = f.readlines()
+            if not lines:
+                return None
+            self._yesterday_recap_cached = json.loads(lines[-1].strip())
+            return self._yesterday_recap_cached
+        except Exception:
+            return None
+
+    def _get_today_turn_count(self) -> int:
+        """从 nerve.self_anchor.get_turn_count 拿主聊 turn 数 (跨日不 reset, 但
+        和 process_start 比对就能算今日 delta).
+        """
+        try:
+            if self.nerve and hasattr(self.nerve, 'self_anchor'):
+                sa = self.nerve.self_anchor
+                if sa and hasattr(sa, 'get_turn_count'):
+                    return int(sa.get_turn_count())
+        except Exception:
+            pass
+        return 0
+
+    def _get_today_thought_count(self) -> int:
+        """跨日 reset thought count. 今日 0 点为界."""
+        today = time.strftime('%Y-%m-%d')
+        if today != self._today_date:
+            self._today_date = today
+            self._today_thought_count = 0
+        return self._today_thought_count
+
+    def _format_age_human(self, ts: float) -> str:
+        age_s = max(0, int(time.time() - ts))
+        if age_s < 60: return f"{age_s}s"
+        if age_s < 3600: return f"{age_s // 60}min"
+        if age_s < 86400: return f"{age_s // 3600}h"
+        return f"{age_s // 86400}d"
+
+    def build_lifetime_block(self, mode: str = 'full',
+                                max_chars: Optional[int] = None) -> str:
+        """🆕 [Sir 2026-05-27 01:00 β.5.50] 主脑 + daemon 复用的 lifetime block.
+
+        Sir 真意 "全面时间感知 / 知道几分钟前在想啥几小时前在做啥".
+        7 维 (按 mode):
+          1. process uptime (alive since)
+          2. cross-session (跨 cold_start 历史)
+          3. today counters (turns + thoughts)
+          4. recent thoughts (15min 时序)
+          5. recent actions (2h SWM tool_called / proposal events)
+          6. hour pattern (M2 — Sir typical at this hour)
+          7. yesterday recap (LLM 写, jsonl 持久)
+
+        mode='mini' for daemon / FACTUAL_RECALL / WAKE_ONLY (省 token)
+        mode='full' for SHORT_CHAT / DEEP_QUERY (主聊用全)
+        mode='off' → 返 ''
+        """
+        if mode == 'off':
+            return ''
+        vocab = self._load_lifetime_vocab()
+        limits = (vocab.get('mode_limits') or {}).get(mode) or \
+                  self._LIFETIME_DEFAULT_VOCAB['mode_limits'].get(mode, {})
+        if max_chars is None:
+            max_chars = int(limits.get('max_chars', 600))
+        rt_n = int(limits.get('recent_thoughts_n', 3))
+        ra_n = int(limits.get('recent_actions_n', 3))
+
+        lines = ["=== JARVIS LIFETIME — you are ONE continuous entity ==="]
+
+        # (1) Process uptime
+        try:
+            up_s = int(time.time() - self._process_start_ts)
+            up_str = self._format_age_human(self._process_start_ts)
+            start_clock = time.strftime(
+                '%H:%M %a', time.localtime(self._process_start_ts)
+            )
+            lines.append(
+                f"- Alive: {up_str} since {start_clock} "
+                f"(this process incarnation)"
+            )
+        except Exception:
+            pass
+
+        # (2) Cross-session (跨 cold_start)
+        try:
+            recs = self._load_cold_starts(
+                int(vocab.get('cross_session_max_records', 12))
+            )
+            if recs and len(recs) >= 2:
+                # recs[0] 是 self (本次), recs[1:] 是历史
+                hist = recs[1:]
+                if hist:
+                    # 计算 span
+                    oldest_ts = float(hist[-1].get('ts', 0))
+                    span_s = int(time.time() - oldest_ts) if oldest_ts > 0 else 0
+                    span_human = (f"{span_s // 86400}d"
+                                    if span_s >= 86400
+                                    else f"{span_s // 3600}h")
+                    lines.append(
+                        f"- Cross-session: {len(recs)} cold-starts "
+                        f"over {span_human} (same Jarvis identity, "
+                        f"multiple process restarts)"
+                    )
+        except Exception:
+            pass
+
+        # (3) Today counters
+        try:
+            turn_n = self._get_today_turn_count()
+            thought_n_today = self._get_today_thought_count()
+            lifetime_thoughts = len(self._thoughts)
+            lines.append(
+                f"- Today so far: {turn_n} main turns | "
+                f"{thought_n_today} new inner thoughts "
+                f"({lifetime_thoughts} in last 24h window)"
+            )
+        except Exception:
+            pass
+
+        # (4) Recent thoughts (时序, 不按 salience)
+        try:
+            lookback_s = int(vocab.get('recent_thoughts_lookback_s', 900))
+            cutoff = time.time() - lookback_s
+            with self._lock:
+                recent_t = sorted(
+                    [t for t in self._thoughts if t.ts > cutoff],
+                    key=lambda x: -x.ts,
+                )[:rt_n]
+            if recent_t:
+                lines.append(
+                    f"- Last {lookback_s // 60}min you thought "
+                    f"({len(recent_t)} thoughts, time-ordered):"
+                )
+                for t in reversed(recent_t):  # 旧→新让 narrative
+                    age = self._format_age_human(t.ts)
+                    tid_short = (
+                        getattr(t, 'thread_id', '') or t.id
+                    )[:10]
+                    cont = getattr(t, 'continuity', 'new_topic')
+                    cont_mark = '🔗' if cont == 'same_thread' else '✨'
+                    act_str = ''
+                    if t.actionable and t.actionable != 'none':
+                        if t.actionable_done is False:
+                            act_str = ' ❌'
+                        elif t.actionable_done is True:
+                            act_str = ' ✓'
+                        else:
+                            act_str = ' →pending'
+                    lines.append(
+                        f"    [{age} ago] {cont_mark} cat={t.category} "
+                        f"sal={t.salience:.2f} t={tid_short}: "
+                        f"\"{t.thought[:90]}\"{act_str}"
+                    )
+        except Exception:
+            pass
+
+        # (5) Recent actions (SWM tool_called / surface / propose 等)
+        try:
+            from jarvis_utils import get_event_bus as _geb_la
+            bus = _geb_la()
+            if bus is not None:
+                lookback_s = int(vocab.get('recent_actions_lookback_s', 7200))
+                top = bus.top_n(n=40) or []
+                action_types = (
+                    'tool_called', 'inner_thought_tool_called',
+                    'inner_thought_surface', 'propose_protocol_activated',
+                    'reminder_fired', 'commitment_fulfilled',
+                    'commitment_cancelled', 'stand_down_set',
+                )
+                acts = []
+                for ev in top:
+                    if ev.get('type') not in action_types:
+                        continue
+                    age_raw = ev.get('_age_s', 999999)
+                    age_s = float(age_raw if age_raw is not None
+                                   else 999999)
+                    if age_s > lookback_s:
+                        continue
+                    desc = str(ev.get('description', '') or '')[:80]
+                    acts.append({
+                        'type': ev.get('type'),
+                        'age_s': int(age_s),
+                        'desc': desc,
+                    })
+                acts.sort(key=lambda a: a['age_s'])
+                if acts:
+                    lines.append(
+                        f"- Last {lookback_s // 3600}h you DID "
+                        f"({min(len(acts), ra_n)} actions, time-ordered):"
+                    )
+                    for a in acts[:ra_n]:
+                        age = (f"{a['age_s']}s" if a['age_s'] < 60 else
+                                  f"{a['age_s'] // 60}min")
+                        lines.append(
+                            f"    [{age} ago] {a['type']}"
+                            f"{(': ' + a['desc']) if a['desc'] else ''}"
+                        )
+        except Exception:
+            pass
+
+        # (6) This hour Sir typical (M2 TimeAwareness)
+        try:
+            from jarvis_time_awareness import get_pattern_at_now as _gpan
+            tp = _gpan()
+            if tp and tp.get('has_data'):
+                acts = ', '.join((tp.get('typical_activities') or [])[:3])
+                if acts:
+                    freq = tp.get('frequency', 0)
+                    lines.append(
+                        f"- This hour ({tp.get('hour')}:00) Sir typically: "
+                        f"{acts} ({freq:.0%} conf, "
+                        f"{tp.get('sample_count', 0)} samples)"
+                    )
+        except Exception:
+            pass
+
+        # (7) Yesterday recap (jsonl 末行)
+        try:
+            rec = self._load_yesterday_recap()
+            if rec:
+                date = rec.get('date', '?')
+                narr = (rec.get('narrative') or '')[:160]
+                if narr:
+                    lines.append(
+                        f"- Yesterday ({date}): {narr}"
+                    )
+        except Exception:
+            pass
+
+        # Closing self-awareness directive
+        lines.append(
+            "  ⚠️ Use this lifetime view: pick up threads Sir started "
+            "earlier, honor what you DID (don't re-propose), respect "
+            "Sir's typical pattern when choosing tone/urgency."
+        )
+
+        block = '\n'.join(lines)
+        if len(block) > max_chars:
+            block = block[:max_chars - 14].rstrip() + '\n…[truncated]'
+        return block
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-27 01:00 β.5.50] yesterday_recap sub-reflector
+    # ----------------------------------------------------------
+    # 复用 daemon LLM call 路径 (Flash-Lite caller='inner_thought' LOW),
+    # 不抽独立 daemon. 内 23h cooldown + hour==23 窗口.
+    # 写 memory_pool/jarvis_yesterday_recap.jsonl (每天 append 1 行).
+    # 准则 6: 配置全 vocab JSON, narrative LLM 生不模板.
+    # ----------------------------------------------------------
+    def _maybe_write_yesterday_recap(self) -> None:
+        """check + 写 yesterday recap. tick 后调, 多次 check 多次 cooldown 守."""
+        vocab = self._load_lifetime_vocab()
+        if not bool(vocab.get('yesterday_recap_enabled', True)):
+            return
+        target_hour = int(vocab.get('yesterday_recap_hour', 23))
+        cooldown_s = float(vocab.get('yesterday_recap_cooldown_s', 82800))
+        now = time.time()
+        # 5min 内不重复 check (省 io)
+        if now - self._yesterday_recap_last_check_ts < 300:
+            return
+        self._yesterday_recap_last_check_ts = now
+        # 时间窗 check (only hour == target_hour ± 1)
+        cur_hour = int(time.strftime('%H'))
+        if cur_hour not in (target_hour, target_hour + 1):
+            return
+        # cooldown check (jsonl 末行 ts)
+        try:
+            rec = self._load_yesterday_recap()
+            if rec:
+                last_ts = float(rec.get('ts', 0))
+                if now - last_ts < cooldown_s:
+                    return
+        except Exception:
+            pass
+        # 真去写
+        try:
+            self._do_write_yesterday_recap()
+        except Exception as e:
+            self._bg_log(
+                f"⚠️ [YesterdayRecap] write exception: {e}"
+            )
+
+    def _do_write_yesterday_recap(self) -> None:
+        """LLM 写 yesterday narrative + persist."""
+        from datetime import datetime, timedelta
+        # 算 yesterday 的 ymd
+        yest = datetime.now() - timedelta(days=1)
+        yest_date = yest.strftime('%Y-%m-%d')
+        # 收 yesterday 数据: 主聊 turn count / 内省 thought count / 主 action
+        yest_start_ts = time.mktime(yest.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).timetuple())
+        yest_end_ts = yest_start_ts + 86400
+        # thoughts in yesterday
+        with self._lock:
+            yest_thoughts = [
+                t for t in self._thoughts
+                if yest_start_ts <= t.ts < yest_end_ts
+            ]
+        # 主 action via SWM
+        actions_summary = []
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                top = bus.top_n(n=200) or []
+                act_types = ('tool_called', 'inner_thought_surface',
+                              'propose_protocol_activated',
+                              'reminder_fired')
+                for ev in top:
+                    if ev.get('type') not in act_types:
+                        continue
+                    age_s = float(ev.get('_age_s', 999999))
+                    ev_ts = time.time() - age_s
+                    if yest_start_ts <= ev_ts < yest_end_ts:
+                        actions_summary.append(ev.get('type'))
+        except Exception:
+            pass
+        from collections import Counter
+        act_counter = Counter(actions_summary)
+        # 拼 evidence 给 LLM
+        evidence_lines = [
+            f"Yesterday: {yest_date} (day before today)",
+            f"Inner thoughts: {len(yest_thoughts)} total",
+        ]
+        if yest_thoughts:
+            cats = Counter(t.category for t in yest_thoughts)
+            evidence_lines.append(
+                f"  by category: {dict(cats)}"
+            )
+            # top 3 by salience
+            top_t = sorted(yest_thoughts,
+                              key=lambda t: -t.salience)[:3]
+            for t in top_t:
+                evidence_lines.append(
+                    f"  - [{t.category} sal={t.salience:.2f}] "
+                    f"{t.thought[:80]}"
+                )
+        if act_counter:
+            evidence_lines.append(
+                f"Actions: {dict(act_counter)}"
+            )
+        if not yest_thoughts and not actions_summary:
+            # 无数据 → 写 minimal recap
+            narrative = "no notable activity recorded"
+        else:
+            # LLM 写 1-2 句 narrative
+            try:
+                narrative = self._llm_write_yesterday_narrative(
+                    yest_date, evidence_lines
+                )
+            except Exception:
+                narrative = (
+                    f"{len(yest_thoughts)} inner thoughts, "
+                    f"{sum(act_counter.values())} actions"
+                )
+        # persist
+        record = {
+            'date': yest_date,
+            'ts': time.time(),
+            'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                       time.localtime()),
+            'narrative': narrative[:300],
+            'thought_count': len(yest_thoughts),
+            'action_count': sum(act_counter.values()),
+        }
+        os.makedirs(os.path.dirname(self._YESTERDAY_RECAP_PATH),
+                       exist_ok=True)
+        with open(self._YESTERDAY_RECAP_PATH, 'a',
+                   encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        # invalidate cache
+        self._yesterday_recap_cached = None
+        self._yesterday_recap_last_written_ts = time.time()
+        self._bg_log(
+            f"💭 [YesterdayRecap] wrote recap for {yest_date}: "
+            f"\"{narrative[:80]}...\""
+        )
+
+    def _llm_write_yesterday_narrative(
+        self, date: str, evidence_lines: List[str]
+    ) -> str:
+        """复用 daemon 现有 _call_llm 路径 (LlmReflector + CALLER_INNER_THOUGHT)."""
+        if not self.key_router:
+            return f"{len(evidence_lines)} signals recorded"
+        system_prompt = (
+            "You are Jarvis, a continuous AI butler entity. Write 1-2 "
+            "short third-person sentences summarizing yesterday from your "
+            "own perspective (you are the observer + participant). English "
+            "only, under 160 chars total. Do NOT use 'Sir' more than once. "
+            "Focus on what was notable, not template phrases."
+        )
+        user_prompt = (
+            f"Yesterday's evidence ({date}):\n"
+            + '\n'.join(evidence_lines)
+            + "\n\nYour narrative (1-2 sentences, butler tone):"
+        )
+        try:
+            txt = (self._call_llm(system_prompt, user_prompt) or '').strip()
+            # 清 markdown / prefix
+            for prefix in ('Narrative:', '"', '*', '- '):
+                if txt.startswith(prefix):
+                    txt = txt[len(prefix):].strip()
+            return txt[:200] or "no narrative generated"
+        except Exception:
+            return "(LLM unavailable)"
 
     # ----------------------------------------------------------
     # Stats (for CLI dump / dashboard)
