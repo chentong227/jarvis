@@ -69,6 +69,23 @@ class InnerThought:
     actionable_result: str = 'pending'
     sir_state: str = 'unknown'     # 'active' / 'afk_short' / 'afk_deep' / 'sleep'
     tick_interval_s: int = 60
+    # 🆕 [Sir 2026-05-26 12:21 真意 Meta-thinking] daemon 让 thought 决定下次 tick 间隔.
+    # Sir 原话: "这个思考的间隔能否也成为他思考的一部分? 发现我离开了就减慢思考频率,
+    # 发现我回来了就回到 1 分钟一次, 如果很需要频繁思考甚至可以提高 30s 一次".
+    # LLM 输出 NEXT_INTERVAL ∈ {30, 60, 180, 600, 1800, default}
+    # 'default' = 用 _compute_adaptive_interval baseline (物理状态驱动)
+    # Python physical gate: LLM 选超物理边界 → fallback baseline
+    # (e.g. sleep 不能选 30s, active 不能选 1800s — 准则 6 信任 LLM 但物理保底)
+    # Python smoothing: 最近 5 thought ≥3 选 30s + 平均 sal<0.5 → 强制回 60s
+    # (防 token 爆 + 低质量急思考惩罚)
+    # 0 = 未设 (老 thought 兼容 + LLM 没输出时 fallback)
+    next_interval_s: int = 0
+    # 'llm_chosen' = LLM 主动选 (LLM 真给 NEXT_INTERVAL 且 pass physical gate)
+    # 'llm_gated' = LLM 选超物理边界, Python fallback baseline
+    # 'llm_smoothed' = Python smoothing 强制回 60s (LLM 多次低质量 30s)
+    # 'default' = LLM 选 default 或没给, 用 baseline
+    # '' = 未设 (老 thought 兼容)
+    tick_origin: str = ''
     # 🆕 [Sir 2026-05-26 00:25 真痛"地基没打牢"] evidence linking 防 LLM 拍脑袋
     # actionable != none 时 LLM 必须 cite THOUGHT 中真实出现的 1-5 词字串证明
     # thought → actionable 真有 trace. Python 校验 cite 在 thought 里, 否则
@@ -109,6 +126,30 @@ class InnerThoughtDaemon:
     SLEEP_HOUR_START = 0              # 凌晨 0-6 点
     SLEEP_HOUR_END = 6
 
+    # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM-self-chosen tick interval.
+    # Sir 真意: thought 决定下次思考间隔 (而不只是物理状态驱动).
+    # enum 5 + 'default' (6 选 1): 30s 急 / 60s active 默认 / 180s afk_short /
+    # 600s afk_deep / 1800s sleep / default (用 _compute_adaptive_interval baseline)
+    _NEXT_INTERVAL_ENUM = frozenset({30, 60, 180, 600, 1800})
+
+    # Physical gate (准则 6 信任 LLM 但物理保底):
+    # 物理 sir_state 决定哪些 interval LLM 可选. 超出 → fallback baseline.
+    # 例: Sir active 不能选 1800 (Sir 真在不能等 30min);
+    #     Sir sleep 不能选 30 (睡觉时不应急思考 — 浪费 token + 噪音).
+    _PHYSICAL_GATE = {
+        'active':    frozenset({30, 60, 180}),
+        'afk_short': frozenset({60, 180, 600}),
+        'afk_deep':  frozenset({180, 600, 1800}),
+        'sleep':     frozenset({600, 1800}),
+        'unknown':   frozenset({60, 180, 600}),  # fallback 中庸
+    }
+
+    # Smoothing (防 LLM 总选 30s 爆 token):
+    # 最近 N thought 中如果有 ≥ K 选 30s + 平均 sal < threshold → 强制回 60s.
+    _SMOOTH_LOOKBACK_N = 5     # 看最近 5 thought
+    _SMOOTH_HIGH_FREQ_K = 3    # ≥ 3 个选 30s 算 high-freq
+    _SMOOTH_LOW_SAL_THRESHOLD = 0.5  # 平均 sal < 0.5 算 low-quality
+
     # cooldown
     # 🆕 [Sir 2026-05-26 12:13 真痛 fix] 30min → 5min cooldown.
     # 根因: 5 cat × 30min → 前 5 tick 生 thought 后 silence 25min,
@@ -139,6 +180,13 @@ class InnerThoughtDaemon:
         self._thought_count = 0
         self._cooldown_skip_count = 0
         self._llm_fail_count = 0
+
+        # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM 决定的下次 interval (0 = 用 baseline)
+        self._next_tick_interval_s = 0
+        # tick origin 统计 (dashboard 看 LLM 真在 self-pacing 还是默认)
+        self._tick_origin_stats = {
+            'default': 0, 'llm_chosen': 0, 'llm_gated': 0, 'llm_smoothed': 0,
+        }
 
         # 启动时载入近 24h thoughts (重启后 SOUL 仍有上下文)
         self._load_persist()
@@ -183,8 +231,14 @@ class InnerThoughtDaemon:
         while not self._stop.is_set():
             interval = self.INTERVAL_ACTIVE_S
             try:
+                # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM-self-chosen interval
+                # 优先 — _tick 末尾会 set self._next_tick_interval_s; fallback baseline.
                 interval = self._compute_adaptive_interval()
                 self._tick()
+                # tick 后 LLM 可能已选下次 interval, 优先
+                if self._next_tick_interval_s > 0:
+                    interval = self._next_tick_interval_s
+                    self._next_tick_interval_s = 0  # consumed
             except Exception as e:
                 self._bg_log(f"⚠️ [InnerThought] tick exception: {e}")
             self._stop.wait(timeout=interval)
@@ -222,6 +276,50 @@ class InnerThoughtDaemon:
             'afk_deep': self.INTERVAL_AFK_DEEP_S,
             'sleep': self.INTERVAL_SLEEP_S,
         }.get(state, self.INTERVAL_ACTIVE_S)
+
+    # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] resolve next interval (LLM hint + gate + smoothing)
+    def _resolve_next_interval(self, thought: 'InnerThought',
+                                  sir_state: str) -> Tuple[int, str]:
+        """Resolve final interval applying physical gate + smoothing.
+
+        Sir 真意 anchor: thought 决定下次思考间隔, 但 Python 物理 gate 保底.
+
+        Logic:
+          1. LLM 没给 next_interval_s (=0) → 用 baseline, origin='default'
+          2. LLM 给了, 但超物理 gate → 用 baseline, origin='llm_gated'
+          3. LLM 给 30 + 最近 ≥3 thought 选 30 + 平均 sal < 0.5 → 强制 60, origin='llm_smoothed'
+             (防 token 爆 + 低质量急思考惩罚)
+          4. LLM 给且合法 → 用 LLM 选择, origin='llm_chosen'
+
+        Returns: (interval_s, origin)
+        """
+        baseline = self._compute_adaptive_interval()
+        llm_choice = thought.next_interval_s
+
+        # Case 1: LLM 没选 (= 0 = 'default')
+        if llm_choice == 0:
+            return baseline, 'default'
+
+        # Case 2: physical gate
+        allowed = self._PHYSICAL_GATE.get(sir_state,
+                                              self._PHYSICAL_GATE['unknown'])
+        if llm_choice not in allowed:
+            return baseline, 'llm_gated'
+
+        # Case 3: smoothing (LLM 总选 30s + 低质量 → 强制 60s)
+        if llm_choice == 30:
+            recent = list(self._thoughts)[-self._SMOOTH_LOOKBACK_N:]
+            if len(recent) >= self._SMOOTH_LOOKBACK_N:
+                high_freq_n = sum(
+                    1 for t in recent if t.next_interval_s == 30
+                )
+                avg_sal = sum(t.salience for t in recent) / len(recent)
+                if (high_freq_n >= self._SMOOTH_HIGH_FREQ_K
+                    and avg_sal < self._SMOOTH_LOW_SAL_THRESHOLD):
+                    return 60, 'llm_smoothed'
+
+        # Case 4: LLM 选择合法 + 不被 smoothing 拦
+        return llm_choice, 'llm_chosen'
 
     # ----------------------------------------------------------
     # Tick (the core)
@@ -309,6 +407,17 @@ class InnerThoughtDaemon:
         # 让 SOUL inject 下轮主脑 prompt 真看到 → 真不重复.
         self._maybe_publish_self_correction(thought)
 
+        # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] resolve LLM-chosen next interval
+        # 物理 gate + smoothing 后, store 到 self._next_tick_interval_s,
+        # _daemon_loop 下次 wait 时优先用.
+        resolved_interval, tick_origin = self._resolve_next_interval(
+            thought, sir_state
+        )
+        thought.tick_origin = tick_origin
+        self._next_tick_interval_s = resolved_interval
+        self._tick_origin_stats[tick_origin] = \
+            self._tick_origin_stats.get(tick_origin, 0) + 1
+
         # persist + publish SWM
         self._persist_thought(thought)
         self._publish_swm(thought)
@@ -322,10 +431,13 @@ class InnerThoughtDaemon:
         ev_str = ''
         if thought.evidence_link and thought.evidence_link.lower() != 'none':
             ev_str = f" | cite=\"{thought.evidence_link[:40]}\""
+        # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] 显示下次 tick 由谁决定 +
+        # interval 真值 (Sir 看 daemon 真在 self-pacing 还是默认)
+        meta_str = f" | next={resolved_interval}s({tick_origin})"
         self._bg_log(
             f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
             f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:100]}"
-            f"{action_str}{ev_str}"
+            f"{action_str}{ev_str}{meta_str}"
         )
 
     def _compute_free_categories(self) -> List[str]:
@@ -512,7 +624,9 @@ class InnerThoughtDaemon:
             "adjust_concern_notes:<concern_id>:<note text></ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
-            "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n\n"
+            "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n"
+            "<NEXT_INTERVAL>30 | 60 | 180 | 600 | 1800 | default</NEXT_INTERVAL>  "
+            "← how soon should I think again? Python physically gates per Sir state.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -541,9 +655,16 @@ class InnerThoughtDaemon:
             "to read on next turn. Python rejects if not C-class or sal<0.7. "
             "Use when you noticed Sir's REACTION pattern (annoyed / asked to stop / "
             "appreciates a certain framing) and want main brain to remember next time.\n"
+            "  - NEXT_INTERVAL: pick 30 if URGENT thought (sal≥0.85 + actionable + "
+            "Sir active), 60 for normal active thinking, 180/600/1800 if Sir AFK/sleep, "
+            "or 'default' to use baseline. Python physically gates: e.g. you can't pick 30 "
+            "when Sir is in deep AFK (10min idle) — that'd be wasted token; nor 1800 when "
+            "Sir is right here. Smoothing: if recent thoughts all pick 30 + sal stays low, "
+            "Python forces 60 (don't burn tokens on low-quality urgency).\n"
             "  - If nothing meaningful comes, output <THOUGHT>(quiet)</THOUGHT> "
             "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> "
-            "<EVIDENCE_LINK>none</EVIDENCE_LINK> — and that's perfectly fine.\n"
+            "<EVIDENCE_LINK>none</EVIDENCE_LINK> "
+            "<NEXT_INTERVAL>default</NEXT_INTERVAL> — and that's perfectly fine.\n"
             "  - Keep first-person, brief, like genuine self-talk.\n\n"
             "🆕 [Sir 2026-05-26 真痛 \"地基要打牢\"] EVIDENCE LINKING RULE (HARD):\n"
             "  ACTIONABLE must be traceable to THOUGHT content. The EVIDENCE_LINK\n"
@@ -687,6 +808,10 @@ class InnerThoughtDaemon:
         ev_link_m = re.search(
             r'<EVIDENCE_LINK>(.*?)</EVIDENCE_LINK>', raw, re.DOTALL
         )
+        # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] NEXT_INTERVAL 解析
+        next_int_m = re.search(
+            r'<NEXT_INTERVAL>(.*?)</NEXT_INTERVAL>', raw, re.DOTALL
+        )
         if not (cat_m and thought_m and sal_m):
             return None
         thought_text = (thought_m.group(1) or '').strip()
@@ -702,6 +827,20 @@ class InnerThoughtDaemon:
         evidence_link = (
             (ev_link_m.group(1) or '').strip() if ev_link_m else ''
         )[:120]
+        # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] parse next_interval (raw LLM value).
+        # 0 = LLM 没给或给 'default' (用 baseline)
+        next_int_raw = (
+            (next_int_m.group(1) or '').strip().lower() if next_int_m else ''
+        )
+        next_interval_s = 0
+        if next_int_raw and next_int_raw != 'default':
+            try:
+                _v = int(next_int_raw)
+                # 允许 enum 内的值 (gate 在 _tick 才真应用)
+                if _v in self._NEXT_INTERVAL_ENUM:
+                    next_interval_s = _v
+            except (ValueError, TypeError):
+                next_interval_s = 0
         now = time.time()
         return InnerThought(
             id=f"thought_{time.strftime('%Y%m%d_%H%M%S')}_{int(now * 1000) % 10000:04x}",
@@ -716,6 +855,8 @@ class InnerThoughtDaemon:
             sir_state=sir_state,
             tick_interval_s=tick_interval,
             evidence_link=evidence_link,
+            next_interval_s=next_interval_s,
+            tick_origin='',  # set by _resolve_next_interval after gate/smoothing
         )
 
     # ----------------------------------------------------------
@@ -1334,6 +1475,11 @@ class InnerThoughtDaemon:
                 'last_category_ts': dict(self._last_category_ts),
                 'current_sir_state': self._classify_sir_state(),
                 'current_interval_s': self._compute_adaptive_interval(),
+                # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM self-pacing 状态
+                # next_tick_interval_s: LLM 真选了的下次 interval (0 = 用 baseline)
+                # tick_origin_stats: 累积 tick 来源分布 (Sir 看 LLM 真在 self-pace 还是默认)
+                'next_tick_interval_s': self._next_tick_interval_s,
+                'tick_origin_stats': dict(self._tick_origin_stats),
             }
 
     def list_recent_thoughts(self, max_n: int = 20) -> List[dict]:
