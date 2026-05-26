@@ -222,7 +222,12 @@ class TestL3ParseLLMOutput(unittest.TestCase):
 # ==========================================================================
 class TestL4ActionableExecutor(unittest.TestCase):
 
-    def _make_thought(self, actionable: str):
+    def _make_thought(self, actionable: str, evidence_link: str = 'test'):
+        # 🆕 [Sir 2026-05-26 fix4 evidence_link compat] actionable != none 时
+        # evidence_link 必须真在 thought 里, 否则 evidence gate 提前 reject.
+        # thought 文本含 "test" → cite "test" 总 pass cite-in-thought gate.
+        # (二层 cite ↔ concern overlap 不影响这里 — 那是 _do_update_concern_severity
+        # 内部 gate, fail 时降 actionable=none 但 _execute_actionable 仍 return ok=False.)
         from jarvis_inner_thought_daemon import InnerThought
         return InnerThought(
             id='thought_test',
@@ -232,6 +237,7 @@ class TestL4ActionableExecutor(unittest.TestCase):
             thought='test thought',
             salience=0.5,
             actionable=actionable,
+            evidence_link=evidence_link if actionable != 'none' else '',
         )
 
     def test_actionable_none_returns_ok(self):
@@ -244,8 +250,11 @@ class TestL4ActionableExecutor(unittest.TestCase):
 
     def test_actionable_update_concern_severity_caps_delta(self):
         from jarvis_inner_thought_daemon import InnerThoughtDaemon
-        # mock concern
-        mock_concern = MagicMock(severity=0.5)
+        # mock concern (fix4 evidence_link gate compat: 加真 str id +
+        # what_i_watch 让 _evidence_links_to_concern 不爆; cite='sleep' overlap concern)
+        mock_concern = MagicMock(severity=0.5,
+                                    id='sir_sleep',
+                                    what_i_watch='Sir sleep schedule')
         mock_ledger = MagicMock()
         mock_ledger.get = MagicMock(return_value=mock_concern)
         mock_ledger.update_concern_field = MagicMock(
@@ -253,8 +262,13 @@ class TestL4ActionableExecutor(unittest.TestCase):
         )
         d = InnerThoughtDaemon(key_router=MagicMock(),
                                   concerns_ledger=mock_ledger)
-        # 试 +0.5 (超 cap 0.2 → 应被 cap 到 +0.2)
-        t = self._make_thought('update_concern_severity:sir_sleep:0.5')
+        # 试 +0.5 (超 cap 0.2 → 应被 cap 到 +0.2). cite='sleep' overlap concern.
+        t = self._make_thought(
+            'update_concern_severity:sir_sleep:0.5',
+            evidence_link='sleep',
+        )
+        # thought 文本含 'sleep' 让 cite 过 cite-in-thought gate
+        t.thought = 'observed sleep pattern late'
         ok, result = d._execute_actionable(t)
         self.assertTrue(ok)
         # 验证 update 用的 new_sev <= 0.7 (0.5 + 0.2)
@@ -268,6 +282,8 @@ class TestL4ActionableExecutor(unittest.TestCase):
         mock_ledger.get = MagicMock(return_value=None)
         d = InnerThoughtDaemon(key_router=MagicMock(),
                                   concerns_ledger=mock_ledger)
+        # concern_not_found 在 evidence_link gate 之后, evidence_link='test'
+        # 依然 pass cite-in-thought ('test' in 'test thought'), 然后 get 返 None 快路 fail
         t = self._make_thought('update_concern_severity:nonexistent:0.1')
         ok, result = d._execute_actionable(t)
         self.assertFalse(ok)

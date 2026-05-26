@@ -23,7 +23,11 @@ Sir 真问 (22:10 + 22:20):
   - Actionable 4 档 (本期全可逆/低风险):
       none / update_concern_severity:<id>:<±delta> /
       publish_swm:<etype>:<desc> / suggest_inside_joke:<phrase>
-  - Cooldown: 同 category 30min 不重复 + 单 tick 仅 1 thought
+  - Cooldown: 同 category 5min 不重复 + 单 tick 仅 1 thought
+    (🆕 [Sir 2026-05-26 12:13 真痛 fix] 30min → 5min: 5 cat × 30min 让 daemon
+     5 个 tick 后 silence 25min, 违 Sir "active=1 thought/min 持续" 真意.
+     5min cooldown 保 1 thought/min 输出 (tick 6 时 cat A 已 free 300s) +
+     同 category 隔 5min 防完全重复.)
   - 持久化: memory_pool/inner_thoughts.jsonl (append-only)
   - SOUL inject: top 3 by salience in last 24h → 主脑下次 turn prompt
     "MY RECENT INNER THOUGHTS" block (~500 char cap)
@@ -106,7 +110,12 @@ class InnerThoughtDaemon:
     SLEEP_HOUR_END = 6
 
     # cooldown
-    SAME_CATEGORY_COOLDOWN_S = 1800  # 30min 同 category 不重复
+    # 🆕 [Sir 2026-05-26 12:13 真痛 fix] 30min → 5min cooldown.
+    # 根因: 5 cat × 30min → 前 5 tick 生 thought 后 silence 25min,
+    # 违 Sir 真意 "active = 1 thought / 60s 持续输出".
+    # 修: 300s 后极限不静默 (tick 6 = 5min, cat A.last_ts=0 时 cat A 已 free 300s).
+    # 同 category 仍隔 5min, 保 diversity 不连发重复.
+    SAME_CATEGORY_COOLDOWN_S = 300   # 5min 同 category 不重复 (Sir 12:13 真痛 fix)
     STARTUP_DELAY_S = 30              # 启动 30s 后才开始 (系统稳定)
 
     # actionable cap
