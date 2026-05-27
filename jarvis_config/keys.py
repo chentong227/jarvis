@@ -34,15 +34,20 @@ from typing import List
 
 
 # .env 必须存在的环境变量名列表
+# 🆕 [Sir 2026-05-28 01:18] OPENROUTER_4/5 改可选 — Sir 之前 2 个 key 被 OpenRouter
+# selective ban Google/Anthropic/OpenAI provider (申诉中). 副 key 池支持 2-5 个动态.
 _REQUIRED_ENV_VARS = [
     "OPENROUTER_MAIN",
     "OPENROUTER_2",
     "OPENROUTER_3",
-    "OPENROUTER_4",
-    "OPENROUTER_5",
     "GEMINI_KEY",
     "GOOGLE_KEY_2",
     "GOOGLE_KEY_3",
+]
+# 可选 env vars — 缺失不 raise, OPENROUTER_LIST 自动 filter
+_OPTIONAL_ENV_VARS = [
+    "OPENROUTER_4",
+    "OPENROUTER_5",
 ]
 
 
@@ -119,14 +124,18 @@ def load_keys() -> JarvisKeys:
     _load_dotenv_if_present()
     _check_required()
     
+    # 🆕 [Sir 2026-05-28 01:18] OPENROUTER_LIST 动态收 2-5 个 key,
+    # 自动 filter 空值 / DEPRECATED 占位符 (老 key 被 ban 时 .env 注释掉即可).
+    _or_pool = []
+    for name in ("OPENROUTER_2", "OPENROUTER_3",
+                  "OPENROUTER_4", "OPENROUTER_5"):
+        v = (os.environ.get(name, "") or "").strip()
+        if v and "DEPRECATED" not in v and "REPLACE_ME" not in v:
+            _or_pool.append(v)
+
     return JarvisKeys(
         OPENROUTER_MAIN=os.environ["OPENROUTER_MAIN"],
-        OPENROUTER_LIST=[
-            os.environ["OPENROUTER_2"],
-            os.environ["OPENROUTER_3"],
-            os.environ["OPENROUTER_4"],
-            os.environ["OPENROUTER_5"],
-        ],
+        OPENROUTER_LIST=_or_pool,
         GEMINI=os.environ["GEMINI_KEY"],
         GOOGLE_LIST=[
             os.environ["GEMINI_KEY"],

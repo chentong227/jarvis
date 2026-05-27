@@ -31,6 +31,12 @@ def should_yield_to_recent_proactive_nudge(
 ) -> Tuple[bool, str]:
     """检查是否该退化为 publish-only 让位最近一个 proactive nudge.
 
+    🆕 [Sir 2026-05-28 01:25 β.6 真意收口] 准则 6 + 8 优雅:
+    全 sentinel gate_mode='publish_only' 时, 此函数退化返 False (不 yield) —
+    因为没有 daemon 真 push __NUDGE__, 思考脑统一看 SWM proactive_nudge_fired
+    /skipped events 自决 SHOULD_SPEAK, 不需要 daemon 互相 hard yield.
+    "重复思考的限制" 反例 (Sir 真意 β.6: LLM 自看 nudge_history 自决).
+
     Args:
         within_s: 看 SWM 多久内的 proactive_nudge_fired event (默认 600s = 10min,
                   跟 nudge_window 同物理边界, 不是硬 cooldown).
@@ -44,6 +50,17 @@ def should_yield_to_recent_proactive_nudge(
           - reason: 字符串解释 (log + skip event metadata)
     """
     exempt_kinds = exempt_kinds or set()
+
+    # 🆕 [β.6 退化] β.6 unified thinking: 全 sentinel publish_only 时 daemon 不互
+    # 相 yield, 思考脑看 SWM 自决. 检查 caller 自身 gate_mode, 若 publish_only →
+    # 退化返 False (不 hard yield, 让 publish() 路径正常出 evidence).
+    try:
+        from jarvis_utils import read_gate_mode as _rgm
+        _caller_gm = _rgm(current_sentinel) if current_sentinel else 'hard'
+        if _caller_gm == 'publish_only':
+            return False, 'unified_thinking_brain_decides'
+    except Exception:
+        pass
 
     try:
         from jarvis_utils import get_event_bus as _geb

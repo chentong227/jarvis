@@ -1284,15 +1284,27 @@ class CareSpeechSynth:
                 from jarvis_utils import get_event_bus as _geb_adv
                 _bus_adv = _geb_adv()
                 if _bus_adv is not None:
+                    # 🆕 [Sir 2026-05-28 01:20 β.6] gate_status (would_be_blocked +
+                    # reason) 进 advice metadata, 让思考脑看到 "如果是 hard mode
+                    # 会怎么决" 自决 SHOULD_SPEAK. 准则 6 数据强耦合.
+                    _gate_would_block = bool(getattr(evi, '_gate_would_block', False))
+                    _gate_reason = str(getattr(evi, '_gate_reason', 'ok'))
+                    # salience 降权: 如 gate would block, 不要 spam 主脑 evidence
+                    # (思考脑仍看到, 但权重低 → 多半 SHOULD_SPEAK=no)
+                    _sal_adv = min(0.95, 0.45 + evi.urgency_score * 0.5)
+                    if _gate_would_block:
+                        _sal_adv = max(0.20, _sal_adv * 0.5)  # 降权 50%
+
                     _bus_adv.publish(
                         etype='proactive_care_advice',
                         description=(
                             f"ProactiveCare wants to nudge "
                             f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
-                            f"channel_hint={channel}"
+                            f"channel_hint={channel} "
+                            f"gate={'BLOCKED:'+_gate_reason if _gate_would_block else 'ok'}"
                         ),
                         source='ProactiveCare',
-                        salience=min(0.95, 0.45 + evi.urgency_score * 0.5),
+                        salience=_sal_adv,
                         metadata={
                             'concern_id': evi.concern_id,
                             'urgency_score': round(evi.urgency_score, 3),
@@ -1305,13 +1317,18 @@ class CareSpeechSynth:
                             'last_signal_what': (evi.last_signal_what or '')[:200],
                             'urgency_breakdown': evi.breakdown,
                             'gate_mode': _gm,
+                            # 🆕 β.6: gate sensor 状态作 evidence 让思考脑自决
+                            'gate_would_block': _gate_would_block,
+                            'gate_reason': _gate_reason,
                         },
                         ttl=600.0,
                     )
                     bg_log(
                         f"🤝 [ProactiveCare/PublishOnly] published advice "
                         f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
-                        f"channel_hint={channel} (思考脑自决 SHOULD_SPEAK)"
+                        f"channel_hint={channel} "
+                        f"gate={'BLOCKED:'+_gate_reason if _gate_would_block else 'ok'} "
+                        f"(思考脑自决 SHOULD_SPEAK)"
                     )
                     # 仍记 last_nudge_concern_id 让 Sir 后续 2min 回应可关联
                     return False  # publish-only, 不 push __NUDGE__
@@ -2034,7 +2051,30 @@ class ProactiveCareEngine(threading.Thread):
             if _silent_age < _sgc:
                 ok = False
                 reason = f'silent_global_cooldown ({int(_sgc - _silent_age)}s left)'
-        if not ok:
+
+        # 🆕 [Sir 2026-05-28 01:20 β.6 真意收口] gate_mode publish_only 不 hard return.
+        # =====================================================================
+        # Sir 真痛: β.5.3 已切 gate_mode=publish_only, 但 ProactiveCare._tick 在
+        # guard.can_speak() 返 False 时 short-circuit return → push() publish_only
+        # 路径永远进不来 → 思考脑看不到 'proactive_care_advice' evidence → β.6
+        # "重复思考的限制" 反例 (Sir 准则 6 + 8).
+        #
+        # 修法 (准则 6 三维耦合):
+        # - 数据强耦合: 不论 ok 与否, evi + gate_status 进 SWM (publish_only 模式下)
+        # - 行为弱耦合: gate_mode='publish_only' (vocab) → push() 自走 publish-only,
+        #   把 gate 8 步状态 (would_be_blocked + reason) 作为 metadata 让思考脑看
+        # - 决策集中思考脑: 思考脑看 'proactive_care_advice' SWM 自决 SHOULD_SPEAK
+        #
+        # gate_mode='hard' (向后兼容) → 保留老 short-circuit return 行为.
+        # =====================================================================
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_pc
+            _gm_pc = _rgm_pc('ProactiveCare')
+        except Exception:
+            _gm_pc = 'hard'
+
+        if not ok and _gm_pc != 'publish_only':
+            # hard mode 老行为: short-circuit return + skip log 节流
             # 🩹 [β.2.9.11 / 2026-05-18] Sir 12:30 痛点 "skip 刷屏":
             # 旧版每 60s tick 同 cid+reason 都 bg_log 一遍, 30min cooldown 刷 30 次.
             # 准则 6 通用节流: 同 (cid, reason_prefix) 5min 内只 log 1 次.
@@ -2047,7 +2087,7 @@ class ProactiveCareEngine(threading.Thread):
                 _last_log = self._skip_log_throttle.get(_key, 0)
                 if now_ts - _last_log >= 300.0:  # 5min 节流
                     bg_log(
-                        f"🛑 [ProactiveCare] skip concern={_cid} "
+                        f"🛑 [ProactiveCare/HardGate] skip concern={_cid} "
                         f"urgency={top_u:.2f} reason={reason}"
                     )
                     self._skip_log_throttle[_key] = now_ts
@@ -2063,7 +2103,14 @@ class ProactiveCareEngine(threading.Thread):
             return
 
         # 6. build evidence + 选 channel + push
+        # 🆕 [Sir 2026-05-28 01:20 β.6] 在 evi 标 gate_status 给 push() publish_only
+        # 路径用 — 进 advice metadata, 思考脑看自决.
         evi = self.selector.build_evidence(top_c, top_u, top_bd)
+        try:
+            evi._gate_would_block = (not ok)
+            evi._gate_reason = reason if not ok else 'ok'
+        except Exception:
+            pass
         # β-3.1 channel 升级: 先 silent 试探, 再 voice 升级
         with self._state_lock:
             last_silent_ts = self.silent_history.get(top_c.id, 0)
