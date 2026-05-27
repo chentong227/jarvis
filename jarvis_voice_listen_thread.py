@@ -163,6 +163,34 @@ class VoiceListenThread(QThread):
         self.last_struggle_phrase_id = ''     # 命中的 phrase id (e.g. 'stuck_zh')
         self.last_struggle_severity = ''      # 'low' / 'medium' / 'high'
         self.last_struggle_text = ''          # Sir 原话片段 (用于 directive evidence)
+        # 🆕 [Sir 2026-05-27 真愿景 Phase 6] 缓存最近一段 Sir audio 给主脑听语气
+        # env JARVIS_AUDIO_TO_BRAIN=1 才被 chat_bypass.stream_chat 读. 默 b''.
+        # 30s 后视为过期 (主脑下次召唤时 fresh check).
+        self._last_audio_wav_bytes: bytes = b''
+        self._last_audio_ts: float = 0.0
+        self._last_audio_duration_sec: float = 0.0
+
+    def get_recent_audio_for_brain(self,
+                                       max_age_sec: float = 30.0) -> tuple:
+        """🆕 [Phase 6] chat_bypass 调本 helper 取 Sir 最近一段 audio.
+
+        Args:
+            max_age_sec: 最大新鲜度 (default 30s). 超此 age 视为过期返 b''.
+
+        Returns:
+            (wav_bytes: bytes, duration_sec: float)
+            wav_bytes 空 b'' 表示没新鲜 audio (老对话/未录入/过期).
+        """
+        try:
+            if not self._last_audio_wav_bytes:
+                return (b'', 0.0)
+            age = time.time() - (self._last_audio_ts or 0.0)
+            if age > max_age_sec:
+                return (b'', 0.0)
+            return (self._last_audio_wav_bytes,
+                       float(self._last_audio_duration_sec or 0.0))
+        except Exception:
+            return (b'', 0.0)
 
     def _load_struggle_vocab(self) -> list:
         """β.5.35-C: 读 memory_pool/sir_struggle_vocab.json, mtime cache.
@@ -1159,6 +1187,11 @@ class VoiceListenThread(QThread):
                             sys.stdout.flush()
 
                         pcm_data = b''.join(audio_frames)
+                        # 🆕 [Sir 2026-05-27 20:45 真愿景 Phase 6] 缓存 WAV bytes
+                        # 让主脑能听 Sir 语气. chat_bypass.stream_chat 读这个,
+                        # env JARVIS_AUDIO_TO_BRAIN=1 才接进 Gemini multi-modal.
+                        # 不缓存太长 (cap 60s, 主脑不该听 6 分钟独白).
+                        _wav_bytes_for_brain: bytes = b''
                         with io.BytesIO() as wav_io:
                             with wave.open(wav_io, 'wb') as wav_file:
                                 wav_file.setnchannels(1)
@@ -1166,7 +1199,18 @@ class VoiceListenThread(QThread):
                                 wav_file.setframerate(16000)
                                 wav_file.writeframes(pcm_data)
                             wav_io.seek(0)
+                            _wav_bytes_for_brain = wav_io.getvalue()
+                            wav_io.seek(0)
                             speech_array, _ = sf.read(wav_io)
+                        # 暂存最近一段 (60s cap, 30s 后过期). 任何错误静默.
+                        try:
+                            _duration_sec = len(pcm_data) / (16000 * 2)  # 16k mono 16bit
+                            if 0 < _duration_sec <= 60.0 and len(_wav_bytes_for_brain) < 2_000_000:
+                                self._last_audio_wav_bytes = _wav_bytes_for_brain
+                                self._last_audio_ts = time.time()
+                                self._last_audio_duration_sec = _duration_sec
+                        except Exception:
+                            pass
 
                         res = model.generate(input=speech_array, cache={}, language="auto", use_itn=True, disable_pbar=True)
 

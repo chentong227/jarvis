@@ -3114,16 +3114,70 @@ Spoken English:"""
                 except Exception:
                     pass
 
-            # 没有图就只送文本（WAKE_ONLY 路径），有图就附带（vision-aware）
-            if img_bytes is None:
-                chat_history = [types.Content(role="user", parts=[
-                    types.Part(text=prompt),
-                ])]
-            else:
-                chat_history = [types.Content(role="user", parts=[
-                    types.Part(text=prompt),
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                ])]
+            # 🆕 [Sir 2026-05-27 真愿景 Phase 6] 取 Sir 最近一段 audio 给主脑听语气
+            # =====================================================================
+            # 设计:
+            #   - env JARVIS_AUDIO_TO_BRAIN=1 才生效 (默认 0, 不破老路径)
+            #   - 从 voice_thread._last_audio_wav_bytes 取 (30s 内, ≤60s 长)
+            #   - 加 types.Part.from_bytes(data=wav, mime_type='audio/wav') 进 parts
+            #   - clean_intent 以 '[后台系统' 开头 (system_event) 跳过 (无 Sir 实时声音)
+            #   - 主脑模型必须支持 audio (gemini-3-flash-preview / 2.5-flash/pro 全支持)
+            #   - 任何异常静默 fallback 到无 audio (主链不挂)
+            # 测试方法:
+            #   $env:JARVIS_AUDIO_TO_BRAIN='1' (开)  → 看 TTFT 多几秒
+            #   $env:JARVIS_AUDIO_TO_BRAIN='0' (关)  → 老路径
+            # =====================================================================
+            _audio_wav_bytes: bytes = b''
+            _audio_duration_sec: float = 0.0
+            try:
+                if (os.environ.get('JARVIS_AUDIO_TO_BRAIN', '0').strip() == '1'
+                        and _supports_vision_main  # multimodal 模型才送 audio
+                        and not (clean_intent and str(clean_intent).startswith('[后台系统'))):
+                    _vt = getattr(getattr(self, 'jarvis', None),
+                                       'voice_thread', None)
+                    if _vt is not None and hasattr(_vt, 'get_recent_audio_for_brain'):
+                        _audio_wav_bytes, _audio_duration_sec = (
+                            _vt.get_recent_audio_for_brain(max_age_sec=30.0)
+                        )
+                        if _audio_wav_bytes:
+                            try:
+                                from jarvis_utils import bg_log as _ab_bg
+                                _ab_bg(
+                                    f"🎤 [AudioToBrain] 送 audio 给主脑 "
+                                    f"({_audio_duration_sec:.1f}s, "
+                                    f"{len(_audio_wav_bytes)//1024}KB)"
+                                )
+                            except Exception:
+                                pass
+            except Exception:
+                _audio_wav_bytes = b''
+
+            # 组 parts: text + (image if any) + (audio if any)
+            # 🆕 [Phase 6] 含 audio 时 prompt 末尾追一句提示主脑感知语气, 不主动 quote.
+            # 🩹 [Sir 2026-05-27 20:55 真测 BUGFIX] 不能用 .format(...) — prompt 内
+            # 含 JSON 字面量 (e.g. `{"intent": "..."}`), 会被 str.format 误当 placeholder
+            # → KeyError: '"intent"'. 治本: 把 audio_hint 作为独立 f-string 拼接, prompt
+            # 部分**不经 format** 处理.
+            _prompt_with_audio_hint = prompt
+            if _audio_wav_bytes:
+                _audio_hint = (
+                    f"\n\n[AUDIO ATTACHED] You are also given Sir's actual voice "
+                    f"recording of this turn (~{_audio_duration_sec:.1f}s). Listen to "
+                    f"tone/laughter/energy/sigh/emotion as evidence. Do NOT quote or "
+                    f"transcribe it — the ASR text above is the literal content. Use "
+                    f"audio ONLY to attune your tone to Sir's mood."
+                )
+                _prompt_with_audio_hint = prompt + _audio_hint
+            _parts = [types.Part(text=_prompt_with_audio_hint)]
+            if img_bytes is not None:
+                _parts.append(types.Part.from_bytes(
+                    data=img_bytes, mime_type="image/jpeg"
+                ))
+            if _audio_wav_bytes:
+                _parts.append(types.Part.from_bytes(
+                    data=_audio_wav_bytes, mime_type="audio/wav"
+                ))
+            chat_history = [types.Content(role="user", parts=_parts)]
             
             full_text = ""
             streamed_text = ""
