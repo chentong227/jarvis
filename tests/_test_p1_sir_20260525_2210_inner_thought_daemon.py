@@ -463,9 +463,16 @@ class TestL7CentralNerveIntegration(unittest.TestCase):
     def test_assemble_prompt_uses_layer_1b(self):
         src = self._read('jarvis_central_nerve.py')
         # _assemble_prompt 必须调 _build_layer_1b_inner_thoughts_block
-        self.assertIn('inner_thoughts_block = self._build_layer_1b_inner_thoughts_block()',
+        # 🆕 [β.5.50 / 2026-05-27 升级] 加了 prompt_tier 参数, 允许有参数调用
+        import re
+        m = re.search(
+            r'inner_thoughts_block\s*=\s*self\._build_layer_1b_inner_thoughts_block\(',
             src,
-            '_assemble_prompt 必须用 Layer 1.5 inner_thoughts')
+        )
+        self.assertIsNotNone(m,
+            '_assemble_prompt 必须用 Layer 1.5 inner_thoughts '
+            '(_build_layer_1b_inner_thoughts_block 调用必须存在, '
+            '允许带 prompt_tier 参数)')
 
     def test_soul_inject_log_has_l1_5(self):
         src = self._read('jarvis_central_nerve.py')
