@@ -30,7 +30,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 try:
     from jarvis_utils import bg_log
@@ -84,6 +84,82 @@ STATE_CANCELLED = 'cancelled'
 DEFAULT_LOG_PATH = os.path.join('memory_pool', 'jarvis_promise_log.json')
 UNTRACKED_AFTER_HOURS = 24.0    # 无 evidence 24h → untracked
 MAX_KEEP_PROMISES = 500          # 内存最多保 500 条 (老的归档/丢弃)
+
+# 🆕 [Sir 2026-05-28 07:18] description 质量校验 vocab loader + mtime cache.
+# 治: SmartNudge '您 02:43 定的 25min 番茄钟' = promise_log 真有
+# author=jarvis description='pomodoro 25min' 的 placeholder commitment.
+# vocab: memory_pool/promise_description_quality_vocab.json
+# CLI:   scripts/promise_description_quality_dump.py
+_QUALITY_VOCAB_PATH = os.path.join(
+    'memory_pool', 'promise_description_quality_vocab.json')
+_QUALITY_CACHE = {'mtime': 0.0, 'vocab': None}
+_QUALITY_LOCK = threading.Lock()
+
+
+def _load_quality_vocab() -> Optional[dict]:
+    """Lazy load + mtime check. 返 None 表示 vocab 缺失 / 损坏 — caller
+    fail-safe 不 reject (老路径继续)."""
+    try:
+        if not os.path.exists(_QUALITY_VOCAB_PATH):
+            return None
+        mtime = os.path.getmtime(_QUALITY_VOCAB_PATH)
+        with _QUALITY_LOCK:
+            if _QUALITY_CACHE['vocab'] is not None and mtime == _QUALITY_CACHE['mtime']:
+                return _QUALITY_CACHE['vocab']
+            with open(_QUALITY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                v = json.load(f)
+            _QUALITY_CACHE['vocab'] = v
+            _QUALITY_CACHE['mtime'] = mtime
+            return v
+    except Exception:
+        return None
+
+
+def _check_description_quality(description: str) -> Tuple[bool, str, str]:
+    """Validate description against vocab blacklist + min/max length.
+
+    Returns: (rejected: bool, reason: str, mode: str)
+      - mode: 'reject_silent' (default) / 'reject_raise' / 'accept_warn'
+      - vocab 缺失 → rejected=False (fail-safe, 不阻断老调用)
+    """
+    vocab = _load_quality_vocab()
+    if vocab is None:
+        return False, '', 'reject_silent'  # fail-safe
+    mode = vocab.get('behavior_on_violation', 'reject_silent')
+
+    if not isinstance(description, str):
+        return True, f'not_string ({type(description).__name__})', mode
+
+    desc_stripped = description.strip()
+    bl = vocab.get('blacklist_descriptions', {})
+
+    # exact match
+    if desc_stripped in bl.get('exact_match', []):
+        return True, f'exact_match_placeholder:{desc_stripped!r}', mode
+
+    # prefix match (e.g. '[testcase]', '[debug]')
+    for p in bl.get('prefix_match', []):
+        if desc_stripped.startswith(p):
+            return True, f'prefix_match:{p!r}', mode
+
+    # regex (empty/whitespace, all punctuation, all digits)
+    import re as _re
+    for pat in bl.get('regex_patterns', []):
+        try:
+            if _re.match(pat, desc_stripped):
+                return True, f'regex_match:{pat!r}', mode
+        except _re.error:
+            pass
+
+    # length bounds
+    min_len = int(vocab.get('min_length', 3))
+    if len(desc_stripped) < min_len:
+        return True, f'too_short ({len(desc_stripped)} < {min_len})', mode
+    max_len = int(vocab.get('max_length', 500))
+    if len(desc_stripped) > max_len:
+        return True, f'too_long ({len(desc_stripped)} > {max_len})', mode
+
+    return False, '', mode
 
 
 @dataclass
@@ -196,6 +272,40 @@ class PromiseExecutionLog:
                   deadline_str: str = '', jarvis_reply: str = '',
                   turn_id: str = '', lang: str = '',
                   author: str = 'jarvis') -> str:
+        # 🆕 [Sir 2026-05-28 07:14 真痛 BUG 治本] description 质量校验
+        # =====================================================================
+        # 源 BUG: SmartNudge '您 02:43 定的 25min 番茄钟逾期 4h' = promise_log 真
+        # 存在 author=jarvis description='pomodoro 25min' 的 placeholder commitment
+        # (Sir 测 CLI 时塞 + testcase 残留). LLM 看脏数据当真生成幻觉 nudge.
+        # 治本 (准则 6 数据强耦合): 写入端 validate description 在 blacklist /
+        # 满足最小长度 / 不是纯标点空白. vocab JSON 持久化 + CLI 可改 +
+        # behavior_on_violation=reject_silent (返 '' 不抛, caller 流程不破).
+        # vocab: memory_pool/promise_description_quality_vocab.json
+        # CLI:   scripts/promise_description_quality_dump.py
+        # =====================================================================
+        try:
+            _rejected, _q_reason, _q_mode = _check_description_quality(description)
+            if _rejected:
+                if _q_mode == 'reject_raise':
+                    raise ValueError(f'PromiseLog reject description: {_q_reason}')
+                if _q_mode == 'accept_warn':
+                    bg_log(
+                        f"⚠️ [PromiseLog/Quality] WARN suspect description "
+                        f"'{(description or '')[:60]}' — {_q_reason} "
+                        f"(behavior=accept_warn, 仍写入)"
+                    )
+                else:  # reject_silent (default)
+                    bg_log(
+                        f"❌ [PromiseLog/Quality] REJECT register: "
+                        f"'{(description or '')[:60]}' — {_q_reason} "
+                        f"(behavior=reject_silent, 返 '' )"
+                    )
+                    return ''
+        except ValueError:
+            raise
+        except Exception:
+            pass  # vocab 缺失 / 损坏 — fail-safe 不阻断 register
+
         # 🩹 [β.5.30 / 2026-05-20] author 字段: 'jarvis' (默认, Jarvis 自己 reply 承诺) /
         # 'sir' (Sir 自己 cmd 表态, 由 CommitmentWatcher 转 PromiseLog 时标).
         # 🩹 [β.2.9.7 / 2026-05-18] Sir 09:06 实测痛点: InconsistencyWatcher 反复

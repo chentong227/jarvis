@@ -466,12 +466,39 @@ class CommitmentWatcher(threading.Thread):
                 existing_descs.add(d)
         added = 0
         cutoff_ts = time.time() - max_age_hours * 3600
+        # 🆕 [Sir 2026-05-28 07:18 真痛 BUG 治本] description 质量 + 老脏数据过滤.
+        # 治 SmartNudge '02:43 番茄钟' 幻觉: 历史 promise_log 残留 author=jarvis +
+        # 描述='x'/'spam'/'pomodoro 25min' 等 testcase/Sir 测 CLI 脏数据, kind=cyclic
+        # 全被加进 commitments → SmartNudge fire commitment_check 当真 Sir commitment.
+        # 准则 6 + 8: 读取端 quality check 过滤 + 加 author 字段进 metadata 给下游 LLM.
+        try:
+            from jarvis_promise_log import _check_description_quality as _qc
+        except Exception:
+            _qc = None
+
         for p in plog.list_pending():
             if getattr(p, 'kind', '') not in ('commitment', 'cyclic'):
                 continue
             desc_l = (p.description or '').strip().lower()
             if not desc_l or desc_l in existing_descs:
                 continue
+            # 🆕 description quality filter — 过滤老脏数据 ('x'/'spam'/'[testcase]')
+            if _qc is not None:
+                try:
+                    _rej, _qreason, _ = _qc(p.description)
+                    if _rej:
+                        try:
+                            from jarvis_utils import bg_log as _qbg
+                            _qbg(
+                                f"🛁 [CommitmentWatcher/PromiseLog] skip dirty "
+                                f"promise '{(p.description or '')[:40]}' — {_qreason} "
+                                f"(author={getattr(p, 'author', '?')})"
+                            )
+                        except Exception:
+                            pass
+                        continue
+                except Exception:
+                    pass
             # 尝试 parse deadline_str → ts. 失败 fallback registered_at + 1h
             dl_ts = self._try_parse_deadline_str(p.deadline_str)
             if dl_ts <= 0:
@@ -479,6 +506,8 @@ class CommitmentWatcher(threading.Thread):
                 continue
             if dl_ts < cutoff_ts:
                 continue
+            # 🆕 author 字段进 commitments dict — 下游 SmartNudge prompt 看自决,
+            # author='sir' 优先, author='jarvis' 可疑 (准则 6 数据强耦合).
             self.commitments.append({
                 'db_id': 0,  # PromiseLog 来源, 没 SQLite db_id
                 'promise_id': p.id,  # 反向引用 (M4.5.3+ daemon 直接走 PromiseLog 标 fulfilled 用)
@@ -489,6 +518,8 @@ class CommitmentWatcher(threading.Thread):
                 'source_text': (p.jarvis_reply or '')[:240],
                 'created_at': p.registered_at,
                 'source': 'promise_log',  # 区别 SQLite 来源
+                'author': getattr(p, 'author', '') or 'jarvis',
+                'who_promised': getattr(p, 'who_promised', '') or getattr(p, 'author', '') or 'jarvis',
             })
             existing_descs.add(desc_l)
             added += 1

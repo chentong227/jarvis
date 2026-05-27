@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "created_at": "2026-05-28T07:18:00+08:00",
+  "description": "[Sir 2026-05-28 07:14 真痛 BUG 治本] PromiseLog.add() description 质量校验 vocab. 治: SmartNudge 编造 '您 02:43 定的 25min 番茄钟' = promise_log 真有 author=jarvis description=测试垃圾 ('x'/'spam'/空) 的 fake commitment, LLM 看脏数据当真生成幻觉 nudge. 修法 (准则 6 数据强耦合): 写入端 add() 校验 description 不能在 blacklist + 满足最小长度 + 不能纯标点/空白.",
+  "design_principle": "Sir 准则 6.5: vocab 持久化 + CLI 可改 + L7 reflector LLM-propose. 这里 daemon 写 promise 前 validate description, 不让脏数据进 ledger. 反例: 之前 testcase / Sir 真测 CLI 塞 description='x'/'spam'/'persist' 等 placeholder, 跟 author=jarvis 一起写进 promise_log, SOUL inject + SmartNudge 当 Sir 真说的展示 → 幻觉.",
+  "blacklist_descriptions": {
+    "exact_match": ["x", "y", "z", "a", "b", "c", "test", "Test", "TEST", "spam", "Spam", "SPAM", "todo", "TODO", "测试", "测试测试", "1", "2", "3", "none", "null", "None", "undefined", "n/a", "N/A", "tbd", "TBD"],
+    "exact_match_note": "完全等于这些值的 description 不准写. 这些是 Sir 测 CLI 时手抖塞的 placeholder.",
+    "prefix_match": ["[testcase]", "[test]", "[TEST]", "[DEBUG]", "[debug]", "[fixture]"],
+    "prefix_match_note": "description 以这些 prefix 开头 = 自动化测试残留. 永远不准进 prod ledger.",
+    "regex_patterns": [
+      "^\\s*$",
+      "^\\W+$",
+      "^[\\d\\s\\.,;:!?]+$"
+    ],
+    "regex_patterns_note": "空白/纯标点/纯数字 — 都不是有效的 Sir 真意 commitment."
+  },
+  "min_length": 3,
+  "min_length_note": "description 至少 3 字符 (能容 'do x' / '吃饭' / '看书' 这种短 commitment, 但拒 'x' 'a' '1' 这种 placeholder).",
+  "max_length": 500,
+  "max_length_note": "防 description 写满整段 STM 当 commitment.",
+  "behavior_on_violation": "reject_silent",
+  "behavior_modes": {
+    "reject_silent": "PromiseLog.add() 返 None + bg_log warning, 不抛 exception (caller daemon 流程不破).",
+    "reject_raise": "抛 ValueError — 用于严格模式 (开发期 catch caller 错).",
+    "accept_warn": "仍写入 ledger, 但 bg_log warning + 标 metadata.suspect=True (临时观察期模式)."
+  },
+  "rollback": "Sir 用 scripts/promise_description_quality_dump.py 一行清 blacklist 临时关校验. 或改 behavior_on_violation='accept_warn' 仅警告不拒.",
+  "history": [
+    {
+      "date": "2026-05-28T07:18:00+08:00",
+      "change": "[Sir 2026-05-28 07:14 真痛 BUG] init: blacklist 25 个 placeholder + 3 个 prefix + 3 个 regex pattern. min_length=3, max_length=500. behavior=reject_silent (daemon 安全)."
+    }
+  ],
+  "l7_reflector_advice": "Sir 真测发现新 placeholder description (e.g. 'foo' / 'bar' / '记一下') 可加入 blacklist. L7 reflector daemon (jarvis_promise_quality_reflector) 可看 promise_log 找模式 — 如多次 description 完全相同 + author=jarvis + 永不 fulfilled → 高度疑似 placeholder, propose 入 blacklist."
+}

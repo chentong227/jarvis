@@ -60,6 +60,14 @@ def main() -> int:
                     help='apply 前备份当前 json 到 .bak.YYYYmmdd_HHMMSS')
     ap.add_argument('--path', default=DEFAULT_PATH,
                     help=f'jarvis_promise_log.json 路径 (默认 {DEFAULT_PATH})')
+    ap.add_argument('--quality-filter', action='store_true',
+                    help='🆕 [Sir 2026-05-28 07:18] 只清 description 被 quality vocab 判脏 '
+                         '的 entries (blacklist placeholder/[testcase]/纯标点/过短/过长). '
+                         '保留 Sir 真实 commitment. vocab: '
+                         'memory_pool/promise_description_quality_vocab.json')
+    ap.add_argument('--only-author-jarvis', action='store_true',
+                    help='🆕 [Sir 2026-05-28 07:18] 只清 author=jarvis 的 entries '
+                         '(Jarvis 自生成 commitment), 保留 author=sir (Sir 真表态).')
     args = ap.parse_args()
 
     if not os.path.exists(args.path):
@@ -76,7 +84,27 @@ def main() -> int:
     cutoff_age = _parse_age(args.older_than)
     now = time.time()
 
+    # 🆕 [Sir 2026-05-28 07:18] quality check fn (lazy import).
+    _qc_fn = None
+    if args.quality_filter:
+        try:
+            from jarvis_promise_log import _check_description_quality
+            _qc_fn = _check_description_quality
+        except Exception as _e:
+            print(f"⚠️ quality filter fail to import: {_e} — fallback skip quality check")
+
     def _should_drop(p: dict) -> bool:
+        # quality_filter: 只清 description 被 vocab 判脏的 (优先级最高 — 精准定位)
+        if args.quality_filter and _qc_fn is not None:
+            try:
+                rejected, _, _ = _qc_fn(p.get('description', '') or '')
+                return rejected  # 仅在 vocab 判脏时清
+            except Exception:
+                return False
+        # only-author-jarvis: 只清 author='jarvis' 的
+        if args.only_author_jarvis:
+            return (p.get('author', 'jarvis') == 'jarvis')
+        # 老逻辑
         if cutoff_age > 0:
             age = now - float(p.get('registered_at', 0) or 0)
             if age < cutoff_age:
