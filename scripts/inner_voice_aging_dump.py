@@ -125,6 +125,60 @@ def cmd_stats(_args) -> int:
     return 0
 
 
+def cmd_tail(args) -> int:
+    """tail -f voice jsonl, live render every new entry."""
+    from jarvis_inner_voice_track import (
+        VoiceEntry, get_inner_voice_track,
+    )
+    track = get_inner_voice_track()
+    jsonl_path = track._persist_path
+    print(f"[tail] watching: {jsonl_path}")
+    print(f"[tail] press Ctrl+C to stop")
+    print("-" * 70)
+    if not os.path.exists(jsonl_path):
+        print(f"(jsonl not yet exist, will appear on first voice append)")
+        # 等 jsonl 出现
+        while not os.path.exists(jsonl_path):
+            try:
+                time.sleep(0.5)
+            except KeyboardInterrupt:
+                return 0
+    pos = os.path.getsize(jsonl_path) if not args.from_start else 0
+    try:
+        while True:
+            try:
+                cur_size = os.path.getsize(jsonl_path)
+            except OSError:
+                time.sleep(0.5)
+                continue
+            if cur_size > pos:
+                with open(jsonl_path, 'r', encoding='utf-8') as f:
+                    f.seek(pos)
+                    new_lines = f.readlines()
+                    pos = f.tell()
+                for line in new_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                        e = VoiceEntry.from_dict(d)
+                        hhmm = time.strftime("%H:%M:%S",
+                                                          time.localtime(e.ts))
+                        wv = "[*]" if e.wants_voice else "   "
+                        urg = f"u={e.urgency:.1f}" if e.urgency >= 0.3 else "    "
+                        print(
+                            f"  {hhmm} {wv} {e.source:18s} {e.intent:12s} "
+                            f"{urg} {e.content[:100]}"
+                        )
+                    except Exception as ex:
+                        print(f"  (parse error: {ex})")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\n[tail] stopped.")
+        return 0
+
+
 def cmd_apply(args) -> int:
     from jarvis_inner_voice_track import get_inner_voice_track
     track = get_inner_voice_track()
@@ -163,6 +217,9 @@ def main(argv=None) -> int:
     p_apply = sub.add_parser('apply', help='apply ageing now (in-memory mutate)')
     p_apply.add_argument('--dry-run', action='store_true',
                               help='只算不动 buffer')
+    p_tail = sub.add_parser('tail', help='tail -f voice jsonl, live render')
+    p_tail.add_argument('--from-start', action='store_true',
+                                help='从 jsonl 起首开始 (默从末尾追加)')
 
     args = parser.parse_args(argv)
     return {
@@ -171,6 +228,7 @@ def main(argv=None) -> int:
         'aged': cmd_aged,
         'stats': cmd_stats,
         'apply': cmd_apply,
+        'tail': cmd_tail,
     }[args.cmd](args)
 
 
