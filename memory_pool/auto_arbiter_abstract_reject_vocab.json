@@ -1,0 +1,46 @@
+{
+  "_doc": [
+    "🆕 [Sir 2026-05-27 12:13 真痛 anchor] AutoArbiter abstract protocol auto-reject vocab.",
+    "",
+    "Sir 真痛 (jarvis_20260527_073636.log L264/444/476/...): 思考脑 9:27 起",
+    "8+ propose_protocol 几乎全 'subjective and aspirational' DEFER_TO_SIR. review",
+    "queue 50+ 积压, Sir 没空 dashboard 拍板. propose 永远不 activate, 浪费 tokens.",
+    "",
+    "修法 (准则 6 + 准则 8): AutoArbiter _evaluate_and_decide 入口加 abstract 关键词",
+    "pre-check, 命中 → bypass LLM 直接 REJECT (不再 DEFER 积压). 同时 propose_protocol",
+    "源头 prompt 也禁这些词 (jarvis_inner_thought_daemon.py:1466-1472). 双层守.",
+    "",
+    "vocab 持久化于此 (准则 6), Sir CLI 可改 (scripts/auto_arbiter_dump.py 可加 vocab",
+    "管理). 加新词不需改 .py source."
+  ],
+  "schema_version": 1,
+  "enabled": true,
+  "abstract_keywords": [
+    "prioritize",
+    "be more",
+    "always strive",
+    "maintain",
+    "professional",
+    "genuine",
+    "aspire",
+    "cultivate",
+    "sound like",
+    "feel like",
+    "concise",
+    "direct cadence",
+    "appropriate",
+    "natural",
+    "subtle",
+    "thoughtful"
+  ],
+  "min_keyword_hits_to_reject": 2,
+  "min_words_in_rule": 4,
+  "log_rejected": true,
+  "config": {
+    "_doc_config": [
+      "min_keyword_hits_to_reject: rule 含 N 个 abstract 词才 reject (避免误伤含 1 词的具体规则)",
+      "min_words_in_rule: 短 rule (< N 词) 直接 reject (太抽象/没 detail)",
+      "log_rejected: 是否 bg_log 'AutoArbiter [protocol/xxx] PRE_REJECT abstract: hit_keywords=[...]' 让 Sir 一眼看"
+    ]
+  }
+}

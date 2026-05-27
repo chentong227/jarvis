@@ -109,6 +109,12 @@ class AutoArbiterDaemon:
 
     PERSIST_PATH = 'memory_pool/auto_arbiter_log.jsonl'
     CALIBRATION_PATH = 'memory_pool/auto_arbiter_calibration.json'
+    # 🆕 [Sir 2026-05-27 12:13 真痛 anchor] abstract protocol auto-reject vocab
+    # Sir 真痛: 思考脑 propose abstract 'prioritize concise' → AutoArbiter LLM
+    # eval 也几乎全 DEFER_TO_SIR (review queue 积压 50+). 治本: 不调 LLM 先看
+    # vocab keyword pre-check, 命中 → bypass LLM 直接 REJECT (省 tokens + 不积压).
+    # 准则 6 持久化 + Sir CLI 可改 (memory_pool/auto_arbiter_abstract_reject_vocab.json)
+    ABSTRACT_REJECT_VOCAB_PATH = 'memory_pool/auto_arbiter_abstract_reject_vocab.json'
 
     DEFAULT_THRESHOLDS = {
         'inside_joke': 0.75,
@@ -510,6 +516,136 @@ class AutoArbiterDaemon:
             self._bg_log(f"⚠️ [AutoArbiter] save calibration fail: {e}")
 
     # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-27 12:13 真痛 anchor] Abstract protocol auto-reject
+    # ----------------------------------------------------------
+    # Sir 真痛 (jarvis_20260527_073636.log): 思考脑 propose abstract 'prioritize
+    # concise' → AutoArbiter LLM eval 也 'subjective and aspirational' DEFER →
+    # review queue 50+ 积压, Sir 没空 dashboard 拍板. propose 永不 activate,
+    # 浪费 tokens, 主脑下轮也看不到效果.
+    # 治本 (准则 6 + 准则 8): vocab keyword pre-check bypass LLM 直接 REJECT
+    #   - vocab 持久化 memory_pool/auto_arbiter_abstract_reject_vocab.json
+    #   - Sir CLI 可改 (加新词不需改 .py)
+    #   - lazy load + mtime 30s cache (Sir 改后下次 tick 即生效)
+    # 双层守: 思考脑源头 prompt 也禁这些词 (jarvis_inner_thought_daemon.py:1466)
+    # ----------------------------------------------------------
+    _ABSTRACT_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    _ABSTRACT_VOCAB_CHECK_INTERVAL_S = 30.0
+
+    def _load_abstract_reject_vocab(self) -> dict:
+        """Lazy load abstract vocab + mtime 30s throttle. 失败 fallback empty.
+
+        Returns:
+            dict 含 enabled / abstract_keywords / min_keyword_hits_to_reject /
+            min_words_in_rule / log_rejected.
+            空 dict 表示 vocab 不存在或 disabled.
+        """
+        default_disabled = {'enabled': False, 'abstract_keywords': []}
+        path = self.ABSTRACT_REJECT_VOCAB_PATH
+        cache = AutoArbiterDaemon._ABSTRACT_VOCAB_CACHE
+        now = time.time()
+        # 30s throttle, 避免每 tick read JSON
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._ABSTRACT_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        if not os.path.exists(path):
+            cache['data'] = default_disabled
+            return default_disabled
+        try:
+            mtime = os.path.getmtime(path)
+            if cache['data'] is not None and mtime == cache['mtime']:
+                return cache['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            cache['data'] = data
+            cache['mtime'] = mtime
+            return data
+        except Exception as e:
+            self._bg_log(f"⚠️ [AutoArbiter] load abstract_reject_vocab fail: {e}")
+            cache['data'] = default_disabled
+            return default_disabled
+
+    def _is_abstract_protocol(self, rule_text: str) -> Tuple[bool, str]:
+        """检 protocol rule 是否过抽象, 命中 vocab keyword 即直接 REJECT.
+
+        Args:
+            rule_text: protocol 候选规则文本
+
+        Returns:
+            (is_abstract, reason): True 表示 abstract 应 reject;
+                reason 含命中关键词 + 触发条件 (供 log + persist).
+        """
+        if not rule_text or not rule_text.strip():
+            return False, 'empty_rule'
+        vocab = self._load_abstract_reject_vocab()
+        if not vocab.get('enabled', False):
+            return False, 'vocab_disabled'
+        keywords = vocab.get('abstract_keywords', []) or []
+        if not keywords:
+            return False, 'no_keywords'
+        min_hits = int(vocab.get('min_keyword_hits_to_reject', 2))
+        min_words = int(vocab.get('min_words_in_rule', 4))
+
+        rule_lower = rule_text.lower().strip()
+        # 短 rule pre-reject (太短没具体内容)
+        word_count = len(rule_lower.split())
+        if word_count < min_words:
+            return True, f'too_short:{word_count}w<{min_words}'
+        # 数 abstract 关键词命中
+        hits = [kw for kw in keywords if kw.lower() in rule_lower]
+        if len(hits) >= min_hits:
+            return True, f'abstract_kw_hit:{",".join(hits[:5])}'
+        return False, f'concrete:{len(hits)}hits<{min_hits}'
+
+    def _handle_pre_reject_abstract(self, kind: str, item_id: str,
+                                          preview: str, risk: str,
+                                          rule_text: str,
+                                          abs_reason: str) -> None:
+        """abstract protocol 直接走 REJECT path, bypass LLM eval.
+
+        构造 ArbiterDecision (decision='reject', confidence=1.0 表示 deterministic
+        pre-check), 真调 _execute(reject) 让 relational.reject_from_review 把
+        item 从 review queue 移除. 持久化 + log + publish SWM.
+        """
+        now = time.time()
+        d = ArbiterDecision(
+            id=f"aa_{time.strftime('%Y%m%d_%H%M%S')}_"
+                f"{int(now * 1000) % 10000:04x}",
+            ts=now,
+            ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+            kind=kind,
+            item_id=item_id,
+            item_preview=preview[:100],
+            risk_level=risk,
+            decision='reject',
+            confidence=1.0,  # deterministic pre-check, 非 LLM 置信度
+            reason=f'pre_reject_abstract: {abs_reason}',
+            threshold_at_decision=0.0,  # 不走阈值路径
+        )
+        # 真执行 reject (从 review queue 移)
+        try:
+            ok, msg = self._execute(kind, item_id, 'reject')
+            d.executed_ok = ok
+            d.executed_at = time.time()
+            d.execution_msg = msg[:200]
+        except Exception as e:
+            d.executed_ok = False
+            d.execution_msg = f'execute_exception:{e}'[:200]
+
+        with self._lock:
+            self._decisions.append(d)
+        self._persist_decision(d)
+        self._publish_swm(d)
+
+        vocab = self._load_abstract_reject_vocab()
+        if vocab.get('log_rejected', True):
+            self._bg_log(
+                f"🤖 [AutoArbiter] [{kind}/{item_id[:20]}] "
+                f"PRE_REJECT abstract (bypass LLM) | reason: {abs_reason} "
+                f"| rule_preview: {rule_text[:60]}"
+            )
+
+    # ----------------------------------------------------------
     # Tick (核心: 拉 review queues, per item evaluate + decide)
     # ----------------------------------------------------------
     def _tick(self) -> None:
@@ -648,6 +784,23 @@ class AutoArbiterDaemon:
         risk = ('low' if kind in self.RISK_LOW
                   else 'medium' if kind in self.RISK_MEDIUM
                   else 'high')
+
+        # 🆕 [Sir 2026-05-27 12:13 真痛 anchor] abstract protocol pre-check
+        # ============================================================
+        # 调 LLM 前先看 vocab keyword, 命中 abstract 直接 REJECT (省 tokens +
+        # 不积 review queue). 防御 Sir 真痛: 50+ DEFER 项 'subjective and
+        # aspirational' 反复积压.
+        # ============================================================
+        if kind == 'protocol':
+            rule_text = getattr(entity, 'rule', '') or ''
+            is_abs, abs_reason = self._is_abstract_protocol(rule_text)
+            if is_abs:
+                # 直接构造 REJECT decision, bypass LLM, bypass _decide
+                self._handle_pre_reject_abstract(
+                    kind=kind, item_id=item_id, preview=preview,
+                    risk=risk, rule_text=rule_text, abs_reason=abs_reason,
+                )
+                return  # 不进 LLM eval / 不进 _decide
 
         # 收集 evidence
         evidence = self._collect_evidence(kind, entity)
