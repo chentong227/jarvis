@@ -3117,20 +3117,23 @@ Spoken English:"""
             # 🆕 [Sir 2026-05-27 真愿景 Phase 6] 取 Sir 最近一段 audio 给主脑听语气
             # =====================================================================
             # 设计:
-            #   - env JARVIS_AUDIO_TO_BRAIN=1 才生效 (默认 0, 不破老路径)
+            #   - env JARVIS_AUDIO_TO_BRAIN 控开关 (Sir 20:58 真测 TTFT 3.2s 无明显
+            #     延迟, 21:00 决定改默认 '1' 常驻; 想关 set '0')
             #   - 从 voice_thread._last_audio_wav_bytes 取 (30s 内, ≤60s 长)
             #   - 加 types.Part.from_bytes(data=wav, mime_type='audio/wav') 进 parts
             #   - clean_intent 以 '[后台系统' 开头 (system_event) 跳过 (无 Sir 实时声音)
             #   - 主脑模型必须支持 audio (gemini-3-flash-preview / 2.5-flash/pro 全支持)
             #   - 任何异常静默 fallback 到无 audio (主链不挂)
-            # 测试方法:
-            #   $env:JARVIS_AUDIO_TO_BRAIN='1' (开)  → 看 TTFT 多几秒
-            #   $env:JARVIS_AUDIO_TO_BRAIN='0' (关)  → 老路径
+            # 真实成本 (Sir 20:58 12s audio 实测):
+            #   - 12s ≈ 300 audio tokens ≈ $0.00003 / turn (~0.0002 元)
+            #   - 100 turn/天 ≈ 2 分钱/天
+            # 关掉方法:
+            #   $env:JARVIS_AUDIO_TO_BRAIN='0'  (下个 turn 立刻生效, 无需重启)
             # =====================================================================
             _audio_wav_bytes: bytes = b''
             _audio_duration_sec: float = 0.0
             try:
-                if (os.environ.get('JARVIS_AUDIO_TO_BRAIN', '0').strip() == '1'
+                if (os.environ.get('JARVIS_AUDIO_TO_BRAIN', '1').strip() == '1'
                         and _supports_vision_main  # multimodal 模型才送 audio
                         and not (clean_intent and str(clean_intent).startswith('[后台系统'))):
                     _vt = getattr(getattr(self, 'jarvis', None),

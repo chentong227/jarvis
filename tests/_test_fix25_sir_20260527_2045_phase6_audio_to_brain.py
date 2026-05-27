@@ -133,11 +133,15 @@ class TestStepBChatBypassEnvGate(unittest.TestCase):
         cls.body = m.group(0)
 
     def test_ph6_5_env_var_check_present(self):
-        """PH6_5: stream_chat 含 JARVIS_AUDIO_TO_BRAIN env 检查."""
+        """PH6_5: stream_chat 含 JARVIS_AUDIO_TO_BRAIN env 检查.
+
+        [Sir 21:00 真测后改默 '1' 常驻]: TTFT 3.2s 无明显延迟,
+        Sir 决定改默常驻. 想关掉: $env:JARVIS_AUDIO_TO_BRAIN='0'
+        """
         self.assertIn("JARVIS_AUDIO_TO_BRAIN", self.body)
         self.assertIn("os.environ.get", self.body)
-        # 默 '0' (老路径 不破)
-        self.assertIn("'JARVIS_AUDIO_TO_BRAIN', '0'", self.body)
+        # 默 '1' (常驻开, Sir 21:00 决)
+        self.assertIn("'JARVIS_AUDIO_TO_BRAIN', '1'", self.body)
 
     def test_ph6_6_system_event_skips_audio(self):
         """PH6_6: clean_intent '[后台系统...]' 跳过 audio."""
