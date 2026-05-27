@@ -119,6 +119,12 @@ HTML_TEMPLATE = r"""
          title="贾维斯持续后台思考 (adaptive 60s-30min tick, 5 类思考池) - 看他独自一人时想什么">
         💭 思考层
       </a>
+      <!-- 🆕 [Sir 2026-05-27 18:44 真愿景] InnerVoiceTrack 心声轨道入口 -->
+      <a href="/inner_voice"
+         class="px-3 py-1.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 transition text-sm font-medium"
+         title="贾维斯 24/7 心声轨道 (意识流) - 所有思考脑/sensor/care_trigger 统一时序流, 主脑被召唤时看的就是这个">
+        🌊 心声
+      </a>
       <!-- 🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiter 入口 -->
       <a href="/auto_arbiter"
          class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition text-sm font-medium"
@@ -5564,6 +5570,360 @@ def page_weekly_insights():
     """🆕 [WRC / Sir 2026-05-25 23:52] /weekly_insights dashboard page."""
     from flask import make_response
     resp = make_response(render_template_string(_WEEKLY_INSIGHTS_HTML))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+# ============================================================
+# 🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 4] /inner_voice
+# InnerVoiceTrack 心声轨道 dashboard
+# 数据源: memory_pool/inner_voice_24h.jsonl (jarvis_inner_voice_track)
+# ============================================================
+
+_INNER_VOICE_SOURCE_META = {
+    'inner_thought': {'cn': '🧠 思考脑',     'color': '#a78bfa'},
+    'sensor':        {'cn': '👁️ 感官',        'color': '#60a5fa'},
+    'care_trigger':  {'cn': '💗 关怀触发',    'color': '#f472b6'},
+    'self_reflection': {'cn': '🪞 自省',     'color': '#fbbf24'},
+    'noting':        {'cn': '📝 心跳',        'color': '#94a3b8'},
+    'sir_injected':  {'cn': '👤 Sir 注入',    'color': '#34d399'},
+}
+
+_INNER_VOICE_INTENT_META = {
+    'observation': '观察',
+    'care': '关怀',
+    'reflection': '反思',
+    'reminder': '提醒',
+    'noting': '心跳',
+}
+
+
+@app.route('/api/inner_voice')
+def api_inner_voice():
+    """🆕 [Sir 2026-05-27 18:44 Phase 1 Step 4] InnerVoiceTrack 数据.
+
+    Query:
+      hours: 取近 N 小时 (default 24)
+      source: 过滤 source (e.g. inner_thought / sensor)
+      wants_voice_only: 1 = 只显 wants_voice=True
+
+    Returns:
+      {ok, entries: [...], stats: {...}, prompt_block_preview: '...'}
+    """
+    try:
+        from jarvis_inner_voice_track import (
+            get_inner_voice_track, is_enabled,
+        )
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import_fail:{e}'})
+    try:
+        hours = float(request.args.get('hours', '24'))
+    except Exception:
+        hours = 24.0
+    source_filter = (request.args.get('source') or '').strip().lower()
+    wants_voice_only = request.args.get('wants_voice_only', '0') == '1'
+
+    track = get_inner_voice_track()
+    entries = track.all_recent(hours=hours)
+    if source_filter:
+        entries = [e for e in entries if e.source == source_filter]
+    if wants_voice_only:
+        entries = [e for e in entries if e.wants_voice]
+    # 倒序 (新在上)
+    entries = sorted(entries, key=lambda e: -e.ts)
+
+    out_entries = []
+    now = time.time()
+    for e in entries[:200]:
+        age_s = int(now - e.ts)
+        if age_s < 60:
+            age_str = f'{age_s}s ago'
+        elif age_s < 3600:
+            age_str = f'{age_s // 60}m ago'
+        else:
+            age_str = f'{age_s // 3600}h{(age_s % 3600) // 60}m ago'
+        src_meta = _INNER_VOICE_SOURCE_META.get(
+            e.source, {'cn': e.source, 'color': '#94a3b8'}
+        )
+        intent_cn = _INNER_VOICE_INTENT_META.get(e.intent, e.intent)
+        out_entries.append({
+            'ts': e.ts,
+            'hhmm': time.strftime('%H:%M:%S', time.localtime(e.ts)),
+            'age_str': age_str,
+            'source': e.source,
+            'source_cn': src_meta['cn'],
+            'source_color': src_meta['color'],
+            'intent': e.intent,
+            'intent_cn': intent_cn,
+            'content': e.content,
+            'urgency': e.urgency,
+            'wants_voice': e.wants_voice,
+            'meta': e.meta or {},
+        })
+
+    return jsonify({
+        'ok': True,
+        'enabled': is_enabled(),
+        'entries': out_entries,
+        'stats': track.stats(),
+        'prompt_block_preview': track.build_prompt_block_for_brain(
+            max_chars=3000, show_l3=True
+        ),
+    })
+
+
+_INNER_VOICE_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>🌊 心声轨道 — Jarvis InnerVoiceTrack</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #0d1117; color: #c9d1d9; margin: 0; padding: 1rem 1.5rem;
+  min-height: 100vh;
+}
+.header h1 { color: #fda4af; margin: 0 0 0.3rem 0; font-size: 1.5rem; }
+.header p { color: #8b949e; font-size: 0.88rem; margin: 0.2rem 0; }
+.header code { background: #161b22; padding: 0.1rem 0.4rem; border-radius: 3px;
+              color: #79c0ff; font-size: 0.82rem; }
+.controls {
+  margin: 0.8rem 0; display: flex; gap: 0.6rem; align-items: center;
+  flex-wrap: wrap; padding: 0.6rem 0.8rem;
+  background: #161b22; border-radius: 8px;
+  border: 1px solid #30363d;
+}
+.controls label { color: #8b949e; font-size: 0.85rem; }
+.controls select, .controls input[type="number"] {
+  background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+  padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem;
+}
+.controls button {
+  background: #1f6feb; color: #fff; border: none;
+  padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer;
+  font-size: 0.85rem;
+}
+.controls button:hover { background: #388bfd; }
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem; margin: 0.8rem 0;
+}
+.stat-card {
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  padding: 0.7rem; text-align: center;
+}
+.stat-card .value { font-size: 1.5rem; color: #fda4af; font-weight: 700; }
+.stat-card .label { font-size: 0.78rem; color: #8b949e; margin-top: 0.2rem; }
+.entry {
+  background: #161b22; border-left: 3px solid #30363d;
+  border-radius: 4px; padding: 0.6rem 0.8rem; margin: 0.4rem 0;
+  display: flex; gap: 0.7rem; align-items: flex-start;
+}
+.entry.wants_voice { border-left-color: #f472b6;
+                     background: linear-gradient(90deg, #2a1426, #161b22); }
+.entry .ts {
+  color: #8b949e; font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem; flex-shrink: 0; min-width: 65px;
+}
+.entry .src-tag {
+  background: #0d1117; padding: 0.1rem 0.4rem; border-radius: 3px;
+  font-size: 0.75rem; font-weight: 600; flex-shrink: 0;
+}
+.entry .intent-tag {
+  color: #8b949e; font-size: 0.78rem; flex-shrink: 0;
+}
+.entry .urgency-bar {
+  height: 4px; background: #30363d; border-radius: 2px;
+  width: 60px; flex-shrink: 0; margin-top: 6px;
+  position: relative; overflow: hidden;
+}
+.entry .urgency-fill { height: 100%; background: #f59e0b; }
+.entry .star {
+  color: #f472b6; flex-shrink: 0; font-size: 0.95rem; margin-top: 1px;
+}
+.entry .content { flex: 1; color: #c9d1d9; font-size: 0.92rem;
+                  line-height: 1.45; word-break: break-word; }
+.entry .age {
+  color: #6e7681; font-size: 0.74rem; flex-shrink: 0; margin-top: 2px;
+}
+.empty { color: #6e7681; text-align: center; padding: 2rem;
+         font-style: italic; }
+.prompt-preview {
+  margin-top: 1.5rem; padding: 0.8rem 1rem;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+}
+.prompt-preview h3 { color: #79c0ff; margin: 0 0 0.5rem 0; font-size: 1rem; }
+.prompt-preview pre {
+  white-space: pre-wrap; word-wrap: break-word;
+  color: #8b949e; font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem; max-height: 360px; overflow-y: auto; margin: 0;
+  padding: 0.6rem; background: #161b22; border-radius: 4px;
+}
+.nav-links { margin: 1rem 0 0 0; padding-top: 0.8rem;
+            border-top: 1px solid #30363d; }
+.nav-links a {
+  color: #79c0ff; margin-right: 1.2rem; text-decoration: none;
+  font-size: 0.88rem;
+}
+.heartbeat-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  background: #fda4af; margin-right: 6px; vertical-align: middle;
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px #fda4af, 0 0 6px #fda4af; }
+  50% { box-shadow: 0 0 10px #fda4af, 0 0 16px #fda4af; }
+}
+.disabled-banner {
+  background: #3b2419; border: 1px solid #6e3818;
+  color: #fca5a5; padding: 0.6rem 1rem; border-radius: 6px;
+  margin: 0.8rem 0; text-align: center; font-size: 0.9rem;
+}
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1><span class="heartbeat-dot"></span>🌊 心声轨道 <span id="enabled-badge" style="font-size:0.82rem;color:#8b949e;font-weight:normal;"></span></h1>
+    <p>Jarvis 24/7 持续意识流 — 所有思考脑/感官/关怀/自省统一时序 append. 主脑被召唤时, 看的就是这个轨道, 自然 weave 进 reply (不刻意 reference).</p>
+    <p>数据源: <code>memory_pool/inner_voice_24h.jsonl</code> · 主脑 prompt Layer 1.6 注入. 关闭: <code>JARVIS_INNER_VOICE_ENABLED=0</code></p>
+  </div>
+
+  <div id="disabled-banner-wrap"></div>
+
+  <div class="controls">
+    <label>取近 <input type="number" id="hours" value="24" min="0.1" step="0.1" style="width:60px"> h</label>
+    <label>source
+      <select id="source-sel">
+        <option value="">全部</option>
+        <option value="inner_thought">🧠 思考脑</option>
+        <option value="sensor">👁️ 感官</option>
+        <option value="care_trigger">💗 关怀触发</option>
+        <option value="self_reflection">🪞 自省</option>
+        <option value="noting">📝 心跳</option>
+        <option value="sir_injected">👤 Sir 注入</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="wv-only"> 只显 ★ (wants_voice)</label>
+    <button id="refresh-btn">🔄 刷新</button>
+    <span id="status" style="color:#8b949e;font-size:0.82rem;"></span>
+    <span style="margin-left:auto;color:#6e7681;font-size:0.78rem;">10s 自动 poll</span>
+  </div>
+
+  <div id="stats-grid" class="stats"></div>
+
+  <div id="entries-wrap">
+    <div class="empty">⏳ loading...</div>
+  </div>
+
+  <div class="prompt-preview">
+    <h3>👁️ 主脑实际看到的 inner_voice block (3 层视图 preview)</h3>
+    <pre id="prompt-preview-pre">(loading...)</pre>
+  </div>
+
+  <div class="nav-links">
+    <a href="/">← 主面板</a>
+    <a href="/inner_thoughts">💭 思考层</a>
+    <a href="/main_brain_meta">🧠 思考链</a>
+    <a href="/auto_arbiter">🤖 自决</a>
+  </div>
+
+<script>
+function load() {
+  const hours = document.getElementById('hours').value;
+  const source = document.getElementById('source-sel').value;
+  const wvOnly = document.getElementById('wv-only').checked ? 1 : 0;
+  document.getElementById('status').textContent = '⏳ loading...';
+  const url = `/api/inner_voice?hours=${hours}&source=${source}&wants_voice_only=${wvOnly}`;
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ok) {
+        document.getElementById('status').textContent = '❌ ' + (data.error || 'fail');
+        return;
+      }
+      // enabled badge
+      const eb = document.getElementById('enabled-badge');
+      const dbw = document.getElementById('disabled-banner-wrap');
+      if (data.enabled) {
+        eb.textContent = '· env=ENABLED';
+        eb.style.color = '#86efac';
+        dbw.innerHTML = '';
+      } else {
+        eb.textContent = '· env=DISABLED';
+        eb.style.color = '#fca5a5';
+        dbw.innerHTML = '<div class="disabled-banner">⚠️ JARVIS_INNER_VOICE_ENABLED=0 — voice 仍 append 但主脑 prompt 不注入. 设 1 恢复.</div>';
+      }
+      // stats
+      const s = data.stats;
+      const grid = document.getElementById('stats-grid');
+      grid.innerHTML = `
+        <div class="stat-card"><div class="value">${s.total}</div><div class="label">总 entries</div></div>
+        <div class="stat-card"><div class="value">${s.last_10min}</div><div class="label">近 10min</div></div>
+        <div class="stat-card"><div class="value">${s.last_1h}</div><div class="label">近 1h</div></div>
+        <div class="stat-card"><div class="value">${s.last_24h}</div><div class="label">近 24h</div></div>
+        <div class="stat-card"><div class="value">${s.wants_voice_pending_30min}</div><div class="label">★ pending (30min)</div></div>
+        <div class="stat-card"><div class="value">${s.newest_age_sec}s</div><div class="label">最新距今</div></div>
+      `;
+      // entries
+      const wrap = document.getElementById('entries-wrap');
+      if (!data.entries || data.entries.length === 0) {
+        wrap.innerHTML = '<div class="empty">⏳ 心声暂空 — 主脑刚醒 / 思考脑还没产 thought / 过滤条件无匹配</div>';
+      } else {
+        wrap.innerHTML = data.entries.map(e => {
+          const wvCls = e.wants_voice ? ' wants_voice' : '';
+          const star = e.wants_voice ? '<span class="star">★</span>' : '';
+          const urgPct = Math.round(e.urgency * 100);
+          const urgBar = e.urgency >= 0.3 ?
+            `<div class="urgency-bar"><div class="urgency-fill" style="width:${urgPct}%"></div></div>` : '';
+          return `<div class="entry${wvCls}">
+            <span class="ts">${e.hhmm}</span>
+            <span class="src-tag" style="color:${e.source_color}">${e.source_cn}</span>
+            <span class="intent-tag">${e.intent_cn}</span>
+            ${urgBar}
+            ${star}
+            <span class="content">${escapeHtml(e.content)}</span>
+            <span class="age">${e.age_str}</span>
+          </div>`;
+        }).join('');
+      }
+      // prompt preview
+      document.getElementById('prompt-preview-pre').textContent =
+        data.prompt_block_preview || '(empty)';
+      document.getElementById('status').textContent =
+        `✅ ${data.entries.length} entries`;
+    })
+    .catch(err => {
+      document.getElementById('status').textContent = '❌ fetch fail: ' + err;
+    });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;',
+    '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+document.getElementById('refresh-btn').addEventListener('click', load);
+document.getElementById('source-sel').addEventListener('change', load);
+document.getElementById('wv-only').addEventListener('change', load);
+document.getElementById('hours').addEventListener('change', load);
+
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>
+"""
+
+
+@app.route('/inner_voice')
+def page_inner_voice():
+    """🆕 [Sir 2026-05-27 18:44 Phase 1 Step 4] /inner_voice dashboard page."""
+    from flask import make_response
+    resp = make_response(render_template_string(_INNER_VOICE_HTML))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
