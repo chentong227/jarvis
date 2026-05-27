@@ -671,9 +671,44 @@ Answer ONLY the nudge type name, nothing else."""
         if nudge_type in ("atmosphere", "screen_tease"):
             window_title = context.get("window_title", "")
             topic_key = self.humor_memory.extract_topic_key(window_title, nudge_type)
+            # 🆕 [Sir 2026-05-27 18:10 真问 anchor] '为何不提醒?' 治本: silent return
+            # 加 bg_log + publish_skip (准则 6 数据强耦合). Sir 看 log 立刻明白
+            # '已选择 screen_tease 但被 humor_memory cooldown 拦' 而不是黑盒.
             if not self.humor_memory.can_joke_now(topic_key):
+                try:
+                    from jarvis_utils import bg_log as _hm_bg
+                    _hm_bg(
+                        f"🎭 [SmartNudge/Skip] {nudge_type} blocked by humor_memory "
+                        f"can_joke_now=False (topic_key='{topic_key[:40]}', "
+                        f"window='{(window_title or '')[:40]}') — 该 topic 仍在冷却"
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._publish_skip(
+                        f'humor_memory_cooldown_{nudge_type}',
+                        {'nudge_type': nudge_type, 'topic_key': topic_key[:80]}
+                    )
+                except Exception:
+                    pass
                 return
             if self.humor_memory.should_skip_topic(topic_key):
+                try:
+                    from jarvis_utils import bg_log as _hm_bg2
+                    _hm_bg2(
+                        f"🎭 [SmartNudge/Skip] {nudge_type} blocked by humor_memory "
+                        f"should_skip_topic=True (topic_key='{topic_key[:40]}') — "
+                        f"该 topic 历史已多次提及, 跳过"
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._publish_skip(
+                        f'humor_memory_topic_skip_{nudge_type}',
+                        {'nudge_type': nudge_type, 'topic_key': topic_key[:80]}
+                    )
+                except Exception:
+                    pass
                 return
             context["humor_freshness"] = self.humor_memory.get_topic_freshness(topic_key)
             context["topic_key"] = topic_key
@@ -775,6 +810,24 @@ Answer ONLY the nudge type name, nothing else."""
             pass
 
         if self.gate and not self.gate.can_speak('companion', nudge_type=nudge_type):
+            # 🆕 [Sir 2026-05-27 18:10 真问 anchor] '为何不提醒?' 治本 part 2:
+            # NudgeGate.can_speak 同样 silent return. 加 bg_log + publish_skip.
+            try:
+                from jarvis_utils import bg_log as _gate_bg
+                _gate_bg(
+                    f"🚧 [SmartNudge/Skip] {nudge_type} blocked by NudgeGate "
+                    f"can_speak('companion')=False — 闸口拒绝 (freeze/sleep/"
+                    f"recent_speech/quota 等, 查 NudgeGate 日志详)"
+                )
+            except Exception:
+                pass
+            try:
+                self._publish_skip(
+                    f'nudge_gate_blocked_{nudge_type}',
+                    {'nudge_type': nudge_type, 'channel': 'companion'}
+                )
+            except Exception:
+                pass
             return
 
         # [R7-α/NudgeChannel] 决定走哪条通道：voice / silent_text / visual_pulse

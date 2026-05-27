@@ -1,7 +1,8 @@
 {
-  "version": "β.5.46-fix18",
+  "version": "β.5.46-fix20",
   "created_at": "2026-05-22T12:30:00",
-  "description": "Sir 说'放一放/hold off/暂停/搁置/先不做' → 项目 hold N 小时. IntentResolver 用此 vocab 检测 hold phrase, 命中 → ProjectTimeline.hold_project(name, hours). 准则 6 vocab 范式: 持久化 + CLI 可改 + L7 reflector propose.",
+  "updated_at": "2026-05-27T18:07:00",
+  "description": "Sir 说'放一放/hold off/暂停/搁置/先不做' → 项目 hold N 小时. IntentResolver 用此 vocab 检测 hold phrase, 命中 → ProjectTimeline.hold_project(name, hours). 准则 6 vocab 范式: 持久化 + CLI 可改 + L7 reflector propose. fix20 (2026-05-27 18:07 Sir 真测 anchor): Sir 说 'Cursor 我们已经不用啦, 把它忘了好吗', Jarvis reply 'scrub from active roster' 但**没真调 tool_project_hold** — 根因 vocab 漏 '不用啦/把它忘了/忘掉' 这类 phrase. 加 6 个新 phrase 覆盖.",
   "phrases": [
     {"id": "fang_yi_fang", "phrase": "放一放", "lang": "zh", "default_hours": 72, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
     {"id": "xian_fang_yi_fang", "phrase": "先放一放", "lang": "zh", "default_hours": 72, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
@@ -27,7 +28,13 @@
     {"id": "stop_reminding", "phrase": "stop reminding", "lang": "en", "default_hours": 168, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
     {"id": "dont_remind", "phrase": "don't remind me", "lang": "en", "default_hours": 168, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
     {"id": "later", "phrase": "later", "lang": "en", "default_hours": 48, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
-    {"id": "not_now", "phrase": "not now", "lang": "en", "default_hours": 24, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"}
+    {"id": "not_now", "phrase": "not now", "lang": "en", "default_hours": 24, "state": "active", "created_at": "2026-05-22T12:30:00", "proposed_by": "sir"},
+    {"id": "bu_yong_la", "phrase": "不用啦", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 Sir 真测 anchor 18:07 'Cursor 我们已经不用啦' - 给 project 收尾用"},
+    {"id": "yi_jing_bu_yong", "phrase": "已经不用", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 Sir 真测 anchor 'Cursor 我们已经不用啦'"},
+    {"id": "ba_ta_wang_le", "phrase": "把它忘了", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 Sir 真测 anchor '把它忘了好吗' - 含指代代词锁定不误命中 'I forgot'"},
+    {"id": "ba_ta_wang_diao", "phrase": "把它忘掉", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 同 ba_ta_wang_le 变体"},
+    {"id": "ba_zhe_wang_le", "phrase": "把这忘了", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 同 ba_ta_wang_le 变体 (指代用'这')"},
+    {"id": "wang_diao_ba", "phrase": "忘掉吧", "lang": "zh", "default_hours": 168, "state": "active", "created_at": "2026-05-27T18:07:00", "proposed_by": "sir", "note": "fix20 短促语气 - 'Cursor, 忘掉吧'"}
   ],
   "review_queue": [],
   "rejected_history": []

@@ -135,6 +135,56 @@ class SelfAnchor:
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-27 18:09 真测 anchor] PREVIOUS SESSION evidence
+        # ============================================================
+        # Sir 真问: '你下午什么时候关的?' → Jarvis 编 '1:05 PM' 幻觉 (主脑没
+        # evidence 自己想). 治本 (准则 5 INTEGRITY + 准则 6 数据强耦合):
+        # 启动时一次性扫 docs/runtime_logs/ 拿次新 log 的 mtime, 进 prompt
+        # evidence. 主脑看到 'previous session last activity: HH:MM (Xh gap)'
+        # 自然能回答 '我大概那时关的', 不再编时间.
+        # ============================================================
+        self._previous_session_last_seen_at: float = 0.0
+        try:
+            log_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'docs', 'runtime_logs'
+            )
+            if os.path.isdir(log_dir):
+                # 找所有 jarvis_*.log, 按 mtime desc 排序, 跳过最新的 (本 session)
+                log_files = [
+                    os.path.join(log_dir, f)
+                    for f in os.listdir(log_dir)
+                    if f.startswith('jarvis_') and f.endswith('.log')
+                ]
+                if len(log_files) >= 2:
+                    log_files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                    # log_files[0] = 本 session 的 log (刚启动还在写)
+                    # log_files[1] = 上一 session 的 log
+                    prev_mtime = os.path.getmtime(log_files[1])
+                    # 防御: prev mtime 必须早于本 session 启动 ≥ 60s, 否则
+                    # 可能是同一 session (启动竞速) 或时钟乱跳.
+                    if prev_mtime > 0 and prev_mtime < self._session_started_at - 60:
+                        self._previous_session_last_seen_at = prev_mtime
+        except Exception:
+            pass
+
+    def _get_previous_session_info(self) -> Optional[str]:
+        """[Sir 2026-05-27 18:09] 返回上 session 死亡时间 + gap 描述, 主脑可
+        直接 reference. 没数据返 None.
+        """
+        if self._previous_session_last_seen_at <= 0:
+            return None
+        prev_str = time.strftime('%H:%M', time.localtime(self._previous_session_last_seen_at))
+        gap_sec = self._session_started_at - self._previous_session_last_seen_at
+        if gap_sec < 60:
+            return f"{prev_str} (just respawned, <1min gap)"
+        gap_min = int(gap_sec / 60)
+        if gap_min < 60:
+            return f"{prev_str} ({gap_min}min gap before I respawned)"
+        gap_h = gap_min // 60
+        gap_m_rem = gap_min % 60
+        return f"{prev_str} ({gap_h}h {gap_m_rem}min gap before I respawned)"
+
     def record_turn(self) -> None:
         """每次新 turn 时调用，增加 turn_count。"""
         with self._lock:
@@ -270,7 +320,25 @@ class SelfAnchor:
         )
         lines.append("")
         lines.append("[MY CURRENT CONTINUITY]")
-        lines.append(f"  - session uptime: {session_age}min")
+        # 🆕 [Sir 2026-05-27 18:09 真测 anchor] session 启动 HH:MM 也显
+        # (老版只显 uptime min, Sir 问"几点启动"主脑没具体时刻 → 自己想 → 幻觉).
+        try:
+            _boot_str = time.strftime('%H:%M', time.localtime(self._session_started_at))
+            lines.append(f"  - session uptime: {session_age}min (boot at {_boot_str})")
+        except Exception:
+            lines.append(f"  - session uptime: {session_age}min")
+        # 🆕 [Sir 2026-05-27 18:09 真测 anchor] PREVIOUS SESSION evidence:
+        # Sir 真测 '你下午什么时候关的?' → Jarvis 编 '1:05 PM'. 治本: 启动时
+        # 扫 docs/runtime_logs/ 次新 log mtime, 主脑直接看 evidence 不再幻觉.
+        _prev_info = self._get_previous_session_info()
+        if _prev_info:
+            lines.append(
+                f"  - previous session last activity: {_prev_info}"
+            )
+            lines.append(
+                f"    ↳ (this is when my prior process died — power loss / "
+                f"reboot / manual stop. I have NO log between then and boot.)"
+            )
         if self._session_id:
             lines.append(f"  - session id: {self._session_id}")
         lines.append(f"  - turns I've spoken this session: {turn_count}")

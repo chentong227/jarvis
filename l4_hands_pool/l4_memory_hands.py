@@ -1,4 +1,7 @@
+import re
 import time
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
 from jarvis_blood import Action, ExecutionResult
 from jarvis_hippocampus import Hippocampus
 
@@ -6,6 +9,182 @@ MANIFEST = {
     "name": "memory_hands",
     "description": "长期记忆与日程管理器。专用于检索过去的记忆、查看未来的日程，以及修改/取消已有记录。",
 }
+
+
+# 🆕 [Sir 2026-05-27 18:14 真测 anchor BUG-C] 自然语言时间 parser
+# ============================================================
+# Sir 真测: 主脑 emit trigger_time='tomorrow' / 'tomorrow 08:00' / '明天' →
+# add_reminder 旧版只接 'YYYY-MM-DD HH:MM:SS' 严格格式 → fail → Jarvis 嘴
+# 上承诺 reminder 但没真存 → 准则 5 INTEGRITY 失败. 治本: tool 入口 fallback
+# parse 自然语言. 准则 6 信任 LLM emit 自然词, python 兜底.
+# ============================================================
+_DEFAULT_HOUR_BY_DAYTIME = {
+    'morning': 8, 'noon': 12, 'afternoon': 14, 'evening': 19, 'night': 21,
+    '早上': 8, '早晨': 8, '上午': 9, '中午': 12, '下午': 14,
+    '傍晚': 18, '晚上': 21, '深夜': 23,
+}
+
+
+def _parse_trigger_time(
+    raw: str, now_ts: Optional[float] = None
+) -> Tuple[Optional[float], str]:
+    """parse 多种自然语言时间到 timestamp.
+
+    Returns:
+        (trigger_ts, normalized_str). 失败返 (None, '').
+    """
+    if not raw or not isinstance(raw, str):
+        return (None, '')
+    s = raw.strip()
+    if not s:
+        return (None, '')
+    now = now_ts if now_ts is not None else time.time()
+    now_dt = datetime.fromtimestamp(now)
+
+    # 1. 严格格式 YYYY-MM-DD HH:MM:SS
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y/%m/%d %H:%M:%S',
+                '%Y/%m/%d %H:%M'):
+        try:
+            ts = time.mktime(time.strptime(s, fmt))
+            return (ts, time.strftime('%Y-%m-%d %H:%M:00', time.localtime(ts)))
+        except Exception:
+            pass
+
+    s_low = s.lower().strip()
+
+    # 2. relative: 'in N hours/minutes/days'
+    m = re.match(r'^in\s+(\d+)\s*(hour|hr|h|minute|min|m|day|d)s?\b', s_low)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        delta_sec = {'hour': 3600, 'hr': 3600, 'h': 3600,
+                     'minute': 60, 'min': 60, 'm': 60,
+                     'day': 86400, 'd': 86400}.get(unit, 0)
+        if delta_sec > 0:
+            ts = now + n * delta_sec
+            return (ts, time.strftime('%Y-%m-%d %H:%M:00', time.localtime(ts)))
+
+    # 3. 中文 'N 小时后' / 'N 分钟后' / 'N 天后'
+    m = re.match(r'^(\d+)\s*(小时|分钟|天)后', s)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        delta_sec = {'小时': 3600, '分钟': 60, '天': 86400}.get(unit, 0)
+        if delta_sec > 0:
+            ts = now + n * delta_sec
+            return (ts, time.strftime('%Y-%m-%d %H:%M:00', time.localtime(ts)))
+
+    # 4. 'tomorrow' / 'today' / '明天' / '今天' + optional time
+    date_word = None
+    rest = s_low
+    night_context = False  # 'tonight' / '今晚' / '明晚' → hh < 12 推 PM
+    if s_low.startswith('tomorrow'):
+        date_word = 'tomorrow'
+        rest = s_low[len('tomorrow'):].strip(' ,')
+    elif s_low.startswith('today'):
+        date_word = 'today'
+        rest = s_low[len('today'):].strip(' ,')
+    elif s_low.startswith('tonight'):
+        date_word = 'today'
+        rest = (s_low[len('tonight'):].strip(' ,') or 'night')
+        night_context = True
+    elif s.startswith('明天'):
+        date_word = 'tomorrow'
+        rest = s[len('明天'):].strip(' ,，')
+    elif s.startswith('今天'):
+        date_word = 'today'
+        rest = s[len('今天'):].strip(' ,，')
+    elif s.startswith('今晚'):
+        date_word = 'today'
+        rest = (s[len('今晚'):].strip(' ,，') or '晚上')
+        night_context = True
+    elif s.startswith('明晚'):
+        date_word = 'tomorrow'
+        rest = (s[len('明晚'):].strip(' ,，') or '晚上')
+        night_context = True
+
+    if date_word:
+        # 目标 date
+        if date_word == 'today':
+            target_date = now_dt.date()
+        else:  # tomorrow
+            target_date = (now_dt + timedelta(days=1)).date()
+        # parse rest into HH, MM
+        hh, mm = _parse_clock(rest)
+        if hh is None:
+            # 默认: tomorrow → 08:00, today → next quarter hour
+            if date_word == 'tomorrow':
+                # night_context = '明晚' 无具体时间 → 21:00
+                hh, mm = (21, 0) if night_context else (8, 0)
+            else:
+                # today 没说几点 → 当前 +1h 整点 (night_context → 21:00)
+                if night_context:
+                    hh, mm = 21, 0
+                else:
+                    target_dt = now_dt + timedelta(hours=1)
+                    hh, mm = target_dt.hour, 0
+        elif night_context and 1 <= hh < 12:
+            # '今晚 9 点' → 21 (PM 推断)
+            hh += 12
+        try:
+            target_dt = datetime(target_date.year, target_date.month,
+                                  target_date.day, hh, mm, 0)
+            ts = target_dt.timestamp()
+            # 防御: today 但已过点 → 推 tomorrow
+            if date_word == 'today' and ts <= now:
+                target_dt = target_dt + timedelta(days=1)
+                ts = target_dt.timestamp()
+            return (ts, time.strftime('%Y-%m-%d %H:%M:00', time.localtime(ts)))
+        except Exception:
+            return (None, '')
+
+    return (None, '')
+
+
+def _parse_clock(s: str) -> Tuple[Optional[int], Optional[int]]:
+    """parse 'HH:MM' / '8am' / '8:30' / '8 点 30 分' / 'morning' / '早上' 等.
+
+    Returns (hh, mm). 失败 returns (None, None).
+    """
+    if not s:
+        return (None, None)
+    s_low = s.lower().strip()
+    # daytime word: morning/晚上 → default hour
+    for word, hh in _DEFAULT_HOUR_BY_DAYTIME.items():
+        if word in s_low or word in s:
+            # word + optional 几点
+            rest = s_low.replace(word, '').strip() or s.replace(word, '').strip()
+            m = re.search(r'(\d{1,2})', rest)
+            if m:
+                h_try = int(m.group(1))
+                # 中文常 12h: 早上8 / 晚上 9 → 21
+                if 1 <= h_try <= 12 and word in ('evening', 'night', '晚上', '深夜', '傍晚'):
+                    h_try = h_try + 12 if h_try < 12 else h_try
+                return (h_try, 0)
+            return (hh, 0)
+    # HH:MM
+    m = re.match(r'^(\d{1,2}):(\d{2})(?:am|pm)?$', s_low)
+    if m:
+        hh = int(m.group(1))
+        mm = int(m.group(2))
+        if 'pm' in s_low and hh < 12:
+            hh += 12
+        if 'am' in s_low and hh == 12:
+            hh = 0
+        return (hh, mm)
+    # 8am / 8pm / at 8 / 8 点 / 8 点 30 分
+    m = re.match(r'^(?:at\s+)?(\d{1,2})\s*(am|pm)?$', s_low)
+    if m:
+        hh = int(m.group(1))
+        if m.group(2) == 'pm' and hh < 12:
+            hh += 12
+        if m.group(2) == 'am' and hh == 12:
+            hh = 0
+        return (hh, 0)
+    m = re.match(r'^(\d{1,2})\s*点(?:\s*(\d{1,2})\s*分)?', s)
+    if m:
+        return (int(m.group(1)), int(m.group(2) or 0))
+    return (None, None)
 
 class Hands:
     def __init__(self, api_key="sk-or-v1-xxxxxxxxxxxx"):
@@ -21,8 +200,9 @@ class Hands:
         1. "search_memory": {"query": "关键词", "time_range_hours": 72} <- 模糊检索【数据库中的】过去的聊天/任务。NOT for physical files!
         2. "list_reminders": {} <- 查看当前所有已记录的【未来待办/日程】。
         3. "delete_record": {"id": 12} <- 删除/取消指定的【数据库】记忆或日程。NOT for deleting physical files!
-        4. "modify_record": {"id": 12, "new_intent": "新的内容(可选)", "new_time": "YYYY-MM-DD HH:MM:00 (可选)"} <- 修改已有日程的时间或内容。
-        5. "add_reminder": {"intent": "提醒内容", "trigger_time": "YYYY-MM-DD HH:MM:00"} <- 创建新的未来提醒/待办事项。仅在用户明确要求设置提醒时使用！
+        4. "modify_record": {"id": 12, "new_intent": "新的内容(可选)", "new_time": "时间(可选)"} <- 修改已有日程的时间或内容。
+        5. "add_reminder": {"intent": "提醒内容", "trigger_time": "时间"} <- 创建新的未来提醒/待办事项。仅在用户明确要求设置提醒时使用！
+           ↳ trigger_time 接受多种格式 (Sir 2026-05-27 BUG-C 治本): "YYYY-MM-DD HH:MM:00" 严格 / "tomorrow 08:00" / "tomorrow morning" / "明天早上" / "明天 8 点" / "今晚 9 点" / "in 2 hours" / "3 小时后" 都自动 parse.
         6. "list_commitments": {"max_age_hours": 48} <- 查 CommitmentWatcher 注册的承诺. 含真实 created_at 时间 (诚实接口, 避免编造时间幻觉). 用于回答 "你什么时候记下的承诺" / "我承诺过什么".
         """
 
@@ -118,16 +298,22 @@ class Hands:
                     updates.append("user_intent = ?")
                     vals.append(new_intent)
                 if new_time:
-                    try:
-                        time_struct = time.strptime(new_time, "%Y-%m-%d %H:%M:%S")
-                        trigger_ts = time.mktime(time_struct)
-                        updates.append("trigger_time = ?")
-                        vals.append(trigger_ts)
-                        # 既然修改了时间，确保它被激活为未来任务
-                        updates.append("is_future_task = 1") 
-                    except Exception as e:
+                    # 🆕 [Sir 2026-05-27 18:14 真测 anchor BUG-C 治本] 同 add_reminder 用 _parse_trigger_time
+                    trigger_ts, _normalized = _parse_trigger_time(new_time)
+                    if trigger_ts is None:
                         conn.close()
-                        return ExecutionResult(success=False, msg=f"时间格式错误，必须为 YYYY-MM-DD HH:MM:00。错误信息: {e}")
+                        return ExecutionResult(
+                            success=False,
+                            msg=(
+                                f"❌ new_time 无法解析: '{new_time}'. "
+                                f"接受 'YYYY-MM-DD HH:MM:00' / 'tomorrow 08:00' / "
+                                f"'明天早上' / 'in 2 hours' / '3 小时后' 等."
+                            ),
+                        )
+                    updates.append("trigger_time = ?")
+                    vals.append(trigger_ts)
+                    # 既然修改了时间，确保它被激活为未来任务
+                    updates.append("is_future_task = 1")
                         
                 vals.append(record_id)
                 sql = f"UPDATE TaskMemories SET {', '.join(updates)} WHERE id = ?"
@@ -159,14 +345,26 @@ class Hands:
                         msg=(
                             "❌ add_reminder 缺 trigger_time 参数 (提醒时间). "
                             "下一轮: 先问 Sir 'X 几点提醒', "
-                            "Sir 答了再 emit, 用 trigger_time='YYYY-MM-DD HH:MM:00' 格式."
+                            "Sir 答了再 emit, 用 trigger_time='YYYY-MM-DD HH:MM:00' 格式 "
+                            "或自然语言 'tomorrow 08:00' / '明天早上' / 'in 2 hours' 都接受."
                         ),
                     )
-                try:
-                    time_struct = time.strptime(trigger_time_str, "%Y-%m-%d %H:%M:%S")
-                    trigger_ts = time.mktime(time_struct)
-                except Exception as e:
-                    return ExecutionResult(success=False, msg=f"时间格式错误，必须为 YYYY-MM-DD HH:MM:00。错误: {e}")
+                # 🆕 [Sir 2026-05-27 18:14 真测 anchor BUG-C 治本] 自然语言 fallback
+                # 老版只接 'YYYY-MM-DD HH:MM:SS' 严格格式. Sir 真测主脑 emit 'tomorrow'
+                # 类自然词 → fail → Jarvis 嘴上说"shall set"但 reminder 没存 →
+                # 准则 5 INTEGRITY 失败. 治本 _parse_trigger_time fallback.
+                trigger_ts, normalized = _parse_trigger_time(trigger_time_str)
+                if trigger_ts is None:
+                    return ExecutionResult(
+                        success=False,
+                        msg=(
+                            f"❌ trigger_time 无法解析: '{trigger_time_str}'. "
+                            f"接受格式: 'YYYY-MM-DD HH:MM:00' / 'tomorrow 08:00' / "
+                            f"'明天早上' / 'in 2 hours' / '3 小时后' / '今晚 9 点' 等. "
+                            f"下一轮请 emit 标准格式或常见自然语言."
+                        ),
+                    )
+                trigger_time_str = normalized  # 给下方 msg 显标准化后的时间
                 # 🩹 [P5-fix-add_reminder / 2026-05-21 10:10] Sir 10:06 真测真报:
                 # "NOT NULL constraint failed: TaskMemories.timestamp"
                 # TaskMemories schema 要求 timestamp/environment/macro_goal NOT NULL,
