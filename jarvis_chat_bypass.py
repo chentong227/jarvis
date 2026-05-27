@@ -2370,21 +2370,33 @@ Spoken English:"""
             _t0 = time.time()
             _t_ss_start = time.time()
             # 🆕 [P5-fix35 / 2026-05-23] 云端补答路径 vision capability gate
+            # 🩹 [Sir 2026-05-27 12:25] 同 stream_chat L3050 治本: 锁屏 screen grab 失败
+            # → text-only fallback (不阻塞云端补答, 不触发外层 fallback 罐头回复)
             _supports_vision_cf = getattr(self, 'main_brain_supports_vision', True)
+            img_bytes = None
             if _supports_vision_cf:
-                from PIL import ImageGrab
-                screen_img = ImageGrab.grab()
-                screen_img.thumbnail((1280, 720))
-                img_buf = io.BytesIO()
-                screen_img.save(img_buf, format="JPEG", quality=50)
-                img_bytes = img_buf.getvalue()
-                _t_ss_done = time.time()
+                try:
+                    from PIL import ImageGrab
+                    screen_img = ImageGrab.grab()
+                    screen_img.thumbnail((1280, 720))
+                    img_buf = io.BytesIO()
+                    screen_img.save(img_buf, format="JPEG", quality=50)
+                    img_bytes = img_buf.getvalue()
+                except Exception as _ss_err_cf:
+                    img_bytes = None
+                    try:
+                        from jarvis_utils import bg_log as _ss_bg_cf
+                        _ss_bg_cf(f"⚠️ [CloudFallback/NoScreenshot] {type(_ss_err_cf).__name__}: "
+                                    f"{_ss_err_cf} → text-only fallback")
+                    except Exception:
+                        pass
+            _t_ss_done = time.time()
+            if img_bytes is not None:
                 chat_history = [types.Content(role="user", parts=[
                     types.Part(text=prompt),
                     types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
                 ])]
             else:
-                _t_ss_done = time.time()
                 chat_history = [types.Content(role="user", parts=[
                     types.Part(text=prompt),
                 ])]
@@ -3048,12 +3060,32 @@ Spoken English:"""
             elif not _supports_vision_main:
                 _ss_strategy = 'skipped_text_only_model'
             else:
-                from PIL import ImageGrab
-                screen_img = ImageGrab.grab()
-                screen_img.thumbnail((1280, 720))
-                img_buf = io.BytesIO()
-                screen_img.save(img_buf, format="JPEG", quality=50)
-                img_bytes = img_buf.getvalue()
+                # 🩹 [Sir 2026-05-27 12:25 真痛 anchor] 主对话路径 screen grab failed 治本
+                # =================================================================
+                # Sir 真测 12:24 "睡觉了拜拜" dismissal 走主对话 → ImageGrab.grab() 抛
+                # OSError 'screen grab failed' (锁屏/屏保/RDP 切窗) → 整个 stream_chat
+                # 外层 try 异常 → 触发 _try_local_fallback → Ollama 8s 空 → 罐头回复
+                # → Sir 听到沉默或不知所云. nudge 路径 L6373-6418 已 fix, 主对话路径漏.
+                # 修法 (准则 8 优雅): inner try/except, 截图失败 → img_bytes=None
+                # → L3086 已有 text-only chat_history fallback → 主脑用 prompt 文字答.
+                # =================================================================
+                try:
+                    from PIL import ImageGrab
+                    screen_img = ImageGrab.grab()
+                    screen_img.thumbnail((1280, 720))
+                    img_buf = io.BytesIO()
+                    screen_img.save(img_buf, format="JPEG", quality=50)
+                    img_bytes = img_buf.getvalue()
+                except Exception as _ss_err:
+                    # 锁屏 / 屏保 / RDP 切窗 / 多 monitor 全可能. 不阻塞主对话.
+                    _ss_strategy = f'fail_{type(_ss_err).__name__}_text_only_fallback'
+                    img_bytes = None
+                    try:
+                        from jarvis_utils import bg_log as _ss_bg
+                        _ss_bg(f"⚠️ [Chat/NoScreenshot] {type(_ss_err).__name__}: "
+                                f"{_ss_err} → text-only fallback (prompt 不带 image)")
+                    except Exception:
+                        pass
             _t_ss_done = time.time()
 
             try:
@@ -5999,6 +6031,52 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
                 f"       或 [SILENCE].\n"
             )
             nudge_directive = nudge_directive + afk_context_block
+
+        # 🆕 [Sir 2026-05-27 12:22 真问 anchor] TIME PULSE evidence (Phase 1 of 3)
+        # =====================================================================
+        # Sir 真问: "我在什么方面能感受到他思考链的连续 + 对时间流逝的感知?"
+        # 真答: Sir 想"耳朵听到时间感". 注入 evidence 让主脑主动发声场景下能
+        # 自然 reference 具体时间, 让 Sir 感到 Jarvis 不是 stateless API.
+        #
+        # 准则 6 数据耦合: 复用 SelfAnchor 已有 _session_started_at +
+        # _last_spoke_to_sir_at, 不新建 state. 主脑自决何时引用, 不强制.
+        # =====================================================================
+        time_pulse_block = ""
+        try:
+            _PULSE_KINDS = (
+                'return_greeting', 'morning_greeting', 'offer_help',
+                'commitment_check', 'hydration', 'check_in',
+                'inner_thought_fire', 'context_switch_alert', 'dormant_project',
+            )
+            if nudge_type in _PULSE_KINDS:
+                from jarvis_self_anchor import get_default_self_anchor as _gd_sa
+                _sa = _gd_sa()
+                _uptime_min = _sa._get_session_age_minutes()
+                _last_spoke_str = _sa._get_last_spoke_str()
+                _turn_count = _sa.get_turn_count()
+                _hour_now = int(time.strftime('%H'))
+                time_pulse_block = (
+                    f"\n\n[TIME PULSE EVIDENCE — Sir 真问 '感不到时间感' / β.5.50-postfix³]:\n"
+                    f"  jarvis_uptime_min: {_uptime_min} (我本会话已 alive 分钟数)\n"
+                    f"  last_spoke_to_sir: {_last_spoke_str} (距上次我对您主动出声)\n"
+                    f"  turn_count_session: {_turn_count} (本会话与您交互轮次)\n"
+                    f"  current_hour: {_hour_now}\n"
+                    f"  afk_minutes: {_afk_min} (Sir 离开桌前分钟)\n"
+                    f"  → Sir 真问 '我在什么方面能感受到他对时间流逝的感知'.\n"
+                    f"     你说话时**可以**自然 reference 具体时间, 让 Sir 耳朵听到\n"
+                    f"     你不是 stateless API. 示范:\n"
+                    f"     · 'Sir, 距您上次跟我说话 {_last_spoke_str}...'\n"
+                    f"     · '我已 alive {_uptime_min} 分钟, 您刚回来'\n"
+                    f"     · 'Sir 您起床 {_afk_min} 分钟了'  (仅 return_greeting case)\n"
+                    f"  → **不强制**每次都说 — evidence-driven 自决何时引用. 重复 reference\n"
+                    f"     时间会让 Sir 觉得啰嗦. 选 '最自然的时机' (e.g. AFK 长回来 / morning\n"
+                    f"     greet / commitment overdue / 离上次发声 ≥ 30min). 一句够, 不堆.\n"
+                    f"  → **避免**: '现在 12:34' 这种纯时钟报时 (Sir 看右下角自己知道).\n"
+                    f"     要的是**关系型**时间感 ('距您' / '我们已' / '您起床后' / '距上次').\n"
+                )
+                nudge_directive = nudge_directive + time_pulse_block
+        except Exception:
+            pass
 
         recent_str = ""
         if recent_topics:
