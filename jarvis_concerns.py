@@ -137,6 +137,42 @@ class Concern:
 
 
 # ============================================================
+# Helpers (module-level, 让 chat_bypass handler + tool_registry 共用)
+# ============================================================
+
+def compute_severity_delta_from_progress(
+    current: float,
+    target: Optional[float],
+    baseline: float = -0.5,
+) -> float:
+    """🆕 [Sir 2026-05-27 21:34 真测 P4] 基于 progress ratio 算 severity_delta.
+
+    Sir 真痛: 真测看到 `progress_update: sir_hydration_habit → 1 杯
+    (severity_delta=+0.00)` — 喝了 1 杯但 severity 没动.
+
+    旧算法 ("75% gate"):
+        -0.5 if ratio >= 1.0
+        -0.2 if ratio >= 0.75
+        0.0  otherwise
+      → 1/10 = 10% 落到 0.0, Sir 觉得"没添加成功".
+
+    新算法 (linear decay):
+        - 0 < target: linear decay 0% → 0, 100% → baseline (默 -0.5)
+            e.g. 1/10 → -0.05, 5/10 → -0.25, 10/10 → -0.5
+        - target=0 / None: 给 -0.05 表达"有正向 signal 但没 target 不知多少"
+        - current <= 0: 0.0 (倒退/无效)
+
+    Sir 真意: "每喝一杯都让我少操心一点", linear 比 gate 自然.
+    """
+    if current is None or current <= 0:
+        return 0.0
+    if not target or target <= 0:
+        return -0.05  # 有 signal 没 target — 小幅降
+    ratio = max(0.0, min(1.0, float(current) / float(target)))
+    return baseline * ratio
+
+
+# ============================================================
 # Ledger
 # ============================================================
 

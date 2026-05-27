@@ -1751,21 +1751,34 @@ Spoken English:"""
                                 "(Sir 报的进度数 e.g. 9 杯水的 9)")
                     cur_f = float(cur)
                     tgt_f = float(tgt) if tgt is not None else None
+                    # 🆕 [Sir 2026-05-27 21:34 真测 P4 BUG-A] tgt_f fallback —
+                    # 主脑常 omit target, ledger daily_progress 已存 (e.g. 10.0).
+                    # 用 ledger 已存 target 算 severity_delta 比 None 准.
+                    if tgt_f is None:
+                        try:
+                            _c = ledger.get(cid)
+                            _dp = (_c.daily_progress if _c else None) or {}
+                            _stored_tgt = _dp.get('target')
+                            if _stored_tgt is not None and float(_stored_tgt) > 0:
+                                tgt_f = float(_stored_tgt)
+                        except Exception:
+                            pass
                     progress = {'current': cur_f}
                     if tgt_f is not None:
                         progress['target'] = tgt_f
                     if unit:
                         progress['unit'] = unit
                     raw_text = (params.get('raw_text', '') or '')[:300]
+                    # 🆕 [Sir 2026-05-27 21:34 真测 P4 BUG-B] linear severity decay
+                    # 旧 "75% gate" → 1/10 = 0.0 让 Sir 觉得没添加成功.
+                    # 新 helper: linear, 1/10 → -0.05, 5/10 → -0.25, 10/10 → -0.5
+                    from jarvis_concerns import (
+                        compute_severity_delta_from_progress as _csev,
+                    )
                     judgement = {
                         'has_relevance': True,
                         'progress': progress,
-                        # severity_delta: 进度达标 → severity 下降 (1 cup = -0.1)
-                        'severity_delta': (
-                            -0.5 if (tgt_f and cur_f >= tgt_f)
-                            else (-0.2 if (tgt_f and cur_f >= tgt_f * 0.75)
-                                  else 0.0)
-                        ),
+                        'severity_delta': _csev(cur_f, tgt_f),
                         'source': 'directive:habit_progress_routing',
                     }
                     ok = ledger.record_user_feedback(cid, raw_text, judgement)

@@ -77,13 +77,40 @@ def tool_concern_progress_update(
         ledger = getattr(nerve, 'concerns_ledger', None) if nerve else None
         if ledger is None:
             return _fail('no concerns_ledger')
+        # 🆕 [Sir 2026-05-27 21:34 真测 P4] target fallback + linear severity_delta
+        # 主脑常 omit target / severity_delta=0 (default), 没 fallback → severity
+        # 不动. 治本: lookup ledger daily_progress.target + 用 helper.
+        _tgt_f = float(target) if target else None
+        if _tgt_f is None or _tgt_f <= 0:
+            try:
+                _c = ledger.get(concern_id)
+                _dp = (_c.daily_progress if _c else None) or {}
+                _stored = _dp.get('target')
+                if _stored is not None and float(_stored) > 0:
+                    _tgt_f = float(_stored)
+            except Exception:
+                pass
+        # 主脑没传 severity_delta (=default 0.0) → 用 helper 算 linear
+        _sev_d = float(severity_delta)
+        if abs(_sev_d) < 1e-6 and current is not None:
+            try:
+                from jarvis_concerns import (
+                    compute_severity_delta_from_progress as _csev,
+                )
+                _sev_d = _csev(float(current), _tgt_f)
+            except Exception:
+                pass
         judgement = {
             'has_relevance': True,
-            'severity_delta': float(severity_delta),
+            'severity_delta': _sev_d,
             'optimal_timing': optimal_timing,
         }
         if current is not None:
-            judgement['progress'] = {'current': current, 'target': target, 'unit': unit}
+            judgement['progress'] = {
+                'current': current,
+                'target': _tgt_f if _tgt_f else target,
+                'unit': unit,
+            }
         ok = ledger.record_user_feedback(concern_id, raw_text or '', judgement)
         if ok:
             _desc = f'{current}/{target} {unit}'.strip() if current is not None else 'signal-only'

@@ -2208,6 +2208,20 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 # 如何判 habit vs deliverable (区分本 directive vs progress_tracker_dispatcher):
                   - 每日重置 (今天喝 8 杯, 明天 0 重新算)         → habit → 本 directive 路径
                   - 一次完成 (驾照过了, 论文交了, 永久 done)        → deliverable → progress.* OK
+
+                # 🆕 [Sir 2026-05-27 21:34 真测 P5] POST-CALL ACK — 不许说 "Done, Sir."
+                # Sir 真痛: progress_update 成功后主脑只回 "Done, Sir." 太敷衍, Sir 不知有没生效.
+                STEP 1. emit FAST_CALL (不嘴上 ack "好的, 记了" 之前 — INTEGRITY).
+                STEP 2. 看 tool result line: `✅ concerns.progress_update: X → N/M 单位 (severity_delta=±X.XX)`
+                  - `N/M 单位` = Sir 真进度 (e.g. `1/10 杯`)
+                  - `severity_delta` = 操心降幅 (负=操心少了, 0=没动)
+                STEP 3. 用 tool result 真数据 ack — **MUST 含进度数字**:
+                  ✅ 好: "好的, 1/10 杯了, 还差 9 杯到目标, Sir."
+                  ✅ 好: "记下了, 第 3 杯, 离 10 杯还有路要走."
+                  ✅ 好 (达标): "10/10, 今日 hydration 目标完成, Sir."
+                  ❌ 差: "Done, Sir." / "已完成" / "好的" (Sir 看不到具体, 觉得没生效)
+                  ❌ 差: 单凭 severity_delta 评论 (Sir 不关心数字, 关心剩多少)
+                STEP 4. 若 tool result `❌` fail → 真话说 fail + 问 Sir 想怎样, 不撒谎.
             """).rstrip(),
             trigger=_trigger_habit_progress_routing,
         ),
