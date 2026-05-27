@@ -1,0 +1,92 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-27T22:20:00",
+    "purpose": "InnerThought 自 pacing vocab — 喂哪些 self-signal evidence 给思考脑, 让 LLM 自决 NEXT_INTERVAL (不在 .py 写 if 规则).",
+    "philosophy": "准则 6 三维耦合: (1) 数据强耦合 raw signal 进 SWM (publish 'inner_thought_self_signal'), (2) 决策集中 LLM (思考脑 prompt 看 signal 自决降频), (3) 持久化 CLI (本 vocab + scripts/pacing_dump.py). 准则 8 优雅: 不加 Python if 链, 不写 magic number 阈值. Sir 真意 anchor: '应该动态从对话中提取, python 规则无法覆盖的部分引入 LLM'.",
+    "consumer": [
+      "jarvis_inner_thought_daemon.py:_collect_evidence (读 signals_enabled 决定喂哪些字段)",
+      "jarvis_inner_thought_daemon.py:_build_prompt (读 prompt_signal_block 决定 prompt 段措辞)",
+      "scripts/pacing_dump.py (Sir CLI 查/改/历史)"
+    ],
+    "doc": "docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md (P10 子节) + docs/JARVIS_PYTHON_STYLE.md 准则 6 范式",
+    "design_rule": "本 vocab 只配置 '喂哪些 signal + 多长 lookback + signal 字段名'. NEVER 配置 '触发 X 就 Y' 类 if 规则 — 那是 LLM 自决的事 (准则 6 反硬编码).",
+    "history_anchor": "Sir 2026-05-27 22:11 真问: '思考会动态变频吗? 会发现自己不用太担心吗? 一直在想, 经常想重复事情'. Audit 现状: tick interval 只看物理 idle, 不看 self-quality / repetition / concern pressure. 治本: 不加 Python rule, 喂 evidence 给 LLM 自决."
+  },
+  "lookback_n": 5,
+  "signals_enabled": {
+    "self_recent_quality": true,
+    "self_thread_diversity": true,
+    "overall_concern_pressure": true
+  },
+  "signal_fields": {
+    "self_recent_quality": {
+      "include": [
+        "avg_salience",
+        "actionable_rate",
+        "mediocre_rate",
+        "lookback_used"
+      ],
+      "_note": "avg sal of last N thoughts; rate of actionable!=none; rate of mediocre (sal<0.5 + actionable=none + A/D/E)"
+    },
+    "self_thread_diversity": {
+      "include": [
+        "unique_threads",
+        "top_thread_share",
+        "top_thread_id_short",
+        "lookback_used"
+      ],
+      "_note": "unique thread_id count in last N; share of top thread (e.g. 4/5=0.8 → 主脑应自决 'I keep cycling on same thread, slow down')"
+    },
+    "overall_concern_pressure": {
+      "include": [
+        "max_severity",
+        "avg_severity",
+        "active_count",
+        "high_severity_count",
+        "recent_swm_event_count_1h"
+      ],
+      "_note": "max/avg severity of active concerns; high_severity_count = concerns with sev>=0.7; recent SWM events count in last hour (proxy 'something happening')"
+    }
+  },
+  "prompt_signal_block": {
+    "enabled": true,
+    "max_chars": 400,
+    "tone": "neutral_fact_only",
+    "_note": "tone 必须中性事实 (NEVER 加 'so you should slow down' 类指令 — LLM 自决, 不教). 仅描述 raw signal: 'last 5 thoughts avg sal=0.3, 4/5 same thread X, max concern severity 0.4'.",
+    "header": "[YOUR RECENT PACING SIGNAL — fact only, you decide if/how to pace]"
+  },
+  "swm_publish": {
+    "enabled": true,
+    "etype": "inner_thought_self_signal",
+    "ttl_s": 1800,
+    "salience": 0.3,
+    "_note": "publish 每 tick — 主脑 / Reflector / Dashboard 看. ttl 30min 防膨胀. salience 0.3 不挤 top 但可查."
+  },
+  "history": [
+    {
+      "when": "2026-05-27T22:37:08",
+      "op": "set_lookback",
+      "detail": "5 → 7",
+      "source": "sir_cli"
+    },
+    {
+      "when": "2026-05-27T22:37:08",
+      "op": "disable_signal",
+      "detail": "self_thread_diversity",
+      "source": "sir_cli"
+    },
+    {
+      "when": "2026-05-27T22:37:08",
+      "op": "enable_signal",
+      "detail": "self_thread_diversity",
+      "source": "sir_cli"
+    },
+    {
+      "when": "2026-05-27T22:37:08",
+      "op": "set_lookback",
+      "detail": "7 → 5",
+      "source": "sir_cli"
+    }
+  ]
+}

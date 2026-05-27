@@ -160,6 +160,83 @@ def _load_surface_to_sir_config() -> dict:
 
 
 # ==========================================================================
+# 🆕 [Sir 2026-05-27 22:20 真问 P10 治本 / 准则 6 三维耦合]
+# Pacing vocab (memory_pool/inner_thought_pacing_vocab.json) —
+# 喂哪些 self-signal evidence 给思考脑, 让 LLM 自决 NEXT_INTERVAL.
+# NEVER 在 .py 写 Python if rule (Sir 真问 "都像硬编码, 你觉得呢?").
+# 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md (P10 子节).
+# ==========================================================================
+_PACING_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_thought_pacing_vocab.json',
+)
+_PACING_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_PACING_VOCAB_CHECK_INTERVAL_S = 30.0
+
+# fallback (vocab fail 时全 disable, daemon 不崩)
+_PACING_DEFAULT_CONFIG: dict = {
+    'lookback_n': 5,
+    'signals_enabled': {
+        'self_recent_quality': True,
+        'self_thread_diversity': True,
+        'overall_concern_pressure': True,
+    },
+    'prompt_signal_block': {
+        'enabled': True,
+        'max_chars': 400,
+        'tone': 'neutral_fact_only',
+        'header': '[YOUR RECENT PACING SIGNAL — fact only, you decide if/how to pace]',
+    },
+    'swm_publish': {
+        'enabled': True,
+        'etype': 'inner_thought_self_signal',
+        'ttl_s': 1800,
+        'salience': 0.3,
+    },
+}
+
+
+def _load_pacing_config() -> dict:
+    """Lazy load pacing vocab + mtime 30s throttle. 失败 fallback default.
+
+    准则 6: Sir CLI scripts/pacing_dump.py 改 vocab → daemon 30s 内热重载.
+    """
+    now = time.time()
+    if (_PACING_VOCAB_CACHE['data'] is not None and
+            now - _PACING_VOCAB_CACHE['checked_at']
+            < _PACING_VOCAB_CHECK_INTERVAL_S):
+        return _PACING_VOCAB_CACHE['data']
+    _PACING_VOCAB_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_PACING_VOCAB_PATH):
+            _PACING_VOCAB_CACHE['data'] = _PACING_DEFAULT_CONFIG
+            return _PACING_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_PACING_VOCAB_PATH)
+        if (mtime == _PACING_VOCAB_CACHE['mtime']
+                and _PACING_VOCAB_CACHE['data']):
+            return _PACING_VOCAB_CACHE['data']
+        with open(_PACING_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # deep-merge with default (vocab 缺 key fallback)
+        config = dict(_PACING_DEFAULT_CONFIG)
+        for k in ('lookback_n', 'signals_enabled', 'signal_fields',
+                  'prompt_signal_block', 'swm_publish'):
+            if k in data:
+                if isinstance(data[k], dict) and isinstance(
+                        config.get(k), dict):
+                    merged = dict(config[k])
+                    merged.update(data[k])
+                    config[k] = merged
+                else:
+                    config[k] = data[k]
+        _PACING_VOCAB_CACHE['data'] = config
+        _PACING_VOCAB_CACHE['mtime'] = mtime
+        return config
+    except Exception:
+        return _PACING_DEFAULT_CONFIG
+
+
+# ==========================================================================
 # Data structure
 # ==========================================================================
 
@@ -966,6 +1043,188 @@ class InnerThoughtDaemon:
             pass
 
     # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-27 22:11 真问 P10] Self-pacing signal compute + publish
+    # ----------------------------------------------------------
+    def _compute_self_signal(self) -> Optional[dict]:
+        """compute 3 raw self-signal evidence (per pacing vocab).
+
+        准则 6: 不写"超 X 就 Y"if rule. 只 raw signal 喂 LLM, LLM 自决 pace.
+        vocab gate: signals_enabled.* / lookback_n / signal_fields.include.
+
+        Returns: dict 含 3 key (gated by vocab), 或 None (vocab 全 disable).
+        """
+        cfg = _load_pacing_config()
+        enabled = cfg.get('signals_enabled', {}) or {}
+        if not any(enabled.values()):
+            return None
+        lookback_n = int(cfg.get('lookback_n', 5))
+        fields_cfg = cfg.get('signal_fields') or {}
+        out: dict = {}
+
+        # snapshot recent N thoughts (unlocked, accept race for low contention)
+        try:
+            with self._lock:
+                recent = sorted(self._thoughts,
+                                  key=lambda t: -t.ts)[:lookback_n]
+        except Exception:
+            recent = []
+
+        # ----- (1) self_recent_quality -----
+        if enabled.get('self_recent_quality', True) and recent:
+            include = ((fields_cfg.get('self_recent_quality') or {})
+                       .get('include') or
+                       ['avg_salience', 'actionable_rate',
+                        'mediocre_rate', 'lookback_used'])
+            q: dict = {}
+            n = len(recent)
+            if 'avg_salience' in include:
+                q['avg_salience'] = round(
+                    sum(t.salience for t in recent) / n, 2
+                )
+            if 'actionable_rate' in include:
+                _act = sum(
+                    1 for t in recent
+                    if t.actionable and t.actionable.lower() != 'none'
+                )
+                q['actionable_rate'] = round(_act / n, 2)
+            if 'mediocre_rate' in include:
+                _med = sum(
+                    1 for t in recent
+                    if (t.salience < self._MEDIOCRE_SAL_THRESHOLD
+                        and (not t.actionable
+                             or t.actionable.lower() == 'none')
+                        and t.category in ('A', 'D', 'E'))
+                )
+                q['mediocre_rate'] = round(_med / n, 2)
+            if 'lookback_used' in include:
+                q['lookback_used'] = n
+            out['self_recent_quality'] = q
+
+        # ----- (2) self_thread_diversity -----
+        if enabled.get('self_thread_diversity', True) and recent:
+            include = ((fields_cfg.get('self_thread_diversity') or {})
+                       .get('include') or
+                       ['unique_threads', 'top_thread_share',
+                        'top_thread_id_short', 'lookback_used'])
+            d: dict = {}
+            thread_ids = [
+                (getattr(t, 'thread_id', '') or t.id) for t in recent
+            ]
+            uniq = set(thread_ids)
+            n = len(recent)
+            if 'unique_threads' in include:
+                d['unique_threads'] = len(uniq)
+            if include and ('top_thread_share' in include
+                            or 'top_thread_id_short' in include):
+                # find top thread
+                top_tid = max(uniq,
+                                key=lambda tid: thread_ids.count(tid))
+                top_count = thread_ids.count(top_tid)
+                if 'top_thread_share' in include:
+                    d['top_thread_share'] = round(top_count / n, 2)
+                if 'top_thread_id_short' in include:
+                    d['top_thread_id_short'] = (top_tid or '')[:16]
+            if 'lookback_used' in include:
+                d['lookback_used'] = n
+            out['self_thread_diversity'] = d
+
+        # ----- (3) overall_concern_pressure -----
+        if enabled.get('overall_concern_pressure', True):
+            include = ((fields_cfg.get('overall_concern_pressure') or {})
+                       .get('include') or
+                       ['max_severity', 'avg_severity', 'active_count',
+                        'high_severity_count',
+                        'recent_swm_event_count_1h'])
+            p: dict = {}
+            try:
+                if (self.concerns_ledger
+                        and hasattr(self.concerns_ledger, 'list_active')):
+                    active = self.concerns_ledger.list_active() or []
+                    if active:
+                        sevs = [c.severity for c in active]
+                        if 'max_severity' in include:
+                            p['max_severity'] = round(max(sevs), 2)
+                        if 'avg_severity' in include:
+                            p['avg_severity'] = round(
+                                sum(sevs) / len(sevs), 2
+                            )
+                        if 'active_count' in include:
+                            p['active_count'] = len(active)
+                        if 'high_severity_count' in include:
+                            p['high_severity_count'] = sum(
+                                1 for s in sevs if s >= 0.7
+                            )
+            except Exception:
+                pass
+            if 'recent_swm_event_count_1h' in include:
+                try:
+                    from jarvis_utils import get_event_bus as _geb_sp
+                    _bus_sp = _geb_sp()
+                    if _bus_sp is not None:
+                        _top = _bus_sp.top_n(n=100) or []
+                        _ct = sum(
+                            1 for e in _top
+                            if e.get('_age_s', 99999) <= 3600
+                        )
+                        p['recent_swm_event_count_1h'] = _ct
+                except Exception:
+                    pass
+            if p:
+                out['overall_concern_pressure'] = p
+
+        return out or None
+
+    def _publish_self_signal_swm(self, sig: dict) -> None:
+        """publish raw signal to SWM (gated by vocab swm_publish.enabled).
+
+        准则 6 数据强耦合: 主脑 / Reflector / Dashboard 都能 consume 同一 event.
+        """
+        cfg = _load_pacing_config()
+        pub_cfg = cfg.get('swm_publish') or {}
+        if not pub_cfg.get('enabled', True):
+            return
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            etype = str(pub_cfg.get('etype', 'inner_thought_self_signal'))
+            ttl_s = float(pub_cfg.get('ttl_s', 1800))
+            sal = float(pub_cfg.get('salience', 0.3))
+            # short desc summary (fact only, no judgement)
+            q = sig.get('self_recent_quality') or {}
+            d = sig.get('self_thread_diversity') or {}
+            p = sig.get('overall_concern_pressure') or {}
+            parts = []
+            if q:
+                parts.append(
+                    f"sal_avg={q.get('avg_salience', '?')} "
+                    f"med_rate={q.get('mediocre_rate', '?')}"
+                )
+            if d:
+                parts.append(
+                    f"threads={d.get('unique_threads', '?')}/"
+                    f"{d.get('lookback_used', '?')} "
+                    f"top_share={d.get('top_thread_share', '?')}"
+                )
+            if p:
+                parts.append(
+                    f"max_sev={p.get('max_severity', '?')} "
+                    f"high_sev_n={p.get('high_severity_count', '?')}"
+                )
+            desc = ' | '.join(parts)[:200]
+            bus.publish(
+                etype=etype,
+                description=desc,
+                source='InnerThoughtDaemon',
+                salience=sal,
+                metadata=sig,
+                ttl=ttl_s,
+            )
+        except Exception:
+            pass
+
+    # ----------------------------------------------------------
     # Evidence collection
     # ----------------------------------------------------------
     def _collect_evidence(self, sir_state: str, within_seconds: int) -> dict:
@@ -1335,6 +1594,25 @@ class InnerThoughtDaemon:
                 ev['recent_skepticism_events'] = sk_events[:5]
         except Exception:
             pass
+
+        # 🆕 [Sir 2026-05-27 22:11 真问 P10 治本 / 准则 6 三维耦合]
+        # =====================================================================
+        # Sir 真问: "贾维斯会动态变频吗? 发现自己不用太担心吗? 一直在想, 经常想
+        #            重复事情". Audit 现状: 只看物理 idle 不看 self-quality /
+        #            repetition / concern pressure → daemon 不知道何时该歇.
+        # 治本: 喂 3 个 raw self-signal evidence 给思考脑, 让 LLM 自决
+        #       NEXT_INTERVAL (准则 6: 不在 .py 写 if rule). 阈值 / lookback /
+        #       哪些 signal 全 vocab JSON, Sir CLI 可改不动 .py.
+        # 同时 publish SWM 'inner_thought_self_signal' 给主脑 / dashboard 看.
+        # =====================================================================
+        try:
+            sig = self._compute_self_signal()
+            if sig:
+                ev['self_pacing_signal'] = sig
+                self._publish_self_signal_swm(sig)
+        except Exception:
+            pass
+
         return ev
 
     # ----------------------------------------------------------
@@ -1922,6 +2200,70 @@ class InnerThoughtDaemon:
                 "decayed weight — your job is meta-learning the pattern."
             )
             lines.append("")
+
+        # 🆕 [Sir 2026-05-27 22:11 真问 P10 治本 / 准则 6 三维耦合 / 准则 8 优雅]
+        # ===================================================================
+        # Sir 真问: "贾维斯会动态变频吗? 发现自己不用太担心吗? 一直在想, 经常想
+        #            重复事情". 治本: 不在 .py 写 if rule, 喂 raw self-signal
+        #            evidence, 让思考脑自决 NEXT_INTERVAL.
+        # tone = 'neutral_fact_only': 仅描述 raw signal, NEVER 加 imperative
+        #        指令 ("so you should slow down" 类禁止). LLM 自决.
+        # vocab gate: prompt_signal_block.enabled / header / max_chars.
+        # ===================================================================
+        try:
+            _pacing_cfg = _load_pacing_config()
+            _pb = (_pacing_cfg.get('prompt_signal_block') or {})
+            if _pb.get('enabled', True):
+                sig = evidence.get('self_pacing_signal') or {}
+                if sig:
+                    header = str(_pb.get('header',
+                        '[YOUR RECENT PACING SIGNAL — fact only, '
+                        'you decide if/how to pace]'))
+                    _max_pb = int(_pb.get('max_chars', 400))
+                    lines.append(header)
+                    block_parts: List[str] = []
+                    q = sig.get('self_recent_quality') or {}
+                    if q:
+                        block_parts.append(
+                            f"  - recent_quality: avg_salience="
+                            f"{q.get('avg_salience', '?')}, "
+                            f"actionable_rate={q.get('actionable_rate', '?')}, "
+                            f"mediocre_rate={q.get('mediocre_rate', '?')} "
+                            f"(over last {q.get('lookback_used', '?')} thoughts)"
+                        )
+                    d = sig.get('self_thread_diversity') or {}
+                    if d:
+                        block_parts.append(
+                            f"  - thread_diversity: "
+                            f"{d.get('unique_threads', '?')} unique threads "
+                            f"out of last {d.get('lookback_used', '?')}, "
+                            f"top thread share="
+                            f"{d.get('top_thread_share', '?')} "
+                            f"(id={d.get('top_thread_id_short', '?')})"
+                        )
+                    p = sig.get('overall_concern_pressure') or {}
+                    if p:
+                        block_parts.append(
+                            f"  - concern_pressure: "
+                            f"max_severity={p.get('max_severity', '?')}, "
+                            f"avg_severity={p.get('avg_severity', '?')}, "
+                            f"active_count={p.get('active_count', '?')}, "
+                            f"high_severity_count="
+                            f"{p.get('high_severity_count', '?')}, "
+                            f"recent_swm_event_count_1h="
+                            f"{p.get('recent_swm_event_count_1h', '?')}"
+                        )
+                    # cap by max_chars (truncate parts joined)
+                    _joined = '\n'.join(block_parts)
+                    if len(_joined) > _max_pb:
+                        _joined = _truncate_at_word_boundary(
+                            _joined, _max_pb
+                        )
+                    for _ln in _joined.splitlines():
+                        lines.append(_ln)
+                    lines.append("")
+        except Exception:
+            pass
 
         if free_categories and len(free_categories) < 5:
             lines.append(
