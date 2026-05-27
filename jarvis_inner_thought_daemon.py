@@ -1570,6 +1570,49 @@ class InnerThoughtDaemon:
             lines.append("  (none recent)")
         lines.append("")
 
+        # 🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 2b] INNER VOICE block
+        # ============================================================
+        # 让思考脑读 InnerVoiceTrack 近 10min 非 inner_thought 类 entry
+        # (sensor / care_trigger / sir_injected 等). 自家 thought 历史已在
+        # 上面 [MY PREVIOUS THOUGHTS] block, 这里只补"其他源" — 让思考脑
+        # 看到完整意识流, 自决是否产新 thought 接续这些信号.
+        # 可回撤: env JARVIS_INNER_VOICE_ENABLED=0 → 跳过本 block.
+        # ============================================================
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled as _ivt_enabled,
+            )
+            if _ivt_enabled():
+                _track = get_inner_voice_track()
+                _voice_recent = _track.recent(minutes=10.0, max_n=30)
+                # 过滤掉 'inner_thought' 类 (那已在 [MY PREVIOUS THOUGHTS])
+                _non_thought = [
+                    e for e in _voice_recent if e.source != 'inner_thought'
+                ]
+                if _non_thought:
+                    lines.append(
+                        "[INNER VOICE — past 10min, cross-source signals "
+                        "feeding your consciousness]"
+                    )
+                    for e in _non_thought[-15:]:  # cap 15
+                        _hhmm = time.strftime('%H:%M', time.localtime(e.ts))
+                        _wv = ' ★' if e.wants_voice else ''
+                        _urg = (
+                            f' u={e.urgency:.1f}' if e.urgency >= 0.3 else ''
+                        )
+                        lines.append(
+                            f"  - {_hhmm} ({e.source}/{e.intent}{_urg}){_wv} "
+                            f"{e.content[:140]}"
+                        )
+                    lines.append(
+                        "  ↳ Your next thought may extend, respond to, or "
+                        "ignore these — your choice (LLM-driven)."
+                    )
+                    lines.append("")
+        except Exception:
+            # 不影响思考脑主路径
+            pass
+
         # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn, 字数翻倍 (反思看完整对话)
         lines.append("[STM LAST 5 TURNS]")
         stm = evidence.get('stm') or []
@@ -3097,8 +3140,70 @@ class InnerThoughtDaemon:
             # 🆕 [Sir 2026-05-25 23:50 真问] B 类高 salience self-reflection
             # 真存 Hippocampus (长期 self-knowledge, 跨 24h jsonl cutoff 仍存)
             self._maybe_archive_to_hippocampus(thought)
+            # 🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 2] 同步 append voice track
+            # 让 thought 成为 inner_voice 流的一部分, 主脑下次召唤能看到为"我刚在想"
+            self._append_to_voice_track(thought)
         except Exception as e:
             self._bg_log(f"⚠️ [InnerThought] persist fail: {e}")
+
+    # 🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 2] thought → voice 桥
+    # ============================================================
+    # 把 thought 翻译成 VoiceEntry append 进 InnerVoiceTrack. 主脑下次召唤
+    # 读 voice 块, 看到自己刚在想什么, 自然 weave 进 reply.
+    # 准则 6 三维耦合: 数据强耦合 (voice 是 SWM 高层); 行为弱耦合 (不强制
+    # 主脑 reference); 决策集中主脑 (LLM 自决 weave).
+    # 可回撤: env JARVIS_INNER_VOICE_ENABLED=0 → 跳过.
+    # ============================================================
+    # category → intent map (A 观察 / B 反思 / C 关怀 / D 主动 / E 关系)
+    _CATEGORY_TO_INTENT = {
+        'A': 'observation',
+        'B': 'reflection',
+        'C': 'care',
+        'D': 'noting',       # 主动想法 (含 actionable)
+        'E': 'noting',       # 关系维系 (inside jokes / 心情)
+    }
+
+    def _append_to_voice_track(self, thought) -> None:
+        """thought → VoiceEntry 桥. 静默 fail (不影响主路径)."""
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled,
+            )
+            if not is_enabled():
+                return
+            track = get_inner_voice_track()
+            intent = self._CATEGORY_TO_INTENT.get(
+                getattr(thought, 'category', '') or '', 'noting'
+            )
+            # urgency: 复用 salience (0-1)
+            urgency = float(getattr(thought, 'salience', 0.0) or 0.0)
+            # wants_voice: 高 salience + 含 actionable (非 'none') → 思考脑认为想开口
+            actionable = (getattr(thought, 'actionable', '') or 'none').lower()
+            has_actionable = actionable not in ('', 'none')
+            wants_voice = (urgency >= 0.7) and has_actionable
+            # content: 取 thought.thought 原文 (人话, LLM 产, ≤300 char)
+            content = (getattr(thought, 'thought', '') or '').strip()
+            # meta: 留 category / continuity / thread_id / actionable / outcome
+            meta = {
+                'category': getattr(thought, 'category', ''),
+                'thread_id': getattr(thought, 'thread_id', ''),
+                'continuity': getattr(thought, 'continuity', ''),
+                'actionable': actionable if has_actionable else None,
+                'outcome': getattr(thought, 'outcome', None),
+            }
+            meta = {k: v for k, v in meta.items() if v}
+            track.append(
+                source='inner_thought',
+                content=content,
+                intent=intent,
+                urgency=urgency,
+                wants_voice=wants_voice,
+                meta=meta or None,
+                ts=getattr(thought, 'ts', None),
+            )
+        except Exception:
+            # 不影响 thought 主路径
+            pass
 
     # 🆕 [Sir 2026-05-25 23:50 真问 "反思要不要拿额外的记忆来存"]
     # B 类 sal >= 0.8 self-reflection (深刻自反思) → 真存 Hippocampus.
