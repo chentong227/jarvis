@@ -703,6 +703,12 @@ class AutoArbiterDaemon:
             f"(jokes + threads + protocols), evaluating..."
         )
 
+        # 🩹 [BUG-A / Sir 2026-05-27 20:38 真测] per-kind cap log 一个 tick 内
+        # 每 item 都打 → 87 protocol all-cap → 88 行 spam. 治本: per-tick per-kind
+        # 只 log 一次 + 末尾 summary 合并 skip 数. 治标层面减少 spam, 不改 cap 行为.
+        _capped_kinds_logged: set = set()
+        _skip_counts: dict = {}  # kind str → count int
+
         for item in items_to_eval:
             # 看决策过吗 (防重复)
             if self._already_decided_recently(item['kind'],
@@ -712,9 +718,15 @@ class AutoArbiterDaemon:
             # per-kind cap
             if self._count_today_decisions_by_kind(item['kind']) \
                     >= self.MAX_PER_KIND_PER_DAY:
-                self._bg_log(
-                    f"🤖 [AutoArbiter] {item['kind']} per-kind cap reached, skip"
-                )
+                # per-tick per-kind 只 log 一次, 后续累加 skip count
+                if item['kind'] not in _capped_kinds_logged:
+                    self._bg_log(
+                        f"🤖 [AutoArbiter] {item['kind']} per-kind cap "
+                        f"({self.MAX_PER_KIND_PER_DAY}/day) reached, "
+                        f"remaining items this tick will be skipped quietly"
+                    )
+                    _capped_kinds_logged.add(item['kind'])
+                _skip_counts[item['kind']] = _skip_counts.get(item['kind'], 0) + 1
                 continue
             # 评估 + 决策 + 执行 + 持久
             try:
@@ -724,6 +736,15 @@ class AutoArbiterDaemon:
                     f"⚠️ [AutoArbiter] eval fail for "
                     f"{item['kind']}/{self._entity_id(item['entity'])}: {e}"
                 )
+
+        # tick 末尾 summary (如有 skip)
+        if _skip_counts:
+            _summary = ", ".join(
+                f"{k}={v}" for k, v in sorted(_skip_counts.items())
+            )
+            self._bg_log(
+                f"🤖 [AutoArbiter] tick done, skipped by cap: {_summary}"
+            )
 
     def _entity_id(self, entity) -> str:
         return getattr(entity, 'id', '') or ''
