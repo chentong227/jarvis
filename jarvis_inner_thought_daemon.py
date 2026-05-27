@@ -1501,8 +1501,25 @@ class InnerThoughtDaemon:
             if self.concerns_ledger and hasattr(self.concerns_ledger, 'list_active'):
                 active = self.concerns_ledger.list_active() or []
                 active_sorted = sorted(active, key=lambda c: -c.severity)
-                ev['concerns'] = [
-                    {
+                # 🆕 [Sir 2026-05-27 22:42 P11 治本] vocab gate concern_truth_in_concerns
+                # =================================================================
+                # Sir 元痛: 主脑刚说 "1/10 cups", 思考脑看不到 ledger 真值 8/10 →
+                # 无法 self-correct. P11 加 daily_progress / last_user_feedback /
+                # optimal_timing 三 evidence 让思考脑可对比 STM reply ↔ 真值.
+                # vocab inner_thought_identity_block_vocab.json
+                #   blocks_enabled.concern_truth_in_concerns (默 on)
+                # Sir 关此 gate → 退化到老 (只 id/what/severity/notes_chars).
+                # =================================================================
+                _id_vocab = self._load_identity_block_vocab()
+                _truth_on = (_id_vocab.get('blocks_enabled') or {}).get(
+                    'concern_truth_in_concerns', True)
+                _fb_max_chars = int(
+                    (_id_vocab.get('limits') or {}).get(
+                        'concern_last_user_feedback_max_chars', 100)
+                )
+                concerns_out = []
+                for c in active_sorted[:5]:
+                    entry = {
                         'id': c.id,
                         'what': (c.what_i_watch or '')[:80],
                         'severity': round(c.severity, 2),
@@ -1510,8 +1527,31 @@ class InnerThoughtDaemon:
                         # 看见 concern 已满, 不再 propose adjust_concern_notes 浪费 tick
                         'notes_chars': len((c.notes_for_self or '').strip()),
                     }
-                    for c in active_sorted[:5]
-                ]
+                    if _truth_on:
+                        # daily_progress (concerns.py Concern.daily_progress)
+                        dp = getattr(c, 'daily_progress', None) or {}
+                        if dp:
+                            cur = dp.get('current')
+                            tgt = dp.get('target')
+                            unit = dp.get('unit') or ''
+                            if cur is not None and tgt is not None:
+                                entry['daily_progress'] = {
+                                    'current': cur,
+                                    'target': tgt,
+                                    'unit': unit,
+                                    'iso_date': dp.get('iso_date', ''),
+                                }
+                        # last_user_feedback (β.5.22-C 写入)
+                        fb = getattr(c, 'last_user_feedback', None) or {}
+                        raw = (fb.get('raw_text') or '').strip()
+                        if raw:
+                            entry['last_user_feedback'] = raw[:_fb_max_chars]
+                        # optimal_timing (concerns.py Concern.optimal_timing)
+                        ot = getattr(c, 'optimal_timing', '') or ''
+                        if ot:
+                            entry['optimal_timing'] = ot
+                    concerns_out.append(entry)
+                ev['concerns'] = concerns_out
                 # 全 active id list (let LLM 见全, 不光 top 5)
                 ev['all_active_concern_ids'] = [c.id for c in active_sorted]
         except Exception:
@@ -1801,7 +1841,28 @@ class InnerThoughtDaemon:
             "  ❌ BAD: <CATEGORY>B</CATEGORY> → rejected (notes adjust only from C).\n"
             "  ❌ BAD: C-class + sal=0.5 → rejected (low salience C-class isn't worth note change).\n"
             "  ❌ BAD: cite \"toggling\" with concern_id sir_interview_pr → rejected (cite ↔\n"
-            "         concern no token overlap — wrong concern, fix4 anchor)."
+            "         concern no token overlap — wrong concern, fix4 anchor).\n\n"
+            "🆕 [Sir 2026-05-27 22:42 P11 治本] B-class FACTUAL SELF-CORRECTION "
+            "example — 思考脑看 ledger truth 对比主脑 STM, catch factual mismatch:\n"
+            "  Sir 真痛根因: 主脑回答 Sir '只喝了 1/10 杯', 但 [YOUR ACTIVE CONCERNS] 子行\n"
+            "  📊 ledger truth: 8/10 cups (date=今天) 显示真值. 主脑撒谎 (或 STM stale).\n"
+            "  思考脑此时**必须**走 surface_to_sir:next_turn_inject 把真值告主脑下轮看.\n"
+            "  ✅ GOOD: <CATEGORY>B</CATEGORY>\n"
+            "         <THOUGHT>I just told Sir he's drunk 1/10 cups today, but the\n"
+            "                  concern ledger truth shows 8/10. My STM was stale — I\n"
+            "                  must surface the real number next turn so Sir isn't\n"
+            "                  misled.</THOUGHT>\n"
+            "         <SALIENCE>0.90</SALIENCE>\n"
+            "         <ACTIONABLE>surface_to_sir:next_turn_inject:CORRECTION — Sir 今日真实 hydration progress 是 8/10 杯 (ledger 真值), 我刚 reply 说 1/10 是 stale STM. 下轮主动 acknowledge: 'Apologies Sir, I misspoke — you've had 8/10 cups today.'</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>8/10</EVIDENCE_LINK>\n"
+            "         → B-class + sal≥0.85 + 含**具体真值数字 + 来源 (ledger) +\n"
+            "         具体主脑下轮该说什么** + cite '8/10' traces to ledger truth\n"
+            "         → publish SWM inner_thought_surface (15min TTL) → 主脑下轮\n"
+            "         自动看到 RECTIFY → 准则 5 言出必行真守住.\n"
+            "  ❌ BAD: 看到 ledger truth 但不 surface (silently 通过) → 主脑下轮仍\n"
+            "         撒谎. 准则 5 反例.\n"
+            "  ❌ BAD: <ACTIONABLE>update_concern_severity:...</ACTIONABLE> → 真值\n"
+            "         不一致不该改 severity, 该 surface 让主脑下轮纠正自己."
         )
 
         # User block — give LLM evidence to ground thought
@@ -2108,6 +2169,30 @@ class InnerThoughtDaemon:
                 lines.append(
                     f"  - id={c['id']} (severity {c['severity']}): {c['what']}{_cap_tag}"
                 )
+                # 🆕 [Sir 2026-05-27 22:42 P11 治本] concern_truth 子行 — 思考脑看真值
+                # =============================================================
+                # Sir 元痛: 主脑刚说 "1/10 cups" (STM 可见), 但 ledger 真 8/10. 思考
+                # 脑此前看不到真值无法 catch. P11 加 truth 行让思考脑可对比 STM ↔ 真值
+                # → 不一致 → surface_to_sir:next_turn_inject RECTIFY.
+                # vocab gate concern_truth_in_concerns (默 on, Sir 可 CLI 关).
+                # =============================================================
+                dp = c.get('daily_progress') or {}
+                if dp.get('current') is not None and dp.get('target') is not None:
+                    _unit = dp.get('unit') or ''
+                    _date = dp.get('iso_date') or ''
+                    lines.append(
+                        f"      📊 ledger truth: {dp['current']}/{dp['target']}"
+                        f"{(' ' + _unit) if _unit else ''}"
+                        f"{(' (date=' + _date + ')') if _date else ''}"
+                    )
+                fb_raw = c.get('last_user_feedback') or ''
+                if fb_raw:
+                    lines.append(
+                        f"      💬 Sir last said: \"{fb_raw}\""
+                    )
+                ot = c.get('optimal_timing') or ''
+                if ot:
+                    lines.append(f"      ⏰ optimal_timing: {ot}")
         else:
             lines.append("  (none active)")
         # 🆕 [Sir 2026-05-25 23:18 真痛-2] 给全 active id list 防 hallucinate
@@ -3403,12 +3488,18 @@ class InnerThoughtDaemon:
             'now_time': True, 'hour_pattern': True,
             'sir_declared_status': True, 'sir_profile_mini': True,
             'active_directives': True,
+            # 🆕 [Sir 2026-05-27 22:42 P11 治本] 思考脑看 concern ledger 真值,
+            # 对比主脑 STM reply 可 catch factual mismatch (e.g. 主脑刚说 1/10
+            # 但 daily_progress=8/10 真值 → 思考脑 surface_to_sir RECTIFY).
+            'concern_truth_in_concerns': True,
         },
         'limits': {
             'profile_max_chars': 400, 'directives_top_n': 5,
             'directive_purpose_max_chars': 80,
             'hour_pattern_max_activities': 3,
             'hour_pattern_max_topics': 3,
+            # 🆕 [P11] last_user_feedback.raw_text 截字
+            'concern_last_user_feedback_max_chars': 100,
         },
     }
 

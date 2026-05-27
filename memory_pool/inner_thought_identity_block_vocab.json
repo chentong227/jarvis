@@ -1,24 +1,28 @@
 {
-  "_doc": "[Sir 2026-05-27 00:49 Option B] 思考脑 prompt 装 'main 主脑公共子集' 让 LLM stay-in-character + 时间感知 + Sir status. Sir 真意: '连续+时间感知 最重要', '不要变蠢' = prompt 不能过载. 持久化 vocab 让 Sir CLI 一关一段不需改 .py (准则 6).",
+  "_doc": "[Sir 2026-05-27 00:49 Option B + 22:42 P11] 思考脑 prompt 装 'main 主脑公共子集' 让 LLM stay-in-character + 时间感知 + Sir status. Sir 真意: '连续+时间感知 最重要', '不要变蠢' = prompt 不能过载. 持久化 vocab 让 Sir CLI 一关一段不需改 .py (准则 6). 🆕 [Sir 2026-05-27 22:42 P11 元问题 '思考的范围还不够广']: 加 concern_truth_in_concerns block — 让思考脑看 ledger 真值 daily_progress/last_user_feedback/optimal_timing, 配合主脑 reply 在 STM 中可对比 → 思考脑能 catch '主脑刚说 1/10 但真值 8/10' 类错并 surface_to_sir RECTIFY.",
   "blocks_enabled": {
     "now_time": true,
     "hour_pattern": true,
     "sir_declared_status": true,
     "sir_profile_mini": true,
-    "active_directives": true
+    "active_directives": true,
+    "concern_truth_in_concerns": true
   },
   "limits": {
     "profile_max_chars": 400,
     "directives_top_n": 5,
     "directive_purpose_max_chars": 80,
     "hour_pattern_max_activities": 3,
-    "hour_pattern_max_topics": 3
+    "hour_pattern_max_topics": 3,
+    "concern_last_user_feedback_max_chars": 100
   },
   "_field_doc": {
-    "blocks_enabled": "5 段开关 — Sir 关任一段不需改 .py (准则 6 vocab 持久化). 全关 → 退化到老 prompt.",
+    "blocks_enabled": "6 段开关 — Sir 关任一段不需改 .py (准则 6 vocab 持久化). 全关 → 退化到老 prompt.",
+    "blocks_enabled.concern_truth_in_concerns": "🆕 [P11 / 2026-05-27] 思考脑 ev['concerns'] 每条加 daily_progress (current/target/unit/iso_date) + last_user_feedback (raw_text 截 100) + optimal_timing — 让思考脑看 ledger 真值, 对比主脑 STM reply 可 catch factual mismatch.",
     "limits.profile_max_chars": "ProfileCard.to_prompt_block 截字 (老 800, 思考脑 400 已够).",
     "limits.directives_top_n": "active directive 拉 top N (按 priority desc, 只 purpose_short).",
     "limits.directive_purpose_max_chars": "单条 directive purpose_short 截字.",
-    "limits.hour_pattern_max_activities": "M2 typical_activities at this hour 取前 N (Sir 常做啥)."
+    "limits.hour_pattern_max_activities": "M2 typical_activities at this hour 取前 N (Sir 常做啥).",
+    "limits.concern_last_user_feedback_max_chars": "🆕 [P11] last_user_feedback.raw_text 截字 (Sir 上次对此 concern 真说的话, 让思考脑看 context)."
   }
 }

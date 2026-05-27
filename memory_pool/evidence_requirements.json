@@ -127,6 +127,28 @@
       "source": "integrity_reflector",
       "created_at": 1779798637.2089489,
       "note": "Past action claims like 'I've updated' or 'I set' frequently require confirmation from tool execution logs."
+    },
+    {
+      "id": "reflector_percent_1779892458",
+      "claim_type": "Percent",
+      "accepted_evidence_kinds": [
+        "stm_match"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779892458.7363598,
+      "note": "Percent claims are frequently unverified, suggesting a need for direct statement matching."
+    },
+    {
+      "id": "reflector_past_1779893380",
+      "claim_type": "Past",
+      "accepted_evidence_kinds": [
+        "promise_log_recorded"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779893380.6619678,
+      "note": "Repeated unverified 'past_action' claims suggest a need to track promises made by the system."
     }
   ]
 }

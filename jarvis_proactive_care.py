@@ -191,6 +191,72 @@ def _get_cd(key: str, fallback: float) -> float:
     return float(fallback)
 
 
+# ============================================================
+# 🆕 [Sir 2026-05-27 23:00 P12 治本] publish dedup vocab loader
+# ============================================================
+# Sir 真痛 (inner_voice 截图刷屏): concern_active / concern_timing_evidence
+# 每 60s tick publish 一次, urgency=1.00 / severity=0.85 数字完全不变,
+# dashboard 全 record. 不是"daemon 重复思考", 是 publish 没 dedup.
+# 治本: 准则 6 vocab 持久化 (memory_pool/proactive_care_publish_dedup_vocab.json)
+# + CLI scripts/proactive_care_dedup_dump.py + ProactiveCareEngine._dedup_cache
+# 同 (etype, concern_id, urgency_bucket, severity_bucket) 在 window_s 内只 publish 1 次.
+# ============================================================
+_DEDUP_VOCAB_PATH = os.path.join(
+    'memory_pool', 'proactive_care_publish_dedup_vocab.json'
+)
+_DEDUP_VOCAB_CACHE: dict = {}
+_DEDUP_VOCAB_MTIME: float = 0.0
+_DEDUP_DEFAULT_CONFIG: dict = {
+    'blocks_enabled': {
+        'concern_active_dedup': True,
+        'concern_timing_evidence_dedup': True,
+    },
+    'windows': {
+        'concern_active_window_s': 300.0,
+        'concern_timing_evidence_window_s': 300.0,
+    },
+    'buckets': {
+        'urgency_decimals': 1,
+        'severity_decimals': 2,
+        'hours_until_decimals': 0,
+    },
+    'log_throttle': {
+        'skip_log_interval_s': 600.0,
+    },
+}
+
+
+def _load_dedup_vocab() -> dict:
+    """读 proactive_care_publish_dedup_vocab.json with mtime cache.
+    返完整 config (blocks_enabled / windows / buckets / log_throttle).
+    失败 → fallback default (defensive: daemon 不挂)."""
+    global _DEDUP_VOCAB_CACHE, _DEDUP_VOCAB_MTIME
+    try:
+        if not os.path.exists(_DEDUP_VOCAB_PATH):
+            return _DEDUP_DEFAULT_CONFIG
+        mt = os.path.getmtime(_DEDUP_VOCAB_PATH)
+        if mt == _DEDUP_VOCAB_MTIME and _DEDUP_VOCAB_CACHE:
+            return _DEDUP_VOCAB_CACHE
+        import json as _j
+        with open(_DEDUP_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = _j.load(f)
+        # deep-merge with default (Sir 删 key 时仍 fallback)
+        cfg = {
+            'blocks_enabled': dict(_DEDUP_DEFAULT_CONFIG['blocks_enabled']),
+            'windows': dict(_DEDUP_DEFAULT_CONFIG['windows']),
+            'buckets': dict(_DEDUP_DEFAULT_CONFIG['buckets']),
+            'log_throttle': dict(_DEDUP_DEFAULT_CONFIG['log_throttle']),
+        }
+        for k in ('blocks_enabled', 'windows', 'buckets', 'log_throttle'):
+            if isinstance(data.get(k), dict):
+                cfg[k].update(data[k])
+        _DEDUP_VOCAB_CACHE = cfg
+        _DEDUP_VOCAB_MTIME = mt
+        return cfg
+    except Exception:
+        return _DEDUP_DEFAULT_CONFIG
+
+
 # 公共访问: 直接代理到 vocab. 老代码 GLOBAL_NUDGE_COOLDOWN_S 全部改成 _get_cd(...)
 # 但为兼容 module-level 引用 (e.g. 其他文件 from jarvis_proactive_care import GLOBAL_NUDGE_COOLDOWN_S),
 # 仍 expose 初始读出的值 (启动时一次性). 之后改值由 _get_cd 即时读 vocab.
@@ -1603,6 +1669,92 @@ class ProactiveCareEngine(threading.Thread):
 
     # ---- internal ----
 
+    # 🆕 [Sir 2026-05-27 23:00 P12 治本] publish dedup helpers
+    # ============================================================
+    # 同 (etype, concern_id, bucket_signature) 在 window_s 内只 publish 1 次,
+    # 避免 inner_voice 看见 60s 一条 urgency=1.00 / severity=0.85 数字完全不变
+    # 重复 event. 治本 not throttle 节流, 是 evidence 真没新 → 不应制造新 event.
+    # vocab memory_pool/proactive_care_publish_dedup_vocab.json + CLI 可改.
+    # ============================================================
+    def _compute_dedup_key(self, etype: str, cid: str, **fields) -> str:
+        """根据 vocab buckets 计算 dedup key (concern_id + 关键数字 bucket).
+        
+        bucket 把连续 float (urgency / severity) 离散化到 N 位小数,
+        e.g. urgency_decimals=1 → urgency=0.534 → bucket=0.5,
+             severity_decimals=2 → severity=0.851 → bucket=0.85.
+        同一 bucket 不重 publish (Sir 不需看到 0.851 / 0.852 / 0.853 三条).
+        """
+        cfg = _load_dedup_vocab()
+        buckets = cfg.get('buckets') or {}
+        parts = [etype, str(cid)]
+        for fname, fval in sorted(fields.items()):
+            if isinstance(fval, bool):
+                parts.append(f"{fname}={int(fval)}")
+            elif isinstance(fval, (int, float)):
+                dec_key = f"{fname}_decimals"
+                dec = int(buckets.get(dec_key, 1))
+                parts.append(f"{fname}={round(float(fval), dec)}")
+            else:
+                parts.append(f"{fname}={fval}")
+        return '|'.join(parts)
+
+    def _should_publish_dedup(self, etype: str, key: str, now_ts: float) -> bool:
+        """check (etype, key) 是否在 window_s 内已 publish 过.
+        
+        返 True = 应 publish; False = 跳过 (dedup hit).
+        vocab blocks_enabled[etype_dedup]=False → 总 True (退化老行为).
+        """
+        cfg = _load_dedup_vocab()
+        be = cfg.get('blocks_enabled') or {}
+        if not be.get(f'{etype}_dedup', True):
+            return True  # dedup 关 → 总 publish
+        if not hasattr(self, '_publish_dedup_cache'):
+            self._publish_dedup_cache: dict = {}
+        windows = cfg.get('windows') or {}
+        window_s = float(windows.get(f'{etype}_window_s', 300.0))
+        last_ts = float(self._publish_dedup_cache.get(key, 0.0))
+        if last_ts > 0 and (now_ts - last_ts) < window_s:
+            # dedup hit → 节流 log (vocab log_throttle.skip_log_interval_s 控)
+            self._maybe_log_dedup_skip(etype, key, now_ts, last_ts, window_s)
+            return False
+        return True
+
+    def _mark_dedup_published(self, etype: str, key: str, now_ts: float) -> None:
+        """publish 成功后记 ts 让下次 dedup 可比. unused etype 仅参 (留扩展)."""
+        if not hasattr(self, '_publish_dedup_cache'):
+            self._publish_dedup_cache: dict = {}
+        self._publish_dedup_cache[key] = now_ts
+        # 顺手清过期 entry 防内存泄漏 (key 超 7 days 不刷 → 删)
+        if len(self._publish_dedup_cache) > 200:
+            cutoff = now_ts - 7 * 86400
+            self._publish_dedup_cache = {
+                k: v for k, v in self._publish_dedup_cache.items()
+                if v >= cutoff
+            }
+
+    def _maybe_log_dedup_skip(self, etype: str, key: str, now_ts: float,
+                                last_ts: float, window_s: float) -> None:
+        """dedup skip log 节流 (vocab log_throttle.skip_log_interval_s 控).
+        默 600s (10min) 一行汇总 (不每次 60s tick 都打)."""
+        if not hasattr(self, '_dedup_log_throttle'):
+            self._dedup_log_throttle: dict = {}
+        cfg = _load_dedup_vocab()
+        throttle = cfg.get('log_throttle') or {}
+        interval_s = float(throttle.get('skip_log_interval_s', 600.0))
+        last_log_ts = float(self._dedup_log_throttle.get(etype, 0.0))
+        if (now_ts - last_log_ts) < interval_s:
+            return  # 节流
+        self._dedup_log_throttle[etype] = now_ts
+        age = int(now_ts - last_ts)
+        try:
+            bg_log(
+                f"🔇 [ProactiveCare/Dedup] skip {etype} (age={age}s within "
+                f"{int(window_s)}s window, key={key[:60]})"
+            )
+        except Exception:
+            pass
+
+
     def _resolve_deps(self) -> bool:
         if self.ledger is None:
             try:
@@ -1747,24 +1899,34 @@ class ProactiveCareEngine(threading.Thread):
         # [β.5.0-A / 2026-05-19] 准则 6 数据强耦合: top concern publish 到 SWM
         # 让主脑下次 prompt 看到 "Sir 当下最受关心的事 = X, urgency=Y", 不依赖
         # ProactiveCare 自己 push __NUDGE__ 才让主脑知道.
+        # 🆕 [Sir 2026-05-27 23:00 P12 治本] publish dedup: 同 (etype, cid,
+        # urgency_bucket, severity_bucket) 在 window_s 内只 publish 1 次, 避免
+        # inner_voice 看见数字完全不变 5min 5 条重复 event 错觉 "daemon 重复想".
+        # vocab memory_pool/proactive_care_publish_dedup_vocab.json + CLI 可改.
         try:
             from jarvis_utils import get_event_bus
             _swm = get_event_bus()
             if _swm is not None:
                 _cid = getattr(top_c, 'id', '?')
                 _sev = getattr(top_c, 'severity', 0.0)
-                _swm.publish(
-                    etype='concern_active',
-                    description=f"top_concern={_cid} urgency={top_u:.2f} severity={_sev:.2f}",
-                    source='ProactiveCare',
-                    metadata={
-                        'concern_id': _cid,
-                        'urgency': round(top_u, 3),
-                        'severity': round(_sev, 3),
-                        'breakdown': top_bd,
-                    },
-                    salience=min(0.95, 0.4 + top_u * 0.5),  # urgency 越高 salience 越高
+                # 🆕 [P12] concern_active dedup check
+                _ca_key = self._compute_dedup_key(
+                    'concern_active', _cid, urgency=top_u, severity=_sev,
                 )
+                if self._should_publish_dedup('concern_active', _ca_key, now_ts):
+                    _swm.publish(
+                        etype='concern_active',
+                        description=f"top_concern={_cid} urgency={top_u:.2f} severity={_sev:.2f}",
+                        source='ProactiveCare',
+                        metadata={
+                            'concern_id': _cid,
+                            'urgency': round(top_u, 3),
+                            'severity': round(_sev, 3),
+                            'breakdown': top_bd,
+                        },
+                        salience=min(0.95, 0.4 + top_u * 0.5),  # urgency 越高 salience 越高
+                    )
+                    self._mark_dedup_published('concern_active', _ca_key, now_ts)
 
                 # 🩹 [β.5.40-fix / 2026-05-20 16:30] Sir 真理: 16:07 sleep nudge BUG.
                 # 准则 6 evidence-driven: 不动 compute_urgency 硬 dampen 公式, 改 publish
@@ -1772,22 +1934,32 @@ class ProactiveCareEngine(threading.Thread):
                 # 详 docs/JARVIS_SENSOR_TO_SWM_ARCHITECTURE.md
                 _timing_ev = _compute_concern_timing_evidence(top_c, now_ts)
                 if _timing_ev:
-                    _swm.publish(
-                        etype='concern_timing_evidence',
-                        description=(
-                            f"concern={_cid} optimal={_timing_ev['optimal_timing']} "
-                            f"current_h={_timing_ev['current_hour']} "
-                            f"in_window={_timing_ev['is_in_optimal_window']} "
-                            f"hours_until={_timing_ev['hours_until_optimal']:+d}"
-                        ),
-                        source='ProactiveCare',
-                        salience=0.65 if not _timing_ev['is_in_optimal_window'] else 0.40,
-                        metadata={
-                            'concern_id': _cid,
-                            **_timing_ev,
-                        },
-                        ttl=300.0,
+                    # 🆕 [P12] concern_timing_evidence dedup check
+                    _ct_key = self._compute_dedup_key(
+                        'concern_timing_evidence', _cid,
+                        in_window=bool(_timing_ev['is_in_optimal_window']),
+                        hours_until=_timing_ev['hours_until_optimal'],
                     )
+                    if self._should_publish_dedup(
+                            'concern_timing_evidence', _ct_key, now_ts):
+                        _swm.publish(
+                            etype='concern_timing_evidence',
+                            description=(
+                                f"concern={_cid} optimal={_timing_ev['optimal_timing']} "
+                                f"current_h={_timing_ev['current_hour']} "
+                                f"in_window={_timing_ev['is_in_optimal_window']} "
+                                f"hours_until={_timing_ev['hours_until_optimal']:+d}"
+                            ),
+                            source='ProactiveCare',
+                            salience=0.65 if not _timing_ev['is_in_optimal_window'] else 0.40,
+                            metadata={
+                                'concern_id': _cid,
+                                **_timing_ev,
+                            },
+                            ttl=300.0,
+                        )
+                        self._mark_dedup_published(
+                            'concern_timing_evidence', _ct_key, now_ts)
         except Exception:
             pass
 

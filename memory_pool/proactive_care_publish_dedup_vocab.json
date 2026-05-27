@@ -1,0 +1,29 @@
+{
+  "_doc": "[Sir 2026-05-27 23:00 P12 治本] ProactiveCare publish dedup vocab. 准则 6 持久化 + Sir CLI scripts/proactive_care_dedup_dump.py 可改不需 .py + Sir CLI 调 dedup window 立刻生效. Sir 真痛: inner_voice 截图 60s 一条 concern_active urgency=1.00 / severity=0.85 数字完全不变, 5min 内刷 5 遍, 全 record 进 inner_voice dashboard 看着像 daemon 在'重复思考'. 治本: ProactiveCare _publish_swm 前 check key=(etype, concern_id, urgency_bucket, severity_bucket) 在 window_s 内不重 publish, dedup 跳过仅 in-memory log compact.",
+  "blocks_enabled": {
+    "concern_active_dedup": true,
+    "concern_timing_evidence_dedup": true
+  },
+  "windows": {
+    "concern_active_window_s": 300.0,
+    "concern_timing_evidence_window_s": 300.0
+  },
+  "buckets": {
+    "urgency_decimals": 1,
+    "severity_decimals": 2,
+    "hours_until_decimals": 0
+  },
+  "log_throttle": {
+    "skip_log_interval_s": 600.0
+  },
+  "_field_doc": {
+    "blocks_enabled.concern_active_dedup": "concern_active SWM publish dedup 开关. Sir 关 → 恢复每 tick publish (老行为, 不建议).",
+    "blocks_enabled.concern_timing_evidence_dedup": "concern_timing_evidence SWM publish dedup 开关.",
+    "windows.concern_active_window_s": "concern_active 同 (concern_id, urgency_bucket, severity_bucket) 在此窗口内只 publish 1 次. 默 300s (5min). Sir 可调更长 (e.g. 900s = 15min) 更安静.",
+    "windows.concern_timing_evidence_window_s": "concern_timing_evidence 同 (concern_id, in_window, hours_until_bucket) 在此窗口内只 publish 1 次. 默 300s.",
+    "buckets.urgency_decimals": "urgency 四舍五入 N 位小数当 dedup bucket key. 默 1 (0.00-1.00 → 11 bucket). Sir 调 0 (整数) 更激进 dedup, 调 2 (0.00-1.00 → 101 bucket) 更细.",
+    "buckets.severity_decimals": "severity bucket. 默 2 (0.00-1.00 → 101 bucket, severity 一般小幅变化, 保 2 位防 0.85→0.86 也 dedup 漏过).",
+    "buckets.hours_until_decimals": "hours_until_optimal bucket. 默 0 (整数小时), 因 timing 几小时变化才有意义.",
+    "log_throttle.skip_log_interval_s": "ProactiveCare 'dedup skip' bg_log 节流 (不每次都打). 默 600s (10min) 一行 summary 防 log 刷屏."
+  }
+}
