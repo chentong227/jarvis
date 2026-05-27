@@ -136,6 +136,14 @@ class ReturnSentinel(threading.Thread):
         self._pending_greeting = None
         self._glow_start_time = 0.0
         self._greeting_phase = "idle"
+        # 🆕 [Sir 2026-05-27 11:48 真痛 anchor] Sir 早 8 点起后 jarvis 仍连说 5+ 次
+        # "Good morning, Sir" (L743/817/925/1179/1827/2343). 根因:
+        # `is_first_today` consume 后 prompt 没注入"今天已 greet N 次, 上次 Xmin 前"
+        # evidence, 主脑看 STM/SOUL 编 "I see you're reviewing X" 仍以 "Good morning"
+        # 起头. 准则 6 数据强耦合修法: track 今日 greet 计数 + 时间, 无条件 inject
+        # nudge_ctx → directive → 主脑自决不重复 "Good morning".
+        self._greetings_today_count = 0
+        self._last_greeting_day = ""
 
         # [P0+9 / 2026-05-15] Sir 实测 8:03 巧合触发"早晨问候"但实际未出声 + 8:44 才真起床。
         # 根因链：
@@ -191,6 +199,11 @@ class ReturnSentinel(threading.Thread):
                 if current_day != self.last_active_day:
                     self.first_active_today = True
                     self.last_active_day = current_day
+                # 🆕 [Sir 2026-05-27 11:48] 跨午夜 reset 今日 greet 计数 (与
+                # first_active_today 同步重置, 主脑下日清白起)
+                if current_day != self._last_greeting_day:
+                    self._greetings_today_count = 0
+                    self._last_greeting_day = current_day
 
                 # [P0+9 / 2026-05-15] hysteresis：进入 AFK 阈值 30s（保持原值）；
                 # 退出 AFK 必须连续 5s 内 idle_ms < 5000（即至少 5s 内没出现 5s+ 的静默期）
@@ -481,6 +494,15 @@ class ReturnSentinel(threading.Thread):
                     sir_status_age_min = int(_cur.get('age_s', 0) / 60)
             except Exception:
                 pass
+            # 🆕 [Sir 2026-05-27 11:48 真痛 anchor] 今日 greet evidence (准则 6 数据耦合)
+            # 主脑下次 prompt 看 greetings_today_count + last_greeting_min_ago 自决:
+            # - 0 次 → 第一次 "Good morning" 合理
+            # - 1+ 次 → 不再 "Good morning", 改 evidence-only 起头 (window title / concern / unfinished)
+            _last_greet_min_ago = (
+                int((time.time() - self._last_greeting_time) / 60)
+                if self._last_greeting_time > 0
+                else -1  # -1 表示今日尚未 greet 过
+            )
             nudge_ctx = {
                 "type": "return_greeting",
                 "afk_minutes": snap["afk_minutes"],
@@ -493,6 +515,9 @@ class ReturnSentinel(threading.Thread):
                 "is_first_today": is_first_today,
                 "crosses_sleep_period": crosses_sleep,
                 "is_morning_window": is_morning_window,
+                # 🆕 [Sir 2026-05-27 11:48] 今日 greet 计数 evidence (主脑必看, 防重复 "Good morning")
+                "greetings_today_count": self._greetings_today_count,
+                "last_greeting_min_ago": _last_greet_min_ago,
                 # 🩹 [P5-SirStatusTracker / 2026-05-21 15:25] Sir 声明状态 (sleep/nap/lunch/out/dnd)
                 "sir_declared_status": sir_declared_status,  # '' 或 sleep/nap/lunch/out/...
                 "sir_status_keyword": sir_status_keyword,    # Sir 原话片段
@@ -585,6 +610,8 @@ class ReturnSentinel(threading.Thread):
             # 之前只有罐头模板路径置 False（line 4313 之前），LLM 路径漏掉 →
             # 同一天可能反复触发 first_active_today（如果上次 push 因下游异常没出声）
             self.first_active_today = False
+            # 🆕 [Sir 2026-05-27 11:48] 今日 greet 计数 +1, 下次 nudge_ctx 注入主脑看
+            self._greetings_today_count += 1
 
             # 🩹 [P5-fixC / 2026-05-21 09:45] β.5.0 行为弱耦合 — publish proactive_nudge_fired
             # 让 SmartNudge.commitment_check + Conductor.path_b offer_help 等其他 sentinel

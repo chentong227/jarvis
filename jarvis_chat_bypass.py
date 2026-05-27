@@ -5808,48 +5808,59 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
                 # 🩹 [β.4.12 / 2026-05-19] Sir 09:59 "10 点了, Integrity Stack 等您" → 加 morning context evidence
                 # 🩹 [β.5.34 / 2026-05-20] Sir 10:34 实测反向 BUG: "早上第一次跟回归没区别,
                 #   其实可以多说一些, 比如我们之间的事/没做的事/今天注意的事".
-                #   β.4.12 当时怕"工作话题硬冲"加了"should NOT bring up"抑制 — 抑制过头
-                #   导致 morning briefing 消失, 早安变成普通回归. 准则 6 服从, 删 prescriptive
-                #   抑制规则, 改 evidence-based 引导让主脑自己决定要不要列 morning briefing.
-                #   主脑参考 SOUL injected L1/L2/L3 已含 concerns/threads/unfinished, prompt 不再硬抑制.
+                # 🆕 [Sir 2026-05-27 11:48 真痛 anchor] Sir 早 8 点起后 jarvis 连说 5 次
+                #   "Good morning, Sir" (L743/817/925/1179/1827/2343). 根因: is_first_today
+                #   consume 后 evidence block 不 render → 主脑看不到"今天已 greet N 次".
+                #   修法 (准则 6 数据耦合 #4): 把 greetings_today_count + last_greeting_min_ago
+                #   evidence **无条件 inject**, 主脑必看. is_first_today=False 时不再 morning
+                #   briefing, 改 evidence-only 起头 (不再 "Good morning").
                 f"Sir just returned to his computer (was away for "
-                f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n"
-                + (
-                    f"[MORNING BRIEFING POSTURE — evidence-based, β.5.34]:\n"
-                    f"  is_first_today: {nudge_context.get('is_first_today', False)}\n"
-                    f"  crosses_sleep_period: {nudge_context.get('crosses_sleep_period', False)} "
-                    f"(AFK > 4h indicates likely overnight sleep)\n"
-                    f"  is_morning_window: {nudge_context.get('is_morning_window', False)} "
-                    f"(local hour in [5, 12))\n"
-                    f"  → If all three are true, this is Sir's first interaction of the day after sleep.\n"
-                    f"    Sir 想要 morning briefing 风格 (β.5.34 实测反馈), 不只是普通回归问候.\n"
-                    f"    参考 SOUL inject 已注入的 evidence (上方 PERSONA 含):\n"
-                    f"      - L1 active concerns (sir_sleep_streak / sir_pomodoro / sir_hydration 等)\n"
-                    f"      - L2 open threads (Sir 在做的事 / 昨天未结话题)\n"
-                    f"      - L2 unfinished business (Sir 答应自己没做的事)\n"
-                    f"      - L3 attention slot (今天日历 / next meeting)\n"
-                    f"    Butler 早间简报姿态: 列 1-2 件最值得 Sir 现在留心的 (concrete signal,\n"
-                    f"    NOT to-do bulldozer). 不催办, 不堆 list, 不下命令 — 像把今天的桌子\n"
-                    f"    铺好后说 'Sir, 您昨天惦记的 X 还在 / 今天 Y 时有 Z'. 让 Sir 自己选先做啥.\n"
-                    f"    如 SOUL evidence 空 (无 concern/thread/unfinished/attention) — 退回\n"
-                    f"    简短问候 + 轻状态查询 (how did you sleep / how's the morning).\n\n"
-                    if nudge_context.get('is_first_today') and nudge_context.get('crosses_sleep_period')
-                    else ""
-                )
-                + f"Speak in your own voice.\n\n"
+                f"{nudge_context.get('afk_minutes', 'a while')} minutes).\n\n"
+                f"[GREETING EVIDENCE — Sir 准则 6 数据耦合, 主脑必看, β.5.50-postfix]:\n"
+                f"  greetings_today_count: {nudge_context.get('greetings_today_count', 0)} "
+                f"(今天已经跟 Sir 打过的招呼次数)\n"
+                f"  last_greeting_min_ago: {nudge_context.get('last_greeting_min_ago', -1)} "
+                f"(上次问候距今分钟数, -1 = 今天还没打过)\n"
+                f"  is_first_today: {nudge_context.get('is_first_today', False)} "
+                f"(今天是否第一次见 Sir)\n"
+                f"  crosses_sleep_period: {nudge_context.get('crosses_sleep_period', False)} "
+                f"(AFK > 4h 跨夜睡)\n"
+                f"  is_morning_window: {nudge_context.get('is_morning_window', False)} "
+                f"(local hour ∈ [5, 12))\n\n"
+                f"[GREETING SEMANTICS — 自决, 不要硬编码]:\n"
+                f"  → greetings_today_count == 0 AND is_first_today AND crosses_sleep_period:\n"
+                f"      Sir 今天第一次见你 (跨夜睡醒), 走 morning briefing 姿态:\n"
+                f"      参考 SOUL inject 已注入的 (上方 PERSONA 含):\n"
+                f"        - L1 active concerns (sir_sleep_streak / sir_pomodoro / sir_hydration 等)\n"
+                f"        - L2 open threads (Sir 在做的事 / 昨天未结话题)\n"
+                f"        - L2 unfinished business (Sir 答应自己没做的事)\n"
+                f"        - L3 attention slot (今天日历 / next meeting)\n"
+                f"      Butler 早间简报: 列 1-2 件最值得 Sir 现在留心的 (concrete signal,\n"
+                f"      NOT to-do bulldozer). 不催办, 不堆 list, 不下命令.\n"
+                f"      如 SOUL evidence 空 → 简短问候 + 轻状态查询.\n"
+                f"  → greetings_today_count >= 1 (今天**已经**打过招呼): **不要**再说\n"
+                f"      'Good morning' / '早上好' / 'Welcome back' / 'Hi' 任何 generic opener.\n"
+                f"      Sir 早上 8 点起来后听了 5 次 'Good morning, Sir' 会非常烦. 改 evidence-only\n"
+                f"      起头: 直接讲你 observe 到的具体事 (window title 变了 / concern 新动态 /\n"
+                f"      Sir 离开期间 SWM 看到的事件 / unfinished business 到时间了). 不再 greet.\n"
+                f"  → greetings_today_count >= 3: **强烈考虑 [SILENCE]** — 今天已 greet 3+ 次,\n"
+                f"      除非有真新事可说否则别说话 (准则 1 高效, 准则 8 不让 Sir 觉得啰嗦).\n\n"
+                f"Speak in your own voice.\n\n"
                 f"[STYLE — concrete signal over polite opener]:\n"
                 f"Sir 准则 6: open with the most specific thing you actually "
                 f"observe in his current context (window title, last activity, "
                 f"elapsed AFK pattern, time of day, SOUL inject 已注入的 concerns/threads). "
-                f"NOT with a generic social greeting ('Welcome back', '回来啦', 'Sir', 'Hi'). "
-                f"Sir reads every generic opener as a template — give him signal instead.\n\n"
+                f"NOT with a generic social greeting ('Welcome back', '回来啦', 'Sir', 'Hi', "
+                f"'Good morning'). Sir reads every generic opener as a template — give him "
+                f"signal instead.\n\n"
                 f"[TRUTH ANCHOR — Sir 准则 5 / β.5.8-fix]:\n"
                 f"Every specific narrative element you introduce (objects, events, "
                 f"activities, people, locations) must correspond to something "
                 f"actually present in the context above (SOUL inject / RECENT MEMORY). "
                 f"If the context doesn't show what Sir did during AFK, just don't speculate — "
-                f"BUT STILL GREET. Open with the available evidence (concern/thread/unfinished). "
-                f"Don't go silent. Sir 准则 3 (butler 人设): a greeting on return is what a butler does."
+                f"BUT STILL GREET (除非 greetings_today_count >= 3, 见上). Open with "
+                f"the available evidence (concern/thread/unfinished). "
+                f"Don't go silent unless evidence supports it."
             ),
             "commitment_check": (
                 # 删句式锁 "Express gentle dry concern / sound like a friend not a parent".
