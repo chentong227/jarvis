@@ -534,7 +534,20 @@ class SoulAlignmentEvaluator:
             pass
 
     def _apply_to_ledger(self, result: SoulEvalResult) -> None:
-        """把 aligned/missed 信号写回 ConcernsLedger 的累计字段。"""
+        """把 aligned/missed 信号写回 ConcernsLedger 的累计字段。
+
+        🆕 [Sir 2026-05-28 00:50 β.6 Phase 4 退化 publish-only]
+        =================================================================
+        准则 6 三维耦合:
+          - 数据强耦合: alignment 评分结果一律 publish 'soul_alignment_advice'
+            SWM event 让思考脑看 (含 aligned/missed concern_ids + what_aligned).
+          - 行为弱耦合: SoulEvaluator gate_mode='publish_only' 默认 →
+            skip 直接 notify ProactiveCare aligned/rejected (让思考脑看 SWM
+            自决调 fatigue, 不双重 mutation).
+          - 决策集中思考脑: 思考脑下次 tick build concern_status channel 看到
+            aligned_count + missed_count + soul_alignment_advice → 自决.
+        =================================================================
+        """
         if self.concerns_ledger is None:
             return
         n_recorded = 0
@@ -557,7 +570,53 @@ class SoulAlignmentEvaluator:
                 self.concerns_ledger.persist()
             except Exception:
                 pass
-        # 🩹 [P0+20-β.2.8.2 / 2026-05-17] β-4 学习反馈循环:
+
+        # 🆕 [β.6 Phase 4] publish 'soul_alignment_advice' SWM (一律, 不分 mode).
+        # 思考脑 nudge_history channel 通过 action_event_prefixes vocab 看到本 event.
+        try:
+            from jarvis_utils import get_event_bus as _geb_sa
+            _bus_sa = _geb_sa()
+            if _bus_sa is not None:
+                _sal = 0.65 if result.alignment == 'no' else (
+                    0.50 if result.alignment == 'partial' else 0.35
+                )
+                _bus_sa.publish(
+                    etype='soul_alignment_advice',
+                    description=(
+                        f"SoulEval alignment={result.alignment} "
+                        f"aligned={len(result.aligned_concern_ids)} "
+                        f"missed={len(result.missed_concern_ids)} "
+                        f"({result.elapsed_ms}ms)"
+                    ),
+                    source='SoulEvaluator',
+                    salience=_sal,
+                    metadata={
+                        'turn_id': result.turn_id,
+                        'alignment': result.alignment,
+                        'aligned_concern_ids': list(result.aligned_concern_ids[:5]),
+                        'missed_concern_ids': list(result.missed_concern_ids[:5]),
+                        'what_aligned': (result.what_aligned or '')[:120],
+                        'what_missed': (result.what_missed or '')[:120],
+                        'picked_model': (result.picked_model or '').split('/')[-1],
+                        'complexity_score': result.complexity_score,
+                    },
+                    ttl=3600.0,
+                )
+        except Exception:
+            pass
+
+        # gate_mode 决定是否直接 notify ProactiveCare (β.6 默认 publish_only → skip)
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_se
+            _gm_se = _rgm_se('SoulEvaluator')
+        except Exception:
+            _gm_se = 'hard'
+        if _gm_se == 'publish_only':
+            # publish_only: 仅 publish SWM, 不直 notify ProactiveCare,
+            # 让思考脑看 'soul_alignment_advice' 自决调 fatigue (减少双重 mutation).
+            return
+
+        # 🩹 [P0+20-β.2.8.2 / 2026-05-17] β-4 学习反馈循环 (hard / soft 路径):
         # aligned → ProactiveCare 衰减 fatigue (说明 nudge 有效)
         # missed  → ProactiveCare 累加 fatigue (Jarvis 提了但没 honor → 减速)
         # 失败不影响 record_alignment 主路径

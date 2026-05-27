@@ -58,6 +58,11 @@
 - **行为弱耦合**: sentinel `gate_mode` 三档 `hard | soft | publish_only`, 持久化 `memory_pool/gate_mode_vocab.json`, CLI `scripts/gate_mode_dump.py` 可切换
 - **决策集中主脑**: stream_nudge 加 `reaction_space` (silence / voice / silent_text / visual_pulse / tool_call), 主脑输出 JSON 选 action + 内容
 
+**β.6 统一思考层** (2026-05-28 立, 详 `docs/JARVIS_BETA6_UNIFIED_THINKING.md`):
+- 5 reflector daemon (ProactiveCare / Conductor / Wellness / SmartNudge / SoulEvaluator) 退化 publish-only (各 publish `proactive_care_advice` / `gate_advice` / `soul_alignment_advice` 进 SWM, 不直 push `__NUDGE__`)
+- 单一思考脑 `jarvis_inner_thought_daemon` 统一决发声 (思考脑 channel view 含 `nudge_history` channel 看 advice + 自决 `SHOULD_SPEAK` / `SPEAK_STYLE`)
+- 准则 6 vocab CLI: `scripts/thinking_brain_speak_dump.py` 改 speak style / rate cap, `scripts/gate_mode_dump.py` 加 `ProactiveCare` / `SoulEvaluator` 可切回 hard
+
 **已立此规范的示例 (持久化 JSON + CLI + Reflector)**: `concerns.json` / `directive_registry.json` / `behavior_inference_vocab.json` / `relational_state.json` / `commitment_conditional_vocab.json` / `gate_mode_vocab.json` (各自配 `scripts/<thing>_dump.py` + L4-L7 Reflector daemon).
 
 **反例 (违规)**: 任何 `_SOMETHING_PATTERNS = [...]` / `_KEYWORDS = (...)` / `_TYPES_MAP = {...}` 在 `.py` 里 → 必须迁到 `memory_pool/*.json` + CLI + reflector. 例外: 极少数 system-internal hardcoded constant (如 `TICK_INTERVAL=60`).

@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "schema_version": 2,
+    "created_at": "2026-05-28T00:30:00",
+    "updated_at": "2026-05-28T00:36:00",
+    "purpose": "β.6 思考脑发声 (SHOULD_SPEAK / SPEAK_STYLE) 配置 — 持久化 LLM 不可自决的硬规 (rate cap / default style / valid style list + 描述). LLM 自决 'should_speak yes/no + style + content', 本 vocab 只配 物理保底. Schema v2: styles 升级带 description, prompt schema 拼接自动从 vocab 读.",
+    "consumer": [
+      "jarvis_inner_thought_daemon.py:_parse_thought (valid style list 校验)",
+      "jarvis_inner_thought_daemon.py:_should_smooth_force_silent (rate cap 阈值)",
+      "jarvis_inner_thought_daemon.py:_build_prompt (SPEAK_STYLE schema line 自动从 vocab 拼)",
+      "scripts/thinking_brain_speak_dump.py (Sir CLI 查/改 — 待实现)"
+    ],
+    "doc": "docs/JARVIS_BETA6_UNIFIED_THINKING.md §1d (主脑端 read directive) + §7 风险/缓解",
+    "design_rule": "本 vocab 只配置 'rate cap 阈值 / default fallback style / valid style 集合 + 描述'. LLM 自决 'speak or not, content, style choice' — 不在本 vocab 写 '触发 X 就 speak' 类硬 if (准则 6 反硬编码). 加 style → 改本 JSON, prompt 自动同步.",
+    "history_anchor": "Sir 2026-05-27 23:40 真意 β.6 真意: '让思考脑自决该不该让主脑发声 / 该不该提出新的高层 protocol'. Audit: 5 个 daemon (Conductor / NudgeGate / SmartNudge / OfferGuard / Wellness) 各自 hard gate 决发声 → 主脑被 5 路 cooldown 锁死. 治本: 思考脑 LLM 集中决定, Python 只保底防抖 (rate cap 5min ≥3 force silent)."
+  },
+  "styles": [
+    {
+      "name": "silent_text",
+      "description": "subtitle only no TTS (Sir in meeting/quiet)",
+      "default_if_invalid": true
+    },
+    {
+      "name": "voice",
+      "description": "full TTS + subtitle",
+      "default_if_invalid": false
+    },
+    {
+      "name": "visual_pulse",
+      "description": "orb pulse only no text/voice (ambient gentle signal)",
+      "default_if_invalid": false
+    }
+  ],
+  "rate_cap": {
+    "window_s": 300,
+    "max_yes_in_window": 3,
+    "_note": "5min 内 should_speak=yes 已 ≥3 次 → 后续强 force silent (Python smoothing). 防 LLM 抖动连发噪声. Sir CLI 可改 window/max."
+  },
+  "history": [
+    {
+      "ts": "2026-05-28T00:36:00",
+      "by": "Sir β.6 Phase 1d 收口准则 6",
+      "schema": "v1 → v2",
+      "change": "valid_styles + default_style_if_invalid 合并为 styles array, 每项带 description (供 prompt 自动拼) + default_if_invalid (布尔). Loader 兼容 v1 (向后)."
+    }
+  ]
+}

@@ -23,7 +23,13 @@
     "wake_",
     "sir_intent_",
     "stand_down_",
-    "utterance_appended"
+    "utterance_appended",
+    "gate_advice",
+    "proactive_care_advice",
+    "proactive_care_skipped",
+    "concern_active",
+    "concern_timing_evidence",
+    "soul_alignment_advice"
   ],
   "log_line_markers": [
     "[Human]",

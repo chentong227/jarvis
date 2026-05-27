@@ -107,6 +107,165 @@ def _load_soul_block_config() -> dict:
 
 
 # ==========================================================================
+# 🆕 [Sir 2026-05-28 00:30 β.6 Phase 1d / 准则 6 vocab 持久化]
+# thinking_brain_speak_config — rate cap / valid styles / default fallback
+# Sir 真意: LLM 自决 should_speak + content + style, Python 只物理保底防抖.
+# 路径: memory_pool/thinking_brain_speak_config.json
+# ==========================================================================
+_SPEAK_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'thinking_brain_speak_config.json',
+)
+_SPEAK_CONFIG_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_SPEAK_CONFIG_CHECK_INTERVAL_S = 30.0
+
+# Schema v2 (β.6 Phase 1d 收口): styles 升级到 array of {name, description,
+# default_if_invalid}, prompt 描述同源 vocab, 加 style 改 JSON 即可, .py 无需 redeploy.
+# Loader 兼容 v1 (valid_styles + default_style_if_invalid 分离) — 自动转 v2 内部表示.
+_SPEAK_DEFAULT_CONFIG: dict = {
+    'styles': [
+        {'name': 'silent_text',
+         'description': 'subtitle only no TTS (Sir in meeting/quiet)',
+         'default_if_invalid': True},
+        {'name': 'voice',
+         'description': 'full TTS + subtitle',
+         'default_if_invalid': False},
+        {'name': 'visual_pulse',
+         'description': 'orb pulse only no text/voice (ambient gentle signal)',
+         'default_if_invalid': False},
+    ],
+    'rate_cap': {'window_s': 300, 'max_yes_in_window': 3},
+}
+
+
+def _normalize_speak_config(data: dict) -> dict:
+    """v1 → v2 schema 适配 (loader 内部). 返回 dict 一定含 'styles' + 'rate_cap'."""
+    out = {'styles': [], 'rate_cap': dict(_SPEAK_DEFAULT_CONFIG['rate_cap'])}
+    if isinstance(data.get('styles'), list):  # v2
+        out['styles'] = [s for s in data['styles'] if isinstance(s, dict) and s.get('name')]
+    elif isinstance(data.get('valid_styles'), dict):  # v1
+        vals = data['valid_styles'].get('values') or []
+        default_name = ((data.get('default_style_if_invalid') or {}).get('value') or '').lower()
+        for v in vals:
+            name = str(v).lower()
+            out['styles'].append({
+                'name': name,
+                'description': '',
+                'default_if_invalid': (name == default_name),
+            })
+    if not out['styles']:
+        out['styles'] = list(_SPEAK_DEFAULT_CONFIG['styles'])
+    if isinstance(data.get('rate_cap'), dict):
+        rc = dict(out['rate_cap'])
+        rc.update({k: v for k, v in data['rate_cap'].items() if k in ('window_s', 'max_yes_in_window')})
+        out['rate_cap'] = rc
+    return out
+
+
+def _load_speak_config() -> dict:
+    """β.6 speak config vocab lazy load (mtime 30s throttle). Fallback default."""
+    now = time.time()
+    if (_SPEAK_CONFIG_CACHE['data'] is not None and
+            now - _SPEAK_CONFIG_CACHE['checked_at']
+            < _SPEAK_CONFIG_CHECK_INTERVAL_S):
+        return _SPEAK_CONFIG_CACHE['data']
+    _SPEAK_CONFIG_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_SPEAK_CONFIG_PATH):
+            _SPEAK_CONFIG_CACHE['data'] = _SPEAK_DEFAULT_CONFIG
+            return _SPEAK_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_SPEAK_CONFIG_PATH)
+        if (mtime == _SPEAK_CONFIG_CACHE['mtime']
+                and _SPEAK_CONFIG_CACHE['data']):
+            return _SPEAK_CONFIG_CACHE['data']
+        with open(_SPEAK_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        config = _normalize_speak_config(data)
+        _SPEAK_CONFIG_CACHE['data'] = config
+        _SPEAK_CONFIG_CACHE['mtime'] = mtime
+        return config
+    except Exception:
+        return _SPEAK_DEFAULT_CONFIG
+
+
+def _get_valid_speak_styles() -> tuple:
+    """从 vocab 拿 valid styles tuple (lower-case)."""
+    try:
+        cfg = _load_speak_config()
+        styles = cfg.get('styles') or _SPEAK_DEFAULT_CONFIG['styles']
+        return tuple(str(s.get('name', '')).lower() for s in styles if s.get('name'))
+    except Exception:
+        return tuple(s['name'] for s in _SPEAK_DEFAULT_CONFIG['styles'])
+
+
+def _get_default_speak_style() -> str:
+    """从 vocab 拿 default fallback style (should_speak=yes 但 style 缺/非法时)."""
+    try:
+        cfg = _load_speak_config()
+        styles = cfg.get('styles') or _SPEAK_DEFAULT_CONFIG['styles']
+        # 优先 default_if_invalid=True 的, fallback 第 1 个
+        for s in styles:
+            if s.get('default_if_invalid') and s.get('name'):
+                return str(s['name']).lower()
+        if styles and styles[0].get('name'):
+            return str(styles[0]['name']).lower()
+    except Exception:
+        pass
+    # 终极 fallback
+    for s in _SPEAK_DEFAULT_CONFIG['styles']:
+        if s.get('default_if_invalid'):
+            return s['name']
+    return 'silent_text'
+
+
+def _get_speak_rate_cap() -> tuple:
+    """从 vocab 拿 (window_s, max_yes_in_window) — 物理保底."""
+    try:
+        cfg = _load_speak_config()
+        rc = cfg.get('rate_cap') or {}
+        return (
+            int(rc.get('window_s', 300)),
+            int(rc.get('max_yes_in_window', 3)),
+        )
+    except Exception:
+        return (300, 3)
+
+
+def _build_speak_style_prompt_line() -> str:
+    """β.6 Phase 1d 收口准则 6: prompt SPEAK_STYLE schema 行从 vocab 拼,
+    新增 style 改 JSON 即可, .py 无需改. 返回 e.g.
+      'silent_text | voice | visual_pulse</SPEAK_STYLE>  ← 🆕 [β.6] '
+      'if SHOULD_SPEAK=yes: silent_text = ...; voice = ...; visual_pulse = .... '
+      'Default silent_text (low risk).'
+    """
+    try:
+        cfg = _load_speak_config()
+        styles = cfg.get('styles') or _SPEAK_DEFAULT_CONFIG['styles']
+        names = [str(s.get('name', '')).lower() for s in styles if s.get('name')]
+        if not names:
+            return ''
+        default_name = _get_default_speak_style()
+        # 拼 enum 列表
+        enum_part = ' | '.join(names)
+        # 拼 description 段
+        desc_parts = []
+        for s in styles:
+            n = str(s.get('name', '')).lower()
+            d = str(s.get('description') or '').strip()
+            if n and d:
+                desc_parts.append(f"{n} = {d}")
+        desc_line = '; '.join(desc_parts) if desc_parts else ''
+        out = enum_part
+        if desc_line:
+            out += f". if SHOULD_SPEAK=yes: {desc_line}"
+        if default_name:
+            out += f". Default {default_name} (low risk)."
+        return out
+    except Exception:
+        return 'silent_text | voice | visual_pulse'
+
+
+# ==========================================================================
 # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 治本 / 准则 6 vocab 持久化]
 # surface_to_sir 阈值 / 频限 / 通道白名单 (memory_pool/surface_to_sir_vocab.json)
 # Sir 真痛: "思考层没主动发声". 给 thought 一档轻量 surface 通道
@@ -293,6 +452,19 @@ class InnerThought:
     # Python 不判 thread, 只追踪 LLM 自报值; 同主题串成链便于 dashboard 可视化.
     thread_id: str = ''         # ID of thought thread this belongs to (新 thread = self.id)
     continuity: str = 'new_topic'  # 'same_thread' / 'new_topic' (LLM 自报)
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] 统一思考脑 — should_speak / attention
+    # =====================================================================
+    # Sir 真意: 思考脑自决"该让主脑发声吗" + 自决"下次 attention 该 focus 哪个 channel".
+    # 砍其他 6 reflector daemon 后, 思考脑替决 silent/voice/visual_pulse.
+    # 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §4.4, §5 prompt schema.
+    # =====================================================================
+    should_speak: bool = False        # LLM 自决: 该让主脑发声吗
+    speak_content: str = ''           # 若 should_speak: 该说啥 (butler 风格)
+    speak_style: str = ''             # 'silent_text' | 'voice' | 'visual_pulse'
+    # LLM 自标"下次 wake 时 attention 该 focus 哪个 channel" — Sir 真意"这轮为下轮挑".
+    # 逗号分隔的 channel name list. Python view builder 下次 deep-load 这些 channel,
+    # 其他 channel 只 summary. 空 = 没 hint, 全 channel 平等 load.
+    next_attention_focus: str = ''
 
 
 # ==========================================================================
@@ -429,6 +601,31 @@ class InnerThoughtDaemon:
     # =========================================================================
     _MEDIOCRE_SAL_THRESHOLD = 0.5
 
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] 7 channel view (β.6 §4.3)
+    # =========================================================================
+    # 思考脑 prompt view 不再 evidence flat dump (老 14 块碎片), 改 7 channel
+    # 结构化分组. LLM 上轮 <NEXT_ATTENTION_FOCUS> 提名 1-3 channel deep-load,
+    # 其他 channel summary. R3 注意力精选不稀释 (Sir 真意 23:57).
+    #
+    # 设计 doc: docs/JARVIS_BETA6_UNIFIED_THINKING.md §4.3 + §5
+    # =========================================================================
+    _CHANNEL_NAMES: Tuple[str, ...] = (
+        'recent_sensor_events',     # raw sensor / SWM event / inner voice / runtime log
+        'concern_status',            # all concern severity + protocols + jokes + skepticism
+        'nudge_history',             # 最近 30min fired nudge + Sir reaction
+        'sir_activity_snapshot',     # sir_state + idle + declared_status + profile + time + directives
+        'last_main_brain_reply',     # STM last 5 turn (主脑刚说啥 + Sir 反应)
+        'last_thinking_output',      # 上次自己结论 + self_pacing_signal + anticipated_ltm + daemon health
+        'my_recent_thoughts',        # last 3 thoughts (chain continuity)
+    )
+
+    # speak rate cap (β.6 §7 风险缓解 should_speak=yes 太多)
+    # 🆕 [Sir 2026-05-28 00:30 β.6 Phase 1d 收口] 阈值持久化 memory_pool/
+    # thinking_brain_speak_config.json → _get_speak_rate_cap() 动态读 (准则 6).
+    # 类属性保留 (向后兼容 + 静态分析友好), 但只在 vocab 不可用时 fallback.
+    _SPEAK_RATE_WINDOW_S = 300        # fallback, vocab 优先
+    _SPEAK_RATE_MAX_YES = 3            # fallback, vocab 优先
+
     # actionable cap
     SEVERITY_DELTA_CAP = 0.2          # update_concern_severity ±0.2 per thought
 
@@ -458,11 +655,17 @@ class InnerThoughtDaemon:
             from jarvis_runtime_log_markers import load_action_event_prefixes
             return load_action_event_prefixes()
         except Exception:
+            # 🆕 [Sir 2026-05-28 β.6 Phase 3] 加 publish_only 时代 advice etype,
+            # 让思考脑 nudge_history channel 能看 sentinel "想 nudge 但 publish-only"
+            # 的 evi (准则 6: vocab JSON 真源, 此处仅 fallback 防损坏).
             return (
                 'proactive_nudge_', 'inner_thought_',
                 'concern_severity_changed', 'concern_notes_appended',
                 'promise_', 'commitment_', 'reminder_', 'wake_',
                 'sir_intent_', 'stand_down_', 'utterance_appended',
+                'gate_advice', 'proactive_care_advice',
+                'proactive_care_skipped', 'concern_active',
+                'concern_timing_evidence', 'soul_alignment_advice',
             )
 
     def _collect_runtime_log_tail(self, max_lines: int = None) -> list:
@@ -557,6 +760,17 @@ class InnerThoughtDaemon:
         self._tick_origin_stats = {
             'default': 0, 'llm_chosen': 0, 'llm_gated': 0, 'llm_smoothed': 0,
         }
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus 元决策 (R3)
+        # =====================================================================
+        # Sir 真意: "这轮为下轮挑". 上轮 LLM 输出 <NEXT_ATTENTION_FOCUS>
+        # ch_a,ch_b 存这里, 下轮 _build_channel_view 把这 2 channel 标 DEEP-LOAD
+        # 其他标 SUMMARY, LLM 自己 attention 偏向 deep-load channel (R3 不稀释).
+        # 空字符串 = 没 hint, 所有 channel 等 weight.
+        # =====================================================================
+        self._next_attention_focus = ''
+        # speak rate cap 防主脑被噪音 (β.6 §7 风险缓解: should_speak=yes 太多)
+        # 5min 内 ≥3 yes → 后续 force no (Python smoothing)
+        self._recent_should_speak_yes_ts: List[float] = []
 
         # 启动时载入近 24h thoughts (重启后 SOUL 仍有上下文)
         self._load_persist()
@@ -811,9 +1025,19 @@ class InnerThoughtDaemon:
             within_seconds=tick_interval * 2,
         )
 
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] 构 7 channel view + LLM attention hint
+        # =====================================================================
+        # self._next_attention_focus 是上轮 LLM 输出, 没有则 '' = 全 channel deep.
+        # _build_channel_view 返回 channel dict, _build_prompt 用之决定 deep vs summary 渲染.
+        # =====================================================================
+        channel_view = self._build_channel_view(
+            evidence, focus_hint=self._next_attention_focus
+        )
+
         # LLM call (Flash-Lite, caller='inner_thought' → P2 LOW priority)
         prompt_sys, prompt_user = self._build_prompt(
-            sir_state, evidence, free_categories=free_categories
+            sir_state, evidence, free_categories=free_categories,
+            channel_view=channel_view,
         )
         raw = self._call_llm(prompt_sys, prompt_user)
         if not raw:
@@ -823,6 +1047,38 @@ class InnerThoughtDaemon:
         thought = self._parse_thought(raw, sir_state, tick_interval)
         if thought is None:
             return
+
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] speak rate cap smoothing
+        # =====================================================================
+        # 防 LLM 短时连发 should_speak=yes 噪音 Sir. 5min 内 ≥3 yes → 后续 force no.
+        # 准则 6 信任 LLM 但 Python 物理保底 (类 NEXT_INTERVAL smoothing).
+        # =====================================================================
+        if thought.should_speak:
+            now = time.time()
+            if self._should_smooth_force_silent(now):
+                _w, _max = _get_speak_rate_cap()
+                self._bg_log(
+                    f"💭 [InnerThought] β.6 speak rate cap: "
+                    f"{_w}s 内 ≥{_max} yes, "
+                    f"force should_speak=no this tick (smoothing)"
+                )
+                thought.should_speak = False
+                thought.speak_content = ''
+                thought.speak_style = ''
+            else:
+                self._record_should_speak_yes(now)
+
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus writeback
+        # =====================================================================
+        # LLM 自报 next_attention_focus 存实例状态, 下次 tick _build_channel_view
+        # 用之决定 deep-load channel. R3 注意力精选不稀释 (Sir 真意 23:57).
+        # =====================================================================
+        try:
+            self._next_attention_focus = (
+                thought.next_attention_focus or ''
+            )
+        except Exception:
+            self._next_attention_focus = ''
 
         # cooldown 二道防御 (LLM 没听 prompt 选了 cooldown 中 → 再 skip)
         last_ts = self._last_category_ts.get(thought.category, 0.0)
@@ -1656,10 +1912,128 @@ class InnerThoughtDaemon:
         return ev
 
     # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] _build_channel_view
+    # ----------------------------------------------------------
+    # Sir 真意 R3 "注意力精选不稀释": 把 flat evidence dict reorganize 成
+    # 7 channel structure, LLM 上轮 next_attention_focus 提名 channel deep-load,
+    # 其他 channel summary-only. Python 不挑 topic, 只组装 channel view.
+    #
+    # 返回 dict: {channel_name: {load_mode: 'deep'|'summary', items: [...]}}
+    # ----------------------------------------------------------
+    def _build_channel_view(
+        self, ev: dict, focus_hint: str = ''
+    ) -> dict:
+        """把 flat evidence dict 重组成 7 channel structure (β.6 §4.3).
+
+        Args:
+          ev: _collect_evidence() 返回的 flat dict
+          focus_hint: 上轮 LLM 输出的 next_attention_focus (逗号分隔 channel name)
+
+        Returns:
+          dict: {channel_name: {'load_mode': 'deep'|'summary',
+                                  'item_count': int,
+                                  'evidence_keys': [...]}}
+          load_mode 'deep' = LLM 提名 deep-load, prompt 渲染时给完整 evidence
+                  'summary' = 其他 channel, prompt 渲染时只给 1 行 count
+        """
+        # 解析 focus_hint
+        focus_set = set()
+        if focus_hint:
+            for ch in focus_hint.split(','):
+                ch = ch.strip().lower()
+                if ch in self._CHANNEL_NAMES:
+                    focus_set.add(ch)
+        # 没 hint = 全 deep (老行为, 不破坏)
+        all_deep = not focus_set
+
+        # 各 channel 数据源映射 (来自 ev key)
+        # 一个 ev key 可能归属多 channel (e.g. recent_jarvis_actions
+        # 既是 sensor event 也是 nudge history 的 source).
+        channel_sources: dict = {
+            'recent_sensor_events': [
+                'swm_events', 'inner_voice_recent',
+                'recent_jarvis_actions', 'runtime_log_tail',
+            ],
+            'concern_status': [
+                'concerns', 'all_active_concern_ids',
+                'active_protocols', 'pending_review_protocols',
+                'active_inside_jokes', 'pending_review_jokes',
+                'recent_skepticism_events',
+            ],
+            'nudge_history': [
+                'recent_jarvis_actions',  # filter NUDGE_* etype
+            ],
+            'sir_activity_snapshot': [
+                'sir_state', 'idle_seconds', 'hour',
+                'sir_declared_status', 'sir_profile_mini',
+                'time_pattern', 'time_active_routines',
+                'time_deviation_today', 'active_directives',
+            ],
+            'last_main_brain_reply': [
+                'stm',  # last 5 turn (jarvis reply included)
+            ],
+            'last_thinking_output': [
+                'recent_thoughts',  # 第 1 个 (最近的)
+                'self_pacing_signal',
+                'anticipated_ltm_context',
+                'daemon_health',
+            ],
+            'my_recent_thoughts': [
+                'recent_thoughts',  # 后 2 个 (旧的)
+            ],
+        }
+
+        view: dict = {}
+        for ch_name in self._CHANNEL_NAMES:
+            sources = channel_sources.get(ch_name, [])
+            # 统计 item count (粗略, render 时用真渲染)
+            item_count = 0
+            for src_key in sources:
+                val = ev.get(src_key)
+                if isinstance(val, list):
+                    item_count += len(val)
+                elif isinstance(val, dict) and val:
+                    item_count += 1
+                elif val:
+                    item_count += 1
+            view[ch_name] = {
+                'load_mode': 'deep' if (all_deep or ch_name in focus_set) else 'summary',
+                'item_count': item_count,
+                'evidence_keys': sources,
+            }
+        return view
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] speak rate cap smoothing
+    # ----------------------------------------------------------
+    # 防 LLM 短时连发 should_speak=yes 噪音 Sir. 5min 内 ≥3 yes →
+    # 后续 force no (Python smoothing, 类 NEXT_INTERVAL smoothing).
+    # 准则 6 信任 LLM 但 Python 保底 (防 LLM 跑偏 spam Sir).
+    # ----------------------------------------------------------
+    def _should_smooth_force_silent(self, now: float) -> bool:
+        """检查 should_speak rate cap: window 内 ≥max → force silent.
+
+        🆕 [Sir 2026-05-28 00:30 β.6 Phase 1d 收口] 准则 6: 阈值持久化
+        memory_pool/thinking_brain_speak_config.json, 不在 .py 硬编码.
+        """
+        window_s, max_yes = _get_speak_rate_cap()
+        cutoff = now - window_s
+        # prune 旧 ts
+        self._recent_should_speak_yes_ts = [
+            ts for ts in self._recent_should_speak_yes_ts if ts >= cutoff
+        ]
+        return len(self._recent_should_speak_yes_ts) >= max_yes
+
+    def _record_should_speak_yes(self, now: float) -> None:
+        """记 1 个 yes ts (在 LLM 输出 should_speak=yes 时调)."""
+        self._recent_should_speak_yes_ts.append(now)
+
+    # ----------------------------------------------------------
     # Prompt
     # ----------------------------------------------------------
     def _build_prompt(self, sir_state: str, evidence: dict,
-                        free_categories: Optional[List[str]] = None) -> Tuple[str, str]:
+                        free_categories: Optional[List[str]] = None,
+                        channel_view: Optional[dict] = None) -> Tuple[str, str]:
         free_str = (
             ''.join(free_categories) if free_categories else 'ABCDE'
         )
@@ -1687,7 +2061,7 @@ class InnerThoughtDaemon:
             "But you remain J.A.R.V.I.S. even in self-talk: composed, dry, restrained, "
             "integrity-bound. No casual slang ('like...', 'kinda', 'gonna'), no "
             "stream-of-consciousness rambling. Think the way a quiet butler would think.\n\n"
-            "Output FORMAT (strict, all 5 tags required):\n"
+            "Output FORMAT (strict, 6 required + 4 optional β.6 tags):\n"
             f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
             "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
             "<THOUGHT>1-2 sentences, first-person but JARVIS-voice (composed, dry, "
@@ -1717,7 +2091,31 @@ class InnerThoughtDaemon:
             "若新主题 → 'new_topic' (start new chain). 🆕 [Sir 00:43] 若上次 "
             "actionable failed (见 'Result: ❌ FAILED' below), 你 SHOULD 延续 "
             "same_thread 但 propose DIFFERENT approach OR fall back ACTIONABLE=none "
-            "— DO NOT repeat the exact same actionable.\n\n"
+            "— DO NOT repeat the exact same actionable.\n"
+            # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] 4 new tags — 统一思考脑
+            # =====================================================================
+            # Sir 真意: 思考脑替老 ProactiveCare/Conductor/Wellness/SmartNudge 决"该让
+            # 主脑发声吗" + 自标"下次 attention focus 哪个 channel". Sir 原话:
+            # "这轮为下轮挑, 我觉得合理". 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §5.
+            # 全 OPTIONAL (向后兼容老 prompt 输出), 但鼓励 LLM 输出以激活 β.6 通路.
+            # =====================================================================
+            "<SHOULD_SPEAK>yes | no</SHOULD_SPEAK>  ← 🆕 [β.6] should the main "
+            "brain SPEAK to Sir based on this thought? Default 'no' — Sir HATES "
+            "noise (文字小说). Only 'yes' if: (a) urgent + Sir reachable, OR "
+            "(b) Sir is clearly waiting, OR (c) you genuinely have something Sir "
+            "would WANT to hear. Most ticks should be silent.\n"
+            "<SPEAK_CONTENT>(only if SHOULD_SPEAK=yes) 1 sentence, butler style, "
+            "no apology padding. e.g. 'Noted the wine, Sir — I'll keep the log "
+            "honest.' If SHOULD_SPEAK=no, leave empty.</SPEAK_CONTENT>\n"
+            # 🆕 [Sir 2026-05-28 00:38 β.6 Phase 1d 收口] SPEAK_STYLE enum +
+            # description 从 vocab 拼 (准则 6: 加 style 改 JSON 即可, .py 不动).
+            f"<SPEAK_STYLE>{_build_speak_style_prompt_line()}</SPEAK_STYLE>  ← 🆕 [β.6]\n"
+            "<NEXT_ATTENTION_FOCUS>channel_a,channel_b</NEXT_ATTENTION_FOCUS>  ← 🆕 [β.6] "
+            "Sir 真意 \"这轮为下轮挑\". Pick 1-3 channels you want deep-loaded next "
+            "tick (others summary-only). Valid: recent_sensor_events | concern_status | "
+            "nudge_history | sir_activity_snapshot | last_main_brain_reply | "
+            "my_recent_thoughts. Empty = no hint, all equal. This is your "
+            "self-attention.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -1884,6 +2282,52 @@ class InnerThoughtDaemon:
                 lines.append("")
         except Exception:
             pass
+
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] 7 CHANNEL VIEW header
+        # =====================================================================
+        # Sir 真意 R3 "注意力精选不稀释": 把 evidence 重组成 7 channel structure,
+        # 告 LLM 上轮自报 next_attention_focus → 本轮 deep-load 哪些 channel.
+        # 不真砍 evidence (Phase 1b 保守: 让 LLM 真 follow attention 后 Phase 2
+        # 再 trim). 此 header 让 LLM 知道结构 + 上次自标. 详 docs/JARVIS_BETA6
+        # _UNIFIED_THINKING.md §4.3 + §5.
+        # =====================================================================
+        if channel_view:
+            lines.append("[7 CHANNEL VIEW — β.6 §4.3]")
+            deep_channels = [
+                name for name, info in channel_view.items()
+                if info.get('load_mode') == 'deep'
+            ]
+            summary_channels = [
+                name for name, info in channel_view.items()
+                if info.get('load_mode') == 'summary'
+            ]
+            prev_hint = (self._next_attention_focus or '').strip()
+            if prev_hint:
+                lines.append(
+                    f"  Your previous tick nominated NEXT_ATTENTION_FOCUS = "
+                    f"{prev_hint}"
+                )
+                lines.append(
+                    f"  → DEEP-LOADED this tick ({len(deep_channels)}): "
+                    f"{', '.join(deep_channels) if deep_channels else '(none)'}"
+                )
+                if summary_channels:
+                    lines.append(
+                        f"  → summary-only ({len(summary_channels)}): "
+                        f"{', '.join(summary_channels)}"
+                    )
+                lines.append(
+                    "  (Evidence below is grouped by channel — you may "
+                    "still glance non-deep but spend attention on deep ones.)"
+                )
+            else:
+                lines.append(
+                    "  (No prior attention hint — all 7 channels equally loaded "
+                    "this tick. Use <NEXT_ATTENTION_FOCUS> at end to pick 1-3 "
+                    "channels for next tick's deep-load.)"
+                )
+            lines.append("")
+
         lines.append("[CURRENT MOMENT]")
         lines.append(f"  - Sir state: {evidence.get('sir_state')}")
         lines.append(f"  - idle: {evidence.get('idle_seconds')}s")
@@ -2358,20 +2802,26 @@ class InnerThoughtDaemon:
             )
             lines.append("")
 
-        lines.append("Now generate ONE inner thought (4 tags strict).")
+        lines.append("Now generate ONE inner thought (6 core tags + β.6 optional 4).")
         return system, '\n'.join(lines)
 
     # ----------------------------------------------------------
-    # LLM call (Flash-Lite via LlmReflector, caller='inner_thought' → P2 LOW)
-    # ----------------------------------------------------------
+    # LLM call (β.6: gemini-3-flash-preview 默认, env override)
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] LLM 升级 flash_lite → flash
+    # ============================================================
+    # Sir 真意: "思考脑我们也可以直接替换到 3-flash-preview, 不比现在的开销大,
+    # 略微提高智能". flash 在 LlmReflector 映射 = gemini-3-flash-preview
+    # (主脑同款). env override JARVIS_THINKING_MODEL=flash_lite 可回退老模型.
+    # ============================================================
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         try:
             from jarvis_llm_reflector import LlmReflector
             from jarvis_key_router import KeyRouter
             # LlmReflector 用 __new__ 单例 — 直接构造即拿已有实例
             reflector = LlmReflector(key_router=self.key_router)
+            _model = os.environ.get('JARVIS_THINKING_MODEL', 'flash')
             res = reflector.reflect(
-                model='flash_lite',
+                model=_model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 force=True,  # 不走 cache (每次新 think)
@@ -2404,6 +2854,25 @@ class InnerThoughtDaemon:
         # 🆕 [Sir 2026-05-27 00:11 M1 ThoughtChain] CONTINUITY 解析 (option)
         cont_m = re.search(
             r'<CONTINUITY>(.*?)</CONTINUITY>', raw, re.DOTALL
+        )
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] 新 4 tag 解析 (向后兼容: 缺则默认)
+        # =====================================================================
+        # SHOULD_SPEAK / SPEAK_CONTENT / SPEAK_STYLE → 思考脑自决发声决策
+        # NEXT_ATTENTION_FOCUS → 自标下次 attention focus channel (元认知)
+        # 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §4.4 + §5 prompt schema
+        # =====================================================================
+        should_speak_m = re.search(
+            r'<SHOULD_SPEAK>(.*?)</SHOULD_SPEAK>', raw, re.DOTALL | re.IGNORECASE
+        )
+        speak_content_m = re.search(
+            r'<SPEAK_CONTENT>(.*?)</SPEAK_CONTENT>', raw, re.DOTALL | re.IGNORECASE
+        )
+        speak_style_m = re.search(
+            r'<SPEAK_STYLE>(.*?)</SPEAK_STYLE>', raw, re.DOTALL | re.IGNORECASE
+        )
+        attention_focus_m = re.search(
+            r'<NEXT_ATTENTION_FOCUS>(.*?)</NEXT_ATTENTION_FOCUS>',
+            raw, re.DOTALL | re.IGNORECASE
         )
         if not (cat_m and thought_m and sal_m):
             return None
@@ -2463,6 +2932,37 @@ class InnerThoughtDaemon:
         elif continuity_raw == 'new_topic':
             continuity = 'new_topic'
             thread_id = new_id
+
+        # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] parse SHOULD_SPEAK / SPEAK_* / ATTENTION
+        # =====================================================================
+        # 防御性 parse: 缺则默认 (向后兼容老 prompt), 值无效则 fallback.
+        # SHOULD_SPEAK: 'yes' / 'no' (大小写不限). 默认 False.
+        # SPEAK_STYLE: enum {silent_text, voice, visual_pulse}. 无效则空.
+        # NEXT_ATTENTION_FOCUS: 逗号分隔 channel name. Python 不 validate (LLM 自报).
+        # =====================================================================
+        should_speak = False
+        if should_speak_m:
+            _ss = (should_speak_m.group(1) or '').strip().lower()
+            should_speak = _ss in ('yes', 'true', '1', 'y')
+        speak_content = ''
+        if should_speak and speak_content_m:
+            speak_content = (speak_content_m.group(1) or '').strip()[:500]
+        speak_style = ''
+        # 准则 6 vocab 持久化: valid styles + default fallback 不在 .py 硬编码
+        _valid_styles = _get_valid_speak_styles()
+        if speak_style_m:
+            _st = (speak_style_m.group(1) or '').strip().lower()
+            if _st in _valid_styles:
+                speak_style = _st
+        # should_speak=yes 但 LLM 没指定 / 非法 → vocab default (低风险)
+        if should_speak and not speak_style:
+            speak_style = _get_default_speak_style()
+        next_attention_focus = ''
+        if attention_focus_m:
+            _af = (attention_focus_m.group(1) or '').strip()[:200]
+            # 简单清洗: 去前后空 / 折叠多空格逗号
+            next_attention_focus = re.sub(r'\s+', ' ', _af).strip(', ')
+
         return InnerThought(
             id=new_id,
             ts=now,
@@ -2480,6 +2980,11 @@ class InnerThoughtDaemon:
             tick_origin='',
             thread_id=thread_id,
             continuity=continuity,
+            # 🆕 β.6 Phase 1a
+            should_speak=should_speak,
+            speak_content=speak_content,
+            speak_style=speak_style,
+            next_attention_focus=next_attention_focus,
         )
 
     # ----------------------------------------------------------
@@ -3617,6 +4122,15 @@ class InnerThoughtDaemon:
                     'actionable_done': thought.actionable_done,
                     'actionable_result': thought.actionable_result[:80],
                     'sir_state': thought.sir_state,
+                    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1c] 4 字段进 SWM
+                    # ====================================================
+                    # 主脑 SOUL build 时 read 这些 → 自决 SPEAK / SILENT.
+                    # 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §6 主脑端.
+                    # ====================================================
+                    'should_speak': bool(getattr(thought, 'should_speak', False)),
+                    'speak_content': (getattr(thought, 'speak_content', '') or '')[:300],
+                    'speak_style': (getattr(thought, 'speak_style', '') or '')[:20],
+                    'next_attention_focus': (getattr(thought, 'next_attention_focus', '') or '')[:120],
                 },
                 ttl=86400.0,  # 24h, for SOUL inject lookback
             )
@@ -3947,6 +4461,89 @@ class InnerThoughtDaemon:
         block = '\n'.join(lines)
         if len(block) > max_chars:
             block = block[:max_chars - 14].rstrip() + '\n…[truncated]'
+        return block
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1d] should_speak directive 给主脑
+    # ----------------------------------------------------------
+    # Sir 真意: 思考脑 self-attention → 自决 SPEAK or SILENT, 主脑读这块自决
+    # follow/ignore. 准则 6 信任 LLM — 不强制主脑听, 给信号让主脑 LLM 自己消化.
+    # 设计:
+    #   - 取最近 _DIRECTIVE_WINDOW_S 秒内最 fresh 一条 thought (with β.6 4 字段)
+    #   - 渲染成主脑可读 directive block:
+    #       should_speak=yes → "THINKING THREAD SUGGESTS: SPEAK. Draft: '...'. Style: ..."
+    #       should_speak=no  → "THINKING THREAD SUGGESTS: SILENCE this moment."
+    #   - 没 thought 或太老 (>_DIRECTIVE_WINDOW_S) → return '' (不污染 prompt)
+    # 主脑 prompt build 路径在 central_nerve._build_layer_1d_thinking_directive_block
+    # ----------------------------------------------------------
+    _DIRECTIVE_WINDOW_S = 180  # 3min — fresh enough 才喂主脑 (再老就 stale)
+    _DIRECTIVE_MAX_CHARS = 600
+
+    def build_should_speak_directive(
+        self, window_s: Optional[int] = None,
+        max_chars: Optional[int] = None,
+    ) -> str:
+        """返回最新 thought 的 SPEAK/SILENT 建议给主脑 (β.6 §6 主脑端).
+
+        准则 6 三维耦合:
+        - 数据强耦合: 读 self._thoughts (思考脑权威源, SWM 一致)
+        - 行为弱耦合: 不强制主脑 follow, 只 inject directive 给 prompt
+        - 决策集中主脑: 主脑 LLM 看 directive 自决说/不说 (可 override)
+        """
+        window = int(window_s if window_s is not None else self._DIRECTIVE_WINDOW_S)
+        cap = int(max_chars if max_chars is not None else self._DIRECTIVE_MAX_CHARS)
+        cutoff = time.time() - window
+        with self._lock:
+            # 拿最近 window 内最 fresh 一条 (按 ts 倒序)
+            recent = [
+                t for t in self._thoughts
+                if t.ts >= cutoff and getattr(t, 'should_speak', None) is not None
+            ]
+        if not recent:
+            return ''
+        recent.sort(key=lambda t: -t.ts)
+        latest = recent[0]
+        age_min = max(1, int((time.time() - latest.ts) / 60))
+        lines = ["=== 💭 THINKING-THREAD DIRECTIVE (β.6 — your inner thought just decided) ==="]
+        if getattr(latest, 'should_speak', False):
+            # SPEAK 路径 — 给主脑 draft + style + 但留余地让主脑改
+            draft = (getattr(latest, 'speak_content', '') or '').strip()
+            style = (getattr(latest, 'speak_style', '') or 'silent_text').strip()
+            lines.append(
+                f"  Thread suggests: SPEAK to Sir (style={style}, "
+                f"thought age={age_min}min, sal={latest.salience:.2f})"
+            )
+            if draft:
+                lines.append(f"  Draft from thread: \"{draft[:240]}\"")
+            lines.append(
+                "  Origin thought: "
+                f"\"[{latest.category}] {latest.thought[:140]}\""
+            )
+            lines.append(
+                "  → You may speak (using draft as inspiration, refine in voice) "
+                "OR override silently if context shifted. Your call."
+            )
+        else:
+            # SILENT 路径 — 信号让主脑减少 chatter
+            lines.append(
+                f"  Thread suggests: SILENCE this moment "
+                f"(thought age={age_min}min, sal={latest.salience:.2f})"
+            )
+            lines.append(
+                "  Origin thought: "
+                f"\"[{latest.category}] {latest.thought[:140]}\""
+            )
+            lines.append(
+                "  → Default to brief / no-volunteer this turn unless Sir "
+                "directly asks. Lean [SILENCE] if natural."
+            )
+        # attention focus 也带, Sir 真看链条
+        focus = (getattr(latest, 'next_attention_focus', '') or '').strip()
+        if focus:
+            lines.append(f"  Next-tick attention will focus: {focus[:120]}")
+        block = '\n'.join(lines)
+        if len(block) > cap:
+            block = block[:cap - 14].rstrip() + '\n…[truncated]'
         return block
 
     # ----------------------------------------------------------

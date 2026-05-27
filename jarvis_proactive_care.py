@@ -1265,6 +1265,62 @@ class CareSpeechSynth:
         }
         if channel == 'silent_text':
             nudge_ctx['silent_text'] = self.render_silent_text(evi)
+
+        # 🆕 [Sir 2026-05-28 00:45 β.6 Phase 2 退化 publish-only]
+        # =====================================================================
+        # 准则 6 行为弱耦合: gate_mode='publish_only' (vocab 默认) →
+        # ProactiveCare 不直 push __NUDGE__, 改 publish 'proactive_care_advice'
+        # 到 SWM (含 directive + evi 详情) 让 β.6 思考脑看, 思考脑 LLM 自决
+        # SHOULD_SPEAK + SPEAK_STYLE. 这是 6 daemon → 1 思考脑统一发声路径.
+        # 'hard' 模式 (vocab 切回) → 走原 push __NUDGE__ 老路 (向后兼容).
+        # =====================================================================
+        try:
+            from jarvis_utils import read_gate_mode as _rgm
+            _gm = _rgm('ProactiveCare')
+        except Exception:
+            _gm = 'hard'
+        if _gm == 'publish_only' and not dry_run:
+            try:
+                from jarvis_utils import get_event_bus as _geb_adv
+                _bus_adv = _geb_adv()
+                if _bus_adv is not None:
+                    _bus_adv.publish(
+                        etype='proactive_care_advice',
+                        description=(
+                            f"ProactiveCare wants to nudge "
+                            f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
+                            f"channel_hint={channel}"
+                        ),
+                        source='ProactiveCare',
+                        salience=min(0.95, 0.45 + evi.urgency_score * 0.5),
+                        metadata={
+                            'concern_id': evi.concern_id,
+                            'urgency_score': round(evi.urgency_score, 3),
+                            'channel_hint': channel,
+                            'original_channel_hint': original_channel_hint or channel,
+                            'nudge_directive': directive,
+                            'sir_recent_quote': (evi.sir_recent_quote or '')[:200],
+                            'inside_joke_ref': (evi.inside_joke_ref or '')[:200],
+                            'what_i_watch': (evi.what_i_watch or '')[:200],
+                            'last_signal_what': (evi.last_signal_what or '')[:200],
+                            'urgency_breakdown': evi.breakdown,
+                            'gate_mode': _gm,
+                        },
+                        ttl=600.0,
+                    )
+                    bg_log(
+                        f"🤝 [ProactiveCare/PublishOnly] published advice "
+                        f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
+                        f"channel_hint={channel} (思考脑自决 SHOULD_SPEAK)"
+                    )
+                    # 仍记 last_nudge_concern_id 让 Sir 后续 2min 回应可关联
+                    return False  # publish-only, 不 push __NUDGE__
+            except Exception as _adv_e:
+                bg_log(
+                    f"⚠️ [ProactiveCare/PublishOnly] publish advice fail: "
+                    f"{type(_adv_e).__name__}: {_adv_e} — fallback to hard push"
+                )
+
         if dry_run:
             # 🩹 [β.2.8.5 hotfix / 2026-05-17] Sir 22:30 反馈: dry-run 每 60s 重复刷
             # same concern same urgency 看着像系统坏了. 加 (cid, urgency_bucket) 30min 节流.
