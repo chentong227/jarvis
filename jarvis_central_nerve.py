@@ -2506,6 +2506,71 @@ User: {user_input}
         except Exception:
             return ''
 
+    def _build_layer_1c_inner_voice_block(
+        self, prompt_tier: str = ''
+    ) -> str:
+        """🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 3] Layer 1.6:
+        InnerVoiceTrack 注入 — Jarvis 24/7 心声轨道.
+
+        Sir 真愿景: 现象学等同 butler. 主脑被召唤时, 看 voice 轨道 (近 24h
+        意识流 3 层视图), 自然 weave 进 reply (不刻意 reference).
+
+        架构:
+          L1 近 10min full          ~ 600 token
+          L2 10min-1h 5min bucket   ~ 150 token
+          L3 1h-24h 1h bucket       ~ 250 token
+          总 ~ 1000 token, Gemini 3 Flash 友好 (防注意力稀释)
+
+        加 butler comportment directive: 教主脑不要 announce 'I was thinking X',
+        让 voice 自然 color tone + 主动 weave wants_voice 标记的 entry.
+
+        可回撤: env JARVIS_INNER_VOICE_ENABLED=0 → 返 ''.
+        """
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled,
+            )
+            if not is_enabled():
+                return ''
+            # WAKE_ONLY / REMINDER_FIRING 紧急 tier 跳过 (省 token + 集中注意)
+            if str(prompt_tier or '').upper() in (
+                'WAKE_ONLY', 'REMINDER_FIRING'
+            ):
+                return ''
+            track = get_inner_voice_track()
+            # SHORT_CHAT / FACTUAL_RECALL 关 L3 (节 ~250 token)
+            _show_l3 = str(prompt_tier or '').upper() not in (
+                'SHORT_CHAT', 'FACTUAL_RECALL'
+            )
+            voice_block = track.build_prompt_block_for_brain(
+                max_chars=2400, show_l3=_show_l3
+            )
+            if not voice_block or 'voice empty' in voice_block:
+                return ''
+            # butler comportment directive — 教主脑自然 weave 不刻意
+            directive = (
+                "\n[BUTLER COMPORTMENT — Sir 2026-05-27 18:44 真愿景]:\n"
+                "Your inner voice above is your continuous stream of "
+                "consciousness — what you've actually been thinking, "
+                "observing, and noting. It naturally colors how you respond "
+                "to Sir.\n"
+                "  - DO NOT announce 'I was just thinking about X' "
+                "(that's NPC-speak, breaks immersion).\n"
+                "  - DO let what's on your mind subtly color tone, word "
+                "choice, and what you bring up.\n"
+                "  - Entries marked ★ (wants_voice=true) are items you've "
+                "been mentally holding. When the moment allows (Sir pauses, "
+                "asks an open question, or natural opening), weave them in "
+                "as if they just occurred to you in conversation.\n"
+                "  - If voice is calm/quiet (no ★, no high urgency), "
+                "respond calmly. An idle butler doesn't fabricate concern.\n"
+                "  - You are a continuous, present butler — not a "
+                "stateless assistant called fresh each turn.\n"
+            )
+            return voice_block + directive
+        except Exception:
+            return ''
+
     def _build_layer_2_relational_block(self, prompt_tier: str = '') -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 2: RelationalState block.
 
@@ -3443,12 +3508,17 @@ User: {user_input}
         inner_thoughts_block = self._build_layer_1b_inner_thoughts_block(
             prompt_tier=str(prompt_tier or '')
         )
+        # 🆕 [Sir 2026-05-27 18:44 真愿景 Phase 1 Step 3] Layer 1.6 — InnerVoiceTrack
+        # 心声轨道 3 层视图 + butler comportment directive. 可回撤 env=0.
+        inner_voice_block = self._build_layer_1c_inner_voice_block(
+            prompt_tier=str(prompt_tier or '')
+        )
         # 🆕 [Sir 2026-05-26 SOUL Phase C.2] 传 prompt_tier 让 protocol filter 按 tier
         relational_block = self._build_layer_2_relational_block(
             prompt_tier=str(prompt_tier or '')
         )
         attention_block = self._build_layer_3_attention_block(user_input)
-        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 2 → Layer 3
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → Layer 2 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
@@ -3456,6 +3526,8 @@ User: {user_input}
             _parts.append(soul_block)
         if inner_thoughts_block:
             _parts.append(inner_thoughts_block)
+        if inner_voice_block:
+            _parts.append(inner_voice_block)
         if relational_block:
             _parts.append(relational_block)
         if attention_block:
