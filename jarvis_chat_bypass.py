@@ -5371,6 +5371,46 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-27 真愿景 Phase 3] 主脑 reply self-append 进 voice track
+        # =====================================================================
+        # Sir 真愿景: jarvis 自我感知闭环 — 主脑下次召唤时, voice 含"我刚跟 Sir
+        # 说过什么", 避免重复 / 重叠 / 矛盾. 思考脑下次 tick 也读 voice tail,
+        # 知道嘴刚说了什么 (e.g. 不要又默 propose 同一主题).
+        # source='self_reflection' intent='noting'. urgency=0.3 (低, 不刷屏).
+        # wants_voice=False (主脑不该 surface "我刚说过 X" 给 Sir, 这是内部记账).
+        # system_event skip (后台事件不算自我感知).
+        # 任何错误静默, 不阻 turn-end.
+        # =====================================================================
+        try:
+            _is_sys_evt = bool(
+                clean_intent and str(clean_intent).startswith('[后台系统')
+            )
+            if not _is_sys_evt and final_reply and final_reply.strip():
+                from jarvis_inner_voice_track import (
+                    get_inner_voice_track, is_enabled as _iv_enabled,
+                )
+                if _iv_enabled():
+                    _reply_preview = str(final_reply).strip()[:120]
+                    _sir_preview = str(user_input or '').strip()[:60]
+                    _voice_content = f'i replied to sir: "{_reply_preview}"'
+                    _voice_meta = {
+                        'kind': 'main_reply',
+                        'reply_len': len(final_reply or ''),
+                        'reply_excerpt': _reply_preview,
+                        'sir_excerpt': _sir_preview,
+                        'turn_id': _turn_id_for_rn if '_turn_id_for_rn' in dir() else '',
+                    }
+                    get_inner_voice_track().append(
+                        source='self_reflection',
+                        intent='noting',
+                        content=_voice_content,
+                        urgency=0.3,
+                        wants_voice=False,
+                        meta=_voice_meta,
+                    )
+        except Exception:
+            pass
+
         # 🩹 [Gap 1 / P5-ToM / 2026-05-21 01:05] ToMReflector async trigger
         # Sir 22:10 真理: Jarvis 应读 Sir 言外之意 (surface/deeper/unspoken need).
         # 每 turn 后 LLM judge → propose hypothesis update. 主脑下轮看 [SIR'S MIND]
@@ -6727,6 +6767,43 @@ No ZH translation. No closing remark. Nothing else.
                         content=final_reply,
                         trigger=_trigger,
                         turn_id=_turn_id)
+            except Exception:
+                pass
+
+            # 🆕 [Sir 2026-05-27 真愿景 Phase 3] nudge 也 self-append 进 voice track
+            # =================================================================
+            # Sir 真愿景: 主动 nudge 也是 jarvis 嘴说话, voice 应记账. 主脑下次
+            # 看 voice 知道"我刚 nudge 过 X 主题", 避免重复 + 形成自我感知连续性.
+            # source='self_reflection' intent='noting' urgency=0.4 (略高于 reply,
+            # 因为 nudge 是 jarvis 主动发声, 自我感知信号更强).
+            # wants_voice=False (内部记账, 主脑不该 surface "我刚 nudge 过" 给 Sir).
+            # =================================================================
+            try:
+                if final_reply and final_reply.strip():
+                    from jarvis_inner_voice_track import (
+                        get_inner_voice_track as _giv_n,
+                        is_enabled as _iv_en_n,
+                    )
+                    if _iv_en_n():
+                        _ch_nv = (nudge_context or {}).get('nudge_type', 'unknown')
+                        _trig_nv = (nudge_context or {}).get('source', '')
+                        _reply_prev_nv = str(final_reply).strip()[:120]
+                        _voice_meta_nv = {
+                            'kind': 'nudge_reply',
+                            'nudge_channel': _ch_nv,
+                            'nudge_source': str(_trig_nv)[:60],
+                            'reply_len': len(final_reply or ''),
+                            'reply_excerpt': _reply_prev_nv,
+                            'turn_id': _turn_id if '_turn_id' in dir() else '',
+                        }
+                        _giv_n().append(
+                            source='self_reflection',
+                            intent='noting',
+                            content=f'i nudged sir ({_ch_nv}): "{_reply_prev_nv}"',
+                            urgency=0.4,
+                            wants_voice=False,
+                            meta=_voice_meta_nv,
+                        )
             except Exception:
                 pass
 
