@@ -254,7 +254,16 @@ class TestBug3NotesFullEarlyReject(unittest.TestCase):
         return daemon, ledger
 
     def test_full_notes_early_reject(self):
-        """notes >= 80% cap → reject notes_near_cap, 不 mutate ledger."""
+        """🩹 [Sir 2026-05-27 21:11 真测 P3 升级] 旧行为已退役.
+
+        旧 (BUG 3): notes 满 80% → 直接 reject 'notes_near_cap', 不 mutate.
+        新 (P3):    notes 满 80% → 自动 prune (archive 老段 jsonl) → 继续 append.
+
+        这里测的 setUp `'X' * 450` 是单 segment (没 ' | ' 分隔), prune 算法看到
+        "smallest segment 已超 target_chars=250" → no-op (老 segment 整段比
+        target 大, 切不动), 退回老 reject 行为. 所以 single-segment 老 case
+        仍 reject, 多 segment case 走 auto-prune (单独 test 覆盖).
+        """
         from jarvis_inner_thought_daemon import InnerThought
         daemon, ledger = self._build_daemon()
         thought = InnerThought(
@@ -267,13 +276,14 @@ class TestBug3NotesFullEarlyReject(unittest.TestCase):
         ok, msg = daemon._do_adjust_concern_notes(
             thought, 'adjust_concern_notes:c1:remember to dampen'
         )
+        # single-segment 老 case: prune no-op → 退回 reject (老行为兼容)
         self.assertFalse(ok,
-            'notes 满 80%+ 必须早 reject (BUG 3 治本)')
+            'single-segment notes 满 80%, prune no-op → 退回 reject')
         self.assertIn('notes_near_cap', msg,
             'reject reason 应是 notes_near_cap')
-        # ledger 未被 mutate (notes 仍是 450 char 不增长)
+        # ledger 未被 mutate (single-segment 无段可 archive)
         self.assertEqual(len(ledger.get('c1').notes_for_self), 450,
-            'reject 后 ledger 不该被 mutate')
+            'single-segment reject 后 ledger 不该被 mutate')
 
     def test_evidence_concerns_includes_notes_chars(self):
         """_collect_evidence concerns 含 notes_chars 字段."""

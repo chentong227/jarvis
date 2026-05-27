@@ -169,11 +169,22 @@ _RE_REMINDER_ZH = re.compile(
 )
 
 # commitment claim (Sir 的承诺, Jarvis confirm)
+# 🩹 [Sir 2026-05-27 21:11 真测] 旧 pattern 太宽松, 'Understood/明白' 单 ack 被
+# 误抓 commitment. 修: 单 ack 必跟 commit verb (remind/track/hold/...) 才算;
+# 单 phrase commit ("I'll hold you to that" / "Consider it done" / "记下了" /
+# "这就帮你...") 保留.
 _RE_COMMITMENT_EN = re.compile(
-    r"(?:got\s+it|noted|understood|locked\s+in|saved|recorded|will\s+hold\s+you)",
+    r"(?:i(?:'ll|\s+will))\s+hold\s+(?:you|that|this|sir|him|her)\s+to\s+(?:that|this|it)"
+    r"|consider\s+(?:it|that|this)\s+(?:done|locked|noted|registered)"
+    r"|(?:got\s+it|noted|understood|locked\s+in)[,\.\s]+(?:sir[,\.\s]+)?(?:i(?:'ll|\s+will)|i(?:'ve|\s+have))\s+(?:remind|track|hold|register|note|set|add|schedule|monitor|follow|check|watch|complete|finish)\b",
     re.IGNORECASE
 )
-_RE_COMMITMENT_ZH = re.compile(r"(?:记下了|记住了|收到|明白|这就|帮您记|记到|没问题)")
+_RE_COMMITMENT_ZH = re.compile(
+    r"(?:记下了|记住了)"
+    r"|(?:这就|马上)(?:帮你|为您|去|开始)\s*(?:提醒|跟进|做|完成|搞定|设|加|帮|登记|注册)"
+    r"|(?:帮您记|记到)\s*(?:海马体|心里|提醒|清单|本子)"
+    r"|(?:收到|明白|没问题|好的)[,，。\s]+(?:我|帮你|为您|那).{0,12}?(?:提醒|跟进|做|完成|搞定|设|加|帮|登记|注册)"
+)
 
 # self_promise claim (Jarvis 自己未来 action) — 复用 SelfPromiseDetector 信号 (后面 wire)
 

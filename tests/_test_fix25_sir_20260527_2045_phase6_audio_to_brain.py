@@ -225,6 +225,35 @@ class TestStepCChatBypassAudioPart(unittest.TestCase):
             '应用 f-string {_audio_duration_sec:.1f} 形态'
         )
 
+    def test_ph6_12_audio_hint_neutral_default_anti_fabrication(self):
+        """🩹 PH6_12 [Sir 2026-05-27 21:11 真测]: Sir 警告"不是每句话都带情绪",
+        audio hint 必须教主脑中性 turn = treat as ABSENT, 禁安全词幻觉.
+
+        旧 hint: "Listen to tone/laughter/energy/sigh/emotion as evidence" 
+        → 主脑过度关注情绪, 中性 turn 仍编 audio_tone (幻觉).
+
+        新 hint 必要条款:
+          - "NEUTRAL" 字眼 (强调中性 turn 占多数)
+          - "ABSENT" 字眼 (中性 = 当作不存在)
+          - "ONLY if" 子句 (强清晰信号才 emit)
+          - 禁安全词 list: 'neutral' / 'calm' / 'balanced' / 'composed'
+          - "fabricat" 字眼 (明禁幻觉)
+        """
+        # 中性 default 子句
+        self.assertIn('NEUTRAL', self.body,
+            'audio_hint 必须强调 "Most of Sir\'s turns are NEUTRAL"')
+        self.assertIn('ABSENT', self.body,
+            'audio_hint 必须教中性 turn = treat as ABSENT')
+        # only-if 子句 (不 MUST)
+        self.assertIn('ONLY if', self.body,
+            'audio_hint 必须用 ONLY if (非 MUST), 防强制 emit 幻觉')
+        # 禁安全词
+        self.assertIn('fabricat', self.body.lower(),
+            'audio_hint 必须明禁 fabrication (安全词幻觉)')
+        for safe_word in ("'neutral'", "'calm'", "'balanced'"):
+            self.assertIn(safe_word, self.body,
+                f'audio_hint 必须列禁词 {safe_word}')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

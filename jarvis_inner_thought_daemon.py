@@ -219,6 +219,39 @@ class InnerThought:
 
 
 # ==========================================================================
+# Helpers
+# ==========================================================================
+
+def _truncate_at_word_boundary(s: str, max_chars: int,
+                                 suffix: str = '…') -> str:
+    """🆕 [Sir 2026-05-27 21:11 真测 P2_b] 防 log 截到字/词中间.
+
+    Sir 真测 21:04 看到:
+      `actionable=propose_protocol:Always match Sir's conf → ...`
+      `proposed:Always match Sir's confirmatio (id=...)`
+      `I should aim for a more aligned ton`
+    全是 [:N] 硬切到 word 中间, 可读性差.
+
+    算法:
+      - len <= max_chars → 直接返
+      - cut = s[:max_chars], 倒查最近 word boundary (space/punct),
+        回退不超过 max_chars*0.2 (避免丢太多). 找到 → 截到那 + suffix
+      - 没找到 → 仍按 max_chars 切 + suffix (CJK 字符天然可切 + 加 …
+        视觉上明示截断)
+    """
+    if not s or len(s) <= max_chars:
+        return s
+    cut = s[:max_chars]
+    boundary_chars = ' .,;:!?，。；：！？\n\t'
+    # 允许回退 30% (ratio 0.7) — 给短 max_chars (e.g. 24) 也够空间找 boundary
+    lo = max(1, int(max_chars * 0.7))
+    for i in range(len(cut) - 1, lo - 1, -1):
+        if cut[i] in boundary_chars:
+            return cut[:i].rstrip(boundary_chars) + suffix
+    return cut.rstrip() + suffix
+
+
+# ==========================================================================
 # Daemon
 # ==========================================================================
 
@@ -809,12 +842,17 @@ class InnerThoughtDaemon:
         # log (Sir 真看见 daemon 在 work) — mediocre 用 compact log
         action_str = ''
         if thought.actionable and thought.actionable.lower() != 'none':
-            action_str = f" | actionable={thought.actionable[:40]} → {result}"
+            # 🆕 [Sir 2026-05-27 21:11 真测 P2_b] word-boundary truncate
+            # 避免 Sir 看到 "Always match Sir's conf" 这种字中间切断
+            _act = _truncate_at_word_boundary(thought.actionable, 40)
+            _res = _truncate_at_word_boundary(result, 80)
+            action_str = f" | actionable={_act} → {_res}"
         # 🆕 [Sir 2026-05-26 00:25 真痛"地基"] 显示 evidence_link (LLM cite 啥)
         # actionable=none 但 evidence_link 非空 → 也展示 (rejected case Sir 真看)
         ev_str = ''
         if thought.evidence_link and thought.evidence_link.lower() != 'none':
-            ev_str = f" | cite=\"{thought.evidence_link[:40]}\""
+            _cite = _truncate_at_word_boundary(thought.evidence_link, 40)
+            ev_str = f" | cite=\"{_cite}\""
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] 显示下次 tick 由谁决定 +
         # interval 真值 (Sir 看 daemon 真在 self-pacing 还是默认)
         meta_str = f" | next={resolved_interval}s({tick_origin})"
@@ -826,10 +864,11 @@ class InnerThoughtDaemon:
             )
         else:
             # 🆕 [Sir 2026-05-27 00:43 真痛] log truncate 100→300 让 Sir 看完整 thought
-            # 老截 [:100] 越表达位裁, Sir image 1 "was g" 裁断 看不到完整 reasoning
+            # 🆕 [Sir 2026-05-27 21:11 真测 P2_b] word-boundary truncate 避字中间断
+            _tt = _truncate_at_word_boundary(thought.thought, 300)
             self._bg_log(
                 f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
-                f"/state={sir_state}/tick={tick_interval}s] {thought.thought[:300]}"
+                f"/state={sir_state}/tick={tick_interval}s] {_tt}"
                 f"{action_str}{ev_str}{meta_str}"
             )
 
@@ -2459,14 +2498,42 @@ class InnerThoughtDaemon:
         # build new notes (append 不覆盖 + tag 来源 + cap)
         note_capped = note[:self._NOTES_APPEND_MAX]
         existing = (c.notes_for_self or '').strip()
-        # 🆕 [Sir 2026-05-26 13:32 BUG 3 治本] notes 容量预检 — 已满 80%+ 直接 reject,
-        # 不浪费 update_concern_field mutation + signal trail. LLM 下次 tick prompt 会
-        # 看到 'NEAR FULL — adjust will be rejected' 警告, 不再 propose 同 concern.
+        # 🆕 [Sir 2026-05-27 21:11 真测 P3 升级] notes 满 80% → 自动 prune (archive
+        # 老段到 jsonl 不丢历史) → 继续 append. 不再让 InnerThought 反复 propose-reject
+        # 循环 (Sir 真测 21:05 看到 'notes_near_cap:485/500' 反复出现).
+        # 旧行为 (Sir 2026-05-26 13:32 BUG 3): >=80% → reject 'notes_near_cap'.
+        # 新行为: >=80% → ledger.prune_concern_notes(target=50%) → 继续 append.
+        # Fallback: 若 prune no-op (smallest segment 已超 target) → 退回老 reject.
         if len(existing) >= int(self._NOTES_MAX_CHARS * 0.8):
-            return False, (
-                f'notes_near_cap:{len(existing)}/{self._NOTES_MAX_CHARS} '
-                f'(>=80% — wait for archival or prune before adding)'
-            )
+            try:
+                prune_ok, prune_msg, archived_n = (
+                    self.concerns_ledger.prune_concern_notes(
+                        cid,
+                        target_chars=int(self._NOTES_MAX_CHARS * 0.5),
+                        source='inner_thought_auto_prune',
+                        turn_id=thought.id,
+                    )
+                )
+                if prune_ok and archived_n > 0:
+                    try:
+                        from jarvis_utils import bg_log
+                        bg_log(
+                            f'🗂️ [InnerThought/AutoPrune] {cid} {prune_msg}'
+                        )
+                    except Exception:
+                        pass
+                    # reload existing — c.notes_for_self 已被 prune 改写
+                    existing = (c.notes_for_self or '').strip()
+                # 若 prune no-op (smallest segment exceeds target) → 退回老 reject
+                if len(existing) >= int(self._NOTES_MAX_CHARS * 0.8):
+                    return False, (
+                        f'notes_near_cap:{len(existing)}/{self._NOTES_MAX_CHARS} '
+                        f'(>=80% — auto-prune attempted: {prune_msg})'
+                    )
+            except Exception as e:
+                return False, (
+                    f'notes_near_cap_prune_exception:{str(e)[:60]}'
+                )
         tag = f"[inner_thought/{thought.category}/sal={thought.salience:.2f}]"
         new_note_segment = f"{tag} {note_capped}"
         if existing:

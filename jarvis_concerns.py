@@ -145,6 +145,9 @@ class ConcernsLedger:
 
     DEFAULT_PERSIST_PATH = os.path.join('memory_pool', 'concerns.json')
     DEFAULT_REVIEW_PATH = os.path.join('memory_pool', 'concerns_review.json')
+    # 🆕 [Sir 2026-05-27 21:11 真测 P3] notes archival — 老段不丢, 转存 jsonl.
+    DEFAULT_NOTES_ARCHIVE_PATH = os.path.join('memory_pool',
+                                              'concern_notes_archive.jsonl')
 
     def __init__(self, persist_path: Optional[str] = None,
                  review_path: Optional[str] = None):
@@ -671,6 +674,104 @@ class ConcernsLedger:
             pass
 
         return True, f"concern.{concern_id}.{field} updated", old_value
+
+    # ---- archival / prune ----
+
+    def prune_concern_notes(self, concern_id: str,
+                            target_chars: int = 250,
+                            source: str = 'auto_prune',
+                            turn_id: str = '',
+                            archive_path: Optional[str] = None
+                            ) -> tuple:
+        """🆕 [Sir 2026-05-27 21:11 真测 P3] notes_for_self 满 → archive 老段 + 留新.
+
+        Sir 真痛: notes 累到 485/500 → InnerThought 反复 propose 反复 reject 'notes_near_cap'.
+        治本: 不再 reject — 自动 prune (archive 老段到 jsonl, 不丢历史), ledger 留最新
+        target_chars 内的 segments.
+
+        Segment 分隔符: ' | ' (跟 InnerThoughtDaemon._do_adjust_concern_notes append 格式一致).
+
+        Args:
+          concern_id: target
+          target_chars: keep notes ≤ 此 char 数 (默认 250 = 50% of 500 schema cap)
+          source: caller 标识 (audit)
+          turn_id: trace id
+          archive_path: 老段 archive jsonl 路径 (默 DEFAULT_NOTES_ARCHIVE_PATH)
+
+        Returns:
+          (ok: bool, message: str, archived_count: int)
+        """
+        if not concern_id:
+            return False, 'empty concern_id', 0
+        # snapshot existing under lock, 算 keep/archive
+        with self._lock:
+            c = self.concerns.get(concern_id)
+            if c is None:
+                return False, f'concern {concern_id} not found', 0
+            existing = (c.notes_for_self or '').strip()
+            if len(existing) <= target_chars:
+                return True, f'no-op (already {len(existing)} <= {target_chars})', 0
+            # split by ' | ' (保留 segment 完整性)
+            segments = [s.strip() for s in existing.split(' | ') if s.strip()]
+            if not segments:
+                return False, 'empty segments after split', 0
+            # 从末尾倒数 — 保留最新 segments, 累到 ≤ target_chars
+            keep: List[str] = []
+            keep_chars = 0
+            for seg in reversed(segments):
+                # +3 for ' | ' separator (除最后一段)
+                seg_cost = len(seg) + (3 if keep else 0)
+                if keep_chars + seg_cost > target_chars:
+                    break
+                keep.insert(0, seg)
+                keep_chars += seg_cost
+            archived = segments[:len(segments) - len(keep)]
+            if not archived:
+                return True, 'no-op (smallest segment exceeds target)', 0
+            # 🩹 edge: keep 为空 (单 segment 已超 target) → 不该全 archive 留空
+            # 退回 no-op 让上层走 reject 或主脑自决
+            if not keep:
+                return True, (
+                    f'no-op (single segment of {len(segments[-1])} chars '
+                    f'exceeds target {target_chars})'
+                ), 0
+
+        # archive 写 jsonl (锁外 — IO 不阻塞 ledger)
+        archive_path = archive_path or self.DEFAULT_NOTES_ARCHIVE_PATH
+        try:
+            arc_dir = os.path.dirname(archive_path)
+            if arc_dir and not os.path.exists(arc_dir):
+                os.makedirs(arc_dir, exist_ok=True)
+            now_ts = time.time()
+            with open(archive_path, 'a', encoding='utf-8') as f:
+                for seg in archived:
+                    f.write(json.dumps({
+                        'ts': now_ts,
+                        'ts_iso': time.strftime(
+                            '%Y-%m-%dT%H:%M:%S', time.localtime(now_ts)
+                        ),
+                        'cid': concern_id,
+                        'segment': seg,
+                        'archived_by': source,
+                        'turn_id': turn_id,
+                    }, ensure_ascii=False) + '\n')
+        except Exception as e:
+            return False, f'archive write fail: {str(e)[:60]}', 0
+
+        # 写回 ledger (复用 update_concern_field — audit + SWM publish)
+        new_notes = ' | '.join(keep)
+        ok, msg, _ = self.update_concern_field(
+            concern_id, 'notes_for_self', new_notes,
+            source=source, turn_id=turn_id,
+            reason=(f'auto-prune {len(archived)} old segments → archive '
+                    f'({len(existing)}→{len(new_notes)} chars)'),
+        )
+        if ok:
+            return True, (
+                f'pruned {len(archived)} segments, kept {len(keep)} '
+                f'({len(existing)}→{keep_chars} chars)'
+            ), len(archived)
+        return False, f'write_back_fail: {msg}', 0
 
     # ---- decay ----
 

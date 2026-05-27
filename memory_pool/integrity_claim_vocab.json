@@ -93,14 +93,20 @@
       "claim_label": "commitment_register",
       "default_target": "commitment",
       "en_patterns": [
-        "(?:got\\s+it|noted|understood|locked\\s+in|saved|recorded|will\\s+hold\\s+you)"
+        "(?:i(?:'ll|\\s+will))\\s+hold\\s+(?:you|that|this|sir|him|her)\\s+to\\s+(?:that|this|it)",
+        "consider\\s+(?:it|that|this)\\s+(?:done|locked|noted|registered)",
+        "(?:got\\s+it|noted|understood|locked\\s+in)[,\\.\\s]+(?:sir[,\\.\\s]+)?(?:i(?:'ll|\\s+will)|i(?:'ve|\\s+have))\\s+(?:remind|track|hold|register|note|set|add|schedule|monitor|follow|check|watch|complete|finish)\\b"
       ],
       "zh_patterns": [
-        "(?:记下了|记住了|收到|明白|这就|帮您记|记到|没问题)"
+        "(?:记下了|记住了)",
+        "(?:这就|马上)(?:帮你|为您|去|开始)\\s*(?:提醒|跟进|做|完成|搞定|设|加|帮|登记|注册)",
+        "(?:帮您记|记到)\\s*(?:海马体|心里|提醒|清单|本子)",
+        "(?:收到|明白|没问题|好的)[,，。\\s]+(?:我|帮你|为您|那).{0,12}?(?:提醒|跟进|做|完成|搞定|设|加|帮|登记|注册)"
       ],
       "state": "active",
       "added_at": 1779349800.0,
-      "added_by": "seed"
+      "added_by": "seed",
+      "_revision_note": "🩹 [Sir 2026-05-27 21:11 真测] 旧 pattern 太宽松, 'Understood/明白/Noted/收到/没问题' 等单 ack 词被误抓 commitment. 修: 单 ack 必跟 commit verb (remind/track/hold/register/...) 才算; 单 phrase commit ('I'll hold you to that' / 'Consider it done' / '记下了' / '这就帮你...') 保留. 旧 'saved/recorded' 移除 — 跟 reminder/profile patterns 重复."
     }
   },
   "review_queue": []

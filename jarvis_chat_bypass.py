@@ -3163,12 +3163,31 @@ Spoken English:"""
             # 部分**不经 format** 处理.
             _prompt_with_audio_hint = prompt
             if _audio_wav_bytes:
+                # 🩹 [Sir 2026-05-27 21:11 真测] 旧 hint "Listen to tone/laughter/..."
+                # 让主脑过度关注情绪, 中性 turn 仍编造 audio_tone evidence (幻觉).
+                # Sir 原话: "我不是每句话都会带情绪的, 有时候就是正常说话,
+                # 别写的太严格给主脑搞幻觉了."
+                # 修: 中性 turn 视音频为 absent, ONLY-IF 真有明显信号才 emit
+                # audio_tone evidence. 禁安全词 ('neutral'/'calm'/'balanced').
                 _audio_hint = (
-                    f"\n\n[AUDIO ATTACHED] You are also given Sir's actual voice "
-                    f"recording of this turn (~{_audio_duration_sec:.1f}s). Listen to "
-                    f"tone/laughter/energy/sigh/emotion as evidence. Do NOT quote or "
-                    f"transcribe it — the ASR text above is the literal content. Use "
-                    f"audio ONLY to attune your tone to Sir's mood."
+                    f"\n\n[AUDIO ATTACHED] Sir's actual voice recording "
+                    f"(~{_audio_duration_sec:.1f}s) is included alongside the "
+                    f"ASR text above.\n"
+                    f"How to use:\n"
+                    f"- ASR text is the literal content. Audio is for tone/"
+                    f"mood signal ONLY (not transcription).\n"
+                    f"- Most of Sir's turns are NEUTRAL — plain speech, no "
+                    f"laughter, no sigh, no obvious emotion. In that case "
+                    f"treat audio as ABSENT — do NOT mention audio_tone in "
+                    f"your evidence list, do NOT change your default tone.\n"
+                    f"- ONLY if you hear a CLEAR signal (laughter / sigh / "
+                    f"frustration / excitement / tense / wry / soft), attune "
+                    f"your reply tone AND add `audio_tone:<signal>` to your "
+                    f"evidence list.\n"
+                    f"- Do NOT fabricate emotion. 'neutral' / 'calm' / "
+                    f"'balanced' / 'composed' count as fabrication — omit "
+                    f"audio_tone entirely instead.\n"
+                    f"- Do NOT quote or transcribe the audio."
                 )
                 _prompt_with_audio_hint = prompt + _audio_hint
             _parts = [types.Part(text=_prompt_with_audio_hint)]
