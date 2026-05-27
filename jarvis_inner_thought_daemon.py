@@ -3315,6 +3315,27 @@ class InnerThoughtDaemon:
                             f"     • [{_s['age_min']}min ago / "
                             f"{_s['tid']}] {_s['summary']}"
                         )
+                    # 🆕 [Sir 2026-05-27 12:22 真问 Phase 2] surface 显示来源引导
+                    # ===========================================================
+                    # Sir 真问: '我在什么方面能感受到他思考链的连续?'
+                    # 真痛: 主脑虽看 [DAEMON SURFACED] 但 reference 时**隐藏来源** —
+                    # Sir 听不出"这条是思考脑动的, 不是您主动问的". Sir 感不到思考链 alive.
+                    # 修法: 给主脑示范"如 reference 请明说来源", 让 Sir 耳朵能听到
+                    # "我思考脑刚才在想..." / "我后台想到您..." 这类 explicit 来源标识.
+                    # ===========================================================
+                    lines.append(
+                        "     ↳ [IF YOU REFERENCE — SHOW THE SOURCE]: Sir 真问\n"
+                        "       '我感不到思考链 alive'. 若你引用上面这些, **明示来源**\n"
+                        "       让 Sir 听到 (不是 Sir 提的, 是我后台想到的). 示范:\n"
+                        "         · 'Sir, 我刚才在想... <reference>'\n"
+                        "         · '我后台还记得您上次说... <reference>'\n"
+                        "         · '后台一直在留意 <topic>, 看到 <evidence>...'\n"
+                        "       **避免**'根据系统记录' / '日志显示' (机械感). 用拟人化:\n"
+                        "         · 'I've been thinking about...'\n"
+                        "         · 'In the back of my mind...'\n"
+                        "         · 'I remembered earlier that you...'\n"
+                        "       evidence-driven 自决, 不强制每次都说. 一句够."
+                    )
         except Exception:
             pass
 

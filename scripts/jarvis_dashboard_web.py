@@ -3988,11 +3988,74 @@ _INNER_THOUGHTS_HTML = r"""
                       border-radius: 16px; font-size: 0.85rem;
                       background: #21262d; border: 1px solid #30363d;
                       margin-left: 0.6rem; }
+
+    /* 🆕 [Sir 2026-05-27 12:22 真问 Phase 3] 实时 pulse 动画 + NEW badge
+       Sir 真问: '我在什么方面能感受到他思考链的连续'
+       让 Sir 看 dashboard 能感"思考脑活着" — 新 thought 进来视觉反馈. */
+    @keyframes pulse-glow {
+      0%   { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.7),
+                          0 0 20px 5px rgba(236, 72, 153, 0.3); }
+      70%  { box-shadow: 0 0 0 16px rgba(236, 72, 153, 0),
+                          0 0 0 0 rgba(236, 72, 153, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0),
+                          0 0 0 0 rgba(236, 72, 153, 0); }
+    }
+    .thought-card.is-fresh {
+      animation: pulse-glow 2.4s ease-out 1;
+      border-left-width: 6px !important;
+      background: linear-gradient(135deg, #1a1f2e 0%, #161b22 100%);
+    }
+    .thought-card.is-fresh .fresh-badge {
+      display: inline-block; background: linear-gradient(135deg, #ec4899, #a78bfa);
+      color: white; padding: 0.18rem 0.55rem; border-radius: 12px;
+      font-size: 0.72rem; font-weight: bold; margin-right: 0.5rem;
+      letter-spacing: 0.5px; animation: badge-flash 1s ease-out;
+    }
+    @keyframes badge-flash {
+      0%   { transform: scale(1.4); opacity: 0; }
+      40%  { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(1.0); opacity: 1; }
+    }
+    /* 顶部 pulse banner (Sir 一眼看到新进 thought) */
+    #new-pulse-banner {
+      position: fixed; top: 18px; right: 24px; z-index: 999;
+      background: linear-gradient(135deg, #ec4899 0%, #a78bfa 100%);
+      color: white; padding: 0.7rem 1.2rem; border-radius: 28px;
+      font-weight: bold; font-size: 0.95rem;
+      box-shadow: 0 6px 24px rgba(236, 72, 153, 0.45);
+      opacity: 0; transform: translateY(-12px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none; user-select: none;
+    }
+    #new-pulse-banner.visible {
+      opacity: 1; transform: translateY(0);
+    }
+    /* counter (n-total) 数字闪光 */
+    #n-total.flash {
+      animation: counter-flash 1.4s ease-out 1;
+    }
+    @keyframes counter-flash {
+      0%   { color: #ec4899; transform: scale(1.45); text-shadow: 0 0 12px rgba(236,72,153,0.7); }
+      55%  { color: #a78bfa; transform: scale(1.15); text-shadow: 0 0 6px rgba(167,139,250,0.5); }
+      100% { color: inherit; transform: scale(1.0); text-shadow: none; }
+    }
+    /* 思考脑 heartbeat dot (永远 pulse 标识 daemon alive) */
+    .heartbeat-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      background: #ec4899; margin-right: 0.4rem; vertical-align: middle;
+      animation: heartbeat 2s ease-in-out infinite;
+    }
+    @keyframes heartbeat {
+      0%, 100% { opacity: 0.4; transform: scale(1.0); }
+      50%      { opacity: 1.0; transform: scale(1.25); }
+    }
   </style>
 </head>
 <body>
+  <!-- 🆕 [Sir 2026-05-27 12:22 Phase 3] 顶部 pulse banner: 新 thought 进来弹 3s -->
+  <div id="new-pulse-banner">💭 +<span id="pulse-count">0</span> 新思考</div>
   <div class="header">
-    <h1>💭 贾维斯的思考层 <span class="current-state" id="cur-state-badge">⏳ 加载...</span></h1>
+    <h1><span class="heartbeat-dot" title="思考脑 alive"></span>贾维斯的思考层 <span class="current-state" id="cur-state-badge">⏳ 加载...</span></h1>
     <p>贾维斯独自一人时, 他在想什么? 后台 daemon 每 60s-30min 自适应思考一次 (按 Sir 真物理 idle 调频率), 主脑自选 5 类思考池产 1 条 inner thought, 高关注度的会进下一轮主脑 prompt — 让他记得"我刚才想过什么"形成 identity 连续性。</p>
     <p style="color:#6e7681; font-size:0.83rem;">数据源: <code>memory_pool/inner_thoughts.jsonl</code> · CLI: <code>python scripts/inner_thoughts_dump.py</code> · daemon log grep '💭 [InnerThought]'</p>
     <div class="legend">
@@ -4163,6 +4226,54 @@ _INNER_THOUGHTS_HTML = r"""
       return (s / 3600).toFixed(1) + 'h';
     }
 
+    // 🆕 [Sir 2026-05-27 12:22 真问 Phase 3] 增量 diff detection
+    // ============================================================
+    // Sir 真问: '我在什么方面能感受到他思考链的连续?'
+    // 让 dashboard polling 不再"无声", 新 thought 进来:
+    //   1. 顶部 pulse banner "💭 +N 新思考" 闪 3s
+    //   2. counter n-total 数字闪光 1.4s
+    //   3. 新 thought card 加 ✨ NEW badge + pulse-glow 边框 2.4s
+    //   4. tab title 闪 "💭 (+N) Jarvis 思考层" 直到 Sir 切回 tab
+    // 不上 SSE 复杂度, 用现有 polling 10s (短缩) + lastTopId 比对.
+    // ============================================================
+    let _lastTopId = null;
+    let _pendingNewCount = 0;  // 累积 (Sir 没切回 tab 时)
+    let _isFirstLoad = true;
+    let _baseTitle = '💭 Jarvis · 思考层';
+
+    function showPulseBanner(n) {
+      const el = document.getElementById('new-pulse-banner');
+      const cnt = document.getElementById('pulse-count');
+      cnt.textContent = n;
+      el.classList.add('visible');
+      // 复位 timer (新 wave 来时 reset)
+      if (window._pulseBannerTimer) clearTimeout(window._pulseBannerTimer);
+      window._pulseBannerTimer = setTimeout(() => {
+        el.classList.remove('visible');
+      }, 3000);
+    }
+    function flashCounter() {
+      const el = document.getElementById('n-total');
+      el.classList.remove('flash');
+      void el.offsetWidth;  // restart animation trick
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1500);
+    }
+    function updateTitleBadge() {
+      if (_pendingNewCount > 0) {
+        document.title = `(+${_pendingNewCount}) ${_baseTitle}`;
+      } else {
+        document.title = _baseTitle;
+      }
+    }
+    // Sir 切回 tab → 清空 pending badge
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        _pendingNewCount = 0;
+        updateTitleBadge();
+      }
+    });
+
     function loadRecords() {
       const hours = document.getElementById('hours-sel').value;
       const limit = document.getElementById('limit-sel').value;
@@ -4302,16 +4413,41 @@ _INNER_THOUGHTS_HTML = r"""
             return;
           }
 
+          // 🆕 [Sir 2026-05-27 12:22 Phase 3] diff detect 新 thought
+          // records[0] 是最新 thought (api desc sort by ts). 比对 _lastTopId.
+          const freshIds = new Set();
+          const topId = records[0].id;
+          if (!_isFirstLoad && _lastTopId && topId !== _lastTopId) {
+            // 找新 thought (从 records[0] 往下扫直到遇 _lastTopId 或扫完)
+            for (const r of records) {
+              if (r.id === _lastTopId) break;
+              freshIds.add(r.id);
+            }
+            const nNew = freshIds.size;
+            if (nNew > 0) {
+              showPulseBanner(nNew);
+              flashCounter();
+              if (document.hidden) {
+                _pendingNewCount += nNew;
+                updateTitleBadge();
+              }
+            }
+          }
+          _lastTopId = topId;
+          _isFirstLoad = false;
+
           let html = '';
           records.forEach(t => {
             const catColor = t.category_color || '#ec4899';
             const actionDone = t.actionable_done;
             const actionStr = t.actionable_zh || t.actionable;
             const hasAction = (t.actionable || 'none').toLowerCase() !== 'none';
+            const isFresh = freshIds.has(t.id);
 
-            html += `<div class="thought-card" style="border-left-color:${catColor}">`;
+            html += `<div class="thought-card${isFresh ? ' is-fresh' : ''}" style="border-left-color:${catColor}">`;
             html += `<div class="card-head">`;
             html += `<div class="card-head-left">`;
+            if (isFresh) html += `<span class="fresh-badge">✨ NEW</span>`;
             html += `<span class="cat-badge" style="color:${catColor}">`;
             html += `${t.category_icon} ${t.category} ${t.category_zh}`;
             html += `</span>`;
@@ -4418,7 +4554,9 @@ _INNER_THOUGHTS_HTML = r"""
 
     loadRecords();
     loadLifetime();
-    setInterval(loadRecords, 30000);  // 30s 自动刷新
+    // 🆕 [Sir 2026-05-27 12:22 Phase 3] 缩短 polling 30s→10s 让 Sir 感"实时"
+    // (新 thought 进来 10s 内必触发 pulse + badge animation)
+    setInterval(loadRecords, 10000);  // 10s 自动刷新 (Phase 3 缩短)
     setInterval(loadLifetime, 60000);  // 60s 刷生命体感
   </script>
 </body>
