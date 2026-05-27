@@ -658,6 +658,7 @@ class InnerThoughtDaemon:
             # 🆕 [Sir 2026-05-28 β.6 Phase 3] 加 publish_only 时代 advice etype,
             # 让思考脑 nudge_history channel 能看 sentinel "想 nudge 但 publish-only"
             # 的 evi (准则 6: vocab JSON 真源, 此处仅 fallback 防损坏).
+            # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一] 加 4 daemon 真退化 candidate etype.
             return (
                 'proactive_nudge_', 'inner_thought_',
                 'concern_severity_changed', 'concern_notes_appended',
@@ -666,6 +667,8 @@ class InnerThoughtDaemon:
                 'gate_advice', 'proactive_care_advice',
                 'proactive_care_skipped', 'concern_active',
                 'concern_timing_evidence', 'soul_alignment_advice',
+                'smart_nudge_candidate', 'conductor_candidate',
+                'wellness_candidate', 'commitment_check_candidate',
             )
 
     def _collect_runtime_log_tail(self, max_lines: int = None) -> list:

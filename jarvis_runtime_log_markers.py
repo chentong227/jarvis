@@ -55,6 +55,16 @@ _DEFAULT_ACTION_EVENT_PREFIXES = (
     'sir_intent_',
     'stand_down_',
     'utterance_appended',
+    # 🆕 [β.6 Phase 2/3/4 publish-only advice] sentinel skip/退化 etype
+    'gate_advice',
+    'proactive_care_advice',
+    'proactive_care_skipped',
+    'soul_alignment_advice',
+    # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一] 4 daemon 真退化 candidate etype
+    'smart_nudge_candidate',
+    'conductor_candidate',
+    'wellness_candidate',
+    'commitment_check_candidate',
 )
 
 _DEFAULT_LOG_LINE_MARKERS = (

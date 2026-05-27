@@ -29,7 +29,11 @@
     "proactive_care_skipped",
     "concern_active",
     "concern_timing_evidence",
-    "soul_alignment_advice"
+    "soul_alignment_advice",
+    "smart_nudge_candidate",
+    "conductor_candidate",
+    "wellness_candidate",
+    "commitment_check_candidate"
   ],
   "log_line_markers": [
     "[Human]",

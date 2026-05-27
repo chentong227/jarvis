@@ -809,6 +809,56 @@ Answer ONLY the nudge type name, nothing else."""
         except Exception:
             pass
 
+        # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一] vocab gate_mode='publish_only' 真退化
+        # =====================================================================
+        # Sir 拍板 4 daemon (SmartNudge / Conductor / WellnessGuardian / CommitmentWatcher)
+        # 真退化为 publish-only, 思考脑统一决发声. 治: 7:14 SmartNudge 编 '02:43 番茄钟'
+        # 直推 + 7:16 又 fire 同 nudge — daemon 自己看 evidence 各自 fire 抢话筒 + 幻觉.
+        # 退化后: publish 'smart_nudge_candidate' SWM event 含 nudge_type + ctx,
+        # 思考脑下次 tick 看 candidate + 全 SWM ctx 自决 SHOULD_SPEAK + SPEAK_STYLE.
+        # vocab CLI: scripts/gate_mode_dump.py --set SmartNudgeSentinel publish_only
+        # 回滚: --set SmartNudgeSentinel hard 立刻生效, 无需重启.
+        # =====================================================================
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_sn
+            _gm_sn = _rgm_sn('SmartNudgeSentinel')
+            if _gm_sn == 'publish_only':
+                try:
+                    from jarvis_utils import get_event_bus as _geb_sn
+                    _bus_sn = _geb_sn()
+                    if _bus_sn is not None:
+                        _bus_sn.publish(
+                            etype='smart_nudge_candidate',
+                            description=(
+                                f"SmartNudge candidate {nudge_type}: "
+                                f"{(context.get('commitment_description') or context.get('hint') or '')[:120]}"
+                            ),
+                            source='smart_nudge',
+                            metadata={
+                                'nudge_type': nudge_type,
+                                'sentinel': 'SmartNudge',
+                                'context': {
+                                    k: v for k, v in context.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict))
+                                },
+                                'gate_mode': 'publish_only',
+                            },
+                            ttl=600.0,
+                        )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import bg_log as _pub_bg_sn
+                    _pub_bg_sn(
+                        f"🤝 [SmartNudge/PublishOnly] {nudge_type} → SWM "
+                        f"candidate published (思考脑自决 SHOULD_SPEAK, 不直推)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         if self.gate and not self.gate.can_speak('companion', nudge_type=nudge_type):
             # 🆕 [Sir 2026-05-27 18:10 真问 anchor] '为何不提醒?' 治本 part 2:
             # NudgeGate.can_speak 同样 silent return. 加 bg_log + publish_skip.

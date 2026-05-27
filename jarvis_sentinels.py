@@ -1835,6 +1835,56 @@ class WellnessGuardian(threading.Thread):
                 pass
 
     def _send_wellness_nudge(self, reason: str):
+        # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一] vocab gate_mode publish_only 真退化
+        # =====================================================================
+        # 老路径: 设 PhysicalEnvironmentProbe._wellness_alert flag → Conductor 看 →
+        # path A 直推 NUDGE. 退化后: publish 'wellness_candidate' SWM 让思考脑直看
+        # wellness evidence (不绕 Conductor), publish_only mode 不设 flag 防 Conductor
+        # 老路径触发. hard/soft mode 仍设 flag (向后兼容老 Conductor 路径).
+        # =====================================================================
+        _publish_only = False
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_wg
+            _publish_only = (_rgm_wg('WellnessGuardian') == 'publish_only')
+        except Exception:
+            pass
+
+        # 一律 publish 'wellness_candidate' (数据强耦合, 思考脑可看 evidence)
+        try:
+            from jarvis_utils import get_event_bus as _geb_wg
+            _bus_wg = _geb_wg()
+            if _bus_wg is not None:
+                _bus_wg.publish(
+                    etype='wellness_candidate',
+                    description=f"WellnessGuardian threshold: {reason}",
+                    source='WellnessGuardian',
+                    metadata={
+                        'reason': reason,
+                        'hour': int(time.strftime('%H')),
+                        'sentinel': 'WellnessGuardian',
+                        'gate_mode': 'publish_only' if _publish_only else 'hard',
+                        'work_duration_min': getattr(PhysicalEnvironmentProbe,
+                                                       'work_duration_minutes', 0),
+                        'work_category': getattr(PhysicalEnvironmentProbe,
+                                                   'current_work_category', ''),
+                    },
+                    ttl=600.0,
+                )
+        except Exception:
+            pass
+
+        if _publish_only:
+            try:
+                from jarvis_utils import bg_log as _pub_bg_wg
+                _pub_bg_wg(
+                    f"🤝 [WellnessGuardian/PublishOnly] {reason} → SWM "
+                    f"wellness_candidate (思考脑自决, 不触发 Conductor)"
+                )
+            except Exception:
+                pass
+            return  # 不设 _wellness_alert flag, Conductor 老路径不触发
+
+        # hard/soft mode 老路径 (设 flag 让 Conductor 看)
         try:
             PhysicalEnvironmentProbe._wellness_alert = {
                 'active': True,

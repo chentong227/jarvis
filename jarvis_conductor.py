@@ -554,6 +554,49 @@ class Conductor(threading.Thread):
         except Exception:
             pass  # 协调失败时走原 path
 
+        # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一 path_a] vocab gate_mode publish_only 真退化
+        # 思考脑统一决发声. publish 'conductor_candidate' SWM 让思考脑下次 tick 看 ctx 自决.
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_cda
+            if _rgm_cda('Conductor') == 'publish_only':
+                try:
+                    from jarvis_utils import get_event_bus as _geb_cda
+                    _bus_cda = _geb_cda()
+                    if _bus_cda is not None:
+                        _bus_cda.publish(
+                            etype='conductor_candidate',
+                            description=(
+                                f"Conductor path_a {_path_a_kind}: "
+                                f"{(alert_info.get('source') or '')[:80]} → "
+                                f"{(alert_info.get('action') or '')[:80]}"
+                            ),
+                            source='conductor',
+                            metadata={
+                                'path': 'A',
+                                'nudge_type': _path_a_kind,
+                                'sentinel': 'Conductor',
+                                'context': {
+                                    k: v for k, v in nudge_context.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict))
+                                },
+                                'gate_mode': 'publish_only',
+                            },
+                            ttl=600.0,
+                        )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import bg_log as _pub_bg_cda
+                    _pub_bg_cda(
+                        f"🤝 [Conductor/PublishOnly] path_a {_path_a_kind} → "
+                        f"SWM candidate published (思考脑自决, 不直推)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:
@@ -801,6 +844,48 @@ class Conductor(threading.Thread):
                 return  # publish-only, 不 push __NUDGE__
         except Exception:
             pass  # 协调失败时走原 path
+
+        # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一 path_b] vocab gate_mode publish_only 真退化
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_cdb
+            if _rgm_cdb('Conductor') == 'publish_only':
+                try:
+                    from jarvis_utils import get_event_bus as _geb_cdb
+                    _bus_cdb = _geb_cdb()
+                    if _bus_cdb is not None:
+                        _bus_cdb.publish(
+                            etype='conductor_candidate',
+                            description=(
+                                f"Conductor path_b {nudge_type}: "
+                                f"{(decision.get('action') or '')[:80]} "
+                                f"(reason={(filter_result.get('reason') or '')[:80]})"
+                            ),
+                            source='conductor',
+                            metadata={
+                                'path': 'B',
+                                'nudge_type': nudge_type,
+                                'sentinel': 'Conductor',
+                                'context': {
+                                    k: v for k, v in nudge_context.items()
+                                    if isinstance(v, (str, int, float, bool, list, dict))
+                                },
+                                'gate_mode': 'publish_only',
+                            },
+                            ttl=600.0,
+                        )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import bg_log as _pub_bg_cdb
+                    _pub_bg_cdb(
+                        f"🤝 [Conductor/PublishOnly] path_b {nudge_type} → "
+                        f"SWM candidate published (思考脑自决, 不直推)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
 
         cmd = f"__NUDGE__:{json.dumps(nudge_context, ensure_ascii=False)}"
         self.worker.push_command(cmd)

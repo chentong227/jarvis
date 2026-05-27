@@ -2251,6 +2251,61 @@ class CommitmentWatcher(threading.Thread):
         except Exception:
             pass  # 协调失败时走原 path (向后兼容)
 
+        # 🆕 [Sir 2026-05-28 07:31 β.6 完整统一] vocab gate_mode publish_only 真退化
+        # =====================================================================
+        # 治: Sir 7:14 + 7:16 SmartNudge 编 '02:43 番茄钟' 反复 fire — 根因是
+        # CommitmentWatcher 看 promise_log 把 author=jarvis 脏 commitment 加进 ledger,
+        # _dispatch_commitment_nudge 看 ledger fire commitment_check → SmartNudge prompt
+        # 编时间 → 幻觉. 退化后: publish 'commitment_check_candidate' SWM 让思考脑看
+        # commitment + author + recent ctx 自决 SHOULD_SPEAK. 思考脑能看 author=jarvis +
+        # 描述可疑 → 自决 SKIP, 不再连发幻觉 nudge.
+        # =====================================================================
+        try:
+            from jarvis_utils import read_gate_mode as _rgm_cw
+            if _rgm_cw('CommitmentWatcher') == 'publish_only':
+                try:
+                    from jarvis_utils import get_event_bus as _geb_cw
+                    _bus_cw = _geb_cw()
+                    if _bus_cw is not None:
+                        _bus_cw.publish(
+                            etype='commitment_check_candidate',
+                            description=(
+                                f"CommitmentWatcher candidate: "
+                                f"{commitment.get('description', '')[:80]} "
+                                f"overdue {overdue_minutes}min "
+                                f"(author={commitment.get('author', 'jarvis')})"
+                            ),
+                            source='commitment_watcher',
+                            metadata={
+                                'commitment_description': commitment.get('description', '')[:200],
+                                'commitment_source_text': commitment.get('source_text', '')[:200],
+                                'overdue_minutes': overdue_minutes,
+                                'author': commitment.get('author', 'jarvis'),
+                                'who_promised': commitment.get('who_promised',
+                                                                 commitment.get('author', 'jarvis')),
+                                'promise_id': commitment.get('promise_id', ''),
+                                'db_id': commitment.get('db_id', 0),
+                                'sentinel': 'CommitmentWatcher',
+                                'gate_mode': 'publish_only',
+                                'sleep_mode_active': sleep_mode_active,
+                            },
+                            ttl=600.0,
+                        )
+                except Exception:
+                    pass
+                try:
+                    from jarvis_utils import bg_log as _pub_bg_cw
+                    _pub_bg_cw(
+                        f"🤝 [CommitmentWatcher/PublishOnly] commitment_check → "
+                        f"SWM candidate (author={commitment.get('author', 'jarvis')}, "
+                        f"思考脑自决, 不直推)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         cmd = f"__NUDGE__:{json.dumps(context, ensure_ascii=False)}"
         self.worker.push_command(cmd)
         if self.gate:

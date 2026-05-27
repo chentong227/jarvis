@@ -14,6 +14,7 @@
     "SmartNudgeSentinel": "publish_only",
     "Conductor": "publish_only",
     "WellnessGuardian": "publish_only",
+    "CommitmentWatcher": "publish_only",
     "ReturnSentinel": "publish_only",
     "ProactiveCare": "publish_only",
     "SoulEvaluator": "publish_only"
@@ -23,7 +24,8 @@
     {"date": "2026-05-19T11:00:00+08:00", "change": "init all hard"},
     {"date": "2026-05-19T11:45:00+08:00", "change": "β.5.3 Sir 拍板完全重构: NudgeGate / OfferGuard hard → publish_only. 主脑看 SWM evidence 自决, 不再受 cooldown / freeze / sleep_mode hard 拦."},
     {"date": "2026-05-19T12:05:00+08:00", "change": "β.5.5-β.5.7 完整 publish-only: SmartNudge / Conductor / WellnessGuardian / ReturnSentinel skip 时 publish gate_advice 信号到 SWM. 主脑能看到所有 sentinel 的 'wanted-but-blocked' 决策. 紧急回滚: python scripts/gate_mode_dump.py --reset"},
-    {"date": "2026-05-28T00:45:00+08:00", "change": "β.6 Phase 2 + 4: 加 'ProactiveCare' + 'SoulEvaluator' 进 vocab, default publish_only. ProactiveCare.synth.push() 入口判 gate_mode → publish 'proactive_care_advice' SWM 让思考脑看 evi 自决 should_speak. SoulEvaluator publish 'soul_alignment_advice' SWM 让思考脑看 alignment score 自调 directive."}
+    {"date": "2026-05-28T00:45:00+08:00", "change": "β.6 Phase 2 + 4: 加 'ProactiveCare' + 'SoulEvaluator' 进 vocab, default publish_only. ProactiveCare.synth.push() 入口判 gate_mode → publish 'proactive_care_advice' SWM 让思考脑看 evi 自决 should_speak. SoulEvaluator publish 'soul_alignment_advice' SWM 让思考脑看 alignment score 自调 directive."},
+    {"date": "2026-05-28T07:31:00+08:00", "change": "β.6 完整统一 (Sir 7:14 真痛 BUG + Sir 7:31 拍板): 4 daemon (SmartNudgeSentinel / Conductor / WellnessGuardian / CommitmentWatcher) 真退化 publish_only — daemon 不直 push __NUDGE__, 改 publish 'smart_nudge_candidate' / 'conductor_candidate' / 'wellness_candidate' / 'commitment_check_candidate' SWM event. 思考脑下次 tick 看 candidate + 全 SWM ctx 自决 SHOULD_SPEAK + SPEAK_CONTENT + SPEAK_STYLE. 治: SmartNudge 7:14+7:16 编 '02:43 番茄钟' 直推幻觉. ReturnSentinel 留 publish_only (但内部 greeting cooldown 仍 hard 拦, 等后续 β.6+ refactor) 保 Sir 起床即闻 morning greeting."}
   ],
   "rollout_plan": {
     "phase_1_β.5.1": "NudgeGate hard → soft (双轨观察期)",
