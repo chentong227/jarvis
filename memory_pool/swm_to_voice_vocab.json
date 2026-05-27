@@ -1,0 +1,233 @@
+{
+  "_meta": {
+    "version": 1,
+    "created_at": "2026-05-27T18:55:00+08:00",
+    "owner": "Sir 真愿景 Phase 2 — sensor / care_trigger / wellness publish_to_voice",
+    "design_doc": "AGENTS.md §1 准则 6 三维耦合 (数据强耦合 / 行为弱耦合 / LLM 决策集中)",
+    "purpose": "ConversationEventBus.publish() 末尾根据本 vocab 把 SWM event mirror 成 VoiceEntry append 进 InnerVoiceTrack, 让 voice 含真实 sensor / care / wellness 信号 (不只是 inner_thought).",
+    "schema": {
+      "mappings": [
+        {
+          "etype": "SWM event type (publish 时第 1 参数)",
+          "active": "true/false — Sir CLI 可切换",
+          "source": "VoiceEntry.source (sensor / care_trigger / wellness / self_reflection / sir_injected)",
+          "intent": "VoiceEntry.intent (observation / care / reflection / reminder / noting)",
+          "wants_voice_min_salience": "0.0-1.0 — 该 etype salience >= 此值才 wants_voice=True (★)",
+          "content_template": "可选 — Python f-string 格式, 占位 {desc} / {salience} / {source_module}, 默认 {desc}",
+          "min_salience": "0.0-1.0 — 低于此 salience 不 mirror (省 voice 噪音), 默认 0.3"
+        }
+      ]
+    },
+    "cli": "scripts/swm_to_voice_dump.py list/activate/reject/add"
+  },
+  "mappings": [
+    {
+      "etype": "sensor_change",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "{desc}"
+    },
+    {
+      "etype": "ambient_state",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "ambient: {desc}"
+    },
+    {
+      "etype": "physio_state",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "physio: {desc}"
+    },
+    {
+      "etype": "active_window_hung",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "window seems hung: {desc}"
+    },
+    {
+      "etype": "afk_return",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.3,
+      "wants_voice_min_salience": 0.6,
+      "content_template": "sir returned (afk over): {desc}"
+    },
+    {
+      "etype": "concern_active",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "care",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "concern noted: {desc}"
+    },
+    {
+      "etype": "concern_timing_evidence",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "care",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "concern timing: {desc}"
+    },
+    {
+      "etype": "commitment_overdue",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "reminder",
+      "min_salience": 0.6,
+      "wants_voice_min_salience": 0.8,
+      "content_template": "commitment overdue — {desc}"
+    },
+    {
+      "etype": "commitment_detected",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "noting",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "sir committed: {desc}"
+    },
+    {
+      "etype": "commitment_retired",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "noting",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.9,
+      "content_template": "commitment retired: {desc}"
+    },
+    {
+      "etype": "sir_progress_evidence",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "noting",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "sir progress: {desc}"
+    },
+    {
+      "etype": "reminder_fired",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "reminder",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "reminder fired: {desc}"
+    },
+    {
+      "etype": "sleep_intent_declared",
+      "active": true,
+      "source": "care_trigger",
+      "intent": "noting",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.85,
+      "content_template": "sir declared sleep intent: {desc}"
+    },
+    {
+      "etype": "gaming_mode_activated",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "sir entered gaming: {desc}"
+    },
+    {
+      "etype": "gaming_mode_ended",
+      "active": true,
+      "source": "sensor",
+      "intent": "observation",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.7,
+      "content_template": "sir exited gaming: {desc}"
+    },
+    {
+      "etype": "self_critique",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "self-critique: {desc}"
+    },
+    {
+      "etype": "hallucination_detected",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.6,
+      "wants_voice_min_salience": 0.85,
+      "content_template": "i may have hallucinated: {desc}"
+    },
+    {
+      "etype": "reply_interrupted",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "sir cut my reply: {desc}"
+    },
+    {
+      "etype": "system_error_visible",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.8,
+      "content_template": "my internal error visible: {desc}"
+    },
+    {
+      "etype": "help_refused",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.4,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "sir refused my offer: {desc}"
+    },
+    {
+      "etype": "manual_standby",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "reflection",
+      "min_salience": 0.6,
+      "wants_voice_min_salience": 0.85,
+      "content_template": "sir hit manual standby: {desc}"
+    },
+    {
+      "etype": "proactive_nudge",
+      "active": false,
+      "source": "self_reflection",
+      "intent": "noting",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.8,
+      "content_template": "i nudged: {desc}",
+      "_note": "default inactive — nudge 本身已 surface to Sir, voice 再 mirror 会噪. 必要时 Sir activate."
+    },
+    {
+      "etype": "tool_called",
+      "active": true,
+      "source": "self_reflection",
+      "intent": "noting",
+      "min_salience": 0.5,
+      "wants_voice_min_salience": 0.75,
+      "content_template": "called tool: {desc}"
+    }
+  ]
+}

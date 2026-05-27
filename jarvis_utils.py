@@ -1648,6 +1648,21 @@ class ConversationEventBus:
             except Exception:
                 pass
 
+        # 🆕 [Sir 2026-05-27 真愿景 Phase 2 Step 2b] SWM event → voice mirror
+        # 准则 6 数据强耦合: sensor / care_trigger / wellness 等 SWM 信号
+        # 自动 mirror 成 voice entry, 主脑 prompt Layer 1.6 直接看. sentinel
+        # 代码不动. vocab persist memory_pool/swm_to_voice_vocab.json (CLI 改).
+        # 任何错误静默, 不阻 publish hot path.
+        try:
+            from jarvis_inner_voice_track import mirror_swm_event
+            mirror_swm_event(
+                etype=etype, description=desc, salience=salience,
+                source_module=source or 'unknown',
+                metadata=metadata,
+            )
+        except Exception:
+            pass
+
         return evidence_id
 
     def recent_events(self, within_seconds: float = None,

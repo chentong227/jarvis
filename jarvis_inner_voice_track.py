@@ -360,3 +360,130 @@ def is_enabled() -> bool:
     可回撤旋钮: Sir 设 0 → 主脑 prompt 不注入 voice block, 思考脑改造也跳过.
     """
     return os.environ.get('JARVIS_INNER_VOICE_ENABLED', '1').strip() != '0'
+
+
+# ============================================================
+# 🆕 [Sir 2026-05-27 Phase 2 Step 2b] SWM event → voice mirror
+# ============================================================
+# 准则 6 三维耦合:
+#   数据强耦合: mapping vocab 持久化 memory_pool/swm_to_voice_vocab.json
+#   行为弱耦合: ConversationEventBus.publish() 末尾静默调 mirror,
+#               sentinel 代码完全不动
+#   决策集中: 哪些 etype mirror / source / intent / wants_voice 阈值
+#             vocab 决定, 不写死 — CLI scripts/swm_to_voice_dump.py 可改
+# 可回撤: env JARVIS_INNER_VOICE_ENABLED=0 → 跳过整个 mirror
+# ============================================================
+
+_SWM_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'swm_to_voice_vocab.json'
+)
+_SWM_VOCAB_CACHE: Optional[dict] = None
+_SWM_VOCAB_CACHE_MTIME: float = 0.0
+_SWM_VOCAB_LOCK = threading.Lock()
+
+
+def _load_swm_vocab() -> dict:
+    """Lazy + mtime cache, 防 hot path 每次 IO."""
+    global _SWM_VOCAB_CACHE, _SWM_VOCAB_CACHE_MTIME
+    try:
+        mtime = os.path.getmtime(_SWM_VOCAB_PATH)
+    except OSError:
+        return {'mappings': []}
+    with _SWM_VOCAB_LOCK:
+        if _SWM_VOCAB_CACHE is not None and mtime == _SWM_VOCAB_CACHE_MTIME:
+            return _SWM_VOCAB_CACHE
+        try:
+            with open(_SWM_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                _SWM_VOCAB_CACHE = json.load(f) or {'mappings': []}
+            _SWM_VOCAB_CACHE_MTIME = mtime
+        except Exception:
+            _SWM_VOCAB_CACHE = {'mappings': []}
+        return _SWM_VOCAB_CACHE
+
+
+def mirror_swm_event(
+    etype: str,
+    description: str,
+    salience: float = 0.5,
+    source_module: str = 'unknown',
+    metadata: Optional[Dict] = None,
+) -> bool:
+    """ConversationEventBus.publish() 末尾调本 helper, 静默 mirror SWM
+    event → voice entry append. 返 True 真 mirror, False 跳过.
+
+    Args:
+        etype: SWM event type (e.g. 'sensor_change' / 'concern_active')
+        description: event 描述 (≤300 char)
+        salience: 0-1 publish 时传入的
+        source_module: publish 时 source 参数 (用于 meta 追溯)
+        metadata: publish 时 metadata (合并进 voice meta)
+
+    任何错误静默 False (publish hot path 不能 raise).
+    env JARVIS_INNER_VOICE_ENABLED=0 → 立即 False.
+    """
+    if not is_enabled():
+        return False
+    if not etype:
+        return False
+    try:
+        vocab = _load_swm_vocab()
+        mappings = vocab.get('mappings') or []
+        # 找匹配的 active mapping
+        m = None
+        for entry in mappings:
+            if entry.get('etype') == etype and entry.get('active', True):
+                m = entry
+                break
+        if m is None:
+            return False
+        try:
+            min_sal = float(m.get('min_salience', 0.3))
+        except (TypeError, ValueError):
+            min_sal = 0.3
+        try:
+            sal_f = float(salience)
+        except (TypeError, ValueError):
+            sal_f = 0.5
+        if sal_f < min_sal:
+            return False
+        try:
+            wv_min = float(m.get('wants_voice_min_salience', 1.1))
+        except (TypeError, ValueError):
+            wv_min = 1.1
+        wants_voice = sal_f >= wv_min
+        # content template
+        tmpl = str(m.get('content_template') or '{desc}')
+        try:
+            content = tmpl.format(
+                desc=description, salience=sal_f,
+                source_module=source_module,
+            )
+        except Exception:
+            content = str(description)
+        # cap 300 char (voice_track append 内部也会 cap, 双保险)
+        content = content[:300]
+        # voice meta — 保留 SWM event 溯源
+        voice_meta = {
+            'swm_etype': etype,
+            'swm_source_module': source_module,
+            'swm_salience': sal_f,
+        }
+        if metadata:
+            # 选择性 merge — 避免 voice meta 巨大. 只保 1-2 关键 key.
+            for k in ('reason', 'evidence_id', 'commitment_id',
+                        'tool', 'concern_id'):
+                if k in metadata:
+                    voice_meta[f'swm_{k}'] = metadata[k]
+        track = get_inner_voice_track()
+        track.append(
+            source=str(m.get('source') or 'noting'),
+            intent=str(m.get('intent') or 'noting'),
+            content=content,
+            urgency=sal_f,
+            wants_voice=wants_voice,
+            meta=voice_meta,
+        )
+        return True
+    except Exception:
+        return False
