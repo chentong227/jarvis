@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "version": 1,
+    "created_at": "2026-05-27T20:05:00+08:00",
+    "owner": "Sir 真愿景 Phase 4 — wants_voice 未 surface ageing + spotlight",
+    "design_doc": "AGENTS.md §1 准则 6 三维耦合 (持久化 + CLI 可改)",
+    "purpose": "控制 wants_voice ★ entry 的 ageing 阈值 + spotlight 显示 + surface 检测参数. 不写死, Sir 可调.",
+    "cli": "scripts/inner_voice_aging_dump.py (Sir 直接改 JSON 也行)"
+  },
+  "spotlight": {
+    "max_pending_min": 60.0,
+    "max_pending_min_note": "wants_voice=True 且未 surface 超过此 min, 仍提到 prompt SPOTLIGHT 段顶 (60 = 1 小时)",
+    "max_items_in_spotlight": 5,
+    "spotlight_header": "★ pending to surface to Sir (you have not mentioned these yet)",
+    "spotlight_header_note": "prompt spotlight 段标题, 让主脑明白这是未 surface 的 ★"
+  },
+  "ageing": {
+    "ageing_max_age_sec": 7200.0,
+    "ageing_max_age_sec_note": "wants_voice=True ★ 超此 age (默 2h) 自动降级为 False (内存 mutate), 不再 spotlight. jsonl 不动 (history 留痕).",
+    "ageing_max_attempts": 6,
+    "ageing_max_attempts_note": "出现在 prompt block 超此次数仍未 surface → 自动降级 (避免循环刷屏). default 6 = 6 次 turn 主脑都没接茬."
+  },
+  "surface_detection": {
+    "min_overlap_words": 3,
+    "min_overlap_words_note": "reply 含 entry content 头 N 词 token overlap >= 此值, 判 surface=True. 默 3 词足够区分 'hydration' 类主题, 不太严苛.",
+    "content_prefix_chars": 60,
+    "content_prefix_chars_note": "entry.content 取前 N 字符抽 token, 用于 overlap 判断. 默 60 字符 ≈ 一句话头部.",
+    "min_token_len": 3,
+    "min_token_len_note": "拆 token 时丢弃长度 < N 的虚词 (a/i/to/of). 默 3 → 'sir' / 'now' / 'why' 留, 'a' / 'i' 丢."
+  }
+}

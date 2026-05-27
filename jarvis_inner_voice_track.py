@@ -63,6 +63,11 @@ class VoiceEntry:
     urgency: float = 0.0        # 0-1, 越高越想开口
     wants_voice: bool = False   # 思考脑认为想开口提及 (主脑自决)
     meta: Optional[Dict] = None
+    # 🆕 [Sir 2026-05-27 Phase 4 ageing + spotlight]
+    entry_id: str = ''                 # uuid8, append 时生成 (backward-compat 默认空)
+    surfaced_to_sir: bool = False      # 主脑 reply 后判定是否 reference 过
+    surface_attempts: int = 0          # 出现在 prompt block 多少次
+    last_surface_attempt_ts: float = 0.0  # 最后一次出现在 prompt 的 ts
 
     def to_dict(self) -> Dict:
         d = asdict(self)
@@ -80,6 +85,13 @@ class VoiceEntry:
             urgency=float(d.get('urgency', 0.0)),
             wants_voice=bool(d.get('wants_voice', False)),
             meta=d.get('meta'),
+            # 🆕 Phase 4 字段 backward-compat 默认
+            entry_id=str(d.get('entry_id', '') or ''),
+            surfaced_to_sir=bool(d.get('surfaced_to_sir', False)),
+            surface_attempts=int(d.get('surface_attempts', 0) or 0),
+            last_surface_attempt_ts=float(
+                d.get('last_surface_attempt_ts', 0.0) or 0.0
+            ),
         )
 
 
@@ -145,6 +157,10 @@ class InnerVoiceTrack:
           meta: 附加结构化数据 (raw thought, sensor snapshot, etc.)
           ts: 自定义 ts (testing用), 默认 now
         """
+        # 🆕 [Phase 4] 自动 gen entry_id (uuid 前 12 字符即足 — 24h 内不冲突).
+        # 用于 ageing/spotlight surface 追踪.
+        import uuid as _uuid
+        _eid = 'iv_' + _uuid.uuid4().hex[:12]
         entry = VoiceEntry(
             ts=ts if ts is not None else time.time(),
             source=str(source or 'noting'),
@@ -153,6 +169,7 @@ class InnerVoiceTrack:
             urgency=max(0.0, min(1.0, float(urgency))),
             wants_voice=bool(wants_voice),
             meta=meta,
+            entry_id=_eid,
         )
         with self._lock:
             self._buffer.append(entry)
@@ -198,10 +215,12 @@ class InnerVoiceTrack:
         return False
 
     def build_prompt_block_for_brain(
-        self, max_chars: int = 2400, show_l3: bool = True
+        self, max_chars: int = 2400, show_l3: bool = True,
+        show_spotlight: bool = True,
     ) -> str:
-        """主脑 prompt 用 — 3 层叙事块.
+        """主脑 prompt 用 — 3 层叙事块 + 🆕 [Phase 4] ★ spotlight 段.
 
+        SPOTLIGHT (顶): ★ wants_voice pending 未 surface (近 1h) 单独提醒
         L1: 近 10min full entries (~600 token)
         L2: 10min-1h, 5min bucket digest (~150 token)
         L3: 1h-24h, 1h bucket digest (~250 token, 可关)
@@ -209,11 +228,44 @@ class InnerVoiceTrack:
         Returns:
           多行字符串. 空 buffer 返一句 '(voice empty — just woke)'.
         """
+        # 🆕 [Phase 4] 先 apply ageing (内存 mutate, 不动 jsonl)
+        try:
+            self.apply_ageing()
+        except Exception:
+            pass
+
         lines = []
         lines.append(
             "[YOUR INNER VOICE — past 24h, your continuous stream of consciousness]"
         )
         lines.append("")
+
+        # 🆕 [Phase 4 SPOTLIGHT] 未 surface 的 ★ pending — 顶部突出, 也 mark attempt
+        spotlight_entries: List[VoiceEntry] = []
+        if show_spotlight:
+            try:
+                spotlight_entries = self.get_pending_wants_voice()
+            except Exception:
+                spotlight_entries = []
+        if spotlight_entries:
+            cfg = _load_aging_config()
+            header = str(cfg.get('spotlight', {}).get(
+                'spotlight_header',
+                '★ pending to surface to Sir (you have not mentioned these yet)'
+            ))
+            lines.append(f"## {header}:")
+            for e in spotlight_entries:
+                lines.append(self._render_entry(e))
+            lines.append(
+                "  (these are pending in your awareness — weave naturally "
+                "when context fits, do not announce 'i was thinking')"
+            )
+            lines.append("")
+            # mark surface attempt (++ counter, ageing 一旦达 max_attempts 自动降级)
+            try:
+                self.mark_surface_attempt(spotlight_entries)
+            except Exception:
+                pass
 
         # L1: 近 10min full
         l1 = self.recent(minutes=10.0, max_n=40)
@@ -328,6 +380,146 @@ class InnerVoiceTrack:
         with self._lock:
             return [e for e in self._buffer if e.ts >= cutoff]
 
+    # ============================================================
+    # 🆕 [Sir 2026-05-27 Phase 4] ageing + spotlight + surface tracking
+    # ============================================================
+
+    def get_pending_wants_voice(
+        self, max_age_min: Optional[float] = None,
+        max_items: Optional[int] = None,
+    ) -> List[VoiceEntry]:
+        """返 wants_voice=True 且 surfaced_to_sir=False 的 entries (按 ts asc).
+
+        Args:
+          max_age_min: 仅返 age <= max_age_min 的 (None = 用 config spotlight.max_pending_min)
+          max_items: 最多返多少条 (None = 用 config spotlight.max_items_in_spotlight)
+        """
+        cfg = _load_aging_config()
+        if max_age_min is None:
+            max_age_min = float(
+                cfg.get('spotlight', {}).get('max_pending_min', 60.0)
+            )
+        if max_items is None:
+            max_items = int(
+                cfg.get('spotlight', {}).get('max_items_in_spotlight', 5)
+            )
+        cutoff = time.time() - max_age_min * 60.0
+        with self._lock:
+            pending = [
+                e for e in self._buffer
+                if e.wants_voice
+                    and not e.surfaced_to_sir
+                    and e.ts >= cutoff
+            ]
+        pending.sort(key=lambda e: e.ts)
+        # 取最近的 max_items 个
+        return pending[-max_items:]
+
+    def apply_ageing(self) -> int:
+        """应用 ageing: 超过 max_age_sec 或 max_attempts 的 ★ entry → wants_voice=False.
+        jsonl 历史不动 (history 留痕), 只内存 mutate.
+
+        Returns: 降级 entry 数.
+        """
+        cfg = _load_aging_config()
+        ag = cfg.get('ageing', {})
+        max_age_sec = float(ag.get('ageing_max_age_sec', 7200.0))
+        max_attempts = int(ag.get('ageing_max_attempts', 6))
+        now = time.time()
+        n_aged = 0
+        with self._lock:
+            for e in self._buffer:
+                if not e.wants_voice:
+                    continue
+                if e.surfaced_to_sir:
+                    # 已 surface, 不必 ageing
+                    continue
+                aged_by_time = (now - e.ts) > max_age_sec
+                aged_by_attempts = e.surface_attempts >= max_attempts
+                if aged_by_time or aged_by_attempts:
+                    e.wants_voice = False
+                    n_aged += 1
+        return n_aged
+
+    def mark_surface_attempt(self, entries: List[VoiceEntry]) -> None:
+        """主脑 prompt 用了这些 entry 后, 调本方法增 surface_attempts.
+
+        不改 jsonl (运行时 counter, 重启不影响 ageing — 因为重启已 reload jsonl).
+        """
+        now = time.time()
+        with self._lock:
+            for e in entries:
+                if e not in self._buffer:
+                    # 也接受 by entry_id 匹配 (e 可能是 prompt 渲染时的 ref copy)
+                    if not e.entry_id:
+                        continue
+                    for be in self._buffer:
+                        if be.entry_id == e.entry_id:
+                            be.surface_attempts += 1
+                            be.last_surface_attempt_ts = now
+                            break
+                else:
+                    e.surface_attempts += 1
+                    e.last_surface_attempt_ts = now
+
+    def mark_recent_surfaced_by_overlap(
+        self,
+        reply_text: str,
+        within_min: float = 30.0,
+    ) -> int:
+        """主脑 reply 后调本 helper. token overlap 判 reply 是否 reference
+        近 within_min min 的 ★ pending entry. 命中 → mark surfaced_to_sir=True.
+
+        Returns: 标 surfaced 的 entry 数.
+
+        准则 6: 不 hardcode keyword, 用通用 token overlap. 阈值持久化 config.
+        """
+        if not reply_text:
+            return 0
+        cfg = _load_aging_config()
+        sd = cfg.get('surface_detection', {})
+        min_overlap = int(sd.get('min_overlap_words', 3))
+        prefix_chars = int(sd.get('content_prefix_chars', 60))
+        min_tok_len = int(sd.get('min_token_len', 3))
+
+        def _tokenize(s: str) -> set:
+            # 简单 alnum tokenization, 小写, 长度 >= min_tok_len
+            import re as _re
+            return {
+                w.lower() for w in _re.findall(r"[\w']+", s or '')
+                if len(w) >= min_tok_len
+            }
+
+        reply_tokens = _tokenize(reply_text)
+        if not reply_tokens:
+            return 0
+        cutoff = time.time() - within_min * 60.0
+        n_marked = 0
+        with self._lock:
+            for e in self._buffer:
+                if e.surfaced_to_sir or not e.wants_voice:
+                    continue
+                if e.ts < cutoff:
+                    continue
+                content_prefix = (e.content or '')[:prefix_chars]
+                ent_tokens = _tokenize(content_prefix)
+                # meta 里如果有 reply_excerpt / sir_excerpt 也排除
+                # (自我感知 entry 永远 reference 自己, 不算 surface)
+                if e.meta and (
+                    e.meta.get('kind') in ('main_reply', 'nudge_reply')
+                ):
+                    # self_reflection self-append entry 不算 pending,
+                    # 但万一被标 wants_voice (异常), 也不该被 overlap mark
+                    continue
+                if not ent_tokens:
+                    continue
+                overlap = reply_tokens & ent_tokens
+                if len(overlap) >= min_overlap:
+                    e.surfaced_to_sir = True
+                    e.last_surface_attempt_ts = time.time()
+                    n_marked += 1
+        return n_marked
+
 
 # ============================================================
 # Singleton
@@ -360,6 +552,70 @@ def is_enabled() -> bool:
     可回撤旋钮: Sir 设 0 → 主脑 prompt 不注入 voice block, 思考脑改造也跳过.
     """
     return os.environ.get('JARVIS_INNER_VOICE_ENABLED', '1').strip() != '0'
+
+
+# ============================================================
+# 🆕 [Sir 2026-05-27 Phase 4] ageing config loader (mtime cache)
+# ============================================================
+
+_AGING_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_voice_aging_config.json'
+)
+_AGING_CFG_CACHE: Optional[dict] = None
+_AGING_CFG_CACHE_MTIME: float = 0.0
+_AGING_CFG_LOCK = threading.Lock()
+_AGING_CFG_DEFAULT = {
+    'spotlight': {
+        'max_pending_min': 60.0,
+        'max_items_in_spotlight': 5,
+        'spotlight_header': (
+            '★ pending to surface to Sir (you have not mentioned these yet)'
+        ),
+    },
+    'ageing': {
+        'ageing_max_age_sec': 7200.0,
+        'ageing_max_attempts': 6,
+    },
+    'surface_detection': {
+        'min_overlap_words': 3,
+        'content_prefix_chars': 60,
+        'min_token_len': 3,
+    },
+}
+
+
+def _load_aging_config() -> dict:
+    """Lazy + mtime cache, default fallback."""
+    global _AGING_CFG_CACHE, _AGING_CFG_CACHE_MTIME
+    try:
+        mtime = os.path.getmtime(_AGING_CONFIG_PATH)
+    except OSError:
+        return _AGING_CFG_DEFAULT
+    with _AGING_CFG_LOCK:
+        if _AGING_CFG_CACHE is not None and mtime == _AGING_CFG_CACHE_MTIME:
+            return _AGING_CFG_CACHE
+        try:
+            with open(_AGING_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                loaded = json.load(f) or {}
+            # merge with default (在 default 基础上覆盖)
+            merged = {
+                'spotlight': dict(_AGING_CFG_DEFAULT['spotlight']),
+                'ageing': dict(_AGING_CFG_DEFAULT['ageing']),
+                'surface_detection': dict(
+                    _AGING_CFG_DEFAULT['surface_detection']
+                ),
+            }
+            for section in ('spotlight', 'ageing', 'surface_detection'):
+                for k, v in (loaded.get(section) or {}).items():
+                    if k.endswith('_note'):
+                        continue
+                    merged[section][k] = v
+            _AGING_CFG_CACHE = merged
+            _AGING_CFG_CACHE_MTIME = mtime
+        except Exception:
+            _AGING_CFG_CACHE = _AGING_CFG_DEFAULT
+        return _AGING_CFG_CACHE
 
 
 # ============================================================

@@ -5381,6 +5381,9 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         # system_event skip (后台事件不算自我感知).
         # 任何错误静默, 不阻 turn-end.
         # =====================================================================
+        # 🆕 [Phase 4] 在 self-append 前先调 mark_recent_surfaced_by_overlap —
+        # 主脑本轮 reply 若 reference 了 ★ pending entry (token overlap),
+        # mark 那些 entry surfaced=True, 下次 prompt 不再 spotlight 它们.
         try:
             _is_sys_evt = bool(
                 clean_intent and str(clean_intent).startswith('[后台系统')
@@ -5390,6 +5393,15 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     get_inner_voice_track, is_enabled as _iv_enabled,
                 )
                 if _iv_enabled():
+                    # Phase 4 先 mark surfaced (本轮 reply 是否 reference ★ pending)
+                    try:
+                        get_inner_voice_track().mark_recent_surfaced_by_overlap(
+                            reply_text=str(final_reply or ''),
+                            within_min=60.0,
+                        )
+                    except Exception:
+                        pass
+
                     _reply_preview = str(final_reply).strip()[:120]
                     _sir_preview = str(user_input or '').strip()[:60]
                     _voice_content = f'i replied to sir: "{_reply_preview}"'
