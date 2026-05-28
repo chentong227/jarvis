@@ -346,6 +346,68 @@ def get_modules_for_keyword(keyword: str, path: str = None) -> List[dict]:
     return hits[:5]
 
 
+_ARCH_BLOCK_CACHE: dict = {'text': None, 'mtime': 0.0}
+
+
+def build_architecture_block(max_per_layer: int = 2) -> str:
+    """🆕 [SOUL Phase 5 P2] 渲染精简架构概览给思考脑 prompt (self-knowledge).
+
+    思考脑随时知道自己由哪些模块组成 → self-debug 时知道改哪 module/vocab.
+    这是"自我认知"元架构从"我是谁"(Layer 0)到"我的身体构造"的延伸.
+
+    cache by module_map.json mtime (省 IO, 每 tick 调).
+    map 不存在 → lazy refresh 一次.
+    """
+    try:
+        if os.path.exists(_MODULE_MAP_PATH):
+            mt = os.path.getmtime(_MODULE_MAP_PATH)
+            if (_ARCH_BLOCK_CACHE['text'] is not None
+                    and mt == _ARCH_BLOCK_CACHE['mtime']):
+                return _ARCH_BLOCK_CACHE['text']
+        data = load_module_map()
+        if not data:
+            data = refresh(write_md=False)  # lazy init
+        if not data:
+            return ''
+        modules = data.get('modules', {})
+        stats = data.get('stats', {})
+        layers: Dict[str, list] = {}
+        for n, i in modules.items():
+            layers.setdefault(i.get('layer', 'misc'), []).append((n, i))
+        lines = [
+            f"[MY ARCHITECTURE — self-knowledge, "
+            f"{stats.get('total_modules', 0)} modules I'm made of]"
+        ]
+        layer_order = [
+            'thinking', 'soul', 'integrity', 'memory', 'nudge',
+            'intent', 'sensor', 'core',
+        ]
+        for layer in layer_order:
+            mods = layers.get(layer)
+            if not mods:
+                continue
+            mods.sort(key=lambda x: -x[1].get('lines', 0))
+            parts = []
+            for n, i in mods[:max_per_layer]:
+                short = n.replace('jarvis_', '')
+                vocab = i.get('vocab_files', [])
+                vstr = f"(vocab:{vocab[0]})" if vocab else ''
+                parts.append(f"{short}{vstr}")
+            lines.append(f"  {layer}: {', '.join(parts)}")
+        lines.append(
+            "  \u21b3 This is YOUR body. If you notice a recurring system "
+            "issue (e.g. bloat, repeated nudge), you now know which "
+            "module/vocab governs it \u2014 you can reason about self-debug."
+        )
+        text = '\n'.join(lines)
+        _ARCH_BLOCK_CACHE['text'] = text
+        if os.path.exists(_MODULE_MAP_PATH):
+            _ARCH_BLOCK_CACHE['mtime'] = os.path.getmtime(_MODULE_MAP_PATH)
+        return text
+    except Exception:
+        return ''
+
+
 def refresh(root: str = None, write_md: bool = True) -> dict:
     """一键 scan + save json + render md. 返 module_map dict.
 

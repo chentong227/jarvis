@@ -3782,6 +3782,22 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+        # 🆕 [SOUL Phase 5 P2 / Sir 2026-05-29 拍板] MY ARCHITECTURE self-knowledge
+        # ============================================================
+        # 思考脑随时知道自己由哪些模块组成 → self-debug 时知道改哪 module/vocab.
+        # 自我认知元架构延伸: 从"我是谁"(Layer 0 SelfAnchor) 到"我的身体构造".
+        # 数据源: jarvis_module_scanner 动态扫 (永不过时), cache by mtime.
+        # 详 docs/JARVIS_DYNAMIC_MAP_AND_SELF_DEBUG_DESIGN.md
+        # ============================================================
+        try:
+            from jarvis_module_scanner import build_architecture_block
+            _arch = build_architecture_block()
+            if _arch:
+                lines.append(_arch)
+                lines.append("")
+        except Exception:
+            pass
+
         # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn, 字数翻倍 (反思看完整对话)
         lines.append("[STM LAST 5 TURNS]")
         stm = evidence.get('stm') or []
