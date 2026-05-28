@@ -1488,6 +1488,27 @@ class InnerThoughtDaemon:
         self._stop.wait(timeout=self.STARTUP_DELAY_S)
         if self._stop.is_set():
             return
+        # 🆕 [SOUL Phase 5 P4 / Sir 2026-05-29 拍板] 启动 refresh 动态地图
+        # =====================================================================
+        # 思考脑是 module_map 主消费者 (P2 self-knowledge inject). 启动时主动
+        # refresh 一次: ① 确保地图反映当前代码 (重启即更新, 修手 map 过时痛点)
+        # ② 生成 AUTO.md (agent 进窗口看最新架构) ③ 后续 build_architecture_block
+        # 用 mtime cache. 在 daemon thread 内 (~1s, 不阻塞主进程).
+        # 详 docs/JARVIS_DYNAMIC_MAP_AND_SELF_DEBUG_DESIGN.md Layer 1/6.
+        # =====================================================================
+        try:
+            from jarvis_module_scanner import refresh as _mm_refresh
+            _mm_data = _mm_refresh()
+            _mm_st = (_mm_data or {}).get('stats', {})
+            self._bg_log(
+                f"🗺️ [P4/module_map] startup refresh: "
+                f"{_mm_st.get('total_modules', 0)} modules, "
+                f"{len(_mm_st.get('orphans', []))} orphans, "
+                f"{len(_mm_st.get('no_docstring', []))} no-doc "
+                f"(思考脑 self-knowledge 地图新鲜)"
+            )
+        except Exception as _e:
+            self._bg_log(f"⚠️ [P4/module_map] startup refresh fail: {_e}")
         while not self._stop.is_set():
             interval = self.INTERVAL_ACTIVE_S
             try:
