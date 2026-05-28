@@ -100,10 +100,19 @@ class ProactiveShield(threading.Thread):
             # Sir 真离场 (真物理 idle > 30s) + IDE/Cascade 在 fg → 屏幕切换非 Sir 操作.
             # 不再 sentinel hard skip (fix3 revert), 改 sensor evidence 直接进评分:
             # score *= 0.1 大幅衰减, 让评分自然不达 TRIGGER_SCORE.
+            # 🆕 [Sir 2026-05-28 19:47 fix44 P1] 30s 阈值改读 vocab (准则 6)
             try:
                 idle_real = float(snapshot.get('idle_seconds_real', 0) or 0)
                 cascade_active = bool(snapshot.get('cascade_active', False))
-                if idle_real > 30 and cascade_active:
+                try:
+                    from jarvis_sensor_thresholds import get_threshold as _gt
+                    _idle_thr = int(_gt(
+                        'proactive_shield.ghost_dampen_idle_real_s',
+                        default=30,
+                    ))
+                except Exception:
+                    _idle_thr = 30
+                if idle_real > _idle_thr and cascade_active:
                     dampen_factor = 0.10
                     score *= dampen_factor
                     breakdown['ghost_activity_dampen'] = dampen_factor

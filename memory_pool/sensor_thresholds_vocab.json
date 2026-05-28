@@ -1,0 +1,140 @@
+{
+  "_doc": [
+    "Sensor 阈值 vocab (准则 6 持久化 + CLI + reflector).",
+    "Sir 2026-05-28 19:47 fix44 P1: 思考脑 actionable `adjust_sensor_threshold` 写 review_queue, Sir CLI 拍板 → current_values 真生效.",
+    "writable_paths schema: 每 path 有 type / current / min / max / max_delta_per_change / default_value.",
+    "sensor 模块 lazy 读 current_values (env_probe.py / proactive_shield.py / etc).",
+    "CLI: scripts/sensor_thresholds_dump.py list/proposals/approve/reject/apply/reset/dry-run/history/gate."
+  ],
+  "schema_version": 1,
+  "enabled": 1,
+  "writable_paths": {
+    "ghost_activity.cascade_ide_keywords": {
+      "type": "list_str",
+      "description": "Foreground process name keywords 算 IDE/cascade (ghost-source). idle>thr + cascade_active=True → publish ghost_activity_observed.",
+      "current": [
+        "cursor.exe",
+        "windsurf.exe",
+        "code.exe",
+        "devenv.exe",
+        "pycharm",
+        "idea",
+        "jetbrains",
+        "sublime"
+      ],
+      "default": [
+        "cursor.exe",
+        "windsurf.exe",
+        "code.exe",
+        "devenv.exe",
+        "pycharm",
+        "idea",
+        "jetbrains",
+        "sublime"
+      ],
+      "max_items": 30,
+      "owner": "jarvis_env_probe.py"
+    },
+    "ghost_activity.idle_threshold_s": {
+      "type": "int",
+      "description": "idle_seconds_real > 此值 + cascade_active = ghost_activity. 默认 60s.",
+      "current": 60,
+      "default": 60,
+      "min": 30,
+      "max": 600,
+      "max_delta_per_change": 60,
+      "owner": "jarvis_env_probe.py"
+    },
+    "afk.idle_threshold_s": {
+      "type": "int",
+      "description": "idle_seconds_real > 此值 publish sir_afk_detected. 默认 60s.",
+      "current": 60,
+      "default": 60,
+      "min": 30,
+      "max": 600,
+      "max_delta_per_change": 60,
+      "owner": "jarvis_env_probe.py"
+    },
+    "proactive_shield.ghost_dampen_idle_real_s": {
+      "type": "int",
+      "description": "proactive_shield frustration_score dampen 触发 idle_real 阈值. 默认 30s.",
+      "current": 30,
+      "default": 30,
+      "min": 10,
+      "max": 300,
+      "max_delta_per_change": 30,
+      "owner": "jarvis_proactive_shield.py"
+    },
+    "ghost_activity.publish_cooldown_s": {
+      "type": "int",
+      "description": "ghost_activity_observed SWM publish 间隔 (防刷屏). 默认 60s.",
+      "current": 60,
+      "default": 60,
+      "min": 10,
+      "max": 600,
+      "max_delta_per_change": 60,
+      "owner": "jarvis_env_probe.py"
+    }
+  },
+  "review_queue": [],
+  "history": [
+    {
+      "item_id": "sta_1779969793_98c1ac",
+      "path": "ghost_activity.idle_threshold_s",
+      "old_value": 60,
+      "new_value": 90,
+      "source": "inner_thought:thought_test",
+      "rationale": "Sir 测试 propose flow",
+      "action": "applied",
+      "applied_at": 1779969798.8445408,
+      "applied_iso": "2026-05-28T20:03:18"
+    },
+    {
+      "path": "ghost_activity.idle_threshold_s",
+      "old_value": 90,
+      "new_value": 60,
+      "action": "reset_to_default",
+      "reset_at": 1779969802.6145515,
+      "reset_iso": "2026-05-28T20:03:22"
+    },
+    {
+      "item_id": "direct_1779969809_2dfcfb",
+      "path": "afk.idle_threshold_s",
+      "old_value": 60,
+      "new_value": 75,
+      "source": "sir_cli",
+      "rationale": "Sir 测试元否决直改",
+      "action": "applied_direct",
+      "applied_at": 1779969809.3053596,
+      "applied_iso": "2026-05-28T20:03:29"
+    },
+    {
+      "path": "afk.idle_threshold_s",
+      "old_value": 75,
+      "new_value": 60,
+      "action": "reset_to_default",
+      "reset_at": 1779969809.3687232,
+      "reset_iso": "2026-05-28T20:03:29"
+    },
+    {
+      "action": "gate_toggle",
+      "old_value": 1,
+      "new_value": 0,
+      "source": "sir_cli",
+      "rationale": "",
+      "applied_at": 1779969809.4328785,
+      "applied_iso": "2026-05-28T20:03:29"
+    },
+    {
+      "action": "gate_toggle",
+      "old_value": 0,
+      "new_value": 1,
+      "source": "sir_cli",
+      "rationale": "",
+      "applied_at": 1779969809.4910424,
+      "applied_iso": "2026-05-28T20:03:29"
+    }
+  ],
+  "last_modified_at": 1779969809.3687232,
+  "last_modified_iso": "2026-05-28T20:03:29"
+}

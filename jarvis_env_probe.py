@@ -553,19 +553,43 @@ Example: Coding|Working in VS Code on a Python project"""
                 cls.last_real_input_ts = current_time - (idle_time_ms / 1000.0)
                 cls.idle_seconds_real = cls.idle_seconds  # alias 语义清晰
                 # cascade ghost source 检测: 当前 fg process 是否 IDE 类
-                _IDE_PROCESS_KEYWORDS = ('cursor.exe', 'windsurf.exe', 'code.exe',
-                                          'devenv.exe', 'pycharm', 'idea',
-                                          'jetbrains', 'sublime')
+                # 🆕 [Sir 2026-05-28 19:47 fix44 P1] 改读 sensor_thresholds_vocab
+                # 准则 6: hardcode 列表 → memory_pool/sensor_thresholds_vocab.json
+                # 思考脑可 propose 改 (CLI 拍板), Sir 可手调.
+                try:
+                    from jarvis_sensor_thresholds import get_threshold as _gt
+                    _IDE_PROCESS_KEYWORDS = tuple(_gt(
+                        'ghost_activity.cascade_ide_keywords',
+                        default=('cursor.exe', 'windsurf.exe', 'code.exe',
+                                  'devenv.exe', 'pycharm', 'idea',
+                                  'jetbrains', 'sublime'),
+                    ))
+                except Exception:
+                    _IDE_PROCESS_KEYWORDS = ('cursor.exe', 'windsurf.exe',
+                                              'code.exe', 'devenv.exe',
+                                              'pycharm', 'idea', 'jetbrains',
+                                              'sublime')
                 _proc_lower = (cls.current_process_name or '').lower()
                 cls.cascade_active = any(kw in _proc_lower for kw in _IDE_PROCESS_KEYWORDS)
                 cls.cascade_process_name = cls.current_process_name if cls.cascade_active else ""
                 # SWM publish (限频): sir_afk_detected on < 60 → > 60 transition
+                # 🆕 [Sir 2026-05-28 19:47 fix44 P1] 60s 阈值改读 vocab (准则 6)
                 try:
-                    if cls.idle_seconds_real > 60 and cls._prev_idle_seconds_real <= 60:
+                    from jarvis_sensor_thresholds import get_threshold as _gt2
+                    _afk_thr = int(_gt2('afk.idle_threshold_s', default=60))
+                    _ghost_thr = int(_gt2('ghost_activity.idle_threshold_s', default=60))
+                    _publish_cd = int(_gt2('ghost_activity.publish_cooldown_s', default=60))
+                except Exception:
+                    _afk_thr = 60
+                    _ghost_thr = 60
+                    _publish_cd = 60
+                try:
+                    if (cls.idle_seconds_real > _afk_thr
+                            and cls._prev_idle_seconds_real <= _afk_thr):
                         # transition: Sir 刚离场
                         from jarvis_utils import get_event_bus as _geb
                         _bus = _geb()
-                        if _bus is not None and (current_time - cls._last_swm_afk_publish_ts) > 60:
+                        if _bus is not None and (current_time - cls._last_swm_afk_publish_ts) > _publish_cd:
                             cls._last_swm_afk_publish_ts = current_time
                             _bus.publish(
                                 etype='sir_afk_detected',
@@ -580,10 +604,10 @@ Example: Coding|Working in VS Code on a Python project"""
                                 },
                             )
                     # ghost_activity_observed: Sir afk + IDE 在 fg
-                    if cls.idle_seconds_real > 60 and cls.cascade_active:
+                    if cls.idle_seconds_real > _ghost_thr and cls.cascade_active:
                         from jarvis_utils import get_event_bus as _geb2
                         _bus2 = _geb2()
-                        if _bus2 is not None and (current_time - cls._last_swm_ghost_publish_ts) > 60:
+                        if _bus2 is not None and (current_time - cls._last_swm_ghost_publish_ts) > _publish_cd:
                             cls._last_swm_ghost_publish_ts = current_time
                             _bus2.publish(
                                 etype='ghost_activity_observed',

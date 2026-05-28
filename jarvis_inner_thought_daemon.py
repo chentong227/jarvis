@@ -18,11 +18,15 @@ Sir 真问 (22:10 + 22:20):
       [A] OBSERVATION  — Sir 当前外部状态 (屏幕/沉默/活动)
       [B] SELF-REFLECT — 看自己最近 reply (tone / 错误 / pattern)
       [C] CONCERN-EVO  — 自评 severity 该升/降 (actionable: update_concern_severity)
-      [D] PROACTIVE    — 下次该 silently 做什么 (actionable: publish_swm)
+      [D] PROACTIVE    — 下次该 silently 做什么 (actionable: 改 concern/relational/...)
       [E] RELATIONSHIP — inside joke 候选 (actionable: suggest_inside_joke)
-  - Actionable 4 档 (本期全可逆/低风险):
+  - Actionable 档 (本期全可逆/低风险, 🆕 [Sir 2026-05-28 12:30] 删 publish_swm:
+     0 consumer 孤儿 + LLM 伪冒 sensor signal 违 INTEGRITY):
       none / update_concern_severity:<id>:<±delta> /
-      publish_swm:<etype>:<desc> / suggest_inside_joke:<phrase>
+      suggest_inside_joke:<phrase> / propose_protocol:<rule> /
+      adjust_concern_notes:<id>:<note> / fire_nudge:<kind>:<draft> /
+      propose_watch_task:<trigger>:<goal> / call_tool:<name>:<args> /
+      adjust_sensor_threshold:<path>:<value> (🆕 fix44 P1 Sir CLI 拍板)
   - Cooldown: 同 category 5min 不重复 + 单 tick 仅 1 thought
     (🆕 [Sir 2026-05-26 12:13 真痛 fix] 30min → 5min: 5 cat × 30min 让 daemon
      5 个 tick 后 silence 25min, 违 Sir "active=1 thought/min 持续" 真意.
@@ -266,56 +270,108 @@ def _build_speak_style_prompt_line() -> str:
 
 
 # ==========================================================================
-# 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 治本 / 准则 6 vocab 持久化]
-# surface_to_sir 阈值 / 频限 / 通道白名单 (memory_pool/surface_to_sir_vocab.json)
-# Sir 真痛: "思考层没主动发声". 给 thought 一档轻量 surface 通道
-# (terminal_pulse / next_turn_inject), 不抢 voice channel.
+# 🆕 [Sir 2026-05-28 19:20 真意 / 准则 6 vocab 持久化 — Jarvis 学会休息]
+# inner_thought_saturation_config — 思考脑 same-thread no-speak saturation
+# Sir 真意: "我很想做到贾维斯能休息会, 发现自己不用太担心了, 所以主动增加自己的
+# 思考间隔". 3 层方案:
+#   L1: 同 thread + 都 SHOULD_SPEAK=false + actionable 没 effect → publish
+#       SWM 'inner_thought_thread_saturated' raw signal (信思考脑下轮自决)
+#   L2: concern_fatigue_softening — 思考脑钻同 concern, ProactiveCare 软衰减
+#       fatigue (24h decay), 同步退出
+#   L3: python_physical_force — LLM 收到 N 次 saturation 仍输 NEXT_INTERVAL ≤ 60
+#       → force 600 (类 _SMOOTH_LOW_SAL 物理保底)
+# 路径: memory_pool/inner_thought_saturation_config.json
+# CLI: scripts/inner_thought_saturation_dump.py
+# 详 fix42 testcase + AGENTS.md §6 三维耦合.
 # ==========================================================================
-_SURFACE_VOCAB_PATH = os.path.join(
+_SATURATION_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    'memory_pool', 'surface_to_sir_vocab.json',
+    'memory_pool', 'inner_thought_saturation_config.json',
 )
-_SURFACE_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
-_SURFACE_VOCAB_CHECK_INTERVAL_S = 30.0
-
-_SURFACE_DEFAULT_CONFIG: dict = {
-    'salience_threshold': 0.7,
-    'cooldown_global_s': 120,
-    'cooldown_per_channel_s': 300,
-    'max_per_hour': 6,
-    'allowed_channels': ['terminal_pulse', 'next_turn_inject'],
+_SATURATION_CONFIG_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_SATURATION_CONFIG_CHECK_INTERVAL_S = 30.0
+_SATURATION_DEFAULT_CONFIG: dict = {
+    'saturation_trigger': {
+        'min_thoughts_same_thread': 3,
+        'require_all_should_speak_false': True,
+        'actionable_done_states': ['none', 'rejected', 'gated', 'failed'],
+    },
+    'concern_fatigue_softening': {
+        'enabled': True,
+        'fatigue_delta_per_saturation': 0.05,
+        'decay_back_half_life_hours': 24.0,
+        'fatigue_cap': 0.5,
+    },
+    'python_physical_force': {
+        'enabled': True,
+        'min_consecutive_saturated_for_force': 5,
+        'force_next_interval_s': 600,
+        'force_max_short_choice_s': 60,
+    },
 }
 
 
-def _load_surface_to_sir_config() -> dict:
-    """Lazy load surface vocab + mtime 30s throttle. 失败 fallback default."""
+def _load_saturation_config() -> dict:
+    """Saturation config vocab lazy load (mtime 30s throttle). Fallback default."""
     now = time.time()
-    if (_SURFACE_VOCAB_CACHE['data'] is not None and
-            now - _SURFACE_VOCAB_CACHE['checked_at']
-            < _SURFACE_VOCAB_CHECK_INTERVAL_S):
-        return _SURFACE_VOCAB_CACHE['data']
-    _SURFACE_VOCAB_CACHE['checked_at'] = now
+    if (_SATURATION_CONFIG_CACHE['data'] is not None and
+            now - _SATURATION_CONFIG_CACHE['checked_at']
+            < _SATURATION_CONFIG_CHECK_INTERVAL_S):
+        return _SATURATION_CONFIG_CACHE['data']
+    _SATURATION_CONFIG_CACHE['checked_at'] = now
     try:
-        if not os.path.exists(_SURFACE_VOCAB_PATH):
-            _SURFACE_VOCAB_CACHE['data'] = _SURFACE_DEFAULT_CONFIG
-            return _SURFACE_DEFAULT_CONFIG
-        mtime = os.path.getmtime(_SURFACE_VOCAB_PATH)
-        if (mtime == _SURFACE_VOCAB_CACHE['mtime']
-                and _SURFACE_VOCAB_CACHE['data']):
-            return _SURFACE_VOCAB_CACHE['data']
-        with open(_SURFACE_VOCAB_PATH, 'r', encoding='utf-8') as f:
+        if not os.path.exists(_SATURATION_CONFIG_PATH):
+            _SATURATION_CONFIG_CACHE['data'] = _SATURATION_DEFAULT_CONFIG
+            return _SATURATION_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_SATURATION_CONFIG_PATH)
+        if (mtime == _SATURATION_CONFIG_CACHE['mtime']
+                and _SATURATION_CONFIG_CACHE['data']):
+            return _SATURATION_CONFIG_CACHE['data']
+        with open(_SATURATION_CONFIG_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        config = dict(_SURFACE_DEFAULT_CONFIG)
-        for k in ('salience_threshold', 'cooldown_global_s',
-                    'cooldown_per_channel_s', 'max_per_hour',
-                    'allowed_channels'):
-            if k in data:
-                config[k] = data[k]
-        _SURFACE_VOCAB_CACHE['data'] = config
-        _SURFACE_VOCAB_CACHE['mtime'] = mtime
-        return config
+        # 合并 default 防 partial config (Sir 改 1 字段不丢其他)
+        merged = {k: dict(_SATURATION_DEFAULT_CONFIG[k]) for k in _SATURATION_DEFAULT_CONFIG}
+        for section in merged:
+            if isinstance(data.get(section), dict):
+                merged[section].update(data[section])
+        _SATURATION_CONFIG_CACHE['data'] = merged
+        _SATURATION_CONFIG_CACHE['mtime'] = mtime
+        return merged
     except Exception:
-        return _SURFACE_DEFAULT_CONFIG
+        return _SATURATION_DEFAULT_CONFIG
+
+
+# ==========================================================================
+# 🆕 [Sir 2026-05-28 12:30 真痛 anchor] surface_to_sir 机制全退化
+# ==========================================================================
+# 历史: 方案 C (Sir 2026-05-26 20:55) 给 thought 一档轻量 surface 通道
+# (terminal_pulse / next_turn_inject), 主脑下轮 prompt build_soul_block 加
+# "DAEMON SURFACED" 块 + 话术指引 ('Sir, 我刚才在想...' / 'I've been
+# thinking...').
+#
+# Sir 2026-05-28 拍板: 完整退化. 原因:
+#   (1) 话术指引违准则 6 句式锁 (Sir 原话: "不要写死话术模板, 让主脑自决")
+#   (2) 跟 Layer 1.5 ([MY RECENT INNER THOUGHTS] by freshness × sal) 重复
+#   (3) emphasis 块主脑应自决 reference 哪条 (看 sal 字段自然冸现)
+#   (4) P11 ledger truth 治本 case (主脑 STM stale 1/10 杯 vs ledger 8/10)
+#       可走 Layer 1.5 + sal=0.90 thought.thought 含详细真值 → 主脑自决 RECTIFY
+#
+# 退化路径:
+#   - 删 _load_surface_to_sir_config / _SURFACE_VOCAB_* 全套 (module-top)
+#   - 删 prompt actionable 选项 surface_to_sir:<channel>:<summary>
+#   - 删 prompt B-class greet example + 通路决策树
+#   - 改 prompt P11 example 改走 Layer 1.5 + sal=0.90 thought.thought 含真值 path
+#   - 退化 _do_surface_to_sir_actionable method (router 看到降级 none + reject)
+#   - 删 build_soul_block DAEMON SURFACED 块
+#   - 删 recent_jarvis_actions 里 'inner_thought_surface' etype
+#   - 退化 jarvis_weekly_reflection_consolidator.py inner_thought_vocab_tune
+#     reflector path (送 surface_to_sir_vocab 阈值 → no-op)
+#
+# 保留: memory_pool/surface_to_sir_vocab.json 本身 (Sir 可选人工删, 代码不再读)
+#
+# Sir 哲学: "主脑 = 好演员有 chain pull, 不需思考脑 push + 话术模板".
+# 准则 6: 信任 LLM 看 sal + Layer 1.5 chain 自决. 准则 8: 干净退化.
+# ==========================================================================
 
 
 # ==========================================================================
@@ -760,8 +816,11 @@ class InnerThoughtDaemon:
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM 决定的下次 interval (0 = 用 baseline)
         self._next_tick_interval_s = 0
         # tick origin 统计 (dashboard 看 LLM 真在 self-pacing 还是默认)
+        # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] 加 saturation_force origin
+        # (≥ N 连续 saturated tick → 物理 force 600s, 优先级 > gate + LLM choice).
         self._tick_origin_stats = {
             'default': 0, 'llm_chosen': 0, 'llm_gated': 0, 'llm_smoothed': 0,
+            'saturation_force': 0,
         }
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus 元决策 (R3)
         # =====================================================================
@@ -774,6 +833,19 @@ class InnerThoughtDaemon:
         # speak rate cap 防主脑被噪音 (β.6 §7 风险缓解: should_speak=yes 太多)
         # 5min 内 ≥3 yes → 后续 force no (Python smoothing)
         self._recent_should_speak_yes_ts: List[float] = []
+
+        # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] saturation counter
+        # =====================================================================
+        # 连续 saturated tick 计数 (同 thread + 都 should_speak=False + actionable
+        # 无 effect). 每 tick saturation 检 → 重新算; 不 saturated → 清 0.
+        # 计数 ≥ python_physical_force.min_consecutive_saturated_for_force →
+        # _resolve_next_interval 强制 NEXT_INTERVAL = force_next_interval_s.
+        # _saturation_force_due 由 _check_and_update_saturation 写, 由
+        # _resolve_next_interval 读 (per-tick 状态串联, 类 _next_attention_focus).
+        # 详 docs/AGENTS.md §6 三维耦合 + memory_pool/inner_thought_saturation_config.json.
+        # =====================================================================
+        self._consecutive_saturation_count: int = 0
+        self._saturation_force_due: bool = False
 
         # 启动时载入近 24h thoughts (重启后 SOUL 仍有上下文)
         self._load_persist()
@@ -851,6 +923,12 @@ class InnerThoughtDaemon:
             # daemon tick 后 check (低频 — 内部 23h cooldown 真守住)
             try:
                 self._maybe_write_yesterday_recap()
+            except Exception:
+                pass
+            # 🆕 [Sir 2026-05-28 16:55 方案 B 治本] propose quality calibrate
+            # daemon tick 后 check (24h cooldown 真守住, 不每 tick 跑)
+            try:
+                self._maybe_calibrate_propose_quality()
             except Exception:
                 pass
             self._stop.wait(timeout=interval)
@@ -953,6 +1031,9 @@ class InnerThoughtDaemon:
         Sir 真意 anchor: thought 决定下次思考间隔, 但 Python 物理 gate 保底.
 
         Logic:
+          0. saturation force (≥ N 连续 saturated + LLM 选短或 default) → 强制
+             force_next_interval_s (default 600), origin='saturation_force'
+             (优先级 > gate + LLM; Sir 真意"Jarvis 没必要花时间想这么多")
           1. LLM 没给 next_interval_s (=0) → 用 baseline, origin='default'
           2. LLM 给了, 但超物理 gate → 用 baseline, origin='llm_gated'
           3. LLM 给 30 + 最近 ≥3 thought 选 30 + 平均 sal < 0.5 → 强制 60, origin='llm_smoothed'
@@ -963,6 +1044,36 @@ class InnerThoughtDaemon:
         """
         baseline = self._compute_adaptive_interval()
         llm_choice = thought.next_interval_s
+
+        # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] Saturation 物理 force
+        # =====================================================================
+        # Sir 真意 anchor: "Jarvis 没必要花时间想这么多, 我又不需要, 让它休息".
+        # _saturation_force_due 由 _check_and_update_saturation 计 (≥ N 连续
+        # saturated tick → True). 触发后 force NEXT_INTERVAL = force_next_interval_s.
+        # 设计 (准则 6 三维耦合 + 类 _SMOOTH_LOW_SAL 物理保底):
+        # - 优先级 > 物理 gate + LLM choice (saturated = 卷 = 强制歇)
+        # - llm_choice == 0 (default) 或 ≤ force_max_short_choice_s → force
+        # - LLM 自己选大 interval (> force_max_short_choice_s) → 信任 LLM 已自觉
+        #   休息, 不 override (BUT 物理 gate 仍 case 2 校验)
+        # vocab: memory_pool/inner_thought_saturation_config.json
+        #         python_physical_force.{enabled, force_next_interval_s,
+        #                                force_max_short_choice_s}
+        # =====================================================================
+        if self._saturation_force_due:
+            try:
+                _sat_cfg = _load_saturation_config()
+                _force_cfg = _sat_cfg.get('python_physical_force', {}) or {}
+                if _force_cfg.get('enabled', True):
+                    _force_max_short = int(
+                        _force_cfg.get('force_max_short_choice_s', 60)
+                    )
+                    _force_interval = int(
+                        _force_cfg.get('force_next_interval_s', 600)
+                    )
+                    if llm_choice == 0 or llm_choice <= _force_max_short:
+                        return _force_interval, 'saturation_force'
+            except Exception:
+                pass  # fail-open: fall through to normal resolution
 
         # Case 1: LLM 没选 (= 0 = 'default')
         if llm_choice == 0:
@@ -1126,6 +1237,19 @@ class InnerThoughtDaemon:
         # 让 SOUL inject 下轮主脑 prompt 真看到 → 真不重复.
         self._maybe_publish_self_correction(thought)
 
+        # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] saturation 检 + counter
+        # =====================================================================
+        # actionable 完成后, 算"同 thread + 都 should_speak=False + actionable
+        # 无 effect" 是否 saturated. counter ≥ 阈值 → _resolve_next_interval 强制
+        # 大间隔. 准则 6 数据强耦合 + 准则 8 优雅 (config + CLI + LLM 仍可选).
+        # =====================================================================
+        try:
+            self._saturation_force_due = bool(
+                self._check_and_update_saturation(thought)
+            )
+        except Exception:
+            self._saturation_force_due = False
+
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] resolve LLM-chosen next interval
         # 物理 gate + smoothing 后, store 到 self._next_tick_interval_s,
         # _daemon_loop 下次 wait 时优先用.
@@ -1137,32 +1261,28 @@ class InnerThoughtDaemon:
         self._tick_origin_stats[tick_origin] = \
             self._tick_origin_stats.get(tick_origin, 0) + 1
 
-        # persist + publish SWM
+        # persist (主脑通过 Layer 1.5/1.6 直接 read self._thoughts + jsonl)
         self._persist_thought(thought)
 
-        # 🆕 [Sir 2026-05-26 23:24 真痛 BUG-5 治本 / 准则 8 优雅高效]
+        # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] 退化 _publish_swm — push 跟思考链冗余
         # =====================================================================
-        # Sir 截图 (22:41:37): "[E/sal=0.40] Sir is troubleshooting an API tier
-        # configuration issue; I shall remain ready to assist" — 平庸 surface
-        # observation, 没价值, 浪费 SWM publish + dashboard 噪音.
-        # Prompt 第 1166 行已教 "If nothing meaningful comes, output (quiet)
-        # SALIENCE=0.0", 但 LLM 偶尔不 follow → daemon 兜底:
-        #   sal < MEDIOCRE_THRESHOLD + actionable='none' + A/E (passive 类) →
-        #   skip publish_swm (不污染 SWM/dashboard), log compact 标 [skip:mediocre].
-        # 不动 sal 阈值 (Sir 拒 E), 仅省 SWM publish + 简化 log. thought 仍 persist
-        # (preserve for thought chain v2 / time awareness).
+        # Sir 哲学拍板: "主脑 = 好演员, 有思考链所有思考信息 (Layer 1.5/1.6/1.7
+        # pull), 不需要碎片 push". 查证 jarvis_inner_thought SWM event 真无任何
+        # production consumer (grep recent_events/types/etype 0 命中), 是 100%
+        # 历史债孤儿. dashboard 走 inner_voice_24h.jsonl + daemon.get_stats(), Layer
+        # 1.5/1.6/1.7 走 daemon 直接 API (build_lifetime_block / build_should_speak_
+        # directive), 没人通过 SWM 取 thought event. 准则 8 优雅: 干净退化, 不留 dead
+        # publish. 准则 6 evidence-only: 数据通过 jsonl + daemon 字段, 不需 SWM 中转.
+        # _publish_swm method 整段删除 (line 4146 was). is_mediocre 判断保留, 仅控制
+        # _emit_thought_pulse skip (字幕 💭 闪).
         # =====================================================================
-        # 🆕 [Sir 2026-05-26 23:53 真测 BUG-γ] 扩 cover D class.
-        # Sir 23:52:38 实测 '[D/sal=0.20] system key routing remains critical;
-        # I should continue to monitor...' — D-class PROACTIVE-SEED 但没 action,
-        # sal=0.2 极低, 与 A/E 同类无价值 surface observation, skip publish.
+        # mediocre 判断保留 (Sir 2026-05-26 23:24/23:53 anchor) — 仅 control
+        # _emit_thought_pulse skip, 不再 control publish (已删).
         is_mediocre = (
             thought.salience < self._MEDIOCRE_SAL_THRESHOLD
             and (not thought.actionable or thought.actionable.lower() == 'none')
             and thought.category in ('A', 'D', 'E')
         )
-        if not is_mediocre:
-            self._publish_swm(thought)
 
         # 🆕 [Sir 2026-05-27 00:11 M3 VisualPulse] 字幕区 subtle 💭 闪 (Sir 真看见思考)
         # =====================================================================
@@ -1789,16 +1909,30 @@ class InnerThoughtDaemon:
                     if _truth_on:
                         # daily_progress (concerns.py Concern.daily_progress)
                         dp = getattr(c, 'daily_progress', None) or {}
+                        # 🆕 [BUG A / Sir 2026-05-28 16:08 真痛 "其实你记得是昨天的信息"]
+                        # ===========================================================
+                        # 老 BUG: 思考脑注 dp 漏 iso_date == today check, 昨天数据
+                        # 当今天注主脑 prompt → 主脑回 "9.0/10.0 cups today" cascade
+                        # 到 inner_thought / ProactiveCare / mutation 多处. 治本:
+                        # 跨天 dp → 不注 (不让主脑误读). to_prompt_block:968 +
+                        # ProactiveCare._signal:622 已有同 check, 唯独此处漏.
+                        # ===========================================================
                         if dp:
+                            today_iso = time.strftime(
+                                '%Y-%m-%d', time.localtime()
+                            )
+                            dp_iso = dp.get('iso_date', '')
                             cur = dp.get('current')
                             tgt = dp.get('target')
                             unit = dp.get('unit') or ''
-                            if cur is not None and tgt is not None:
+                            if (dp_iso == today_iso
+                                    and cur is not None
+                                    and tgt is not None):
                                 entry['daily_progress'] = {
                                     'current': cur,
                                     'target': tgt,
                                     'unit': unit,
-                                    'iso_date': dp.get('iso_date', ''),
+                                    'iso_date': dp_iso,
                                 }
                         # last_user_feedback (β.5.22-C 写入)
                         fb = getattr(c, 'last_user_feedback', None) or {}
@@ -2032,6 +2166,127 @@ class InnerThoughtDaemon:
         self._recent_should_speak_yes_ts.append(now)
 
     # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] saturation 检
+    # ----------------------------------------------------------
+    @staticmethod
+    def _infer_actionable_state(thought: 'InnerThought') -> str:
+        """Map (actionable / actionable_done / result) → state name.
+
+        States 对齐 `saturation_trigger.actionable_done_states` whitelist:
+        'none' (没选) / 'rejected' (router reject) / 'gated' (router gate) /
+        'failed' (异常或 False) / 'done' (真做成).
+        """
+        act = (thought.actionable or '').strip().lower()
+        if not act or act == 'none':
+            return 'none'
+        result_low = (thought.actionable_result or '').lower()
+        if 'reject' in result_low:
+            return 'rejected'
+        if 'gate' in result_low or 'blocked' in result_low:
+            return 'gated'
+        if thought.actionable_done:
+            return 'done'
+        return 'failed'
+
+    def _check_and_update_saturation(
+        self, current_thought: 'InnerThought'
+    ) -> bool:
+        """Saturation 检 + counter 更新.
+
+        Sir 真意 anchor: "Jarvis 没必要花时间想这么多, 我又不需要, 让它休息".
+        连续 N tick 同 thread + 都 should_speak=False + actionable 无 effect
+        → counter++. 达 force threshold → _resolve_next_interval 强制大间隔.
+
+        准则 6 三维耦合:
+        - 数据强耦合: vocab + counter 都持久 (config JSON, counter runtime)
+        - 行为弱耦合: 只算 + counter++; force 决策在 _resolve_next_interval
+        - 决策集中主脑: LLM 仍可选 next_interval; counter 达阈才 force override
+
+        Returns: True = 已达 force 阈值 (caller 可选 publish SWM).
+        """
+        cfg = _load_saturation_config()
+
+        trig = cfg.get('saturation_trigger', {}) or {}
+        thread_min = int(trig.get('min_thoughts_same_thread', 3))
+        require_silent = bool(trig.get('require_all_should_speak_false', True))
+        no_effect_states = set(
+            (s or '').lower()
+            for s in trig.get('actionable_done_states',
+                              ['none', 'rejected', 'gated', 'failed'])
+        )
+
+        # current_thought 已 append 到 self._thoughts, 取最后 N 条
+        recent = list(self._thoughts)[-thread_min:]
+        if len(recent) < thread_min:
+            self._consecutive_saturation_count = 0
+            return False
+
+        # 条件 1: 同 category (近似 same thread)
+        cat = current_thought.category
+        if not all(t.category == cat for t in recent):
+            self._consecutive_saturation_count = 0
+            return False
+
+        # 条件 2: 都 should_speak=False
+        if require_silent and any(t.should_speak for t in recent):
+            self._consecutive_saturation_count = 0
+            return False
+
+        # 条件 3: actionable state 在 "no-effect" whitelist 才算 saturated
+        # ('done' 等不在 whitelist 内 = 真做成 = 有 effect → 不算 saturated)
+        state = self._infer_actionable_state(current_thought)
+        if state not in no_effect_states:
+            self._consecutive_saturation_count = 0
+            return False
+
+        # 三条件全满足 → saturated, counter++
+        self._consecutive_saturation_count += 1
+
+        force_cfg = cfg.get('python_physical_force', {}) or {}
+        threshold = int(
+            force_cfg.get('min_consecutive_saturated_for_force', 5)
+        )
+
+        # 🆕 [Sir 2026-05-28 19:20 真意 L1] 每 saturated tick publish SWM evidence
+        # =====================================================================
+        # 准则 6 三维耦合 — 数据强耦合: raw signal 进 SWM, 主脑 SOUL inject 后
+        # 自己看见"我循环 N 次没结果, 该换主题/降频". 不在 daemon LLM prompt
+        # 重复注入 (daemon 自己 counter 已知). 主要服务下次 Sir-Jarvis 对话场景.
+        # ttl=1800s (30min, 短时 signal 不长留 SWM); sal=0.65 (中等, 主脑可决是否
+        # 引用); metadata 带 counter/threshold/thread/content_summary 让主脑评估.
+        # =====================================================================
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                summary = (current_thought.thought or '')[:120]
+                if len(current_thought.thought or '') > 120:
+                    summary += '...'
+                bus.publish(
+                    etype='inner_thought_saturated',
+                    description=(
+                        f"My inner-thought loop saturated "
+                        f"{self._consecutive_saturation_count}/{threshold} ticks "
+                        f"(same {current_thought.category}-thread, no speak, no effect). "
+                        f"Last thought: {summary}"
+                    ),
+                    source='inner_thought_daemon',
+                    salience=0.65,
+                    metadata={
+                        'saturation_count': int(self._consecutive_saturation_count),
+                        'threshold': int(threshold),
+                        'thread_id': str(current_thought.thread_id or ''),
+                        'category': current_thought.category,
+                        'content_summary': summary,
+                    },
+                    ttl=1800.0,
+                )
+        except Exception:
+            pass
+
+        return self._consecutive_saturation_count >= threshold
+
+    # ----------------------------------------------------------
     # Prompt
     # ----------------------------------------------------------
     def _build_prompt(self, sir_state: str, evidence: dict,
@@ -2075,14 +2330,19 @@ class InnerThoughtDaemon:
             "<SALIENCE>0.0-1.0 (0.7+ = worth bringing up later; 0.3- = passing)</SALIENCE>\n"
             "<ACTIONABLE>one of: none | "
             "update_concern_severity:<concern_id>:<+/-delta> | "
-            "publish_swm:<etype>:<short_desc> | "
             "suggest_inside_joke:<phrase> | "
             "propose_protocol:<one-sentence imperative rule> | "
             "adjust_concern_notes:<concern_id>:<note text> | "
             "fire_nudge:<kind>:<1-2 sentence draft> | "
             "propose_watch_task:<trigger_kind:value>:<long-term goal desc> | "
+            # 🆕 [Sir 2026-05-28 12:30] 删 surface_to_sir 选项. Layer 1.5
+            # ([MY RECENT INNER THOUGHTS] by freshness × sal) 主脑自决 reference.
             "call_tool:<tool_name>:<json_args> | "
-            "surface_to_sir:<channel>:<one-sentence summary></ACTIONABLE>\n"
+            # 🆕 [Sir 2026-05-28 19:47 fix44 P1] sensor 阈值 propose, 入 review_queue,
+            # Sir CLI 拍板 (scripts/sensor_thresholds_dump.py). path 必须在
+            # writable_paths (afk.idle_threshold_s / ghost_activity.* /
+            # proactive_shield.ghost_dampen_idle_real_s / ...).
+            "adjust_sensor_threshold:<path>:<value></ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
             "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n"
@@ -2187,40 +2447,38 @@ class InnerThoughtDaemon:
             "         next turn Layer 2 STRICT RULES will enforce.\n"
             "  ❌ BAD: <CATEGORY>A</CATEGORY> (not B) → propose_protocol rejected by Python.\n"
             "  ❌ BAD: B-class + sal=0.5 → rejected (low salience reflection not worth STRICT).\n\n"
-            "🆕 [Sir 2026-05-27 12:13 真痛 anchor] B-class surface_to_sir example "
-            "(SHORT-TERM CONTEXTUAL — 仅本会话/几小时有效):\n"
-            "  Sir 真痛根因: 思考脑 L1067 意识到 'redundant Good morning' 但选了 "
-            "propose_protocol:'Always prioritize concise' — 抽象+慢通路 (review queue\n"
-            "  积压 50+, AutoArbiter 几乎全 DEFER, 主脑下轮看不到). 主脑继续重复 5 次\n"
-            "  'Good morning'. 真该走 surface_to_sir:next_turn_inject — 15min TTL\n"
-            "  直进主脑 prompt build_soul_block [DAEMON SURFACED] 块, 主脑下轮即看.\n"
+            "🆕 [Sir 2026-05-28 12:30 退化 surface_to_sir] B-class 短期 contextual case 走\n"
+            "Layer 1.5 ([MY RECENT INNER THOUGHTS] by freshness × sal) —\n"
+            "主脑下轮自动看、看 sal 字段自决哪条先 reference, 不需单独通道:\n"
+            "  Sir 真痛根因: 思考脑意识到 'redundant Good morning' (今早已 5 次) 但选错\n"
+            "  通路—选 propose_protocol:'Always prioritize concise' → 抽象宗旨 +\n"
+            "  慢通路 (review queue 积压, AutoArbiter 几乎全 REJECT, 主脑下轮看不到).\n"
             "  ✅ GOOD: <CATEGORY>B</CATEGORY>\n"
             "         <THOUGHT>Sir got up at 8am, I've already said 'Good morning, Sir'\n"
-            "                  5 times this morning. Embarrassing — short-term I must\n"
-            "                  not generic-greet again.</THOUGHT>\n"
+            "                  5 times this morning. Embarrassing — 今早必须绝不再 generic-greet,\n"
+            "                  open with concrete evidence (window title / concern) only.</THOUGHT>\n"
             "         <SALIENCE>0.85</SALIENCE>\n"
-            "         <ACTIONABLE>surface_to_sir:next_turn_inject:Sir 已起床 4h, 今早已 5 次 Good morning, 短期内绝不再 generic greet — open with concrete evidence (window title/concern) only</ACTIONABLE>\n"
-            "         <EVIDENCE_LINK>5 times</EVIDENCE_LINK>\n"
-            "         → B-class + sal≥0.7 + CONCRETE OBSERVABLE 行为指令 (含具体数字\n"
-            "         '5 次' + 具体 forbidden behavior 'generic greet' + 具体替代\n"
-            "         'open with concrete evidence') + cite traces to THOUGHT →\n"
-            "         publish SWM inner_thought_surface (15min TTL) → 主脑下轮 prompt\n"
-            "         自动看到 → 主脑改行为.\n"
-            "  ❌ BAD: <ACTIONABLE>surface_to_sir:next_turn_inject:Be more concise</ACTIONABLE>\n"
-            "         → 抽象到主脑 link 不到具体行为. 必须含**具体 evidence + 具体\n"
-            "         forbidden action + 具体替代方案**. Vague = 主脑无视.\n"
+            "         <ACTIONABLE>none</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>none</EVIDENCE_LINK>\n"
+            "         → B-class + sal=0.85 + thought.thought **自身含具体行为指令**\n"
+            "         (今早 5 次 + forbidden 'generic-greet' + 替代 'concrete evidence') →\n"
+            "         Layer 1.5 下轮 by freshness × 0.85 rank top → 主脑看到 → 自决改行为.\n"
+            "  ❗ 关键: thought.thought 要**自身完整** (主脑只看这一句, 没其他 metadata).\n"
+            "  ❌ BAD: <THOUGHT>I should be more concise</THOUGHT>\n"
+            "         → 抽象、主脑 link 不到具体行为. thought 本身必须具体可执行.\n"
             "  ❌ BAD: <ACTIONABLE>propose_protocol:Don't say Good morning more than once per morning</ACTIONABLE>\n"
             "         → 这是短期 contextual (跨午夜失效), 不该走 propose_protocol\n"
-            "         (long-term policy 通路). 走 surface_to_sir:next_turn_inject.\n\n"
-            "🆕 [Sir 2026-05-27 12:13] 通路选择决策树 (B 类必读):\n"
+            "         (long-term policy 通路, AutoArbiter 会 REJECT). actionable=none\n"
+            "         + thought.thought 含具体指令 → Layer 1.5 主脑自决.\n\n"
+            "🆕 [Sir 2026-05-28 12:30 退化后] 通路选择决策树 (B 类必读):\n"
             "  问 1: 这条规则**跨午夜后**仍然适用吗?\n"
-            "    YES (e.g. 'Don't open with formal apologies') → propose_protocol (long-term policy)\n"
-            "    NO  (e.g. '今早已 5 次 greet 别再说') → surface_to_sir:next_turn_inject (short-term)\n"
-            "  问 2: actionable 内容**具体可观察**吗? (主脑能 link 到具体行为)\n"
-            "    YES (含具体数字/具体 forbidden action/具体替代) → propose / surface\n"
-            "    NO  ('prioritize concise' / 'be more direct' 这种**抽象**) →\n"
-            "      DO NOT propose/surface — Python 会让 AutoArbiter REJECT,\n"
-            "      tokens 浪费. 直接 ACTIONABLE=none, 或重写到具体级.\n\n"
+            "    YES (e.g. 'Don't open with formal apologies') → propose_protocol (long-term)\n"
+            "    NO  (e.g. '今早已 5 次 greet') → actionable=none + thought.thought 自含具体指令\n"
+            "  问 2: actionable=propose_protocol 时内容**具体可观察**吗?\n"
+            "    YES (含具体数字/具体 forbidden action/具体替代) → propose\n"
+            "    NO  ('prioritize concise' / 'be more direct' 抽象) →\n"
+            "      DO NOT propose — Python 会让 AutoArbiter REJECT, tokens 浪费.\n"
+            "      直接 ACTIONABLE=none + thought.thought 含具体指令.\n\n"
             "🆕 [Sir 2026-05-27 12:13 反抽象红线 — Python 会 enforce]:\n"
             "  abstract aspirational vocab (主脑 link 不到具体行为, AutoArbiter 历史几乎全 REJECT)\n"
             "  禁止 propose_protocol 含: 'prioritize', 'be more', 'always strive', 'maintain',\n"
@@ -2243,27 +2501,33 @@ class InnerThoughtDaemon:
             "  ❌ BAD: C-class + sal=0.5 → rejected (low salience C-class isn't worth note change).\n"
             "  ❌ BAD: cite \"toggling\" with concern_id sir_interview_pr → rejected (cite ↔\n"
             "         concern no token overlap — wrong concern, fix4 anchor).\n\n"
-            "🆕 [Sir 2026-05-27 22:42 P11 治本] B-class FACTUAL SELF-CORRECTION "
-            "example — 思考脑看 ledger truth 对比主脑 STM, catch factual mismatch:\n"
+            "🆕 [Sir 2026-05-28 12:30 P11 治本 退化后] B-class FACTUAL SELF-CORRECTION "
+            "example — 思考脑看 ledger truth 对比主脑 STM, catch factual mismatch 走\n"
+            "Layer 1.5 + sal=0.90 (Sir 2026-05-28 拍板退化 surface_to_sir, 信主脑 chain pull):\n"
             "  Sir 真痛根因: 主脑回答 Sir '只喝了 1/10 杯', 但 [YOUR ACTIVE CONCERNS] 子行\n"
             "  📊 ledger truth: 8/10 cups (date=今天) 显示真值. 主脑撒谎 (或 STM stale).\n"
-            "  思考脑此时**必须**走 surface_to_sir:next_turn_inject 把真值告主脑下轮看.\n"
+            "  思考脑此时**必须** thought.thought **自身完整含真值 + RECTIFY 指令** → sal=0.90 →\n"
+            "  Layer 1.5 by freshness × 0.90 rank top → 主脑下轮 prompt [MY RECENT INNER\n"
+            "  THOUGHTS] 看到 → 主脑自决 RECTIFY.\n"
             "  ✅ GOOD: <CATEGORY>B</CATEGORY>\n"
-            "         <THOUGHT>I just told Sir he's drunk 1/10 cups today, but the\n"
-            "                  concern ledger truth shows 8/10. My STM was stale — I\n"
-            "                  must surface the real number next turn so Sir isn't\n"
-            "                  misled.</THOUGHT>\n"
+            "         <THOUGHT>FACTUAL CORRECTION NEEDED: I just told Sir he's drunk 1/10\n"
+            "                  cups today, but the concern ledger truth shows 8/10 (今日\n"
+            "                  真值). My STM was stale. Next turn I must acknowledge:\n"
+            "                  'Apologies Sir, I misspoke — you've had 8/10 cups today.'\n"
+            "                  </THOUGHT>\n"
             "         <SALIENCE>0.90</SALIENCE>\n"
-            "         <ACTIONABLE>surface_to_sir:next_turn_inject:CORRECTION — Sir 今日真实 hydration progress 是 8/10 杯 (ledger 真值), 我刚 reply 说 1/10 是 stale STM. 下轮主动 acknowledge: 'Apologies Sir, I misspoke — you've had 8/10 cups today.'</ACTIONABLE>\n"
-            "         <EVIDENCE_LINK>8/10</EVIDENCE_LINK>\n"
-            "         → B-class + sal≥0.85 + 含**具体真值数字 + 来源 (ledger) +\n"
-            "         具体主脑下轮该说什么** + cite '8/10' traces to ledger truth\n"
-            "         → publish SWM inner_thought_surface (15min TTL) → 主脑下轮\n"
-            "         自动看到 RECTIFY → 准则 5 言出必行真守住.\n"
-            "  ❌ BAD: 看到 ledger truth 但不 surface (silently 通过) → 主脑下轮仍\n"
-            "         撒谎. 准则 5 反例.\n"
+            "         <ACTIONABLE>none</ACTIONABLE>\n"
+            "         <EVIDENCE_LINK>none</EVIDENCE_LINK>\n"
+            "         → B-class + sal=0.90 + thought.thought **自身完整包含真值 +\n"
+            "         主脑下轮该说什么** (主脑只看这一句, 没其他 metadata) → Layer 1.5\n"
+            "         by freshness × 0.90 rank top → 主脑下轮自动看 RECTIFY → 准则 5 守住.\n"
+            "  ❗ 关键: thought.thought 要**详细含真值数字 + 来源 (ledger) + 主脑下轮\n"
+            "         该说的具体句子**. 主脑下轮看 [MY RECENT INNER THOUGHTS] 只看 thought 本身.\n"
+            "  ❌ BAD: <THOUGHT>Sir's hydration data mismatch</THOUGHT> → 抽象. 主脑不知\n"
+            "         真值是多少, 不能自决 RECTIFY.\n"
+            "  ❌ BAD: 看到 ledger truth 但 sal=0.3 (低 sal) → freshness rank 低, 主脑不看. 必 sal≥0.85.\n"
             "  ❌ BAD: <ACTIONABLE>update_concern_severity:...</ACTIONABLE> → 真值\n"
-            "         不一致不该改 severity, 该 surface 让主脑下轮纠正自己."
+            "         不一致不该改 severity, 该 thought.thought 含真值 → 主脑下轮自决纠正."
         )
 
         # User block — give LLM evidence to ground thought
@@ -2567,17 +2831,54 @@ class InnerThoughtDaemon:
         if _ds and _ds.get('status'):
             _age_min = _ds.get('age_s', 0) // 60
             _od = ' (overdue)' if _ds.get('is_overdue') else ''
+            # 🆕 [Sir 2026-05-28 12:10 真痛 anchor] reconcile physical vs declared
+            # =====================================================================
+            # Sir 真痛 (12:10 thought): "Sir has returned after a 14-minute absence,
+            # and while Adobe Media Encoder has finished its task, his declared
+            # status remains 'sleep'. This discrepancy suggests he may only be
+            # checking progress briefly before retiring or is simply forgetful
+            # regarding his manual status toggle." Sir: "我是去吃饭前弄了导出, 然后
+            # 回来的时候看到的" — Sir 早上 declare sleep 没切回, 中午回来看进度.
+            # 思考脑同时收 sir_state=active (物理短路修正) + declared=sleep + ⚠️
+            # "Honor declared → NO surface" 矛盾 directive, 只能编 hedge story.
+            # 治本 (准则 6 evidence-only + 准则 8 优雅):
+            #   render 端 cross-reference 物理 vs 声明, inconsistent → 标 STALE +
+            #   换 directive ("don't anchor narrative on stale status, options:
+            #   silence / silent SWM publish 'sir_status_stale'"). 不删 declared
+            #   inject (它仍是 sensor signal), 不改 _classify_sir_state 物理短路
+            #   (已对). 只动 render copy.
+            # =====================================================================
+            _physical_state = evidence.get('sir_state', 'unknown')
+            _is_stale = (
+                _physical_state == 'active'
+                and _ds['status'] in (
+                    'sleep', 'nap', 'dnd', 'out',
+                    'lunch', 'dinner', 'afk_short',
+                )
+            )
             lines.append("[SIR DECLARED STATUS (raw — Sir 真意 sensor, before aggregation)]")
             lines.append(
                 f"  - status: {_ds['status']} | declared "
                 f"{_age_min}min ago{_od}"
             )
-            lines.append(
-                "  ⚠️ Honor Sir's declaration. e.g. status=sleep/nap/dnd "
-                "→ NO surface_to_sir / fire_nudge / call_tool 'open UI' "
-                "this tick (only silent SWM publish OK). status=out/lunch "
-                "→ delay actionable, low urgency."
-            )
+            if _is_stale:
+                lines.append(
+                    f"  ⚠️ STALE — Physical sir_state=active (Sir 键鼠在用) "
+                    f"OVERRIDES declared '{_ds['status']}'. Sir likely forgot to "
+                    f"toggle back. Don't anchor narrative on stale status "
+                    f"(avoid phrasing like 'his status remains "
+                    f"{_ds['status']}' / 'he may be retiring' / 'forgetful "
+                    f"about manual toggle'). Options: silence (Sir will move on) "
+                    f"OR silent SWM publish 'sir_status_stale' (let main brain "
+                    f"gently confirm with Sir on next interaction)."
+                )
+            else:
+                lines.append(
+                    "  ⚠️ Honor Sir's declaration. e.g. status=sleep/nap/dnd "
+                    "→ NO surface_to_sir / fire_nudge / call_tool 'open UI' "
+                    "this tick (only silent SWM publish OK). status=out/lunch "
+                    "→ delay actionable, low urgency."
+                )
             lines.append("")
 
         _pm = evidence.get('sir_profile_mini')
@@ -3008,6 +3309,15 @@ class InnerThoughtDaemon:
             thought.actionable = 'none'  # 防 SOUL inject 误以为有 action
             return False, f'rejected_no_evidence_link:{gate_reason}'
 
+        # 🆕 [Sir 2026-05-28 16:55 方案 B] propose quality gate (sal threshold)
+        # 自适应 — propose 类 (suggest_inside_joke / propose_protocol) 受 sal
+        # threshold gate, 阈值由 _maybe_calibrate_propose_quality 24h calibrate.
+        # 准则 6 vocab 持久化, 准则 8 thought 仍 persist 但 actionable 降级.
+        gate_propose, gate_propose_reason = self._should_gate_propose(thought)
+        if gate_propose:
+            thought.actionable = 'none'
+            return False, f'rejected_propose_quality:{gate_propose_reason}'
+
         try:
             if a.startswith('update_concern_severity:'):
                 ok, result = self._do_update_concern_severity(thought, a)
@@ -3016,8 +3326,15 @@ class InnerThoughtDaemon:
                 if not ok and 'evidence_link_wrong_concern' in result:
                     thought.actionable = 'none'
                 return ok, result
+            # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] publish_swm: 路径已删
+            # 原因: (1) 大多 etype 0 consumer (sir_activity/self_reflection_noted/
+            # ... 全孤儿); (2) 少数撞名 sensor signal (ghost_activity_observed)
+            # → LLM 伪冒物理 sensor, 违准则 5 INTEGRITY; (3) 跟 Layer 1.5/1.6/1.7
+            # pull 模型重叠. 若 LLM 旧 vocab 仍出 'publish_swm:...' → 降级 none
+            # (准则 8 优雅: 不破 thought, 仅拒 actionable).
             if a.startswith('publish_swm:'):
-                return self._do_publish_swm_actionable(thought, a)
+                thought.actionable = 'none'
+                return False, 'rejected:publish_swm_deprecated_sir_20260528_1230'
             if a.startswith('suggest_inside_joke:'):
                 return self._do_suggest_inside_joke(thought, a)
             # 🆕 [Sir 2026-05-26 SOUL Phase A] propose_protocol — B 类反思真改自己行为
@@ -3048,16 +3365,23 @@ class InnerThoughtDaemon:
             # sal>=0.90 + tool in allowlist + Sir 元否决预留 (CLI revert).
             if a.startswith('call_tool:'):
                 return self._do_call_tool_actionable(thought, a)
-            # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C] surface_to_sir — thought 主动发声
+            # 🆕 [Sir 2026-05-28 19:47 fix44 P1] adjust_sensor_threshold —
+            # 思考脑改 sensor 阈值 (准则 6 vocab 持久化 + Sir CLI 可覆盖 + LLM propose)
+            # E.g. "Sir 每天 IDE 长开屏, 30s ghost_dampen 太严 → adjust to 60s"
+            # sal>=0.75 + path 必须在 ALLOWED prefix (afk/ghost/proactive_shield).
+            if a.startswith('adjust_sensor_threshold:'):
+                return self._do_adjust_sensor_threshold(thought, a)
+            # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] surface_to_sir 全退化
             # =================================================================
-            # Sir 真痛: "思考层也没主动发声". 给 thought 一档轻量 surface 通道:
-            #   - terminal_pulse: bg_log 终端显示 (Sir 真看见, 不抢 voice)
-            #   - next_turn_inject: publish SWM, 主脑下轮 prompt 强提示 reference
-            # 阈值 + 频限 + channel allow list 全持久化
-            # memory_pool/surface_to_sir_vocab.json (Sir CLI 可调).
+            # 历史: 方案 C (Sir 2026-05-26 20:55) thought 主动 surface 通道
+            # 退化原因: Sir 哲学 "主脑 = 好演员有 chain pull, 不需 push 通道 + 模板".
+            # 信任主脑下轮看 Layer 1.5 [MY RECENT INNER THOUGHTS] by freshness × sal
+            # 自决 reference. 思考脑只 publish 'inner_thought_committed' (Layer 1.5 自然
+            # 看), 不再走单独 push 通道. 见顶部 anchor (line 271-300).
+            # Stale LLM 输出 surface_to_sir → 此处直 reject (handler 函数虽留, 不调).
             # =================================================================
             if a.startswith('surface_to_sir:'):
-                return self._do_surface_to_sir_actionable(thought, a)
+                return False, 'rejected:surface_to_sir_retired_beta_5_45'
             return False, f'unknown_actionable:{a[:40]}'
         except Exception as e:
             return False, f'exception:{str(e)[:80]}'
@@ -3203,34 +3527,26 @@ class InnerThoughtDaemon:
             return True, f'sev {old_v:.2f}→{new_sev:.2f} ({delta:+.2f})'
         return False, f'update_fail:{msg[:60]}'
 
-    def _do_publish_swm_actionable(self, thought: InnerThought,
-                                      a: str) -> Tuple[bool, str]:
-        parts = a.split(':', 2)
-        if len(parts) < 3:
-            return False, 'parse_fail (expected publish_swm:<etype>:<desc>)'
-        _, etype, desc = parts
-        etype = etype.strip()[:60] or 'inner_thought_seed'
-        desc = desc.strip()[:200]
-        try:
-            from jarvis_utils import get_event_bus
-            bus = get_event_bus()
-            if bus is None:
-                return False, 'no_bus'
-            bus.publish(
-                etype=etype,
-                description=desc,
-                source='inner_thought',
-                salience=thought.salience,
-                metadata={
-                    'thought_id': thought.id,
-                    'thought_category': thought.category,
-                    'thought_text': thought.thought[:200],
-                },
-                ttl=3600.0,
-            )
-            return True, f'published:{etype}'
-        except Exception as e:
-            return False, f'publish_fail:{str(e)[:60]}'
+    # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] _do_publish_swm_actionable 整段删
+    # ----------------------------------------------------------
+    # 历史: 思考脑 actionable=publish_swm:<custom_etype>:<desc> 让 LLM 任意编 etype
+    # publish SWM event. 期主脑/其他 module 通过 SWM 看 thought 信号.
+    #
+    # 真相 (Sir 2026-05-28 12:30 audit 184 thought 12% 用此):
+    #   - Top etype 全孤儿: sir_activity(8) / self_reflection_noted(6) /
+    #     sir_is_resting(3) / sir_sleeping(3) / vigilant_watch(2) / ... 0 consumer
+    #   - 撞名 sensor signal: ghost_activity_observed(4) 真 publisher 是
+    #     jarvis_env_probe.PhysicalEnvProbe (键鼠 idle + IDE 前台 物理证据),
+    #     LLM 伪冒 sensor 让 directive trigger 误以为有物理证据 → 违准则 5
+    #     INTEGRITY (言出必行: 没物理证据不可冒充)
+    #   - 跟 Layer 1.5/1.6/1.7 pull 模型重叠 (主脑已 read thought)
+    #
+    # Sir 哲学: "主脑 = 好演员有 chain pull, 不需碎片 push". 准则 6 evidence-only:
+    # 数据通过 jsonl + daemon 字段, 不需 SWM 中转. 准则 8 干净退化.
+    #
+    # 退化路径: _execute_actionable 看到 publish_swm: 直接降级 actionable='none'
+    # + 返 (False, 'rejected:publish_swm_deprecated_...'), thought 仍 persist.
+    # ----------------------------------------------------------
 
     def _do_suggest_inside_joke(self, thought: InnerThought,
                                    a: str) -> Tuple[bool, str]:
@@ -3796,6 +4112,157 @@ class InnerThoughtDaemon:
             return False, f'call_tool_exception:{str(e)[:60]}'
 
     # ==========================================================================
+    # 🆕 [Sir 2026-05-28 19:47 fix44 P1] adjust_sensor_threshold actionable
+    # ==========================================================================
+    # Sir 真意: 思考脑发现某 sensor 阈值不合 Sir 真习惯 (e.g. 30s ghost_dampen
+    # 太严, Sir 每天 IDE 长开屏被误判), propose 调整入 review_queue, Sir CLI
+    # 拍板才 apply. 准则 6 vocab 持久化 + 准则 7 Sir 元否决权预留.
+    #
+    # gate:
+    #   - sal >= 0.75 (思考脑要确信)
+    #   - path 必须在 sensor_thresholds_vocab.writable_paths 内
+    #   - value 走 _validate_value (类型 / min / max / max_delta_per_change)
+    #   - publish SWM 'sensor_threshold_proposed' 让 Sir 看 dashboard
+    #
+    # Sir 不直接 mutate current — propose 入 queue, CLI apply 才生效.
+    # 详 memory_pool/sensor_thresholds_vocab.json + jarvis_sensor_thresholds.py.
+    # ==========================================================================
+    ADJUST_SENSOR_THRESHOLD_MIN_SAL = 0.75
+
+    def _do_adjust_sensor_threshold(self, thought: InnerThought,
+                                       a: str) -> Tuple[bool, str]:
+        """thought propose 改 sensor 阈值 — 入 review_queue 等 Sir CLI 拍板.
+
+        Format: adjust_sensor_threshold:<path>:<value>
+          path: 'ghost_activity.idle_threshold_s' / 'afk.idle_threshold_s' /
+                'proactive_shield.ghost_dampen_idle_real_s' / ...
+          value: 数值 (int/float) / json list (list_str) / 'true'|'false' (bool) /
+                 字符串. python 会按 vocab 中 spec.type 自动 parse + validate.
+
+        gate:
+          - sal >= 0.75
+          - path 必须在 writable_paths 内
+          - value 走 _validate_value (type / min / max / max_delta_per_change)
+        """
+        if thought.salience < self.ADJUST_SENSOR_THRESHOLD_MIN_SAL:
+            return False, (
+                f'gated:adjust_sensor_threshold_requires_sal>='
+                f'{self.ADJUST_SENSOR_THRESHOLD_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+
+        # Format: adjust_sensor_threshold:<path>:<value>
+        parts = a.split(':', 2)
+        if len(parts) < 3:
+            return False, (
+                'parse_fail (expected '
+                'adjust_sensor_threshold:<path>:<value>)'
+            )
+        _, path, value_str = parts
+        path = (path or '').strip()
+        value_str = (value_str or '').strip()
+        if not path or not value_str:
+            return False, 'empty_path_or_value'
+
+        # value parse — 按 vocab spec.type 自动 cast
+        try:
+            from jarvis_sensor_thresholds import (
+                get_writable_paths as _gwp,
+                propose_adjustment as _propose,
+            )
+            writable = _gwp()
+            spec = writable.get(path)
+            if spec is None:
+                allowed = ', '.join(sorted(writable.keys())[:5])
+                return False, (
+                    f'unknown_path:{path} '
+                    f'(allowed e.g.: {allowed} ...)'
+                )
+
+            vtype = spec.get('type', 'str')
+            # cast value_str → typed value (按 vtype)
+            try:
+                if vtype == 'int':
+                    parsed_value: Any = int(value_str)
+                elif vtype == 'float':
+                    parsed_value = float(value_str)
+                elif vtype == 'bool':
+                    low = value_str.lower()
+                    if low in ('true', '1', 'yes', 'on'):
+                        parsed_value = True
+                    elif low in ('false', '0', 'no', 'off'):
+                        parsed_value = False
+                    else:
+                        return False, (
+                            f'bool_parse_fail:{value_str!r} '
+                            '(expected true/false/1/0)'
+                        )
+                elif vtype == 'list_str':
+                    import json as _json_ls
+                    parsed_value = _json_ls.loads(value_str)
+                    if not isinstance(parsed_value, list):
+                        return False, (
+                            f'list_str_parse_fail:not_list '
+                            f'({type(parsed_value).__name__})'
+                        )
+                else:
+                    parsed_value = value_str
+            except (ValueError, TypeError) as cast_exc:
+                return False, (
+                    f'value_cast_fail:{vtype}:{value_str!r} '
+                    f'({str(cast_exc)[:40]})'
+                )
+
+            # rationale — 引 thought 短摘要 (Sir CLI review 时看)
+            rationale = (
+                f'thought {thought.id} [{thought.category}/'
+                f'sal={thought.salience:.2f}]: {thought.thought[:200]}'
+            )
+            ok, msg = _propose(
+                path=path,
+                new_value=parsed_value,
+                source=f'inner_thought:{thought.id}',
+                rationale=rationale,
+            )
+            if not ok:
+                return False, f'propose_fail:{msg}'
+            item_id = msg
+
+            # publish SWM 让 Sir dashboard 可见 + 主脑下轮看到
+            try:
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    bus.publish(
+                        etype='sensor_threshold_proposed',
+                        description=(
+                            f"thought {thought.id} proposed "
+                            f"{path}={parsed_value!r} "
+                            f"(review_id={item_id}, Sir CLI to apply)"
+                        ),
+                        source='InnerThought',
+                        salience=0.7,
+                        metadata={
+                            'thought_id': thought.id,
+                            'review_id': item_id,
+                            'path': path,
+                            'current_value': spec.get('current'),
+                            'proposed_value': parsed_value,
+                            'thought_category': thought.category,
+                        },
+                        ttl=86400.0,
+                    )
+            except Exception:
+                pass
+
+            return True, (
+                f'proposed:{path}={parsed_value!r} '
+                f'(review_id={item_id}, Sir CLI to apply)'
+            )
+        except Exception as e:
+            return False, f'adjust_sensor_threshold_exception:{str(e)[:60]}'
+
+    # ==========================================================================
     # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 治本] surface_to_sir handler
     # ==========================================================================
     # Sir 真痛: "思考层也没主动发声". thought 自决 surface 给 Sir 看, 不抢 voice.
@@ -4104,41 +4571,30 @@ class InnerThoughtDaemon:
             pass
 
     # ----------------------------------------------------------
-    # SWM publish (jarvis_inner_thought event)
+    # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] _publish_swm method 整段删除
     # ----------------------------------------------------------
-    def _publish_swm(self, thought: InnerThought) -> None:
-        try:
-            from jarvis_utils import get_event_bus
-            bus = get_event_bus()
-            if bus is None:
-                return
-            bus.publish(
-                etype='jarvis_inner_thought',
-                description=f"[{thought.category}] {thought.thought[:120]}",
-                source='inner_thought_daemon',
-                salience=thought.salience,
-                metadata={
-                    'thought_id': thought.id,
-                    'category': thought.category,
-                    'salience': thought.salience,
-                    'actionable': thought.actionable[:100],
-                    'actionable_done': thought.actionable_done,
-                    'actionable_result': thought.actionable_result[:80],
-                    'sir_state': thought.sir_state,
-                    # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1c] 4 字段进 SWM
-                    # ====================================================
-                    # 主脑 SOUL build 时 read 这些 → 自决 SPEAK / SILENT.
-                    # 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §6 主脑端.
-                    # ====================================================
-                    'should_speak': bool(getattr(thought, 'should_speak', False)),
-                    'speak_content': (getattr(thought, 'speak_content', '') or '')[:300],
-                    'speak_style': (getattr(thought, 'speak_style', '') or '')[:20],
-                    'next_attention_focus': (getattr(thought, 'next_attention_focus', '') or '')[:120],
-                },
-                ttl=86400.0,  # 24h, for SOUL inject lookback
-            )
-        except Exception:
-            pass
+    # 历史: β.6 Phase 1c (Sir 2026-05-28 00:00) publish 'jarvis_inner_thought'
+    # SWM event + 4 个 metadata 字段 (should_speak/speak_content/speak_style/
+    # next_attention_focus) 期望主脑 SOUL build 时 read 自决 SPEAK/SILENT.
+    #
+    # 真相 (Sir 2026-05-28 12:30 拍板查证): jarvis_inner_thought event 真无
+    # 任何 production consumer:
+    #   - grep recent_events.*jarvis_inner_thought → 0 命中
+    #   - grep types.*jarvis_inner_thought → 0 命中 (除 _publish_swm 自身 +
+    #     test 验证 publish)
+    #   - 主脑 Layer 1.5/1.6/1.7 走 daemon 直接 API (build_lifetime_block /
+    #     build_should_speak_directive — 后者直接 read self._thoughts, 非 SWM)
+    #   - dashboard 走 inner_voice_24h.jsonl + daemon.get_stats(), 不读 SWM
+    #
+    # Sir 哲学: "主脑 = 好演员, 有思考链所有思考信息 (Layer pull), 不需要碎片
+    # push". 准则 6 (evidence-only): 思考链全 pull 模型 self-sufficient. 准则
+    # 8 (优雅): 干净退化, 不留 dead publish.
+    #
+    # 数据 source of truth: thought 4 字段 (should_speak/speak_content/
+    # speak_style/next_attention_focus) 仍在 InnerThought dataclass + persist
+    # jsonl. build_should_speak_directive (line 4522) 直接 read self._thoughts
+    # in-memory, 完整 cover β.6 Layer 1.7 主脑端读路径.
+    # ----------------------------------------------------------
 
     # ----------------------------------------------------------
     # Persistence (append-only jsonl)
@@ -4401,65 +4857,14 @@ class InnerThoughtDaemon:
                 f"  [{t.category}/{age_min}min ago/sal {t.salience:.2f}] "
                 f"{t.thought[:140]}{action_str}"
             )
-        # 🆕 [Sir 2026-05-26 20:55 真痛追根 方案 C 衔接] inner_thought_surface event
+        # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] DAEMON SURFACED 块删除
         # =================================================================
-        # 若最近 15min 有 thought 主动 surface (via _do_surface_to_sir_actionable
-        # next_turn_inject channel), block 末尾加一行强提示主脑 reference 这条.
-        # 准则 6: 全 SWM evidence-driven, 不教内容只给信号.
+        # 历史: 方案 C 衔接给主脑 inject [DAEMON SURFACED ... THESE FOR YOUR ATTENTION]
+        # 块 + reference 来源引导. Sir 2026-05-28 拍板 surface_to_sir 全退化:
+        # Layer 1.5 [MY RECENT INNER THOUGHTS] by freshness × sal 已自然 chain pull
+        # (主脑下轮 prompt 自动看), 不需额外 push 通道 + 话术模板. 主脑作为好演员
+        # 自决 reference 哪条, 怎么开场. 见顶部 anchor (line 271-300).
         # =================================================================
-        try:
-            from jarvis_utils import get_event_bus as _geb_s
-            _bus_s = _geb_s()
-            if _bus_s is not None:
-                _top_s = _bus_s.top_n(n=20) or []
-                _surfaces = []
-                for _ev_s in _top_s:
-                    if _ev_s.get('type') != 'inner_thought_surface':
-                        continue
-                    _age_raw = _ev_s.get('_age_s')
-                    _age_s = float(_age_raw if _age_raw is not None else 999999)
-                    if _age_s > 900.0:  # 15min cap (matches publish ttl)
-                        continue
-                    _meta = _ev_s.get('metadata') or {}
-                    _surfaces.append({
-                        'tid': _meta.get('thought_id', '')[:30],
-                        'summary': str(_meta.get('summary', ''))[:120],
-                        'age_min': max(1, int(_age_s / 60)),
-                    })
-                if _surfaces:
-                    lines.append("")
-                    lines.append(
-                        "  ⚡ [DAEMON SURFACED THESE FOR YOUR ATTENTION — "
-                        "reference if natural, don't force]"
-                    )
-                    for _s in _surfaces[:3]:
-                        lines.append(
-                            f"     • [{_s['age_min']}min ago / "
-                            f"{_s['tid']}] {_s['summary']}"
-                        )
-                    # 🆕 [Sir 2026-05-27 12:22 真问 Phase 2] surface 显示来源引导
-                    # ===========================================================
-                    # Sir 真问: '我在什么方面能感受到他思考链的连续?'
-                    # 真痛: 主脑虽看 [DAEMON SURFACED] 但 reference 时**隐藏来源** —
-                    # Sir 听不出"这条是思考脑动的, 不是您主动问的". Sir 感不到思考链 alive.
-                    # 修法: 给主脑示范"如 reference 请明说来源", 让 Sir 耳朵能听到
-                    # "我思考脑刚才在想..." / "我后台想到您..." 这类 explicit 来源标识.
-                    # ===========================================================
-                    lines.append(
-                        "     ↳ [IF YOU REFERENCE — SHOW THE SOURCE]: Sir 真问\n"
-                        "       '我感不到思考链 alive'. 若你引用上面这些, **明示来源**\n"
-                        "       让 Sir 听到 (不是 Sir 提的, 是我后台想到的). 示范:\n"
-                        "         · 'Sir, 我刚才在想... <reference>'\n"
-                        "         · '我后台还记得您上次说... <reference>'\n"
-                        "         · '后台一直在留意 <topic>, 看到 <evidence>...'\n"
-                        "       **避免**'根据系统记录' / '日志显示' (机械感). 用拟人化:\n"
-                        "         · 'I've been thinking about...'\n"
-                        "         · 'In the back of my mind...'\n"
-                        "         · 'I remembered earlier that you...'\n"
-                        "       evidence-driven 自决, 不强制每次都说. 一句够."
-                    )
-        except Exception:
-            pass
 
         block = '\n'.join(lines)
         if len(block) > max_chars:
@@ -4623,6 +5028,289 @@ class InnerThoughtDaemon:
             return cfg
         except Exception:
             return dict(self._LIFETIME_DEFAULT_VOCAB)
+
+    # =====================================================================
+    # 🆕 [Sir 2026-05-28 16:55 方案 B 治本 / dashboard 7-8 页 root cause #2]
+    # Propose quality feedback loop — propose→activate rate 低 → sal 阈值升
+    # =====================================================================
+    # Sir 真痛: dashboard 139 review 待办, 7d 内 inner_thought propose 太多
+    # 质量参差 → AutoArbiter 大量 defer_to_sir / reject → review 堆积.
+    # 真因 #2: daemon 没看自己 propose 真激活率, 不收敛 propose 频率/质量.
+    # 治本: 闭环反思 — 看 24h auto_arbiter_log activate/reject/defer 比例,
+    # 自适应升降 sal_threshold (sal < threshold 的 propose actionable 降级 none,
+    # thought 仍 persist 但不进 review queue).
+    # 准则 6: vocab 持久化 + Sir CLI 可改 + L7 reflector 可改
+    # 准则 7: Sir 可禁 (enabled=0) / 手动设阈值
+    # 准则 8: cooldown 24h, 不爆 LLM 调用
+    # =====================================================================
+    _PROPOSE_QUALITY_VOCAB_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'inner_thought_propose_quality_vocab.json',
+    )
+    _PROPOSE_QUALITY_VOCAB_CACHE: dict = {
+        'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+    }
+    _PROPOSE_QUALITY_VOCAB_CHECK_INTERVAL_S = 30.0
+    _PROPOSE_QUALITY_DEFAULT_VOCAB = {
+        '_doc': (
+            'Inner thought daemon 自适应 propose 质量 gate. propose 类 '
+            'actionable (suggest_inside_joke / propose_protocol) 受 '
+            'salience >= sal_threshold gate. 周期反思 24h activate rate '
+            '动态调阈值: rate 高 → 降阈 (放松); rate 低 → 升阈 (收紧). '
+            'Sir CLI: scripts/propose_quality_dump.py (TODO).'
+        ),
+        'enabled': True,
+        'sal_threshold': 0.60,       # propose 类 sal 最低门槛
+        'sal_threshold_floor': 0.40,
+        'sal_threshold_ceiling': 0.85,
+        # 自动 calibrate (24h 一次, 读 auto_arbiter_log)
+        'auto_calibrate_enabled': True,
+        'calibrate_cooldown_h': 24,
+        'calibrate_lookback_h': 24,
+        'calibrate_min_samples': 10,  # 决策 < 10 不调 (样本不够)
+        # 调整规则
+        'activate_rate_high': 0.70,   # rate >= → 降阈 (放松)
+        'activate_rate_low': 0.30,    # rate <= → 升阈 (收紧)
+        'raise_step': 0.05,
+        'lower_step': 0.02,
+        # state (calibrate 写)
+        'last_calibrated_at_ts': 0,
+        'last_calibrated_at_iso': '',
+        # history (最近 20 次 calibrate)
+        'history': [],
+        # 哪些 actionable kind 受 gate (准则 6 vocab 不硬编码)
+        'gated_actionable_prefixes': [
+            'suggest_inside_joke:',
+            'propose_protocol:',
+        ],
+    }
+
+    def _load_propose_quality_vocab(self) -> dict:
+        """Lazy load + 30s throttle. Fail-safe → default."""
+        now = time.time()
+        cache = self._PROPOSE_QUALITY_VOCAB_CACHE
+        if (cache['data'] is not None and
+                now - cache['checked_at']
+                < self._PROPOSE_QUALITY_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        try:
+            if not os.path.exists(self._PROPOSE_QUALITY_VOCAB_PATH):
+                cache['data'] = dict(self._PROPOSE_QUALITY_DEFAULT_VOCAB)
+                return cache['data']
+            mtime = os.path.getmtime(self._PROPOSE_QUALITY_VOCAB_PATH)
+            if mtime == cache['mtime'] and cache['data']:
+                return cache['data']
+            with open(self._PROPOSE_QUALITY_VOCAB_PATH,
+                       'r', encoding='utf-8') as f:
+                data = json.load(f)
+            cfg = dict(self._PROPOSE_QUALITY_DEFAULT_VOCAB)
+            for k, v in (data or {}).items():
+                cfg[k] = v
+            cache['data'] = cfg
+            cache['mtime'] = mtime
+            return cfg
+        except Exception:
+            return dict(self._PROPOSE_QUALITY_DEFAULT_VOCAB)
+
+    def _should_gate_propose(self, thought) -> Tuple[bool, str]:
+        """sal < threshold + actionable in gated prefixes → gate (返 True).
+
+        Returns: (gated, reason) — gated=True 表 propose 被拒, 调 caller
+        把 actionable 降级 'none'.
+        """
+        try:
+            vocab = self._load_propose_quality_vocab()
+            if not vocab.get('enabled', True):
+                return False, ''
+            a = (thought.actionable or '').strip().lower()
+            prefixes = vocab.get('gated_actionable_prefixes') or []
+            if not any(a.startswith(p.lower()) for p in prefixes):
+                return False, ''  # 不在 gated 列表
+            thr = float(vocab.get('sal_threshold', 0.60))
+            if thought.salience >= thr:
+                return False, ''
+            return True, (
+                f'sal={thought.salience:.2f}<{thr:.2f} '
+                f'(propose_quality_gate)'
+            )
+        except Exception:
+            return False, ''
+
+    def _save_propose_quality_vocab(self, vocab: dict) -> bool:
+        """持久化 + invalidate cache. 失败 silent."""
+        try:
+            os.makedirs(
+                os.path.dirname(self._PROPOSE_QUALITY_VOCAB_PATH),
+                exist_ok=True,
+            )
+            with open(self._PROPOSE_QUALITY_VOCAB_PATH,
+                       'w', encoding='utf-8') as f:
+                json.dump(vocab, f, ensure_ascii=False, indent=2)
+            # invalidate cache
+            self._PROPOSE_QUALITY_VOCAB_CACHE['mtime'] = 0.0
+            self._PROPOSE_QUALITY_VOCAB_CACHE['data'] = None
+            return True
+        except Exception:
+            return False
+
+    def _maybe_calibrate_propose_quality(self) -> None:
+        """周期 calibrate — 读 auto_arbiter_log 24h decisions, 调 sal_threshold.
+
+        cooldown: vocab.calibrate_cooldown_h (默认 24h, 不重复跑).
+        逻辑:
+          - filter kind in (inside_joke, protocol), 算 activate_rate =
+            activate / (activate + reject + defer_to_sir)
+          - rate >= activate_rate_high → 阈降 lower_step (放松)
+          - rate <= activate_rate_low → 阈升 raise_step (收紧)
+          - 其他不变
+          - 持久化 vocab + log + publish SWM 1 event
+        """
+        try:
+            vocab = self._load_propose_quality_vocab()
+            if not vocab.get('auto_calibrate_enabled', True):
+                return
+            now = time.time()
+            last_ts = float(vocab.get('last_calibrated_at_ts', 0) or 0)
+            cooldown_s = float(vocab.get('calibrate_cooldown_h', 24)) * 3600
+            if last_ts > 0 and (now - last_ts) < cooldown_s:
+                return
+
+            lookback_s = float(vocab.get('calibrate_lookback_h', 24)) * 3600
+            cutoff = now - lookback_s
+            min_samples = int(vocab.get('calibrate_min_samples', 10))
+
+            # 读 auto_arbiter_log.jsonl (relative to module dir)
+            log_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'memory_pool', 'auto_arbiter_log.jsonl',
+            )
+            if not os.path.exists(log_path):
+                return
+            n_activate = 0
+            n_reject = 0
+            n_defer = 0
+            with open(log_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    if float(d.get('ts', 0) or 0) < cutoff:
+                        continue
+                    if d.get('kind') not in ('inside_joke', 'protocol'):
+                        continue
+                    dec = d.get('decision', '')
+                    if dec == 'activate':
+                        n_activate += 1
+                    elif dec == 'reject':
+                        n_reject += 1
+                    elif dec == 'defer_to_sir':
+                        n_defer += 1
+
+            total = n_activate + n_reject + n_defer
+            if total < min_samples:
+                # 样本不够, 更新 last_ts 防热跑但不调阈值
+                vocab['last_calibrated_at_ts'] = now
+                vocab['last_calibrated_at_iso'] = time.strftime(
+                    '%Y-%m-%dT%H:%M:%S', time.localtime(now)
+                )
+                self._save_propose_quality_vocab(vocab)
+                self._bg_log(
+                    f"📊 [ProposeQuality] skip calibrate "
+                    f"(only {total} samples < {min_samples})"
+                )
+                return
+
+            rate = n_activate / total
+            old_thr = float(vocab.get('sal_threshold', 0.60))
+            floor = float(vocab.get('sal_threshold_floor', 0.40))
+            ceil = float(vocab.get('sal_threshold_ceiling', 0.85))
+            high = float(vocab.get('activate_rate_high', 0.70))
+            low = float(vocab.get('activate_rate_low', 0.30))
+            raise_step = float(vocab.get('raise_step', 0.05))
+            lower_step = float(vocab.get('lower_step', 0.02))
+
+            if rate >= high:
+                new_thr = max(floor, old_thr - lower_step)
+                reason = (
+                    f'activate_rate={rate:.0%}>={high:.0%}, '
+                    f'lower threshold {old_thr:.2f}→{new_thr:.2f} (放松)'
+                )
+            elif rate <= low:
+                new_thr = min(ceil, old_thr + raise_step)
+                reason = (
+                    f'activate_rate={rate:.0%}<={low:.0%}, '
+                    f'raise threshold {old_thr:.2f}→{new_thr:.2f} (收紧)'
+                )
+            else:
+                new_thr = old_thr
+                reason = (
+                    f'activate_rate={rate:.0%} in [{low:.0%}, {high:.0%}], '
+                    f'no change (threshold={old_thr:.2f})'
+                )
+
+            # 持久化
+            vocab['sal_threshold'] = new_thr
+            vocab['last_calibrated_at_ts'] = now
+            vocab['last_calibrated_at_iso'] = time.strftime(
+                '%Y-%m-%dT%H:%M:%S', time.localtime(now)
+            )
+            history = list(vocab.get('history') or [])
+            history.append({
+                'ts_iso': vocab['last_calibrated_at_iso'],
+                'old_threshold': round(old_thr, 3),
+                'new_threshold': round(new_thr, 3),
+                'reason': reason,
+                'stats': {
+                    'activate': n_activate, 'reject': n_reject,
+                    'defer': n_defer, 'total': total,
+                    'activate_rate': round(rate, 3),
+                },
+            })
+            # cap history 最近 20
+            vocab['history'] = history[-20:]
+            self._save_propose_quality_vocab(vocab)
+            self._bg_log(
+                f"📊 [ProposeQuality] calibrate: {reason} "
+                f"(stats: act={n_activate}/rej={n_reject}/"
+                f"defer={n_defer})"
+            )
+            # publish SWM 1 event (主脑 / dashboard 看)
+            try:
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    bus.publish(
+                        etype='propose_quality_calibrated',
+                        description=reason[:200],
+                        source='InnerThoughtDaemon.ProposeQuality',
+                        salience=0.5,
+                        metadata={
+                            'old_threshold': old_thr,
+                            'new_threshold': new_thr,
+                            'activate_rate': rate,
+                            'stats': {
+                                'activate': n_activate,
+                                'reject': n_reject,
+                                'defer': n_defer,
+                                'total': total,
+                            },
+                        },
+                        ttl=86400.0,
+                    )
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                self._bg_log(
+                    f"⚠️ [ProposeQuality] calibrate exception: {e}"
+                )
+            except Exception:
+                pass
 
     def _append_cold_start_record(self) -> None:
         """daemon init 时 append 一条 cold_start record (跨 session 持久)."""
@@ -4855,7 +5543,9 @@ class InnerThoughtDaemon:
                 top = bus.top_n(n=40) or []
                 action_types = (
                     'tool_called', 'inner_thought_tool_called',
-                    'inner_thought_surface', 'propose_protocol_activated',
+                    # 🆕 [Sir 2026-05-28 12:30 β.5.45] 删 'inner_thought_surface'
+                    # (退化 surface_to_sir 全通道, 走 Layer 1.5 chain pull).
+                    'propose_protocol_activated',
                     'reminder_fired', 'commitment_fulfilled',
                     'commitment_cancelled', 'stand_down_set',
                 )
@@ -4996,7 +5686,9 @@ class InnerThoughtDaemon:
             bus = get_event_bus()
             if bus is not None:
                 top = bus.top_n(n=200) or []
-                act_types = ('tool_called', 'inner_thought_surface',
+                # 🆕 [Sir 2026-05-28 12:30 β.5.45] 删 'inner_thought_surface'
+                # (退化 surface_to_sir 全通道, 走 Layer 1.5 chain pull).
+                act_types = ('tool_called',
                               'propose_protocol_activated',
                               'reminder_fired')
                 for ev in top:
