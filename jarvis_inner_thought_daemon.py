@@ -342,6 +342,61 @@ def _load_saturation_config() -> dict:
 
 
 # ==========================================================================
+# 🆕 [第五阶段支柱 A / Sir 2026-05-29 02:29 真痛 "开着挂机心疼 token"]
+# inner_thought_cost_config — evidence-gated tick 省 token
+# tick 前算 evidence 指纹 (外部输入: sir_state + idle bucket + SWM event +
+# STM 最新 turn), 跟上次一样 (无新外部输入) → skip LLM call (不烧 token),
+# daemon 仍 alive. 挂机 (Sir 不在 + 无新事件) 时指纹稳定 → 大幅 skip 省钱.
+# max_skip_streak 兜底 (连续 skip 满 → 强制 think 1 次心跳防纯 reactive).
+# 路径: memory_pool/inner_thought_cost_config.json
+# 详 docs/JARVIS_THINKING_COST_AWARE_SELF_DEBUG_DESIGN.md 支柱 A.
+# ==========================================================================
+_COST_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_thought_cost_config.json',
+)
+_COST_CONFIG_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_COST_CONFIG_CHECK_INTERVAL_S = 30.0
+_COST_DEFAULT_CONFIG: dict = {
+    'evidence_gate': {
+        'enabled': True,
+        'max_skip_streak': 20,
+        'idle_buckets_s': [300, 1800],
+    },
+}
+
+
+def _load_cost_config() -> dict:
+    """Cost config vocab lazy load (mtime 30s throttle). Fallback default."""
+    now = time.time()
+    if (_COST_CONFIG_CACHE['data'] is not None and
+            now - _COST_CONFIG_CACHE['checked_at']
+            < _COST_CONFIG_CHECK_INTERVAL_S):
+        return _COST_CONFIG_CACHE['data']
+    _COST_CONFIG_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_COST_CONFIG_PATH):
+            _COST_CONFIG_CACHE['data'] = _COST_DEFAULT_CONFIG
+            return _COST_DEFAULT_CONFIG
+        mtime = os.path.getmtime(_COST_CONFIG_PATH)
+        if (mtime == _COST_CONFIG_CACHE['mtime']
+                and _COST_CONFIG_CACHE['data']):
+            return _COST_CONFIG_CACHE['data']
+        with open(_COST_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # 合并 default 防 partial config (Sir 改 1 字段不丢其他)
+        merged = {k: dict(_COST_DEFAULT_CONFIG[k]) for k in _COST_DEFAULT_CONFIG}
+        for section in merged:
+            if isinstance(data.get(section), dict):
+                merged[section].update(data[section])
+        _COST_CONFIG_CACHE['data'] = merged
+        _COST_CONFIG_CACHE['mtime'] = mtime
+        return merged
+    except Exception:
+        return _COST_DEFAULT_CONFIG
+
+
+# ==========================================================================
 # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] surface_to_sir 机制全退化
 # ==========================================================================
 # 历史: 方案 C (Sir 2026-05-26 20:55) 给 thought 一档轻量 surface 通道
@@ -1419,6 +1474,18 @@ class InnerThoughtDaemon:
         self._consecutive_saturation_count: int = 0
         self._saturation_force_due: bool = False
 
+        # 🆕 [第五阶段支柱 A / Sir 2026-05-29 02:29] evidence-gated tick 省 token
+        # =====================================================================
+        # tick 前算 evidence 指纹 (外部输入), 跟上次一样 → skip LLM (不烧 token).
+        # _last_tick_fingerprint: 上次 tick 的指纹 (比较用, '' = 首 tick 必 think).
+        # _evidence_skip_streak: 连续 skip 计数 (满 max_skip_streak 强制 think 心跳).
+        # _evidence_gated_skip_count: 总 skip 数 (audit — 省了多少 LLM call).
+        # 详 docs/JARVIS_THINKING_COST_AWARE_SELF_DEBUG_DESIGN.md 支柱 A.
+        # =====================================================================
+        self._last_tick_fingerprint: str = ''
+        self._evidence_skip_streak: int = 0
+        self._evidence_gated_skip_count: int = 0
+
         # 🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] 紧急通路 state
         # =====================================================================
         # SWM 高 salience event publish 时 daemon_loop wait 中断 → 立次个 tick.
@@ -1784,6 +1851,89 @@ class InnerThoughtDaemon:
         return llm_choice, 'llm_chosen'
 
     # ----------------------------------------------------------
+    # 🆕 [第五阶段支柱 A / Sir 2026-05-29 02:29] evidence-gated tick 省 token
+    # ----------------------------------------------------------
+    def _compute_evidence_fingerprint(self, sir_state: str,
+                                       evidence: dict) -> str:
+        """算 evidence 指纹 — 只含外部新输入, 不含思考脑自己产出.
+
+        维度 (挂机时这些都稳定 → 指纹不变 → skip):
+          - sir_state (active/afk_short/afk_deep/sleep)
+          - idle bucket (跨 idle_buckets_s 边界才算变, 不用精确秒, 防抖动)
+          - SWM events (type + desc, 排除 age_s 这种每 tick 都变的字段)
+          - STM 最新 turn (when 绝对 ts + user 内容 = Sir 说新话的强信号)
+
+        刻意不含 recent_thoughts (思考脑自产 — 含了会污染指纹导致永不 skip).
+
+        Returns: str 指纹 (同进程内连续 tick 比较, 相同 = 无新外部输入).
+        """
+        parts: List[str] = [str(sir_state)]
+        try:
+            idle = int(evidence.get('idle_seconds', 0) or 0)
+            buckets = (_load_cost_config().get('evidence_gate', {})
+                       .get('idle_buckets_s', [300, 1800]))
+            bidx = sum(1 for b in buckets if idle >= b)
+            parts.append(f'i{bidx}')
+        except Exception:
+            parts.append('i?')
+        # SWM events 内容 (type+desc, 不含 age_s — age 每 tick 变会破坏 skip)
+        for e in (evidence.get('swm_events') or []):
+            parts.append(
+                f"s:{e.get('type', '')}:{(e.get('desc') or '')[:40]}"
+            )
+        # STM 最新 turn (when 绝对 ts + user — Sir 说新话信号)
+        stm = evidence.get('stm') or []
+        if stm:
+            last = stm[-1]
+            parts.append(
+                f"u:{last.get('when', '')}:{(last.get('user') or '')[:40]}"
+            )
+        return '|'.join(parts)
+
+    def _maybe_evidence_gate_skip(self, sir_state: str,
+                                  evidence: dict) -> bool:
+        """🆕 [第五阶段支柱 A] evidence 指纹一样 → skip LLM (省 token).
+
+        Sir 2026-05-29 02:29 真痛 "开着挂机心疼 token". tick 前算外部输入指纹,
+        跟上次一样 (Sir 没动 + 没说话 + 无新 SWM event) → skip LLM call, daemon
+        仍 alive 等下个 tick. 连续 skip 满 max_skip_streak → 强制 think 1 次
+        (心跳 heartbeat, 防纯 reactive 失"持续存在的生命"感).
+
+        准则 6 vocab (enabled 开关 + max_skip_streak) + 准则 8 Python 硬节流
+        (不依赖 LLM 觉悟省钱, 算指纹是纯 Python 不烧 token).
+
+        Returns: True = 该 skip (不调 LLM); False = 正常 tick.
+        """
+        cfg = _load_cost_config().get('evidence_gate', {}) or {}
+        if not cfg.get('enabled', True):
+            return False
+        fp = self._compute_evidence_fingerprint(sir_state, evidence)
+        max_skip = int(cfg.get('max_skip_streak', 20))
+        if (fp == self._last_tick_fingerprint
+                and self._evidence_skip_streak < max_skip):
+            self._evidence_skip_streak += 1
+            self._evidence_gated_skip_count += 1
+            # 每 10 次 skip log 1 次 (Sir 看 daemon alive + 省了多少 LLM call)
+            if self._evidence_gated_skip_count % 10 == 1:
+                self._bg_log(
+                    f"💤 [InnerThought/evidence-gate] 无新外部输入 → skip LLM "
+                    f"(streak={self._evidence_skip_streak}/{max_skip}, "
+                    f"total saved={self._evidence_gated_skip_count}, "
+                    f"state={sir_state}) — 省 token, daemon alive"
+                )
+            return True
+        # 指纹变 (有新输入) 或 streak 满 (强制心跳) → 正常 tick + reset
+        if (fp == self._last_tick_fingerprint
+                and self._evidence_skip_streak >= max_skip):
+            self._bg_log(
+                f"💭 [InnerThought/evidence-gate] skip streak 满 {max_skip} "
+                f"→ 强制 think 1 次 (心跳 heartbeat, 防纯 reactive)"
+            )
+        self._last_tick_fingerprint = fp
+        self._evidence_skip_streak = 0
+        return False
+
+    # ----------------------------------------------------------
     # 🆕 [fix50 / 2026-05-28] Active WatchTask → vision refresh advice (准则 6)
     # ----------------------------------------------------------
     def _check_active_watch_task_and_publish_vision_refresh(self) -> None:
@@ -1899,6 +2049,19 @@ class InnerThoughtDaemon:
             sir_state=sir_state,
             within_seconds=tick_interval * 2,
         )
+
+        # 🆕 [第五阶段支柱 A / Sir 2026-05-29 02:29] evidence-gated skip 省 token
+        # =====================================================================
+        # evidence 指纹跟上次一样 (Sir 没动/没说话/无新 SWM event) → skip LLM,
+        # daemon 仍 alive. 挂机时大幅省 token (Sir "开着挂机心疼"). 放 LLM call
+        # 前 (channel_view + build_prompt + _call_llm 全省). 准则 8 Python 硬节流.
+        # evidence collect 已发生 (纯 Python 不烧 token), 用它算指纹值得.
+        # =====================================================================
+        try:
+            if self._maybe_evidence_gate_skip(sir_state, evidence):
+                return
+        except Exception:
+            pass
 
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] 构 7 channel view + LLM attention hint
         # =====================================================================

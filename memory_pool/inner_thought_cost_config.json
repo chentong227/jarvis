@@ -1,0 +1,9 @@
+{
+  "_doc": "第五阶段支柱 A — evidence-gated tick 省 token. Sir 2026-05-29 02:29 真痛: '开着挂机心疼 token'. 思考脑 tick 前算 evidence 指纹 (外部输入: sir_state + idle bucket + SWM event type/desc + STM 最新 turn), 跟上次一样 (无新外部输入) → skip LLM call (不烧 token), daemon 仍 alive. 连续 skip 满 max_skip_streak → 强制 think 1 次 (心跳防纯 reactive 失生命感). 挂机 (Sir 不在 + 无新事件) 时指纹稳定 → 大幅 skip 省钱. 准则 6 vocab 持久化 + 准则 8 Python 硬节流. CLI: scripts/inner_thought_cost_dump.py (TODO 明天补). 详 docs/JARVIS_THINKING_COST_AWARE_SELF_DEBUG_DESIGN.md 支柱 A.",
+  "evidence_gate": {
+    "_doc": "enabled 开关 (false = 退回每 tick 必调 LLM 老行为); max_skip_streak 连续 skip 上限 (到则强制 think 心跳, active 45s×20=15min/sleep 1800s×20=10h); idle_buckets_s idle 分桶边界秒 (跨桶才算状态变, 防 idle 10s→20s 抖动触发 think).",
+    "enabled": true,
+    "max_skip_streak": 20,
+    "idle_buckets_s": [300, 1800]
+  }
+}
