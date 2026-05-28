@@ -652,7 +652,17 @@ class ProfileCard:
         self._cache_time = 0
         
         if effective_confidence >= 0.30:
-            print(f"[ProfileCard] 贝叶斯修正: {source_module} → {field} (置信度: {effective_confidence:.2f})")
+            # 🩹 [BUG-leak / Sir 2026-05-28 18:25 真痛 治本] 原 print(...) 在 LLM
+            # stream 期间被 ProfileCard.apply_correction 同步触发 → 插入正在
+            # 拼接的 "║ 🤖 [Jarvis] " 行 → Sir 看到 reply 顶部 leak
+            # "[ProfileCard] 贝叶斯修正:..." debug 串.
+            # 修法: print → bg_log (走 utils.py:440 注释的标准方案, 进缓冲不
+            # 干扰对话框 stdout). 准则 8 优雅: 单行 fix, root cause 一致.
+            try:
+                from jarvis_utils import bg_log as _pc_bg
+                _pc_bg(f"[ProfileCard] 贝叶斯修正: {source_module} → {field} (置信度: {effective_confidence:.2f})")
+            except Exception:
+                pass
 
         # 🩹 [β.2.9.9 / 2026-05-18] Sir 10:51 诚信审计治本:
         # 旧版 apply_correction 只 in-memory append, 进程重启完全丢失 + 主脑还
