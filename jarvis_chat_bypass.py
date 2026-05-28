@@ -3102,18 +3102,27 @@ Spoken English:"""
                             _composed_by = str(
                                 _active_dir.get('composed_by_thought_id', '')
                             )[:12]
+                            # 🆕 [BUG FIX / Sir 2026-05-29 07:07 真痛] 措辞改: directive 是
+                            # 背景建议, Sir 当前问题永远优先 (防绑架主脑跑题).
+                            # =================================================================
+                            # 老措辞 "honor it unless Sir directly overrides" + prompt top + 强势
+                            # → 主脑把 directive 当硬指令, Sir 问 A 也跑题答 directive 主题 (真测
+                            # 问 IPAP 连答 cursor_payment 3 次). 新措辞: OPTIONAL background, Sir
+                            # CURRENT message 优先, 不相关就忽略. (调 directive 优先级理解, 非硬
+                            # 编码主脑话术 — 准则 6 OK)
+                            # =================================================================
                             _dir_block = (
-                                f"=== THINKING BRAIN DIRECTIVE — for THIS reply ===\n"
-                                f"Your thinking layer (running 1-min ticks) has "
-                                f"composed a directive for you to follow on this "
-                                f"reply (TTL {_ttl_remaining_s}s left, "
-                                f"composed_by_thought={_composed_by}):\n"
+                                f"=== THINKING BRAIN NOTE (background, optional) ===\n"
+                                f"Your thinking layer composed this note "
+                                f"{_ttl_remaining_s}s ago (composed_by_thought="
+                                f"{_composed_by}):\n"
                                 f"  → {_dir_text}\n"
-                                f"This is YOUR own thinking layer talking to YOU — "
-                                f"honor it unless Sir directly overrides. After "
-                                f"reply, Sir's reaction will be tracked and fed "
-                                f"back to thinking layer (元学习闭环).\n"
-                                f"=== END THINKING BRAIN DIRECTIVE ===\n\n"
+                                f"This is OPTIONAL background context, NOT a command. "
+                                f"Sir's CURRENT message ALWAYS takes priority — if Sir "
+                                f"is asking about something else, answer Sir FIRST and "
+                                f"IGNORE this note. Only act on it if directly relevant "
+                                f"to what Sir just said.\n"
+                                f"=== END NOTE ===\n\n"
                             )
                             prompt = _dir_block + (prompt or '')
                             try:
@@ -3123,6 +3132,19 @@ Spoken English:"""
                                     f"thinking_brain_directive into prompt top "
                                     f"(TTL {_ttl_remaining_s}s, composed_by="
                                     f"{_composed_by}, text='{_dir_text[:60]}')"
+                                )
+                                # 🆕 [BUG FIX / Sir 2026-05-29 07:07 真痛] directive 注入后即消费
+                                # =============================================================
+                                # 根因: get_active_directive 只 TTL check 不消费 → 5min TTL 内每
+                                # 轮重复注入 → 连续多轮绑架主脑 (真测: 问 A 答 cursor_payment 3 次).
+                                # 修复: 注入成功后立即 clear → directive 一次性 (兑现 "for THIS
+                                # reply" 语义). 若思考脑仍认为需要, 下个 tick 会 re-compose (但会
+                                # 看 Sir reaction 元学习, 不无脑重复).
+                                # =============================================================
+                                _track_dir.clear_active_directive()
+                                _bgl_dir(
+                                    f"✅ [F7/inject_directive] directive consumed "
+                                    f"(one-shot, 防 5min 重复注入绑架)"
                                 )
                             except Exception:
                                 pass

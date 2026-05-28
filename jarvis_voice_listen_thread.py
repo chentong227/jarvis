@@ -132,6 +132,14 @@ class VoiceListenThread(QThread):
         super().__init__()
         self._state_lock = threading.Lock()
         self.is_jarvis_speaking = False
+        # 🆕 [BUG FIX 方案A / Sir 2026-05-29 07:07 真痛] nudge focus 灰区精准 gate
+        # =====================================================================
+        # True = 当前 focus 是 Jarvis 主动 nudge 开的 + Sir 还没明确回应过 →
+        #        灰区 (0.3-0.6) 静默不触发 (防 Sir 跟家人说话被误当成对 Jarvis 说).
+        # False = Sir 主动唤醒 / Sir 已明确回应 (≥0.6) → 灰区恢复触发 (不小心翼翼).
+        # Sir 真痛: afk 回来 Jarvis greeting 后, Sir 转头跟妈妈说话被灰区误触发跑题.
+        # =====================================================================
+        self._nudge_focus_pending_ack = False
         # [R7-α/B1] in_active_conversation 走 self.state 中央状态机；
         # 但本类在 __init__ 时还没注入 state（state 在 main 里事后绑过来），
         # 所以保留一个 _local_in_active_conv 兜底字段，property 在没 state 时读它。
@@ -702,6 +710,34 @@ class VoiceListenThread(QThread):
 
         score = max(0.0, min(1.0, score))
         return score, breakdown
+
+    def _evaluate_focus_directness(self, score: float) -> tuple:
+        """🆕 [BUG FIX 方案A / Sir 2026-05-29 07:07 真痛] 决定 directness 是否触发主脑.
+
+        nudge 主动开 focus 期间, Sir 未明确回应过 (_nudge_focus_pending_ack=True)
+        → 灰区 (0.3-0.6) 静默 (防 Sir 跟家人说话误触发); >=0.6 明确对 Jarvis →
+        触发 + 清 pending_ack (转正常对话, 后续灰区恢复触发 = Sir 旧诉求"不小心翼翼").
+        Sir 主动唤醒的对话 pending_ack=False → 灰区照常触发.
+
+        Args: score — classify_jarvis_directness 打分 (0-1).
+        Returns: (should_trigger, is_grayzone, gated_reason, just_acked)
+          should_trigger: True=触发主脑, False=静默丢弃 (旁路语/灰区 gate)
+          is_grayzone: 0.3<=score<0.6 (for log)
+          gated_reason: 静默原因 ('旁路语'/'nudge-focus 未 ack 灰区静默'/'')
+          just_acked: 本次是否刚清 pending_ack (Sir 首次明确回应, for log)
+        Side-effect: score>=0.6 且 pending_ack=True → self._nudge_focus_pending_ack=False
+        """
+        is_grayzone = (0.3 <= score < 0.6)
+        pending_ack = getattr(self, '_nudge_focus_pending_ack', False)
+        if score < 0.3:
+            return False, False, '旁路语', False
+        if is_grayzone and pending_ack:
+            return False, True, 'nudge-focus 未 ack 灰区静默', False
+        just_acked = False
+        if score >= 0.6 and pending_ack:
+            self._nudge_focus_pending_ack = False
+            just_acked = True
+        return True, is_grayzone, '', just_acked
 
     def _handle_acoustic_wake(self, res: 'Any') -> None:
         """[P0+20-β.4.8 / 2026-05-19] Acoustic wakeword 检测到 → 触发 wake.
@@ -1461,6 +1497,9 @@ class VoiceListenThread(QThread):
                                     self.state.set_active_conversation(True, reason='wake', source='wake_word_match')
                                 else:
                                     self.in_active_conversation = True
+                                # 🆕 [BUG FIX 方案A / Sir 2026-05-29 07:07] Sir 主动唤醒 = 明确对话
+                                # → 清 pending_ack → 灰区正常触发 (不小心翼翼, Sir 旧诉求保留).
+                                self._nudge_focus_pending_ack = False
                                 self.last_interaction_time = time.time()
                                 set_browser_ducking(True) 
                                 cmd = re.sub(r'[，。,.!?？！\s]+$', '', raw_cmd)
@@ -1476,14 +1515,20 @@ class VoiceListenThread(QThread):
                                     # 🩹 [β.2.7.10 / 2026-05-17] Sir 痛点: 焦点期间不应触发旁路语
                                     # (Sir 打电话/和家人说话/视频音被 ASR 录入 → 不应 trigger Jarvis)
                                     _score, _bd = self.classify_jarvis_directness(cmd)
-                                    if _score < 0.3:
-                                        # 旁路语 — 静默丢弃, 仅 bg_log 留痕
+                                    # 🆕 [BUG FIX 方案A / Sir 2026-05-29 07:07 真痛] nudge focus 灰区精准 gate
+                                    # 决策抽到 _evaluate_focus_directness (可单元测). nudge 主动开 focus
+                                    # 期间 Sir 未明确回应过 → 灰区静默 (防 Sir 跟家人说话误触发); Sir
+                                    # 明确对 Jarvis (>=0.6) → 触发 + 清 pending_ack 转正常对话.
+                                    _trigger, _is_gray, _gate_reason, _just_acked = \
+                                        self._evaluate_focus_directness(_score)
+                                    if not _trigger:
+                                        # 静默丢弃 (旁路语 <0.3 或 nudge-focus 灰区 gate)
                                         # 触发"旁路语计数器", 累计 3 次后缩 TIMEOUT
                                         self._bypass_speech_count = getattr(self, '_bypass_speech_count', 0) + 1
                                         try:
                                             from jarvis_utils import bg_log as _by_bg
                                             _by_bg(
-                                                f"🔇 [Bypass Speech] 旁路语 score={_score:.2f} "
+                                                f"🔇 [Bypass Speech] {_gate_reason} score={_score:.2f} "
                                                 f"breakdown={_bd} count={self._bypass_speech_count}: "
                                                 f"'{cmd[:60]}'"
                                             )
@@ -1502,13 +1547,22 @@ class VoiceListenThread(QThread):
                                                 pass
                                             self._bypass_speech_count = 0
                                     else:
-                                        # jarvis-direct, 重置 bypass 计数 + 正常触发
-                                        if _score < 0.6:
+                                        # 触发主脑 (>=0.6 明确 / 灰区但 Sir 已在对话)
+                                        if _just_acked:
+                                            try:
+                                                from jarvis_utils import bg_log as _ack_bg
+                                                _ack_bg(
+                                                    f"✅ [Focus Ack] Sir 明确回应 "
+                                                    f"(score={_score:.2f}) → 灰区恢复触发 (本轮对话)"
+                                                )
+                                            except Exception:
+                                                pass
+                                        elif _is_gray:
                                             try:
                                                 from jarvis_utils import bg_log as _gz_bg
                                                 _gz_bg(
                                                     f"🟡 [Directness Gray] score={_score:.2f} "
-                                                    f"breakdown={_bd} '{cmd[:50]}' — 仍触发但灰区"
+                                                    f"breakdown={_bd} '{cmd[:50]}' — 仍触发 (Sir 已在对话)"
                                                 )
                                             except Exception:
                                                 pass
@@ -1532,6 +1586,8 @@ class VoiceListenThread(QThread):
                                 self.state.set_active_conversation(False, reason='timeout', source='active_timeout')
                             else:
                                 self.in_active_conversation = False
+                            # 🆕 [BUG FIX 方案A] 对话结束 → reset pending_ack (下次 nudge focus 重新 gate)
+                            self._nudge_focus_pending_ack = False
                             self.last_conversation_end_time = time.time()
                             self.last_dismissal_reason = 'timeout'  # [R6/B6] 标记是"自然超时"，与"用户主动喊停"区分
                             self.awake_signal.emit(False)

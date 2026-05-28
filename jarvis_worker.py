@@ -2003,6 +2003,12 @@ class JarvisWorkerThread(QThread):
                         if hasattr(self, 'voice_thread'):
                             self.voice_thread.in_active_conversation = True
                             self.voice_thread.last_interaction_time = time.time()
+                            # 🆕 [BUG FIX 方案A / Sir 2026-05-29 07:07 真痛] nudge 主动开 focus →
+                            # 标记 "需 Sir 明确回应" → 灰区 (0.3-0.6) 静默直到 Sir 明确对 Jarvis
+                            # 说话 (score>=0.6). Sir 真痛: greeting 后 Sir 转头跟妈妈说话 ("睡觉关
+                            # 灯吗") 被灰区误当成对 Jarvis 说 → 跑题响应. Sir 主动喊 Jarvis 开的
+                            # 对话不受影响 (那时 pending_ack=False). 详 voice_listen 灰区 gate.
+                            self.voice_thread._nudge_focus_pending_ack = True
                             # 👇 Bug A 修复：原来这里写 mute_until=0.0 是为了让用户能秒回，
                             # 但同时也把 TTS 余音的防御窗口拆了 → Jarvis 听到自己的
                             # "Pylance seems rather displeased..." 拖尾音被 ASR 转成
