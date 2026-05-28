@@ -23,10 +23,14 @@ P2 — vocab 持久化 (2 testcase):
   - jarvis_lifetime_block_vocab.json 存在且含 tier_mode (V1)
   - tier_mode 含 5 tier (SHORT_CHAT/DEEP_QUERY/FACTUAL_RECALL/WAKE_ONLY/REMINDER_FIRING) (V2)
 
-P3 — 主脑 Layer 1.5 升级 (3 testcase):
-  - _build_layer_1b_inner_thoughts_block(prompt_tier='SHORT_CHAT') → full lifetime (L1)
+P3 — 主脑 Layer 1.5 升级 (3 testcase) —  
+  [🚨 UPDATED β.6 Phase 2 治本 / Sir 2026-05-28 17:20: Layer 1.5 已退化
+   stub 永返 ''. lifetime 现由 Layer 1.6 voice block 内部聚合呈现, 端到端
+   contract 由 fix37 验证. P3 现守 Layer 1.5 method-level stub 契约 (永返 '')
+   防回退到独立 push 老路径]
+  - _build_layer_1b_inner_thoughts_block(prompt_tier='SHORT_CHAT') → '' (β.6 stub) (L1)
   - _build_layer_1b_inner_thoughts_block(prompt_tier='REMINDER_FIRING') → '' (L2)
-  - _build_layer_1b_inner_thoughts_block(prompt_tier='UNKNOWN') → 默认 full (L3)
+  - _build_layer_1b_inner_thoughts_block(prompt_tier='UNKNOWN') → '' (β.6 stub) (L3)
 
 P4 — daemon 自己 prompt 接 mini lifetime (1 testcase):
   - _build_prompt user prompt 含 'JARVIS LIFETIME' header (D1)
@@ -167,16 +171,24 @@ class TestP3LayerOneB(unittest.TestCase):
         return nerve, daemon
 
     def test_l1_short_chat_returns_full(self):
-        """tier=SHORT_CHAT → full lifetime_block (非空)."""
+        """[β.6 Phase 2 治本 / Sir 2026-05-28 17:20] tier=SHORT_CHAT → '' (Layer 1.5 stub).
+
+        老契约 (β.5.50): SHORT_CHAT tier 经 vocab tier_mode='full' → 返
+        daemon.build_lifetime_block(mode='full') 非空含 'JARVIS LIFETIME'
+        header. Layer 1.5 独立 push 给主脑.
+
+        新契约 (β.6 Phase 2 治本): Layer 1.5 退化 stub 永返 ''. lifetime
+        改由 Layer 1.6 voice block 内部聚合呈现 (fix37 端到端验证). 此
+        testcase 守 stub method-level 契约, 防回退到老独立 push 路径.
+        """
         nerve, daemon = self._make_nerve_with_daemon()
         block = nerve._build_layer_1b_inner_thoughts_block(
             prompt_tier='SHORT_CHAT'
         )
-        # SHORT_CHAT vocab 应该 = 'full' → 返 build_lifetime_block(mode='full')
-        self.assertIsInstance(block, str)
-        if block:  # 非空才有 header
-            self.assertIn('JARVIS LIFETIME', block,
-                "SHORT_CHAT tier 应走 full lifetime path")
+        self.assertEqual(block, '',
+            "β.6 Phase 2 治本: Layer 1.5 = stub 永返 ''. lifetime 改由 "
+            "Layer 1.6 voice block 聚合呈现 (见 fix37). 此处若返非空 → 回退"
+            "到独立 push 老路径, 违反 Sir 17:14 真意 'all 集成到思考链'.")
 
     def test_l2_reminder_firing_returns_empty(self):
         """tier=REMINDER_FIRING → off → '' (高紧急不杂)."""
@@ -189,14 +201,17 @@ class TestP3LayerOneB(unittest.TestCase):
             "REMINDER_FIRING tier 应返 '' (off)")
 
     def test_l3_unknown_tier_fallback_full(self):
-        """tier=UNKNOWN_TIER → fallback full (mode 不在 vocab default 'full')."""
+        """[β.6 Phase 2 治本 / Sir 2026-05-28 17:20] tier=UNKNOWN → '' (Layer 1.5 stub).
+
+        老契约 (β.5.50): UNKNOWN tier 走 vocab default 'full' → 非空 lifetime block.
+        新契约 (β.6 Phase 2 治本): Layer 1.5 stub, 任何 tier 都返 ''.
+        """
         nerve, daemon = self._make_nerve_with_daemon()
         block = nerve._build_layer_1b_inner_thoughts_block(
             prompt_tier='UNKNOWN_TIER_XYZ'
         )
-        self.assertIsInstance(block, str)
-        # default 'full' → 非空 (除非 daemon 完全空)
-        # 不强 assert 非空 (daemon mock 可能空), 但应该走 build_lifetime_block(mode='full')
+        self.assertEqual(block, '',
+            "β.6 Phase 2 治本: Layer 1.5 = stub 永返 '' (任何 tier).")
 
 
 # ============================================================

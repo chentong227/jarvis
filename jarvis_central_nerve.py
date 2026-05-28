@@ -2470,41 +2470,27 @@ User: {user_input}
     def _build_layer_1b_inner_thoughts_block(
         self, prompt_tier: str = ''
     ) -> str:
-        """🆕 [P1 / Sir 2026-05-25 22:10] Layer 1.5: Inner Thoughts block.
+        """[DEPRECATED — Sir 2026-05-28 17:20 β.6 Phase 2 治本] Layer 1.5 stub.
 
-        🆕 [Sir 2026-05-27 01:00 β.5.50 LifetimeAwareness] tier-aware:
-        按 daemon vocab tier_mode 选 lifetime_block (7 维生命体感) vs
-        soul_block (老 freshness-rank thoughts) vs off.
+        Sir 真意 (17:14): "除了归来招呼和我设置的定时提醒走强制性编码唤醒,
+        其他的所有模块都集成到思考链, 把思考链给主脑让主脑演的像他一直存在".
 
-        tier_mode (jarvis_lifetime_block_vocab.json):
-          SHORT_CHAT / DEEP_QUERY → 'full' lifetime_block (700 char, 主聊用)
-          FACTUAL_RECALL / WAKE_ONLY → 'mini' lifetime_block (320 char, 省 token)
-          REMINDER_FIRING → 'off' (高紧急不杂)
-          'legacy' → 老 build_soul_block 路径 (兼容)
+        老路径: 本 method 调 daemon.build_lifetime_block → 主脑 prompt 加段
+        是**独立 push**到主脑. β.6 Phase 2 将此功能**聚合**到 Layer 1.6
+        (_build_layer_1c_inner_voice_block), voice block 内部按 vocab
+        tier_mode 注入 lifetime — 主脑只读 voice block 一处即看到 lifetime
+        + thoughts + thinking directive + spotlight 全部"思考链".
 
-        Sir 真意: Jarvis 是"持续唤醒的思考脑"心跳, 不是 stateless API call.
-        主脑该看 几分钟前在想啥 / 几小时前在做啥 / 跨 session 我是同一 Jarvis.
+        本 stub 永返 '' (不再独立 push lifetime). daemon.build_lifetime_block
+        仍是 source of truth, 仍被 Layer 1.6 voice 聚合调用. _assemble_prompt
+        仍 call 本 method (返 '' 不影响拼接, 防 backward compat 破裂).
+
+        防回退 anchor: 如本 method 重新返非空 → 说明有人误恢复独立 push
+        (违反 Sir β.6 真意), 删它. 详 tests/_test_fix15_*beta550.py + 本注释.
         """
-        try:
-            daemon = getattr(self, 'inner_thought_daemon', None)
-            if daemon is None:
-                return ''
-            # 拿 vocab tier_mode
-            try:
-                vocab = daemon._load_lifetime_vocab()
-                tier_mode_map = vocab.get('tier_mode') or {}
-                tier_key = str(prompt_tier or '').upper()
-                mode = tier_mode_map.get(tier_key, 'full')
-            except Exception:
-                mode = 'full'
-            if mode == 'off':
-                return ''
-            if mode == 'legacy':
-                return daemon.build_soul_block(max_chars=500)
-            # 默认走 lifetime (full / mini)
-            return daemon.build_lifetime_block(mode=mode)
-        except Exception:
-            return ''
+        # β.6 Phase 2: 永返 '' (lifetime 改由 Layer 1.6 voice block 聚合呈现)
+        _ = prompt_tier  # 保参数签名向后兼容, 不再使用
+        return ''
 
     def _build_layer_1c_inner_voice_block(
         self, prompt_tier: str = ''
@@ -2542,8 +2528,14 @@ User: {user_input}
             _show_l3 = str(prompt_tier or '').upper() not in (
                 'SHORT_CHAT', 'FACTUAL_RECALL'
             )
+            # 🆕 [Sir 2026-05-28 17:20 β.6 Phase 2 治本] 传 daemon → voice block
+            # 内部聚合 (lifetime + should_speak directive). 主脑只读本 Layer 1.6
+            # 就够看到 "我运行多久 / 之前想啥 / 思考脑现在建议啥". Layer 1.5 +
+            # Layer 1.7 已退化 stub (返 '', 详 _build_layer_1b/_build_layer_1d).
+            _daemon = getattr(self, 'inner_thought_daemon', None)
             voice_block = track.build_prompt_block_for_brain(
-                max_chars=2400, show_l3=_show_l3
+                max_chars=2400, show_l3=_show_l3, daemon=_daemon,
+                prompt_tier=str(prompt_tier or ''),
             )
             if not voice_block or 'voice empty' in voice_block:
                 return ''
@@ -2570,6 +2562,38 @@ User: {user_input}
             return voice_block + directive
         except Exception:
             return ''
+
+    # 🆕 [Sir 2026-05-28 00:20 β.6 Phase 1d 主脑端] Layer 1.7:
+    # thinking thread should_speak directive 主脑读思考脑自决建议
+    # ====================================================================
+    # 路径: daemon publish (Phase 1c) → daemon.build_should_speak_directive
+    # → 本 layer 注入 → 主脑 LLM 自决 SPEAK / SILENT (准则 6 信任 LLM).
+    # 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §6 主脑端 + Phase 1d 收口.
+    # ====================================================================
+    def _build_layer_1d_thinking_directive_block(
+        self, prompt_tier: str = ''
+    ) -> str:
+        """[DEPRECATED — Sir 2026-05-28 17:20 β.6 Phase 2 治本] Layer 1.7 stub.
+
+        Sir 真意 (17:14): "除了归来招呼和我设置的定时提醒走强制性编码唤醒,
+        其他的所有模块都集成到思考链".
+
+        老路径: 本 method 调 daemon.build_should_speak_directive → 主脑 prompt
+        加段, 是**独立 push**到主脑. β.6 Phase 2 将此功能**聚合**到 Layer 1.6
+        (_build_layer_1c_inner_voice_block), voice block 内部 call
+        daemon.build_should_speak_directive — 主脑只读 voice block 一处即看到.
+
+        本 stub 永返 '' (不再独立 push should_speak directive).
+        daemon.build_should_speak_directive 仍是 source of truth, 仍被
+        Layer 1.6 voice 聚合调用. _assemble_prompt 仍 call 本 method (返 '' 不
+        影响拼接, 防 backward compat 破裂).
+
+        防回退 anchor: 如本 method 重新返非空 → 说明有人误恢复独立 push
+        (违反 Sir β.6 真意), 删它.
+        """
+        # β.6 Phase 2: 永返 '' (should_speak 改由 Layer 1.6 voice block 聚合)
+        _ = prompt_tier  # 保参数签名向后兼容, 不再使用
+        return ''
 
     def _build_layer_2_relational_block(self, prompt_tier: str = '') -> str:
         """[Reshape M6.1 third wave / 2026-05-24] Layer 2: RelationalState block.
@@ -3513,12 +3537,18 @@ User: {user_input}
         inner_voice_block = self._build_layer_1c_inner_voice_block(
             prompt_tier=str(prompt_tier or '')
         )
+        # 🆕 [Sir 2026-05-28 00:20 β.6 Phase 1d] Layer 1.7 — Thinking directive
+        # 思考脑最近 3min 一条 thought.should_speak → 主脑读建议自决 SPEAK/SILENT.
+        # 准则 6 信任 LLM. 详 docs/JARVIS_BETA6_UNIFIED_THINKING.md §6.
+        thinking_directive_block = self._build_layer_1d_thinking_directive_block(
+            prompt_tier=str(prompt_tier or '')
+        )
         # 🆕 [Sir 2026-05-26 SOUL Phase C.2] 传 prompt_tier 让 protocol filter 按 tier
         relational_block = self._build_layer_2_relational_block(
             prompt_tier=str(prompt_tier or '')
         )
         attention_block = self._build_layer_3_attention_block(user_input)
-        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → Layer 2 → Layer 3
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → 1.7 → Layer 2 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
@@ -3528,6 +3558,8 @@ User: {user_input}
             _parts.append(inner_thoughts_block)
         if inner_voice_block:
             _parts.append(inner_voice_block)
+        if thinking_directive_block:
+            _parts.append(thinking_directive_block)
         if relational_block:
             _parts.append(relational_block)
         if attention_block:

@@ -217,13 +217,32 @@ class InnerVoiceTrack:
     def build_prompt_block_for_brain(
         self, max_chars: int = 2400, show_l3: bool = True,
         show_spotlight: bool = True,
+        daemon=None, prompt_tier: str = '',
     ) -> str:
-        """主脑 prompt 用 — 3 层叙事块 + 🆕 [Phase 4] ★ spotlight 段.
+        """主脑 prompt 用 — 3 层叙事块 + 🆕 [Phase 4] ★ spotlight 段
+        + 🆕 [Sir 2026-05-28 17:20 β.6 Phase 2 治本] daemon 聚合
+        (lifetime + thinking directive).
 
-        SPOTLIGHT (顶): ★ wants_voice pending 未 surface (近 1h) 单独提醒
-        L1: 近 10min full entries (~600 token)
-        L2: 10min-1h, 5min bucket digest (~150 token)
-        L3: 1h-24h, 1h bucket digest (~250 token, 可关)
+        Sir 真意 (2026-05-28 17:14): "除了归来招呼和我设置的定时提醒走强制性
+        编码唤醒, 其他的所有模块都集成到思考链, 把思考链给主脑让主脑演的像
+        他一直存在, 因为他知道他之前在想什么, 运行了多久, 什么的."
+
+        架构 (β.6 Phase 2 — push 退化到 voice 聚合):
+          主脑只调 Layer 1.6 → 本 method → 内部聚合 daemon (lifetime +
+          should_speak), 不需 Layer 1.5/1.7 独立 push. daemon 仍是 source of
+          truth, voice 是 view aggregator (准则 6 决策集中主脑; 准则 8 优雅).
+
+        新 render 顺序 (top → bottom):
+          [YOUR LIFETIME] (daemon.build_lifetime_block, 若 daemon 给)
+          [THINKING BRAIN SUGGESTS] (daemon.build_should_speak_directive, 若 daemon 给)
+          SPOTLIGHT (★ wants_voice pending)
+          L1: 近 10min full
+          L2: 10min-1h 5min bucket
+          L3: 1h-24h 1h bucket
+
+        参数:
+          daemon: optional InnerThoughtDaemon. 不给 → 仅 voice (老行为, backward compat).
+                  给 → 顶部聚合 lifetime + should_speak directive.
 
         Returns:
           多行字符串. 空 buffer 返一句 '(voice empty — just woke)'.
@@ -235,6 +254,41 @@ class InnerVoiceTrack:
             pass
 
         lines = []
+
+        # 🆕 [β.6 Phase 2 / Sir 17:20] daemon 聚合 — lifetime + thinking directive
+        # 主脑只读本 block 就懂 "我运行多久 / 之前想啥 / 思考脑现在建议啥".
+        # daemon=None (backward compat for testcase / 老调用) → 跳过, 仅 voice.
+        # prompt_tier (Layer 1.5 老 vocab 路径迁移过来): SHORT_CHAT→full,
+        # FACTUAL_RECALL→mini, REMINDER_FIRING→off, default→full.
+        if daemon is not None:
+            try:
+                if hasattr(daemon, 'build_lifetime_block'):
+                    # tier-aware mode 解析: 复用 daemon vocab (准则 6 持久化)
+                    _mode = 'full'
+                    try:
+                        if hasattr(daemon, '_load_lifetime_vocab'):
+                            _vocab = daemon._load_lifetime_vocab() or {}
+                            _tier_map = _vocab.get('tier_mode') or {}
+                            _tier_key = str(prompt_tier or '').upper()
+                            _mode = _tier_map.get(_tier_key, 'full')
+                    except Exception:
+                        _mode = 'full'
+                    if _mode != 'off':
+                        lt_block = daemon.build_lifetime_block(mode=_mode) or ''
+                        if lt_block.strip():
+                            lines.append(lt_block.rstrip())
+                            lines.append("")
+            except Exception:
+                pass
+            try:
+                if hasattr(daemon, 'build_should_speak_directive'):
+                    sd_block = daemon.build_should_speak_directive() or ''
+                    if sd_block.strip():
+                        lines.append(sd_block.rstrip())
+                        lines.append("")
+            except Exception:
+                pass
+
         lines.append(
             "[YOUR INNER VOICE — past 24h, your continuous stream of consciousness]"
         )
