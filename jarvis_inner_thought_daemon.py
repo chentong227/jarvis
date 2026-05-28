@@ -679,6 +679,22 @@ def _add_let_go_topic(thread_id: str, ttl_min: int = None,
     thread_id = thread_id.strip()[:32]
     if not thread_id:
         return False
+    # 🆕 [governor Phase 4 E5 / Sir 2026-05-29 拍板] commitment 红线 check
+    # 仅 LLM source enforce (Sir manual 元否决豁免 — Sir 可强 let_go 任何).
+    # let_go thread_id 关联 active commitment/promise → reject (不可放下有 deadline 承诺).
+    if source == 'llm':
+        _rl_hit, _rl_id = _check_red_line_let_go(thread_id)
+        if _rl_hit:
+            try:
+                from jarvis_utils import bg_log as _bgl
+                _bgl(
+                    f"🚫 [E5/red_line] LLM let_go thread={thread_id[:16]} "
+                    f"关联 active commitment/promise={_rl_id[:16]} → reject. "
+                    f"不可放下有 deadline 的承诺 (Sir CLI 可强 let_go)."
+                )
+            except Exception:
+                pass
+            return False
     try:
         _max_occ, _win_min, _default_ttl = _get_topic_repeat_config()
         ttl_min = int(ttl_min) if ttl_min is not None else _default_ttl
@@ -732,6 +748,215 @@ def _remove_let_go_topic(thread_id: str) -> bool:
         return _save_let_go_topics(filtered)
     except Exception:
         return False
+
+
+# ==========================================================================
+# 🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] 紧急通路 vocab
+# ==========================================================================
+# Sir 真意: 高 salience SWM event (alarm / commitment / Sir 强否决) 不该等
+# 下次 60s tick, 中断 daemon wait 立即下 tick (~100ms 内启 LLM).
+# 准则 6: vocab 持久化 + CLI 可改 + 0 hardcode.
+# ==========================================================================
+_EMERGENCY_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_thought_emergency_trigger_vocab.json',
+)
+_EMERGENCY_VOCAB_CACHE: dict = {
+    'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+}
+_EMERGENCY_VOCAB_CHECK_INTERVAL_S = 30.0
+_EMERGENCY_DEFAULT_VOCAB = {
+    'enabled': True,
+    'salience_threshold': 0.85,
+    'rate_limit_s': 30,
+    'poll_chunk_s': 0.5,
+    'lookback_s': 5.0,
+    'trigger_etypes': [
+        'sir_speech_strong_negative', 'sir_skepticism',
+        'alarm_fire', 'reminder_fired',
+        'commitment_deadline_imminent',
+        'health_emergency', 'integrity_violation_detected',
+        'sleep_pressure_critical',
+    ],
+}
+
+
+# ==========================================================================
+# 🆕 [governor Phase 4 E5 / Sir 2026-05-29 拍板] 红线 vocab
+# ==========================================================================
+# 4 类 LLM 不可碰 (v1 实施 integrity_disable + commitment_let_go).
+# 详 memory_pool/inner_thought_red_lines_vocab.json.
+# ==========================================================================
+_RED_LINES_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'inner_thought_red_lines_vocab.json',
+)
+_RED_LINES_VOCAB_CACHE: dict = {
+    'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+}
+_RED_LINES_VOCAB_CHECK_INTERVAL_S = 30.0
+_RED_LINES_DEFAULT_VOCAB = {
+    'enabled': True,
+    'red_lines': {
+        'integrity_disable': {
+            'enabled': True,
+            'check': 'propose_protocol_rule_keyword',
+            'blocked_phrases': [
+                'disable claimtracer', 'disable claim tracer',
+                'disable integrity', 'skip integrity check',
+                'skip claim trace', 'bypass integrity',
+                'turn off integrity', 'stop tracking claims',
+                'ignore claim verification',
+                '禁用 claimtracer', '禁用 integrity',
+                '跳过 integrity', '跳过 claim',
+                '停止追踪 claim',
+            ],
+        },
+        'commitment_let_go': {
+            'enabled': True,
+            'check': 'let_go_thread_id_vs_active_promise',
+        },
+    },
+}
+
+
+def _load_red_lines_vocab() -> dict:
+    """🆕 [governor Phase 4 E5] Lazy load red lines vocab (mtime cache)."""
+    now = time.time()
+    if (_RED_LINES_VOCAB_CACHE['data'] is not None and
+            now - _RED_LINES_VOCAB_CACHE['checked_at']
+            < _RED_LINES_VOCAB_CHECK_INTERVAL_S):
+        return _RED_LINES_VOCAB_CACHE['data']
+    _RED_LINES_VOCAB_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_RED_LINES_VOCAB_PATH):
+            _RED_LINES_VOCAB_CACHE['data'] = _RED_LINES_DEFAULT_VOCAB
+            return _RED_LINES_DEFAULT_VOCAB
+        mtime = os.path.getmtime(_RED_LINES_VOCAB_PATH)
+        if (mtime == _RED_LINES_VOCAB_CACHE['mtime']
+                and _RED_LINES_VOCAB_CACHE['data']):
+            return _RED_LINES_VOCAB_CACHE['data']
+        with open(_RED_LINES_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        cfg = dict(_RED_LINES_DEFAULT_VOCAB)
+        for k in ('enabled', 'red_lines'):
+            if k in data:
+                cfg[k] = data[k]
+        _RED_LINES_VOCAB_CACHE['data'] = cfg
+        _RED_LINES_VOCAB_CACHE['mtime'] = mtime
+        return cfg
+    except Exception:
+        return _RED_LINES_DEFAULT_VOCAB
+
+
+def _check_red_line_propose_protocol(rule_text: str) -> Tuple[bool, str]:
+    """🆕 [governor Phase 4 E5] Check propose_protocol rule 是否撞 integrity_disable 红线.
+
+    Returns: (violated, hit_phrase).
+    """
+    if not rule_text or not isinstance(rule_text, str):
+        return (False, '')
+    try:
+        cfg = _load_red_lines_vocab()
+        if not cfg.get('enabled', True):
+            return (False, '')
+        rl = cfg.get('red_lines', {}).get('integrity_disable', {})
+        if not rl.get('enabled', True):
+            return (False, '')
+        blocked = rl.get('blocked_phrases', []) or []
+        rule_lower = rule_text.lower()
+        for phrase in blocked:
+            if not phrase:
+                continue
+            if str(phrase).lower() in rule_lower:
+                return (True, str(phrase))
+        return (False, '')
+    except Exception:
+        return (False, '')
+
+
+def _check_red_line_let_go(thread_id: str) -> Tuple[bool, str]:
+    """🆕 [governor Phase 4 E5] Check let_go thread_id 是否关联 active commitment/promise.
+
+    用 PromiseLog API 拿 active commitments + active promises, 查 thread_id 是否
+    包含其 ID. 包含 → red_line_violated (LLM 不可放下真有 deadline 承诺).
+
+    Returns: (violated, hit_id).
+    """
+    if not thread_id or not isinstance(thread_id, str):
+        return (False, '')
+    try:
+        cfg = _load_red_lines_vocab()
+        if not cfg.get('enabled', True):
+            return (False, '')
+        rl = cfg.get('red_lines', {}).get('commitment_let_go', {})
+        if not rl.get('enabled', True):
+            return (False, '')
+        # Get active commitment/promise IDs (best-effort)
+        active_ids = []
+        try:
+            from jarvis_promise_log import PromiseLog
+            promise_log = PromiseLog.instance()
+            for p in promise_log.get_all_active():
+                if getattr(p, 'kind', '') in (
+                    'commitment', 'commitment_watcher_pending',
+                ):
+                    active_ids.append(str(getattr(p, 'id', '') or ''))
+        except Exception:
+            pass
+        try:
+            from jarvis_self_promise import SelfPromiseLedger
+            sp = SelfPromiseLedger.instance()
+            if hasattr(sp, 'list_active'):
+                for p in sp.list_active():
+                    active_ids.append(str(getattr(p, 'id', '') or ''))
+        except Exception:
+            pass
+        # Check thread_id contains any active ID (full or prefix match)
+        thread_lower = thread_id.lower()
+        for aid in active_ids:
+            if not aid:
+                continue
+            aid_lower = aid.lower()
+            if aid_lower in thread_lower or thread_lower in aid_lower:
+                return (True, aid)
+        return (False, '')
+    except Exception:
+        return (False, '')
+
+
+def _load_emergency_vocab() -> dict:
+    """🆕 [governor Phase 4 E1] Lazy load emergency trigger vocab (mtime cache).
+
+    准则 6 热重载: Sir CLI 改 vocab → daemon 30s 内 reload.
+    Fail-safe → _EMERGENCY_DEFAULT_VOCAB.
+    """
+    now = time.time()
+    if (_EMERGENCY_VOCAB_CACHE['data'] is not None and
+            now - _EMERGENCY_VOCAB_CACHE['checked_at']
+            < _EMERGENCY_VOCAB_CHECK_INTERVAL_S):
+        return _EMERGENCY_VOCAB_CACHE['data']
+    _EMERGENCY_VOCAB_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_EMERGENCY_VOCAB_PATH):
+            _EMERGENCY_VOCAB_CACHE['data'] = _EMERGENCY_DEFAULT_VOCAB
+            return _EMERGENCY_DEFAULT_VOCAB
+        mtime = os.path.getmtime(_EMERGENCY_VOCAB_PATH)
+        if (mtime == _EMERGENCY_VOCAB_CACHE['mtime']
+                and _EMERGENCY_VOCAB_CACHE['data']):
+            return _EMERGENCY_VOCAB_CACHE['data']
+        with open(_EMERGENCY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        cfg = dict(_EMERGENCY_DEFAULT_VOCAB)
+        for k in ('enabled', 'salience_threshold', 'rate_limit_s',
+                  'poll_chunk_s', 'lookback_s', 'trigger_etypes'):
+            if k in data:
+                cfg[k] = data[k]
+        _EMERGENCY_VOCAB_CACHE['data'] = cfg
+        _EMERGENCY_VOCAB_CACHE['mtime'] = mtime
+        return cfg
+    except Exception:
+        return _EMERGENCY_DEFAULT_VOCAB
 
 
 # ==========================================================================
@@ -1139,6 +1364,16 @@ class InnerThoughtDaemon:
         self._consecutive_saturation_count: int = 0
         self._saturation_force_due: bool = False
 
+        # 🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] 紧急通路 state
+        # =====================================================================
+        # SWM 高 salience event publish 时 daemon_loop wait 中断 → 立次个 tick.
+        # rate limit: 上次 wake interrupt < rate_limit_s → skip.
+        # last_seen_ts: 防 same event 重复 trigger (event ts > last_seen 才计).
+        # =====================================================================
+        self._last_emergency_wake_ts: float = 0.0
+        self._emergency_check_last_seen_ts: float = 0.0
+        self._emergency_wake_count: int = 0  # audit / dashboard
+
         # 启动时载入近 24h thoughts (重启后 SOUL 仍有上下文)
         self._load_persist()
 
@@ -1223,7 +1458,87 @@ class InnerThoughtDaemon:
                 self._maybe_calibrate_propose_quality()
             except Exception:
                 pass
-            self._stop.wait(timeout=interval)
+            # 🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] emergency wait interrupt
+            # SWM 高 salience event publish 时 中断 wait → 立次个 tick.
+            # 不再是 purely 静态 _stop.wait, 是事件可响应 wait.
+            self._wait_with_emergency_check(timeout=interval)
+
+    def _check_emergency_pending(self) -> bool:
+        """🆕 [governor Phase 4 E1] Check SWM 有 emergency event published
+        since last seen (rate limited).
+
+        Returns: True → emergency 该中断 wait.
+        """
+        try:
+            cfg = _load_emergency_vocab()
+            if not cfg.get('enabled', True):
+                return False
+            now = time.time()
+            rate_limit_s = float(cfg.get('rate_limit_s', 30))
+            # rate limit: 上次 wake < rate_limit_s → skip (防刷屏)
+            if now - self._last_emergency_wake_ts < rate_limit_s:
+                return False
+            sal_thr = float(cfg.get('salience_threshold', 0.85))
+            trigger_etypes = set(cfg.get('trigger_etypes', []) or [])
+            if not trigger_etypes:
+                return False
+            lookback_s = float(cfg.get('lookback_s', 5.0))
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return False
+            recent = bus.recent_events(
+                within_seconds=lookback_s, types=trigger_etypes,
+            ) or []
+            for e in recent:
+                if float(e.get('salience', 0)) < sal_thr:
+                    continue
+                ev_ts = float(e.get('timestamp', 0))
+                # 防 same event 重复 trigger
+                if ev_ts <= self._emergency_check_last_seen_ts:
+                    continue
+                # 命中 emergency — update state + return True
+                self._emergency_check_last_seen_ts = ev_ts
+                self._last_emergency_wake_ts = now
+                self._emergency_wake_count += 1
+                self._bg_log(
+                    f"⚡ [E1/emergency] SWM event etype={e.get('type', '?')} "
+                    f"salience={e.get('salience', 0):.2f} → 中断 wait 立 tick "
+                    f"(wake_count={self._emergency_wake_count})"
+                )
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _wait_with_emergency_check(self, timeout: float) -> str:
+        """🆕 [governor Phase 4 E1] Wait up to `timeout` s, poll emergency every
+        `poll_chunk_s` s. Return 'stop' / 'emergency' / 'timeout'.
+
+        Replace plain `self._stop.wait(timeout=...)` to allow SWM event interrupt.
+        """
+        try:
+            cfg = _load_emergency_vocab()
+            poll_chunk = float(cfg.get('poll_chunk_s', 0.5))
+        except Exception:
+            poll_chunk = 0.5
+        poll_chunk = max(0.1, min(2.0, poll_chunk))  # sanity
+        remaining = max(0.0, float(timeout))
+        # If E1 disabled 或 timeout 太短, fallback 原 _stop.wait
+        if not _load_emergency_vocab().get('enabled', True):
+            self._stop.wait(timeout=remaining)
+            return 'stop' if self._stop.is_set() else 'timeout'
+        while remaining > 0 and not self._stop.is_set():
+            chunk = min(poll_chunk, remaining)
+            self._stop.wait(timeout=chunk)
+            if self._stop.is_set():
+                return 'stop'
+            if self._check_emergency_pending():
+                return 'emergency'
+            remaining -= chunk
+        if self._stop.is_set():
+            return 'stop'
+        return 'timeout'
 
     # ----------------------------------------------------------
     # Adaptive frequency + Sir state
@@ -4728,6 +5043,21 @@ class InnerThoughtDaemon:
             return False, 'empty_rule'
         if len(rule) < 10:
             return False, f'rule_too_short:{len(rule)}<10'
+
+        # 🆕 [governor Phase 4 E5 / Sir 2026-05-29 拍板] integrity 红线 check
+        # propose_protocol rule 含 "disable ClaimTracer / skip integrity" 等
+        # → red_line_violated. ClaimTracer 永远不可由 LLM 自决关 (准则 5 言出必行).
+        # reject 返 actionable_result, LLM 下轮看到学习不再 propose.
+        _rl_hit, _rl_phrase = _check_red_line_propose_protocol(rule)
+        if _rl_hit:
+            self._bg_log(
+                f"🚫 [E5/red_line] propose_protocol 撞 integrity 红线 "
+                f"(phrase='{_rl_phrase}') → reject. ClaimTracer 不可关."
+            )
+            return False, (
+                f'red_line_violated:integrity_disable:'
+                f'phrase={_rl_phrase[:40]}'
+            )
 
         if not self.relational_state:
             return False, 'no_relational_state'

@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-29T01:15:00",
+    "purpose": "🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] 思考脑紧急通路 — SWM 高 salience event publish 时中断 daemon self-pacing wait → 立即下次 tick (100ms 内启 LLM). 防紧急事件 (Sir 否决 / alarm / commitment deadline / health emergency / integrity violation) 等到下次 60s tick 才被思考脑看到.",
+    "philosophy": "准则 6 数据强耦合: emergency etype list + salience threshold 全 vocab 持久化. daemon 0 polling-overhead (用 0.5s 粒度 Event.wait check). 准则 7 Sir 元否决: 可改 vocab 加/去 etype, 调阈值, disable 全 E1.",
+    "consumer": [
+      "jarvis_inner_thought_daemon.py:_check_emergency_pending (poll SWM check trigger)",
+      "jarvis_inner_thought_daemon.py:_wait_with_emergency_check (daemon_loop wait 中断)"
+    ],
+    "cli": "scripts/emergency_trigger_dump.py (TODO Phase 4 后续)"
+  },
+  "enabled": true,
+  "salience_threshold": 0.85,
+  "rate_limit_s": 30,
+  "rate_limit_note": "上次 wake interrupt < rate_limit_s → skip (防 30s 内连续 emergency event 刷屏唤醒). default 30s.",
+  "poll_chunk_s": 0.5,
+  "poll_chunk_s_note": "daemon wait 时 0.5s 粒度 poll SWM. trade-off: 越小 = 紧急响应越快但 IO 多, 越大 = 响应慢但省 CPU. default 0.5s 平衡.",
+  "lookback_s": 5.0,
+  "lookback_s_note": "poll 时 check 近 N 秒 SWM event. default 5s — 防太老 event 触发 (event 1min 前发, 现在才 poll 不算紧急).",
+  "trigger_etypes": [
+    "sir_speech_strong_negative",
+    "sir_skepticism",
+    "alarm_fire",
+    "reminder_fired",
+    "commitment_deadline_imminent",
+    "health_emergency",
+    "integrity_violation_detected",
+    "sleep_pressure_critical"
+  ],
+  "trigger_etypes_note": "命中此 list AND salience >= salience_threshold → wake interrupt. Sir CLI add/del etype 直接生效 (mtime check)."
+}

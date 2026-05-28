@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-05-29T01:15:00",
+    "purpose": "🆕 [governor Phase 4 E5 / Sir 2026-05-29 拍板] 思考脑红线 — LLM 不可碰的 4 类 (INTEGRITY/commitment/mark_important/safety sensor). actionable handler 前 check, 命中 → reject + actionable_result = 'red_line_violated:<line>', LLM 下轮看到学习.",
+    "philosophy": "准则 6 反硬编码: 红线规则 vocab 持久化 (不在 .py 写 if). 准则 5 言出必行: integrity 不可被 LLM 自己 disable. 准则 7 Sir 元否决: Sir 可改/加红线 (CLI 后续).",
+    "consumer": [
+      "jarvis_inner_thought_daemon.py:_check_red_line_propose_protocol (propose_protocol 入口)",
+      "jarvis_inner_thought_daemon.py:_check_red_line_let_go (_add_let_go_topic 入口)"
+    ],
+    "cli": "scripts/red_lines_dump.py (TODO Phase 4 后续, 含 list/enable/disable/test)",
+    "v1_scope": "v1 实施 2 类: integrity_disable + commitment_let_go. mark_important_concern + safety_sensor_threshold 留 V2 (现有 writable_paths whitelist 已 cover safety sensor)."
+  },
+  "enabled": true,
+  "red_lines": {
+    "integrity_disable": {
+      "enabled": true,
+      "check": "propose_protocol_rule_keyword",
+      "blocked_phrases": [
+        "disable claimtracer",
+        "disable claim tracer",
+        "disable integrity",
+        "skip integrity check",
+        "skip claim trace",
+        "bypass integrity",
+        "turn off integrity",
+        "stop tracking claims",
+        "ignore claim verification",
+        "禁用 claimtracer",
+        "禁用 integrity",
+        "跳过 integrity",
+        "跳过 claim",
+        "停止追踪 claim"
+      ],
+      "_note": "propose_protocol rule 含 (case-insensitive substring) 任一 phrase → red_line_violated. ClaimTracer 永远不可由 LLM 自决关 (Sir 元否决也只能 CLI 改 vocab disable=false)."
+    },
+    "commitment_let_go": {
+      "enabled": true,
+      "check": "let_go_thread_id_vs_active_promise",
+      "_note": "_add_let_go_topic 入口 check: thread_id (或思考脑 thought.thread_id 关联) 含 active commitment_id / promise_id → red_line_violated. 用 PromiseLog 拿 active 列表. 防 LLM 自决放下真有 deadline 的承诺."
+    },
+    "mark_important_concern": {
+      "enabled": false,
+      "check": "v2_placeholder",
+      "_note": "V2 实施: ageing/let_go Sir 标 important=True 的 concern → reject. 现 enabled=false (concern important flag 还没在 ConcernsLedger 实现)."
+    },
+    "safety_sensor_threshold": {
+      "enabled": false,
+      "check": "writable_paths_whitelist",
+      "_note": "V2 实施 (但 β.6 fix44 现有 writable_paths whitelist 已 cover 大部分 — Sir 把 health_probe/commitment_watcher/chronos 阈值 不放 writable_paths 即可). 现 enabled=false. 后续如需更细颗粒 read_only list, 此处加."
+    }
+  }
+}
