@@ -353,6 +353,16 @@ class ChatBypass:
         threading.Thread(target=self._play_worker, daemon=True, name='TTS-Play').start()
         threading.Thread(target=self._translate_worker, daemon=True, name='TTS-Translate').start()
 
+        # 🪞 [Sir 2026-05-28 23:00 fix49 mirror BUG #3+#4 hook wire]
+        # mirror gate monkey-patch stream_chat / stream_chat_local / stream_nudge,
+        # try/finally cover 所有 ~13 个 return path (happy / early / exception / circuit_broken).
+        # 主进程 (JARVIS_MIRROR 未 set) 内部 is_mirror_mode() short circuit, 0 影响 chain.
+        try:
+            from jarvis_mirror_mode import patch_chat_bypass_for_mirror as _patch_for_mirror
+            _patch_for_mirror(self)
+        except Exception as _e:
+            print(f"[mirror_mode] patch_chat_bypass_for_mirror wire fail (non-fatal): {_e}")
+
     # [R7-β2 v5/Sir-2026-05-14] _generate_backchannel_pcm 已删除（与 play_acknowledgment_chime 重复）。
 
     # [轴 2.4 / 2026-05-15] 本地短句 PCM 池配置 —— 取代 v3 罐头随机抽路径
@@ -1592,6 +1602,22 @@ Spoken English:"""
                 "若不确定该用哪个 organ, 不要发 FAST_CALL, 改问 Sir 或用自然语言响应."
             )
 
+        # 🪞 [Sir 2026-05-28 22:00 fix49 mirror P2 hook-4] FAST_CALL audit
+        # 镜像 mode 每次工具调都写 _mirror_output.jsonl, Cascade tail 看实时进度
+        # (turn_complete 只在 turn 末尾, 这里是 tool 真发起时). 非 mirror → noop.
+        try:
+            from jarvis_mirror_mode import is_mirror_mode as _mir_check, append_mirror_output as _mir_log
+            if _mir_check():
+                _mir_log({
+                    'event': 'fast_call_attempt',
+                    'organ': str(organ_name),
+                    'command': str(command),
+                    'params_excerpt': {k: (str(v)[:120] if not isinstance(v, (int, float, bool, type(None))) else v)
+                                       for k, v in (params or {}).items()},
+                })
+        except Exception:
+            pass
+
         SAFETY_GATE_ORGANS = ["system_hands", "file_operator_hands", "txt_writer_hands_generated"]
         ACKNOWLEDGMENT_PATTERNS = [
             r'^(okay|ok|yeah|yep|yes|sure|right|got it|mhm|uh huh|alright|fine|good|great|nice|cool|thanks|thx|ty)$',
@@ -1618,6 +1644,23 @@ Spoken English:"""
             if ctrl_cmd in ("subtitle_on", "subtitle_off", "orb_on", "orb_off"):
                 self.subtitle_queue.put(("control", ctrl_cmd))
                 return f"✅ ui_control.{ctrl_cmd}"
+            # 🪞 [Sir 2026-05-28 22:00 fix49 mirror P2 hook-4] dashboard mirror skip
+            # dashboard_open / dashboard_close 会 subprocess.Popen + webbrowser.open
+            # 触主 Sir 桌面 (port 8765 web server + 浏览器弹窗), 严重 break 镜像隔离.
+            # 镜像 mode 短路返回 mock success, 让主脑看到"已执行"继续后续 reply.
+            if ctrl_cmd in ("dashboard_open", "dashboard_close"):
+                try:
+                    from jarvis_mirror_mode import is_mirror_mode as _mir_check, append_mirror_output as _mir_log
+                    if _mir_check():
+                        _mir_log({
+                            'event': 'mirror_fast_call_skipped',
+                            'organ': 'ui_control',
+                            'command': ctrl_cmd,
+                            'reason': 'dashboard subprocess + browser would leak to Sir desktop',
+                        })
+                        return f"🪞 [mirror] ui_control.{ctrl_cmd} 已跳过 (镜像 mode 不抢真桌面/真浏览器)"
+                except Exception:
+                    pass
             # 🩹 [β.2.9.9 / 2026-05-18] Sir 11:09 集成 dashboard 到主脑:
             # "打开面板/看看状态" 模糊语义 → 主脑 emit FAST_CALL ui_control.dashboard_open
             # 🩹 [β.5.25-finish / 2026-05-20] Sir 02:30 反馈"打开的还是之前那个 python":
@@ -3030,6 +3073,62 @@ Spoken English:"""
         except Exception:
             pass
 
+        # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] thinking_brain_directive 注入
+        # =====================================================================
+        # 思考脑 actionable=compose_main_brain_directive:<text> 装的 directive.
+        # 主脑此处读 → prepend prompt top → 主脑 reply 守 directive.
+        # TTL 5min, 过期 auto-clear (inner_voice_track.get_active_directive
+        # 内部 TTL check, 返 None 即跳过).
+        # V5 Sir vision: 思考脑 = governor, 装配主脑 prompt.
+        # =====================================================================
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track as _giv_dir,
+                is_enabled as _iv_en_dir,
+            )
+            if _iv_en_dir():
+                _track_dir = _giv_dir()
+                if hasattr(_track_dir, 'get_active_directive'):
+                    _active_dir = _track_dir.get_active_directive()
+                    if _active_dir and isinstance(_active_dir, dict):
+                        _dir_text = str(_active_dir.get('text', '')).strip()
+                        if _dir_text:
+                            _expires_at = float(
+                                _active_dir.get('expires_at', 0)
+                            )
+                            _ttl_remaining_s = max(
+                                0, int(_expires_at - time.time())
+                            )
+                            _composed_by = str(
+                                _active_dir.get('composed_by_thought_id', '')
+                            )[:12]
+                            _dir_block = (
+                                f"=== THINKING BRAIN DIRECTIVE — for THIS reply ===\n"
+                                f"Your thinking layer (running 1-min ticks) has "
+                                f"composed a directive for you to follow on this "
+                                f"reply (TTL {_ttl_remaining_s}s left, "
+                                f"composed_by_thought={_composed_by}):\n"
+                                f"  → {_dir_text}\n"
+                                f"This is YOUR own thinking layer talking to YOU — "
+                                f"honor it unless Sir directly overrides. After "
+                                f"reply, Sir's reaction will be tracked and fed "
+                                f"back to thinking layer (元学习闭环).\n"
+                                f"=== END THINKING BRAIN DIRECTIVE ===\n\n"
+                            )
+                            prompt = _dir_block + (prompt or '')
+                            try:
+                                from jarvis_utils import bg_log as _bgl_dir
+                                _bgl_dir(
+                                    f"📌 [F7/inject_directive] inject "
+                                    f"thinking_brain_directive into prompt top "
+                                    f"(TTL {_ttl_remaining_s}s, composed_by="
+                                    f"{_composed_by}, text='{_dir_text[:60]}')"
+                                )
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
         import re
         print(f"\n" + "╔" + "═"*63)
         clean_user_input = user_input.replace(": ", "", 1) if user_input.startswith(": ") else user_input
@@ -3044,6 +3143,51 @@ Spoken English:"""
             self.jarvis._last_user_active = time.time()
             self.jarvis._detect_wake_up()
             self.jarvis._detect_sleep_intent(clean_user_input)
+
+        # 🆕 [governor Phase 3 F6 改 3 / Sir 2026-05-29 拍板] mark Sir reaction
+        # =====================================================================
+        # Sir 新输入 → 上次 main_brain_reply 被反应 (V6 元学习闭环).
+        # 分类: 负面 keyword → 'rejected', 其他 → 'engaged'.
+        # 下轮思考脑 evidence meta_feedback_loop 看 reply + reaction → 自学习.
+        # system_event 跳 (后台没事件不是 Sir 反应).
+        # =====================================================================
+        try:
+            _is_sys_evt_for_reaction = bool(
+                clean_intent and str(clean_intent).startswith('[后台系统')
+            )
+            if not _is_sys_evt_for_reaction and clean_user_input:
+                from jarvis_inner_voice_track import (
+                    get_inner_voice_track as _giv_react,
+                    is_enabled as _iv_en_react,
+                )
+                if _iv_en_react():
+                    # 简版 negative keyword detect (V2 可接 SkepticismDetector vocab)
+                    _neg_kws = (
+                        '别提', '别说', '不要', '别再', '烦死', '够了',
+                        '别了', '不对', '错了', '不用', '醒醒',
+                        ' stop ', ' enough ', "don't ",
+                    )
+                    _ui_lower = ' ' + clean_user_input.lower() + ' '
+                    _is_neg = any(k in _ui_lower for k in _neg_kws)
+                    _reaction_label = 'rejected' if _is_neg else 'engaged'
+                    try:
+                        _marked = _giv_react().mark_pending_main_replies_reacted(
+                            reaction=_reaction_label, within_min=30.0,
+                        )
+                        if _marked > 0:
+                            try:
+                                from jarvis_utils import bg_log as _bgl
+                                _bgl(
+                                    f"🔄 [F6c3/meta_feedback] mark {_marked} "
+                                    f"prior main_reply(s) as "
+                                    f"sir_reaction='{_reaction_label}'"
+                                )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         classifier = get_quick_classifier()
         if classifier.is_available:
@@ -5832,12 +5976,30 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     _reply_preview = str(final_reply).strip()[:120]
                     _sir_preview = str(user_input or '').strip()[:60]
                     _voice_content = f'i replied to sir: "{_reply_preview}"'
+                    # 🆕 [governor Phase 3 F6 改 3 / Sir 2026-05-29 拍板] 元学习闭环
+                    # meta 加 sir_reaction='pending' + directive_id (F7 关联)
+                    # Sir 下个输入 → mark engaged/rejected (V6 闭环)
+                    # 思考脑下轮 evidence meta_feedback_loop 看 reply + reaction
+                    _active_directive_id = ''
+                    try:
+                        _track_for_did = get_inner_voice_track()
+                        if hasattr(_track_for_did, 'get_active_directive'):
+                            _ad = _track_for_did.get_active_directive()
+                            if _ad and isinstance(_ad, dict):
+                                _active_directive_id = str(
+                                    _ad.get('composed_by_thought_id', '')
+                                )[:32]
+                    except Exception:
+                        pass
                     _voice_meta = {
                         'kind': 'main_reply',
                         'reply_len': len(final_reply or ''),
                         'reply_excerpt': _reply_preview,
                         'sir_excerpt': _sir_preview,
                         'turn_id': _turn_id_for_rn if '_turn_id_for_rn' in dir() else '',
+                        # F6 改 3: 元学习 closure fields
+                        'sir_reaction': 'pending',
+                        'directive_id': _active_directive_id,
                     }
                     get_inner_voice_track().append(
                         source='self_reflection',
@@ -6095,6 +6257,11 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 )
         except Exception:
             pass
+
+        # 🪞 [Sir 2026-05-28 23:00 fix49 mirror BUG #3+#4] 原 mirror hook 在此 happy-path
+        # 末写 turn_complete, 但 stream_chat 有 ~13 个 return 早返 path 全 miss. 改成
+        # mirror gate 在 ChatBypass.__init__ 末 monkey-patch (try/finally cover 所有 path).
+        # 详 jarvis_mirror_mode.patch_chat_bypass_for_mirror.
 
         return False, final_reply
 

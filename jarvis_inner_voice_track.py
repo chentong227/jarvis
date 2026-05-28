@@ -205,6 +205,130 @@ class InnerVoiceTrack:
             result = [e for e in self._buffer if lower <= e.ts < upper]
         return result[-max_n:]
 
+    def mark_pending_main_replies_reacted(
+        self, reaction: str, within_min: float = 30.0,
+    ) -> int:
+        """🆕 [governor Phase 3 F6改3 / Sir 2026-05-29] mark main_brain reply 的 sir_reaction.
+
+        Sir 新输入 → 上一个 main_brain_reply (meta.kind='main_reply',
+        sir_reaction='pending') 被反应了, 据 reaction 更新 meta.
+
+        Args:
+          reaction: 'engaged' / 'rejected' / 'ignored'
+          within_min: 仅 mark 近 N 分钟内 pending 的 (避免 mark 很老 reply)
+
+        Returns: 被 mark 数 (用于 audit log).
+
+        准则 6 数据强耦合: meta 记 sir_reaction, 思考脑下轮 evidence
+        meta_feedback_loop 看到 → 自学习 (V6 元学习闭环).
+        """
+        if not reaction or not isinstance(reaction, str):
+            return 0
+        reaction = reaction.strip().lower()
+        if reaction not in ('engaged', 'rejected', 'ignored'):
+            return 0
+        cutoff = time.time() - within_min * 60.0
+        marked = 0
+        now = time.time()
+        with self._lock:
+            for e in self._buffer:
+                if e.ts < cutoff:
+                    continue
+                if not e.meta:
+                    continue
+                if e.meta.get('kind') != 'main_reply':
+                    continue
+                if e.meta.get('sir_reaction') != 'pending':
+                    continue
+                e.meta['sir_reaction'] = reaction
+                e.meta['sir_reaction_marked_at'] = now
+                marked += 1
+        return marked
+
+    def get_recent_main_replies(
+        self, within_min: float = 60.0, max_n: int = 5,
+    ) -> list:
+        """🆕 [governor Phase 3 F6改3] 拿近 N 分钟 main_brain_reply entries (含 reaction).
+
+        For 思考脑 evidence meta_feedback_loop. 返 List[VoiceEntry] (含 meta).
+        """
+        cutoff = time.time() - within_min * 60.0
+        with self._lock:
+            mr = [
+                e for e in self._buffer
+                if e.ts >= cutoff
+                and e.meta and e.meta.get('kind') == 'main_reply'
+            ]
+        # 按 ts asc, 取最后 N 条
+        mr.sort(key=lambda e: e.ts)
+        return mr[-max_n:]
+
+    # ============================================================
+    # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] thinking_brain_directive
+    # ============================================================
+    # 思考脑 actionable=compose_main_brain_directive:<text> → set_thinking_brain_directive.
+    # 主脑 chat_bypass stream_chat 入口 → get_active_directive() 注入 prompt top.
+    # TTL default 5min, 过期 fallback default (主脑用 standard prompt).
+    # 准则 6 信任 LLM 自决 (思考脑 LLM 自决何时装 directive).
+    # ============================================================
+
+    def set_thinking_brain_directive(
+        self, text: str, ttl_min: int = 5,
+        composed_by_thought_id: str = '',
+    ) -> bool:
+        """🆕 [governor Phase 3 F7] 思考脑装 directive 给主脑.
+
+        Args:
+          text: directive text (≤200 char, 主脑 prompt top 注入)
+          ttl_min: TTL minutes (default 5), 过期 fallback default
+          composed_by_thought_id: 触发 directive 的 thought.id (audit)
+
+        Returns: True 成功.
+
+        持久化: in-memory + 简单 fail-safe. 不持久 disk (TTL 短, restart 即 reset OK).
+        """
+        if not text or not isinstance(text, str):
+            return False
+        text = text.strip()[:200]
+        if len(text) < 5:
+            return False
+        ttl_min = max(1, min(60, int(ttl_min)))
+        now = time.time()
+        with self._lock:
+            self._active_directive = {
+                'text': text,
+                'created_at': now,
+                'expires_at': now + ttl_min * 60.0,
+                'ttl_min': ttl_min,
+                'composed_by_thought_id': str(
+                    composed_by_thought_id or ''
+                )[:32],
+            }
+        return True
+
+    def get_active_directive(self) -> Optional[Dict]:
+        """🆕 [governor Phase 3 F7] 主脑读 active directive (TTL check).
+
+        Returns: dict (text, created_at, expires_at, composed_by_thought_id)
+                 或 None (无 active 或已过期).
+        """
+        with self._lock:
+            d = getattr(self, '_active_directive', None)
+            if not d:
+                return None
+            if time.time() >= d.get('expires_at', 0):
+                # auto-expire: 清缓存
+                self._active_directive = None
+                return None
+            return dict(d)
+
+    def clear_active_directive(self) -> bool:
+        """🆕 [governor Phase 3 F7] Sir CLI / 紧急 revoke active directive."""
+        with self._lock:
+            had = getattr(self, '_active_directive', None) is not None
+            self._active_directive = None
+            return had
+
     def has_wants_voice_pending(self, within_min: float = 30.0) -> bool:
         """近 N 分钟内有 wants_voice=True 的 entry 吗?"""
         cutoff = time.time() - within_min * 60.0

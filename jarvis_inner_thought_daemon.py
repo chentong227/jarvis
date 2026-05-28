@@ -2158,6 +2158,49 @@ class InnerThoughtDaemon:
                 }
         except Exception:
             pass
+        # 🆕 [governor Phase 3 F6 改 3 / Sir 2026-05-29 拍板] meta_feedback_loop
+        # ============================================================
+        # V6 元学习闭环: 拿近 N 分钟 main_brain_reply entries (心声
+        # meta.kind='main_reply') + sir_reaction (engaged/rejected/ignored/pending).
+        # 思考脑下轮 prompt [META FEEDBACK LOOP] block 看 reply + reaction →
+        # 上次 directive A 被 Sir rejected → 重组 directive B (不同方向).
+        # ============================================================
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track as _giv_mfl,
+                is_enabled as _iv_en_mfl,
+            )
+            if _iv_en_mfl():
+                _track_mfl = _giv_mfl()
+                if hasattr(_track_mfl, 'get_recent_main_replies'):
+                    _replies = _track_mfl.get_recent_main_replies(
+                        within_min=60.0, max_n=5,
+                    )
+                    if _replies:
+                        _now_mfl = time.time()
+                        ev['meta_feedback_loop'] = [
+                            {
+                                'reply_excerpt': (
+                                    (e.meta or {}).get('reply_excerpt', '')
+                                )[:120],
+                                'sir_excerpt': (
+                                    (e.meta or {}).get('sir_excerpt', '')
+                                )[:60],
+                                'sir_reaction': (
+                                    (e.meta or {}).get('sir_reaction', 'pending')
+                                ),
+                                'directive_id': (
+                                    (e.meta or {}).get('directive_id', '')
+                                ),
+                                'turn_id': (
+                                    (e.meta or {}).get('turn_id', '')
+                                ),
+                                'age_s': int(_now_mfl - e.ts),
+                            }
+                            for e in _replies
+                        ]
+        except Exception:
+            pass
         # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] '放下' prune
         # ============================================================
         # 读 active let_go list → prune recent_thoughts + topic_distribution
@@ -2898,7 +2941,14 @@ class InnerThoughtDaemon:
             # Sir CLI 拍板 (scripts/sensor_thresholds_dump.py). path 必须在
             # writable_paths (afk.idle_threshold_s / ghost_activity.* /
             # proactive_shield.ghost_dampen_idle_real_s / ...).
-            "adjust_sensor_threshold:<path>:<value></ACTIONABLE>\n"
+            "adjust_sensor_threshold:<path>:<value> | "
+            # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] compose_main_brain_directive
+            # 思考脑装 directive 给主脑 (V5 Sir vision). text 5-200 char, TTL 5min.
+            # 主脑 chat_bypass 入口前读 → 注入 prompt top → 主脑 reply 守 directive.
+            # sal>=0.75 gate (防低质 directive). 元学习闭环 (F6改3): Sir reaction 反馈思考脑.
+            "compose_main_brain_directive:<short imperative for next "
+            "main brain reply, e.g. 'be brief, skip health advice'>"
+            "</ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
             "cite appears in THOUGHT). Else: 'none'</EVIDENCE_LINK>\n"
@@ -3323,6 +3373,61 @@ class InnerThoughtDaemon:
                     f"thread for {_td_ttl}min (it will be pruned from "
                     f"your evidence — freeing your attention). "
                     f"Your call (准则 6 信任 LLM 自决)."
+                )
+                lines.append("")
+        except Exception:
+            pass
+
+        # 🆕 [governor Phase 3 F6 改 3 / Sir 2026-05-29 拍板] meta feedback loop block
+        # ============================================================
+        # V6 元学习闭环 — 思考脑看 last 5 main_brain_reply + Sir reaction.
+        # rejected reply → 重组 directive (不同方向). engaged → 继续下去.
+        # ============================================================
+        try:
+            _mfl = evidence.get('meta_feedback_loop') or []
+            if _mfl:
+                lines.append(
+                    f"[META FEEDBACK LOOP — last {len(_mfl)} replies + "
+                    "Sir reactions]"
+                )
+                _rxn_marks = {
+                    'engaged': '✅',
+                    'rejected': '❌',
+                    'ignored': '⏸️',
+                    'pending': '⚡',  # 未反应 (Sir 还没说话)
+                }
+                for _e in _mfl:
+                    _age_s = _e.get('age_s', 0)
+                    if _age_s < 60:
+                        _age_str = f"{_age_s}s ago"
+                    elif _age_s < 3600:
+                        _age_str = f"{_age_s // 60}m ago"
+                    else:
+                        _age_str = f"{_age_s // 3600}h ago"
+                    _rxn = _e.get('sir_reaction', 'pending')
+                    _rxn_mark = _rxn_marks.get(_rxn, '?')
+                    _did = _e.get('directive_id', '')
+                    _did_str = (
+                        f" [directive={_did[:12]}]" if _did else ''
+                    )
+                    lines.append(
+                        f"  [{_age_str}] me: \"{_e.get('reply_excerpt', '')[:100]}\""
+                        f"{_did_str}"
+                    )
+                    _sir_ex = _e.get('sir_excerpt', '')
+                    _sir_str = (
+                        f' (sir: "{_sir_ex[:50]}")' if _sir_ex else ''
+                    )
+                    lines.append(
+                        f"           {_rxn_mark} sir_reaction={_rxn}{_sir_str}"
+                    )
+                lines.append(
+                    "  ↳ If a reply was ❌ rejected, re-examine: did your "
+                    "directive (if any) miss something? Consider "
+                    "compose_main_brain_directive with different approach "
+                    "next time. ⏸️ ignored = Sir silent N min after — maybe "
+                    "too pushy or Sir AFK. ⚡ pending = Sir hasn't reacted "
+                    "yet (in flight)."
                 )
                 lines.append("")
         except Exception:
@@ -4245,6 +4350,14 @@ class InnerThoughtDaemon:
             # sal>=0.75 + path 必须在 ALLOWED prefix (afk/ghost/proactive_shield).
             if a.startswith('adjust_sensor_threshold:'):
                 return self._do_adjust_sensor_threshold(thought, a)
+            # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] compose_main_brain_directive
+            # 思考脑装 directive 给主脑 (V5 Sir vision):
+            # - thinking_brain_directive 存 inner_voice_track (TTL 5min)
+            # - 主脑 chat_bypass.stream_chat 入口前读 → 注入 prompt top
+            # - 元学习 (F6改3): Sir reaction (engaged/rejected) 反馈 evidence
+            # 准则 6 信任 LLM 自决何时装 directive (sal gate 0.75 防低质 spam).
+            if a.startswith('compose_main_brain_directive:'):
+                return self._do_compose_main_brain_directive(thought, a)
             # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] surface_to_sir 全退化
             # =================================================================
             # 历史: 方案 C (Sir 2026-05-26 20:55) thought 主动 surface 通道
@@ -4659,6 +4772,73 @@ class InnerThoughtDaemon:
             )
         except Exception as e:
             return False, f'protocol_build_fail:{str(e)[:60]}'
+
+    # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] compose_main_brain_directive
+    # =====================================================================
+    # 思考脑 actionable=compose_main_brain_directive:<text> → 装 directive
+    # 给主脑 (inner_voice_track 存 TTL 5min). 主脑 chat_bypass.stream_chat
+    # 入口前 get_active_directive() 读 → 注入 prompt top.
+    # =====================================================================
+    _COMPOSE_DIRECTIVE_MIN_SAL = 0.75   # 防低质 directive spam
+    _COMPOSE_DIRECTIVE_TTL_MIN = 5      # default TTL minutes (≤60 cap inside)
+
+    def _do_compose_main_brain_directive(
+        self, thought: InnerThought, a: str,
+    ) -> Tuple[bool, str]:
+        """🆕 [governor Phase 3 F7] 装 directive 给主脑 (V5 Sir vision).
+
+        actionable=compose_main_brain_directive:<text>
+        - sal ≥ 0.75 (防低质 directive spam)
+        - text ≥ 5 char (空 directive 无意义)
+        - TTL 5min default (过期 fallback default prompt)
+        - inner_voice_track 存 active directive, 主脑 chat_bypass 读
+
+        流程 (V5 Sir vision):
+          thought (sal>=0.75) → compose_main_brain_directive:<text>
+          → inner_voice_track.set_thinking_brain_directive(text, ttl=5min,
+              composed_by=thought.id)
+          → 下次主脑 turn chat_bypass 入口 → get_active_directive()
+          → 注入 prompt top → 主脑 reply 守 directive
+          → reply append voice meta.directive_id = thought.id
+          → Sir reaction (F6改3) tracked → 元学习闭环 (V6)
+        """
+        # sal gate (防低质 directive 浪费主脑 attention)
+        if thought.salience < self._COMPOSE_DIRECTIVE_MIN_SAL:
+            return False, (
+                f'gated:compose_directive_requires_sal>='
+                f'{self._COMPOSE_DIRECTIVE_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+        text = a.split(':', 1)[1].strip() if ':' in a else ''
+        if not text:
+            return False, 'empty_directive_text'
+        if len(text) < 5:
+            return False, f'directive_too_short:{len(text)}<5'
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled as _iv_enabled,
+            )
+            if not _iv_enabled():
+                return False, 'inner_voice_track_disabled'
+            track = get_inner_voice_track()
+            if not hasattr(track, 'set_thinking_brain_directive'):
+                return False, 'set_thinking_brain_directive_method_missing'
+            ok = track.set_thinking_brain_directive(
+                text=text,
+                ttl_min=self._COMPOSE_DIRECTIVE_TTL_MIN,
+                composed_by_thought_id=thought.id,
+            )
+            if ok:
+                self._bg_log(
+                    f"📌 [InnerThought/compose_directive] thought={thought.id[:12]} "
+                    f"sal={thought.salience:.2f} → set directive "
+                    f"'{text[:60]}' (TTL {self._COMPOSE_DIRECTIVE_TTL_MIN}min). "
+                    f"主脑下轮 chat_bypass 读 + 注入 prompt top."
+                )
+                return True, f'directive_set:{text[:40]}'
+            return False, 'set_directive_returned_false'
+        except Exception as e:
+            return False, f'compose_directive_fail:{str(e)[:60]}'
 
     # 🆕 [Sir 2026-05-26 SOUL Phase B] adjust_concern_notes constants
     _NOTES_MAX_CHARS = 500             # concern.notes_for_self 总长 cap (schema)
