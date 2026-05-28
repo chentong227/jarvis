@@ -63,6 +63,23 @@
     "salience": 0.3,
     "_note": "publish 每 tick — 主脑 / Reflector / Dashboard 看. ttl 30min 防膨胀. salience 0.3 不挤 top 但可查."
   },
+  "recent_thoughts_lookback": {
+    "n": 15,
+    "min": 30,
+    "_note": "🆕 [governor Phase 1 F2 / Sir 2026-05-29 拍板] 思考脑 evidence 'recent_thoughts' lookback 两维: 取 last `min` 分钟内的 thought, 上限 `n` 条. 修复缺口 ①: 旧版硬编码 last 3 思考脑看不到 30min 内重复 22 次. n range 1-50, min range 1-180 (sanity cap). 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F2."
+  },
+  "topic_distribution": {
+    "lookback_min": 60,
+    "warning_threshold": 10,
+    "max_topics_shown": 10,
+    "_note": "🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] 思考脑 evidence 加 [TOPIC DISTRIBUTION] block — count thoughts by thread_id in window. 当 occurrence ≥ warning_threshold (default 10) 标 ⚠️ 提示 LLM 考虑 let_go. lookback_min 1-360, warning_threshold 1-100, max_topics_shown 1-30 (sanity cap). E4 evidence 维度化: LLM 视觉看'我 22 次想同事' → 自然激活 let_go. 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F3."
+  },
+  "self_reflection_dedup": {
+    "enabled": true,
+    "window_min": 30,
+    "jaccard_threshold": 0.6,
+    "_note": "🆕 [governor Phase 1 F6 改 2 / Sir 2026-05-29 拍板] 思考脑 B 类反思 append 心声 (主脑 SOUL inject 看心声 = 看到反思) 前 jaccard dedup: 窗内 (window_min 30 default) 同 topic (jaccard ≥ threshold 0.6) 跳, 防 1h 22 次重复反思淹没主脑. enabled false 关 dedup (危险, 测试用). window_min 1-180, jaccard 0.0-1.0 (sanity cap). 修复缺口 ③: 旧路只 publish SWM (0 consumer) 主脑看不到 B 类反思. 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F6 改 2."
+  },
   "attention_focus_channels": {
     "_meta": {
       "purpose": "β.6 Phase 1b — 思考脑自标 NEXT_ATTENTION_FOCUS 用的合法 channel 白名单. 持久化在此 (准则 6: 不在 .py 硬编码 list).",

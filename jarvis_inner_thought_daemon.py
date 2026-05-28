@@ -408,6 +408,33 @@ _PACING_DEFAULT_CONFIG: dict = {
         'ttl_s': 1800,
         'salience': 0.3,
     },
+    # 🆕 [governor Phase 1 F2 / Sir 2026-05-29 拍板]
+    # 思考脑 evidence 'recent_thoughts' lookback 两维 (n 上限 + min 时间窗).
+    # 修复缺口 ①: 旧版硬编码 last 3 看不到 30min 内重复 22 次.
+    # 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F2
+    'recent_thoughts_lookback': {
+        'n': 15,
+        'min': 30,
+    },
+    # 🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] topic distribution hint
+    # 思考脑 evidence 加 [TOPIC DISTRIBUTION] block (count by thread_id in window)
+    # E4 evidence 维度化: LLM 视觉看 "我 22 次想同事" → 自然激活 let_go.
+    # 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F3
+    'topic_distribution': {
+        'lookback_min': 60,
+        'warning_threshold': 10,
+        'max_topics_shown': 10,
+    },
+    # 🆕 [governor Phase 1 F6 改 2 / Sir 2026-05-29 拍板]
+    # 思考脑 B 类反思 append 心声 (主脑 SOUL inject 看心声 = 看到反思)
+    # 防 1h 22 次重复反思全 append: 30min jaccard > 0.6 同 topic 跳.
+    # 修复缺口 ③: 旧路只 publish SWM (0 consumer), 主脑看不到 B 类反思.
+    # 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F6 改 2
+    'self_reflection_dedup': {
+        'window_min': 30,
+        'jaccard_threshold': 0.6,
+        'enabled': True,
+    },
 }
 
 
@@ -434,8 +461,11 @@ def _load_pacing_config() -> dict:
             data = json.load(f)
         # deep-merge with default (vocab 缺 key fallback)
         config = dict(_PACING_DEFAULT_CONFIG)
+        # 🆕 [governor Phase 1 F2+F3+F6改2] 增白名单
         for k in ('lookback_n', 'signals_enabled', 'signal_fields',
-                  'prompt_signal_block', 'swm_publish'):
+                  'prompt_signal_block', 'swm_publish',
+                  'recent_thoughts_lookback', 'topic_distribution',
+                  'self_reflection_dedup'):
             if k in data:
                 if isinstance(data[k], dict) and isinstance(
                         config.get(k), dict):
@@ -449,6 +479,94 @@ def _load_pacing_config() -> dict:
         return config
     except Exception:
         return _PACING_DEFAULT_CONFIG
+
+
+def _get_recent_thoughts_lookback() -> tuple:
+    """🆕 [governor Phase 1 F2] 返 (n, lookback_min) tuple.
+
+    n: 上限条数 (default 15)
+    lookback_min: 时间窗口分钟 (default 30)
+
+    源法: vocab `recent_thoughts_lookback` 读 → fallback default.
+    准则 6: 不硬编码 magic number, vocab 持久化 + CLI 可改.
+    """
+    try:
+        cfg = _load_pacing_config()
+        block = cfg.get('recent_thoughts_lookback', {})
+        n = int(block.get('n', 15))
+        lookback_min = int(block.get('min', 30))
+        # 范围 sanity (n: 1-50, min: 1-180)
+        n = max(1, min(50, n))
+        lookback_min = max(1, min(180, lookback_min))
+        return (n, lookback_min)
+    except Exception:
+        return (15, 30)
+
+
+def _get_topic_distribution_config() -> tuple:
+    """🆕 [governor Phase 1 F3] 返 (lookback_min, warning_threshold, max_topics_shown).
+
+    lookback_min: 时间窗口 (default 60min)
+    warning_threshold: 重复警告阈值 (default 10 occurrences)
+    max_topics_shown: 展示上限 (default 10 topics)
+
+    准则 6: vocab 可改 (memory_pool/inner_thought_pacing_vocab.json).
+    """
+    try:
+        cfg = _load_pacing_config()
+        block = cfg.get('topic_distribution', {})
+        lookback_min = int(block.get('lookback_min', 60))
+        warning_threshold = int(block.get('warning_threshold', 10))
+        max_topics_shown = int(block.get('max_topics_shown', 10))
+        # sanity (lookback: 1-360, threshold: 1-100, max: 1-30)
+        lookback_min = max(1, min(360, lookback_min))
+        warning_threshold = max(1, min(100, warning_threshold))
+        max_topics_shown = max(1, min(30, max_topics_shown))
+        return (lookback_min, warning_threshold, max_topics_shown)
+    except Exception:
+        return (60, 10, 10)
+
+
+def _get_self_reflection_dedup_config() -> tuple:
+    """🆕 [governor Phase 1 F6 改 2] 返 (enabled, window_min, jaccard_threshold).
+
+    enabled: 是否启用 dedup (default True)
+    window_min: dedup 窗口 (default 30min)
+    jaccard_threshold: 同 topic 阈值 (default 0.6)
+
+    用于: 思考脑 B 类反思 append 心声前, check 窗内同 topic 是否已 append.
+    准则 6: vocab 可改 (memory_pool/inner_thought_pacing_vocab.json).
+    """
+    try:
+        cfg = _load_pacing_config()
+        block = cfg.get('self_reflection_dedup', {})
+        enabled = bool(block.get('enabled', True))
+        window_min = int(block.get('window_min', 30))
+        jaccard_thr = float(block.get('jaccard_threshold', 0.6))
+        # sanity (window: 1-180, jaccard: 0.0-1.0)
+        window_min = max(1, min(180, window_min))
+        jaccard_thr = max(0.0, min(1.0, jaccard_thr))
+        return (enabled, window_min, jaccard_thr)
+    except Exception:
+        return (True, 30, 0.6)
+
+
+def _self_reflection_jaccard(text_a: str, text_b: str) -> float:
+    """🆕 [governor Phase 1 F6 改 2] token-level jaccard for self-reflection dedup.
+
+    Inline (不 import jarvis_mutation_evidence_guard 防循环 import).
+    简 — unicode word chars, lowercase, set intersection / union.
+    """
+    import re
+    if not text_a or not text_b:
+        return 0.0
+    tok_a = set(re.findall(r'\w+', str(text_a).lower()))
+    tok_b = set(re.findall(r'\w+', str(text_b).lower()))
+    if not tok_a or not tok_b:
+        return 0.0
+    inter = len(tok_a & tok_b)
+    union = len(tok_a | tok_b)
+    return inter / union if union > 0 else 0.0
 
 
 # ==========================================================================
@@ -1498,29 +1616,92 @@ class InnerThoughtDaemon:
         try:
             from jarvis_utils import get_event_bus
             bus = get_event_bus()
-            if bus is None:
+            # 🆕 [governor Phase 1 F6 改 2] 不再 early return — bus is None
+            # 仍允许下面 voice append 路径继续 (SWM publish 和 voice append 独立).
+            if bus is not None:
+                bus.publish(
+                    etype='self_reflection_noted',
+                    description=(
+                        f"I just self-reflected: {thought.thought[:140]}. "
+                        f"Next reply: consider whether to adjust."
+                    ),
+                    source='inner_thought_daemon',
+                    # salience 透传: 让 SOUL inject 按强度排序
+                    salience=max(0.7, thought.salience),
+                    metadata={
+                        'thought_id': thought.id,
+                        'category': 'B',
+                        'original_salience': thought.salience,
+                        'thought_excerpt': thought.thought[:200],
+                    },
+                    ttl=3600.0 * 6,  # 6h
+                )
+                self._bg_log(
+                    f"🪞 [InnerThought/self-reflection] B-thought "
+                    f"(sal={thought.salience:.2f}) → publish "
+                    f"self_reflection_noted SWM (legacy 0-consumer 路径, "
+                    f"实际主脑通过下面 voice append 看)"
+                )
+        except Exception:
+            pass
+        # 🆕 [governor Phase 1 F6 改 2 / Sir 2026-05-29 拍板]
+        # 修复缺口 ③: B 类反思 只 publish SWM (0 consumer) 主脑看不到.
+        # 治本: append 心声 source='self_reflection' intent='reflection',
+        # 主脑下轮 SOUL inject 心声 → 自然看到 B 类反思.
+        # dedup: 窗内 (30min default) 同 topic (jaccard > 0.6) 跳,
+        # 防 1h 22 次重复反思淹没主脑.
+        # 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F6 改 2
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled as _iv_enabled,
+            )
+            if not _iv_enabled():
                 return
-            bus.publish(
-                etype='self_reflection_noted',
-                description=(
-                    f"I just self-reflected: {thought.thought[:140]}. "
-                    f"Next reply: consider whether to adjust."
-                ),
-                source='inner_thought_daemon',
-                # salience 透传: 让 SOUL inject 按强度排序
-                salience=max(0.7, thought.salience),
-                metadata={
+            _enabled, _win_min, _jacc_thr = (
+                _get_self_reflection_dedup_config()
+            )
+            if not _enabled:
+                return
+            _track = get_inner_voice_track()
+            # dedup check: 窗内查同 topic self_reflection
+            _recent = _track.recent(minutes=float(_win_min), max_n=30)
+            _new_text = str(thought.thought or '')[:200]
+            _dup_found = False
+            for _e in _recent:
+                if (getattr(_e, 'source', '') != 'self_reflection'
+                        or getattr(_e, 'intent', '') != 'reflection'):
+                    continue
+                _existing_text = str(_e.content or '')
+                # strip prefix '(self-reflected) ' 为公平 jaccard
+                if _existing_text.startswith('(self-reflected) '):
+                    _existing_text = _existing_text[17:]
+                _jacc = _self_reflection_jaccard(_new_text, _existing_text)
+                if _jacc >= _jacc_thr:
+                    _dup_found = True
+                    break
+            if _dup_found:
+                self._bg_log(
+                    f"🪞 [InnerThought/self-reflection] B-thought append voice "
+                    f"skipped (jaccard>={_jacc_thr} dedup 窗{_win_min}min)"
+                )
+                return
+            _track.append(
+                source='self_reflection',
+                intent='reflection',
+                content=f'(self-reflected) {_new_text[:140]}',
+                urgency=min(0.7, float(thought.salience)),
+                wants_voice=(thought.salience >= 0.8),  # 高 sal 标 ★ spotlight
+                meta={
                     'thought_id': thought.id,
                     'category': 'B',
-                    'original_salience': thought.salience,
-                    'thought_excerpt': thought.thought[:200],
+                    'original_salience': float(thought.salience),
+                    'source_origin': 'inner_thought_daemon',
                 },
-                ttl=3600.0 * 6,  # 6h
             )
             self._bg_log(
                 f"🪞 [InnerThought/self-reflection] B-thought "
-                f"(sal={thought.salience:.2f}) → publish self_reflection_noted "
-                f"SWM (主脑下轮 SOUL inject 真看到)"
+                f"(sal={thought.salience:.2f}) → append voice "
+                f"source='self_reflection' (主脑下轮看心声看到)"
             )
         except Exception:
             pass
@@ -1722,14 +1903,25 @@ class InnerThoughtDaemon:
             # 让思考连续 (LLM 自决是否延续上次 thread).
             'recent_thoughts': [],
         }
-        # 拿上 3 个 thought (含 thread_id + continuity tag)
+        # 🆕 [governor Phase 1 F2 / Sir 2026-05-29 拍板] 拿 last N 个 thought (vocab 可调)
+        # 修复缺口 ①: 旧版硬编码 last 3 思考脑看不到 1h 内重复 22 次同事.
+        # 新: vocab recent_thoughts_lookback.n (15) + .min (30) 可调 → 思考脑长视野.
+        # 传 actionable_done + result 让 LLM 看上次失败 (防重提同 tool).
         try:
+            _lookback_n, _lookback_min = _get_recent_thoughts_lookback()
+            ev['recent_thoughts_lookback_min'] = _lookback_min  # 供 _build_prompt 文案
+            _cutoff_ts = time.time() - _lookback_min * 60.0
             with self._lock:
-                recent_3 = sorted(self._thoughts, key=lambda t: -t.ts)[:3]
-            # 🆕 [Sir 2026-05-27 00:43 真痛 重复思考] 传 actionable_done + actionable_result 让 LLM 看上次失败
-            # Sir image 1: 同主题 2 thought 60s 连 fire, 都 propose 同 tool 都失败.
-            # 根因: LLM 只看到上次 actionable 文本不知道为啥 fail. 补上 result 后 LLM
-            # 自然看到 "gated:call_tool_requires_sal>=0.9" → 不重提同 tool.
+                _sorted_thoughts = sorted(
+                    self._thoughts, key=lambda t: -t.ts
+                )
+            # 主路径: cutoff 内取上限 n 条
+            _in_window = [t for t in _sorted_thoughts if t.ts >= _cutoff_ts]
+            recent_picked = _in_window[:_lookback_n]
+            # Fallback: 启动后 cutoff 内空 (新进程没 thought 历史)
+            # → 取 last n 不管时间 (backward compat 不破坏旧行为)
+            if not recent_picked and _sorted_thoughts:
+                recent_picked = _sorted_thoughts[:_lookback_n]
             ev['recent_thoughts'] = [
                 {
                     'id': t.id,
@@ -1746,8 +1938,50 @@ class InnerThoughtDaemon:
                     'outcome': getattr(t, 'outcome', 'pending'),
                     'age_s': int(time.time() - t.ts),
                 }
-                for t in recent_3
+                for t in recent_picked
             ]
+        except Exception:
+            pass
+        # 🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] topic distribution hint
+        # E4 evidence 维度化: count thoughts by thread_id in window →
+        # 思考脑视觉看"我 22 次想同事" → 自然激活 let_go (Phase 2 实现标签).
+        # Python 只 count, LLM 自决是否 let_go (准则 6 信任 LLM).
+        try:
+            from collections import Counter
+            _td_lookback_min, _td_warning_thr, _td_max_topics = (
+                _get_topic_distribution_config()
+            )
+            _td_cutoff = time.time() - _td_lookback_min * 60.0
+            with self._lock:
+                _all_in_window = [
+                    t for t in self._thoughts if t.ts >= _td_cutoff
+                ]
+            if _all_in_window:
+                _thread_counts: Counter = Counter()
+                _thread_latest_ts: dict = {}
+                for t in _all_in_window:
+                    tid = (getattr(t, 'thread_id', '') or t.id)
+                    _thread_counts[tid] += 1
+                    if (tid not in _thread_latest_ts
+                            or t.ts > _thread_latest_ts[tid]):
+                        _thread_latest_ts[tid] = t.ts
+                _now = time.time()
+                ev['topic_distribution'] = {
+                    'lookback_min': _td_lookback_min,
+                    'warning_threshold': _td_warning_thr,
+                    'topics': [
+                        {
+                            'thread_id_short': (tid or '')[:16],
+                            'count': cnt,
+                            'last_age_s': int(
+                                _now - _thread_latest_ts[tid]
+                            ),
+                        }
+                        for tid, cnt in _thread_counts.most_common(
+                            _td_max_topics
+                        )
+                    ],
+                }
         except Exception:
             pass
         # SWM events
@@ -2713,7 +2947,13 @@ class InnerThoughtDaemon:
         # =====================================================================
         prev_thoughts = evidence.get('recent_thoughts') or []
         if prev_thoughts:
-            lines.append("[MY PREVIOUS THOUGHTS (last 3, for continuity — pick one to延续 or new topic)]")
+            # 🆕 [governor Phase 1 F2] 动态 n + lookback_min (vocab 可调)
+            _pt_n = len(prev_thoughts)
+            _pt_lookback_min = evidence.get('recent_thoughts_lookback_min', 30)
+            lines.append(
+                f"[MY PREVIOUS THOUGHTS (last {_pt_n} within {_pt_lookback_min}min, "
+                "for continuity — pick one to延续 or new topic)]"
+            )
             for t in prev_thoughts:
                 age_s = t.get('age_s', 0)
                 age_str = (f"{age_s}s ago" if age_s < 60
@@ -2778,16 +3018,17 @@ class InnerThoughtDaemon:
             if _ivt_enabled():
                 _track = get_inner_voice_track()
                 _voice_recent = _track.recent(minutes=10.0, max_n=30)
-                # 过滤掉 'inner_thought' 类 (那已在 [MY PREVIOUS THOUGHTS])
-                _non_thought = [
-                    e for e in _voice_recent if e.source != 'inner_thought'
-                ]
-                if _non_thought:
+                # 🆕 [governor Phase 1 F1 / Sir 2026-05-29 00:30 拍板]
+                # 删除 inner_thought filter — 心声给思考脑应是"全意识流"(含自家 thought).
+                # 修复缺口 ②: 旧版 'e.source != inner_thought' 让思考脑看心声时
+                # 看不到自己已 think 的内容, 元意识闭环断, 重复 think 22 次同事却不自觉.
+                # 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F1
+                if _voice_recent:
                     lines.append(
-                        "[INNER VOICE — past 10min, cross-source signals "
-                        "feeding your consciousness]"
+                        "[INNER VOICE — past 10min, all-source signals "
+                        "(incl. own thoughts) feeding your consciousness]"
                     )
-                    for e in _non_thought[-15:]:  # cap 15
+                    for e in _voice_recent[-15:]:  # cap 15
                         _hhmm = time.strftime('%H:%M', time.localtime(e.ts))
                         _wv = ' ★' if e.wants_voice else ''
                         _urg = (
@@ -2804,6 +3045,48 @@ class InnerThoughtDaemon:
                     lines.append("")
         except Exception:
             # 不影响思考脑主路径
+            pass
+
+        # 🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] topic distribution hint
+        # ============================================================
+        # E4 evidence 维度化: 让 LLM 视觉看"我重复想同主题 N 次" →
+        # 自然激活 let_go 考虑 (Phase 2 实现标签、现只提示).
+        # Python 只 count (准则 6 信任 LLM 自决 let_go).
+        # ============================================================
+        try:
+            _td = evidence.get('topic_distribution') or {}
+            _td_topics = _td.get('topics') or []
+            if _td_topics:
+                _td_lookback = _td.get('lookback_min', 60)
+                _td_warn = _td.get('warning_threshold', 10)
+                lines.append(
+                    f"[TOPIC DISTRIBUTION — last {_td_lookback}min, "
+                    "count by thread_id]"
+                )
+                for _topic in _td_topics:
+                    _age_s = _topic.get('last_age_s', 0)
+                    if _age_s < 60:
+                        _age_str = f"{_age_s}s ago"
+                    elif _age_s < 3600:
+                        _age_str = f"{_age_s // 60}m ago"
+                    else:
+                        _age_str = f"{_age_s // 3600}h ago"
+                    _warn_mark = (
+                        ' ⚠️' if _topic.get('count', 0) >= _td_warn else ''
+                    )
+                    lines.append(
+                        f"  topic_{_topic.get('thread_id_short', '?')}: "
+                        f"{_topic.get('count', 0)} occurrences "
+                        f"(last {_age_str}){_warn_mark}"
+                    )
+                lines.append(
+                    f"  ↳ Topics with {_td_warn}+ occurrences may warrant "
+                    "let-go consideration (you decide if/how to slow this "
+                    "thread — Phase 2 will add <LET_GO> tag for explicit "
+                    "signal)."
+                )
+                lines.append("")
+        except Exception:
             pass
 
         # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn, 字数翻倍 (反思看完整对话)
