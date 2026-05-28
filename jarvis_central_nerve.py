@@ -711,7 +711,7 @@ class CentralNerve:
         if env in ('CHAT', 'CHAT_SUMMARY'):
             score += 0.1
 
-        if len(summary) > 100:
+        if len(summary_lower) > 100:  # 🩹 Sir 2026-05-28 16:46: summary 可能 None (SQL NULL), 用 already-None-safe summary_lower
             score += 0.05
 
         return min(1.0, score)
