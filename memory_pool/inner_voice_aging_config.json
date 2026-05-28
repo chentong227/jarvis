@@ -27,5 +27,11 @@
     "content_prefix_chars_note": "entry.content 取前 N 字符抽 token, 用于 overlap 判断. 默 60 字符 ≈ 一句话头部.",
     "min_token_len": 3,
     "min_token_len_note": "拆 token 时丢弃长度 < N 的虚词 (a/i/to/of). 默 3 → 'sir' / 'now' / 'why' 留, 'a' / 'i' 丢."
+  },
+  "topic_repeat": {
+    "max_occurrences_in_window": 10,
+    "window_min": 60,
+    "default_let_go_ttl_min": 30,
+    "_note": "🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] 思考脑'放下'元能力配置. 当同 thread_id 在 window_min (default 60) 内累计 ≥ max_occurrences (default 10) 次, evidence 标 aged_flag=True 暗示 LLM 可输出 <LET_GO>thread_id</LET_GO>. LLM 自决是否 let_go (准则 6 信任 LLM). default_let_go_ttl_min: LLM 输出 let_go 时默认 TTL (30min), 期内思考脑 evidence prune 该 thread → LLM 视觉看不到 → 自然不 think → '放下'真生效. Sir CLI scripts/let_go_dump.py 可强解锁/extend. 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F4."
   }
 }

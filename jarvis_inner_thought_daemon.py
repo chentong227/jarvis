@@ -570,6 +570,171 @@ def _self_reflection_jaccard(text_a: str, text_b: str) -> float:
 
 
 # ==========================================================================
+# 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] '放下' 元能力 — let_go topics
+# ==========================================================================
+# Sir 真痛 anchor: "重复思考严重, 放下元能力一直没立".
+# 治本架构:
+#   1. 思考脑 evidence topic_distribution count by thread_id 已显 (F3)
+#   2. 当 count >= max_occurrences, evidence 标 aged_flag=True 暗示 LLM
+#   3. LLM 自决输出 <LET_GO>thread_id_short</LET_GO> tag (准则 6 信任 LLM)
+#   4. _parse_thought 解析 tag, 调 _add_let_go_topic 持久化 + TTL
+#   5. 下次 tick _collect_evidence prune 该 thread_id 相关 entry (LLM 视觉看不到)
+#   6. TTL 到期自动 expire, LLM 重新看到 (允许新一轮 think)
+#   7. Sir CLI scripts/let_go_dump.py 强解锁 / extend / list
+# ==========================================================================
+_LET_GO_TOPICS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'let_go_topics.json',
+)
+_LET_GO_LOCK = threading.Lock()
+
+
+def _get_topic_repeat_config() -> tuple:
+    """🆕 [governor Phase 2 F4] 返 (max_occurrences, window_min, default_ttl_min).
+
+    从 memory_pool/inner_voice_aging_config.json 'topic_repeat' 段读.
+    """
+    try:
+        # 复用 inner_voice_track 的 _load_aging_config (mtime cache, 准则 6 热重载)
+        from jarvis_inner_voice_track import _load_aging_config
+        cfg = _load_aging_config()
+        tr = cfg.get('topic_repeat', {}) or {}
+        max_occ = int(tr.get('max_occurrences_in_window', 10))
+        window_min = int(tr.get('window_min', 60))
+        default_ttl_min = int(tr.get('default_let_go_ttl_min', 30))
+        # sanity (max_occ: 2-100, window: 5-360, ttl: 5-360)
+        max_occ = max(2, min(100, max_occ))
+        window_min = max(5, min(360, window_min))
+        default_ttl_min = max(5, min(360, default_ttl_min))
+        return (max_occ, window_min, default_ttl_min)
+    except Exception:
+        return (10, 60, 30)
+
+
+def _load_let_go_topics() -> list:
+    """🆕 [governor Phase 2 F4] Load active let_go topics (prune expired).
+
+    Returns: list of dict, each {thread_id, ttl_ts, source, reason, ...}
+    """
+    try:
+        if not os.path.exists(_LET_GO_TOPICS_PATH):
+            return []
+        with _LET_GO_LOCK:
+            with open(_LET_GO_TOPICS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+        active = data.get('active', []) or []
+        now = time.time()
+        # prune expired (但不 save — _save 由 mutator 调)
+        return [
+            e for e in active
+            if isinstance(e, dict) and float(e.get('ttl_ts', 0)) > now
+        ]
+    except Exception:
+        return []
+
+
+def _save_let_go_topics(active: list) -> bool:
+    """🆕 [governor Phase 2 F4] Atomic save let_go topics."""
+    try:
+        os.makedirs(os.path.dirname(_LET_GO_TOPICS_PATH), exist_ok=True)
+        tmp = _LET_GO_TOPICS_PATH + '.tmp'
+        with _LET_GO_LOCK:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump({
+                    '_meta': {
+                        'schema': 'let_go_topics',
+                        'updated_at_iso': time.strftime(
+                            '%Y-%m-%dT%H:%M:%S'
+                        ),
+                        'purpose': (
+                            "Active '放下' thread_id list with TTL. "
+                            "Pruned from思考脑 evidence (LLM 视觉看不到), "
+                            "natural 'let go'. Sir CLI: scripts/let_go_dump.py"
+                        ),
+                    },
+                    'active': active,
+                }, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, _LET_GO_TOPICS_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def _add_let_go_topic(thread_id: str, ttl_min: int = None,
+                       source: str = 'llm', thought_id: str = '',
+                       reason: str = '') -> bool:
+    """🆕 [governor Phase 2 F4] Add or extend a let_go topic.
+
+    Args:
+      thread_id: short prefix (e.g. 'th_20260529_abc123', 12-32 char)
+      ttl_min: None → use default from vocab
+      source: 'llm' / 'sir_manual'
+      thought_id: 触发 let_go 的 thought.id (audit trail)
+      reason: 一句 reason (LLM 自报 or Sir 给, 截 200 char)
+
+    Returns: True 成功, False fail (但不阻塞调用者).
+    """
+    if not thread_id or not isinstance(thread_id, str):
+        return False
+    thread_id = thread_id.strip()[:32]
+    if not thread_id:
+        return False
+    try:
+        _max_occ, _win_min, _default_ttl = _get_topic_repeat_config()
+        ttl_min = int(ttl_min) if ttl_min is not None else _default_ttl
+        ttl_min = max(1, min(360, ttl_min))  # sanity 1-360min
+        now = time.time()
+        new_ttl_ts = now + ttl_min * 60.0
+        active = _load_let_go_topics()
+        # dedup: 同 thread_id 已 active → extend ttl (take max)
+        found = False
+        filtered = []
+        for e in active:
+            if e.get('thread_id') == thread_id:
+                e['ttl_ts'] = max(float(e.get('ttl_ts', 0)), new_ttl_ts)
+                e['last_extended_at_iso'] = time.strftime(
+                    '%Y-%m-%dT%H:%M:%S'
+                )
+                # 累计 extend 来源 (audit)
+                e.setdefault('extend_history', []).append({
+                    'at_iso': e['last_extended_at_iso'],
+                    'source': source,
+                    'thought_id': thought_id,
+                    'reason': str(reason or '')[:200],
+                })
+                found = True
+            filtered.append(e)
+        if not found:
+            filtered.append({
+                'thread_id': thread_id,
+                'ttl_ts': new_ttl_ts,
+                'source': source,
+                'thought_id_origin': thought_id,
+                'reason': str(reason or '')[:200],
+                'created_at_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'ttl_min_initial': ttl_min,
+            })
+        return _save_let_go_topics(filtered)
+    except Exception:
+        return False
+
+
+def _remove_let_go_topic(thread_id: str) -> bool:
+    """🆕 [governor Phase 2 F4] Sir CLI: 强解锁 (revoke) 一个 let_go topic."""
+    try:
+        active = _load_let_go_topics()
+        filtered = [
+            e for e in active
+            if e.get('thread_id') != thread_id
+        ]
+        if len(filtered) == len(active):
+            return False  # not found
+        return _save_let_go_topics(filtered)
+    except Exception:
+        return False
+
+
+# ==========================================================================
 # Data structure
 # ==========================================================================
 
@@ -1946,10 +2111,15 @@ class InnerThoughtDaemon:
         # E4 evidence 维度化: count thoughts by thread_id in window →
         # 思考脑视觉看"我 22 次想同事" → 自然激活 let_go (Phase 2 实现标签).
         # Python 只 count, LLM 自决是否 let_go (准则 6 信任 LLM).
+        # 🆕 [governor Phase 2 F4] count 中加 aged_flag (occurrences >= max_occ) 提示 LLM
         try:
             from collections import Counter
             _td_lookback_min, _td_warning_thr, _td_max_topics = (
                 _get_topic_distribution_config()
+            )
+            # 🆕 [governor Phase 2 F4] 拿 topic_repeat 阈值
+            _tr_max_occ, _tr_win_min, _tr_default_ttl = (
+                _get_topic_repeat_config()
             )
             _td_cutoff = time.time() - _td_lookback_min * 60.0
             with self._lock:
@@ -1969,6 +2139,8 @@ class InnerThoughtDaemon:
                 ev['topic_distribution'] = {
                     'lookback_min': _td_lookback_min,
                     'warning_threshold': _td_warning_thr,
+                    'aged_threshold': _tr_max_occ,
+                    'default_let_go_ttl_min': _tr_default_ttl,
                     'topics': [
                         {
                             'thread_id_short': (tid or '')[:16],
@@ -1976,12 +2148,58 @@ class InnerThoughtDaemon:
                             'last_age_s': int(
                                 _now - _thread_latest_ts[tid]
                             ),
+                            # 🆕 F4: aged_flag 暂 LLM 可考虑 <LET_GO> tag
+                            'aged_flag': cnt >= _tr_max_occ,
                         }
                         for tid, cnt in _thread_counts.most_common(
                             _td_max_topics
                         )
                     ],
                 }
+        except Exception:
+            pass
+        # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] '放下' prune
+        # ============================================================
+        # 读 active let_go list → prune recent_thoughts + topic_distribution
+        # 该 thread_id 相关 entry. LLM 视觉看不到 → 自然不 think → '放下' 真生效.
+        # Sir CLI scripts/let_go_dump.py 强解锁 / extend.
+        # ============================================================
+        try:
+            _active_let_go = _load_let_go_topics()
+            if _active_let_go:
+                _let_go_tids = {
+                    e.get('thread_id') for e in _active_let_go
+                    if e.get('thread_id')
+                }
+                _now2 = time.time()
+                # ev 暴露 let_go list (主脑 + dashboard 可看)
+                ev['active_let_go_topics'] = [
+                    {
+                        'thread_id_short': str(
+                            e.get('thread_id', '')
+                        )[:16],
+                        'reason': str(e.get('reason', '') or '')[:120],
+                        'source': e.get('source', '?'),
+                        'ttl_remaining_s': int(
+                            float(e.get('ttl_ts', 0)) - _now2
+                        ),
+                    }
+                    for e in _active_let_go
+                ]
+                # Prune recent_thoughts (思考脑下轮看不到 let_go thread)
+                if 'recent_thoughts' in ev:
+                    ev['recent_thoughts'] = [
+                        t for t in ev['recent_thoughts']
+                        if t.get('thread_id') not in _let_go_tids
+                    ]
+                # Prune topic_distribution (count 不包含 let_go thread)
+                if 'topic_distribution' in ev:
+                    ev['topic_distribution']['topics'] = [
+                        t for t in ev['topic_distribution'].get(
+                            'topics', []
+                        )
+                        if t.get('thread_id_short') not in _let_go_tids
+                    ]
         except Exception:
             pass
         # SWM events
@@ -2716,7 +2934,21 @@ class InnerThoughtDaemon:
             "tick (others summary-only). Valid: recent_sensor_events | concern_status | "
             "nudge_history | sir_activity_snapshot | last_main_brain_reply | "
             "my_recent_thoughts. Empty = no hint, all equal. This is your "
-            "self-attention.\n\n"
+            "self-attention.\n"
+            # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] <LET_GO> tag
+            # =====================================================================
+            # '放下' 元能力 — LLM 自决放下 fruitless 重复思考主题. 当 [TOPIC
+            # DISTRIBUTION] 显某 thread 🍂 AGED (default >= 10 occurrences) 而
+            # 你判断继续 think 无意义 → 输出 <LET_GO>thread_id_short</LET_GO>.
+            # Python 持久化 + TTL (default 30min), 下次 tick prune 该 thread →
+            # 你视觉看不到 → 自然不 think → '放下' 真生效. 准则 6 信任 LLM.
+            # Sir CLI 可强解锁 (revoke).
+            # =====================================================================
+            "<LET_GO>thread_id_short</LET_GO>  ← 🆕 [Phase 2 F4] OPTIONAL. "
+            "Only if [TOPIC DISTRIBUTION] above shows 🍂 AGED thread AND you "
+            "judge further thinking is fruitless. Use thread_id_short EXACTLY "
+            "as shown above (must match a real thread you saw). Default TTL "
+            "30min. Leave empty if no thread should be let-go this tick.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -3048,10 +3280,11 @@ class InnerThoughtDaemon:
             pass
 
         # 🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] topic distribution hint
+        # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] aged_flag + <LET_GO> tag
         # ============================================================
         # E4 evidence 维度化: 让 LLM 视觉看"我重复想同主题 N 次" →
-        # 自然激活 let_go 考虑 (Phase 2 实现标签、现只提示).
-        # Python 只 count (准则 6 信任 LLM 自决 let_go).
+        # 自决是否输出 <LET_GO>thread_id</LET_GO> tag '放下'该主题.
+        # Python 只 count + 提示 (准则 6 信任 LLM 自决 let_go).
         # ============================================================
         try:
             _td = evidence.get('topic_distribution') or {}
@@ -3059,6 +3292,8 @@ class InnerThoughtDaemon:
             if _td_topics:
                 _td_lookback = _td.get('lookback_min', 60)
                 _td_warn = _td.get('warning_threshold', 10)
+                _td_aged = _td.get('aged_threshold', _td_warn)
+                _td_ttl = _td.get('default_let_go_ttl_min', 30)
                 lines.append(
                     f"[TOPIC DISTRIBUTION — last {_td_lookback}min, "
                     "count by thread_id]"
@@ -3071,19 +3306,57 @@ class InnerThoughtDaemon:
                         _age_str = f"{_age_s // 60}m ago"
                     else:
                         _age_str = f"{_age_s // 3600}h ago"
-                    _warn_mark = (
-                        ' ⚠️' if _topic.get('count', 0) >= _td_warn else ''
+                    _cnt = _topic.get('count', 0)
+                    _warn_mark = ' ⚠️' if _cnt >= _td_warn else ''
+                    _aged_mark = (
+                        ' 🍂 AGED' if _topic.get('aged_flag') else ''
                     )
                     lines.append(
                         f"  topic_{_topic.get('thread_id_short', '?')}: "
-                        f"{_topic.get('count', 0)} occurrences "
-                        f"(last {_age_str}){_warn_mark}"
+                        f"{_cnt} occurrences (last {_age_str})"
+                        f"{_warn_mark}{_aged_mark}"
                     )
                 lines.append(
-                    f"  ↳ Topics with {_td_warn}+ occurrences may warrant "
-                    "let-go consideration (you decide if/how to slow this "
-                    "thread — Phase 2 will add <LET_GO> tag for explicit "
-                    "signal)."
+                    f"  ↳ 🍂 AGED topics (>={_td_aged} occurrences) — "
+                    f"if you've been cycling fruitlessly, output "
+                    f"<LET_GO>thread_id_short</LET_GO> to '放下' that "
+                    f"thread for {_td_ttl}min (it will be pruned from "
+                    f"your evidence — freeing your attention). "
+                    f"Your call (准则 6 信任 LLM 自决)."
+                )
+                lines.append("")
+        except Exception:
+            pass
+
+        # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] active let_go list
+        # ============================================================
+        # 展示当前 active let_go thread_id + TTL remaining + reason.
+        # 主脑 / Sir / Reflector 都能看. 心声 prune 已生效 (LLM 看不到该 thread).
+        # ============================================================
+        try:
+            _lg = evidence.get('active_let_go_topics') or []
+            if _lg:
+                lines.append(
+                    f"[ACTIVELY LETTING GO — {len(_lg)} thread(s), "
+                    "pruned from your evidence above]"
+                )
+                for _e in _lg:
+                    _ttl_s = _e.get('ttl_remaining_s', 0)
+                    if _ttl_s >= 60:
+                        _ttl_str = f"{_ttl_s // 60}min left"
+                    else:
+                        _ttl_str = f"{max(0, _ttl_s)}s left"
+                    _reason = _e.get('reason') or '(no reason)'
+                    _src = _e.get('source', '?')
+                    lines.append(
+                        f"  topic_{_e.get('thread_id_short', '?')}: "
+                        f"{_ttl_str} (by {_src}) — {_reason[:80]}"
+                    )
+                lines.append(
+                    "  ↳ These topics are silenced (your evidence above "
+                    "has been pruned). You won't see them this tick or "
+                    "next ticks until TTL. Sir CLI scripts/let_go_dump.py "
+                    "can revoke / extend."
                 )
                 lines.append("")
         except Exception:
@@ -3723,6 +3996,16 @@ class InnerThoughtDaemon:
             r'<NEXT_ATTENTION_FOCUS>(.*?)</NEXT_ATTENTION_FOCUS>',
             raw, re.DOTALL | re.IGNORECASE
         )
+        # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] <LET_GO> tag 解析
+        # =====================================================================
+        # LLM 自决 “放下” 重复主题 — 输出 <LET_GO>thread_id_short</LET_GO>.
+        # 解析后 调 _add_let_go_topic 持久化 (TTL default 30min), 下次 tick
+        # _collect_evidence prune 该 thread → LLM 视觉看不到 → 自然不 think.
+        # 准则 6 信任 LLM 自决 let_go (跳过 cooldown 硬编码).
+        # =====================================================================
+        let_go_m = re.search(
+            r'<LET_GO>(.*?)</LET_GO>', raw, re.DOTALL | re.IGNORECASE
+        )
         if not (cat_m and thought_m and sal_m):
             return None
         thought_text = (thought_m.group(1) or '').strip()
@@ -3781,6 +4064,52 @@ class InnerThoughtDaemon:
         elif continuity_raw == 'new_topic':
             continuity = 'new_topic'
             thread_id = new_id
+
+        # 🆕 [governor Phase 2 F4] 解析 + execute <LET_GO> tag
+        # =====================================================================
+        # LLM 输出 <LET_GO>thread_id_short</LET_GO> → 持久化 + TTL.
+        # 防 LLM 乱指照: thread_id 必须能 prefix-match recent_thoughts 其中
+        # 一个 thread_id (准则 5: 不信 LLM 编造 id, 只接受看过的).
+        # =====================================================================
+        try:
+            if let_go_m:
+                _lg_claimed = (let_go_m.group(1) or '').strip()[:32]
+                if _lg_claimed:
+                    _lg_target = ''
+                    try:
+                        # match against self._thoughts thread_id prefix
+                        for _t in list(self._thoughts)[-50:]:
+                            _candidate = (
+                                getattr(_t, 'thread_id', '') or _t.id
+                            )
+                            # 接受 prefix-match (LLM 看到 16 char short)
+                            if (_candidate.startswith(_lg_claimed)
+                                    or _lg_claimed.startswith(_candidate[:12])):
+                                _lg_target = _candidate[:32]
+                                break
+                    except Exception:
+                        pass
+                    if _lg_target:
+                        _ok = _add_let_go_topic(
+                            thread_id=_lg_target,
+                            source='llm',
+                            thought_id=new_id,
+                            reason=thought_text[:200],
+                        )
+                        if _ok:
+                            self._bg_log(
+                                f"🍂 [InnerThought/let_go] LLM 自决 '放下' "
+                                f"thread={_lg_target[:16]} (TTL default), "
+                                f"下轮 tick prune 该 thread 从 evidence"
+                            )
+                    else:
+                        self._bg_log(
+                            f"🍂 [InnerThought/let_go] LLM 输出 <LET_GO>"
+                            f"{_lg_claimed}</LET_GO> 但 thread_id 未在 "
+                            f"recent_thoughts 中 (可能 LLM 编造 id), 跳."
+                        )
+        except Exception:
+            pass
 
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] parse SHOULD_SPEAK / SPEAK_* / ATTENTION
         # =====================================================================
@@ -4102,6 +4431,19 @@ class InnerThoughtDaemon:
             return False, 'no_relational_state'
         if not hasattr(self.relational_state, 'propose_inside_joke'):
             return False, 'propose_inside_joke method not found'
+        # 🆕 [governor Phase 2 F5 / Sir 2026-05-29 拍板] hard jaccard dedup guard
+        # 修复缺口 ④: 旧版 relational.propose_inside_joke 0.7 dedup 返只 True/False,
+        # daemon 拿到 'dedup_or_fail' 不知具体重复哪条 → LLM 下轮不能学习.
+        # 治本: daemon 入口自己 jaccard check (default 0.5 更严), 命中 → 返
+        # "jaccard_dedup_rejected:overlap_with_<id>:<jaccard>", LLM 下轮看 actionable_result 学习.
+        _hit, _hit_id, _hit_jacc = self._check_propose_jaccard_dedup(
+            phrase, kind='inside_joke',
+        )
+        if _hit:
+            return False, (
+                f'jaccard_dedup_rejected:overlap_with_{_hit_id}:'
+                f'jaccard={_hit_jacc:.2f}'
+            )
         # build InsideJoke
         try:
             from jarvis_relational import InsideJoke
@@ -4151,6 +4493,96 @@ class InnerThoughtDaemon:
             except Exception:
                 pass
 
+    def _check_propose_jaccard_dedup(
+        self, new_text: str, kind: str
+    ) -> Tuple[bool, str, float]:
+        """🆕 [governor Phase 2 F5 / Sir 2026-05-29 拍板] hard jaccard dedup guard.
+
+        修复缺口 ④: relational_state dedup at 0.7 返 True/False, daemon 不知
+        具体重复哪条 → LLM 看 'dedup_or_fail' 学不到. F5 入口拦截 + 返具体 id.
+
+        Args:
+          new_text: 新 propose 的 text (phrase 或 rule)
+          kind: 'inside_joke' 或 'protocol'
+
+        Returns: (hit, hit_id, hit_jaccard).
+          hit=True → 调用者 reject + actionable_result 返具体 id + jaccard.
+          hit=False → 放行继续 propose (relational_state 0.7 dedup 仍是 fallback safety).
+
+        准则 6: threshold vocab 可调 (default 0.5 比 relational 0.7 更严).
+        详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F5.
+        """
+        if not new_text or not isinstance(new_text, str):
+            return (False, '', 0.0)
+        try:
+            vocab = self._load_propose_quality_vocab()
+            if not vocab.get('jaccard_dedup_enabled', True):
+                return (False, '', 0.0)
+            threshold = float(vocab.get('jaccard_dedup_threshold', 0.5))
+            threshold = max(0.0, min(1.0, threshold))
+        except Exception:
+            threshold = 0.5
+        rs = self.relational_state
+        if rs is None:
+            return (False, '', 0.0)
+        # 拿 active + review entries 两部分 (防 reject pending 同题)
+        try:
+            if kind == 'inside_joke':
+                active_list = rs.list_inside_jokes(include_archived=False)
+                review_list = (
+                    rs.list_inside_jokes_review()
+                    if hasattr(rs, 'list_inside_jokes_review') else []
+                )
+                existing = [(j.id, j.phrase or '')
+                            for j in (active_list + review_list)]
+            elif kind == 'protocol':
+                active_list = rs.list_protocols(include_archived=False)
+                review_list = (
+                    rs.list_protocols_review()
+                    if hasattr(rs, 'list_protocols_review') else []
+                )
+                existing = [(p.id, p.rule or '')
+                            for p in (active_list + review_list)]
+            else:
+                return (False, '', 0.0)
+        except Exception:
+            return (False, '', 0.0)
+        # jaccard check 逐个 (最高那条胜, 敢 hit)
+        new_tokens = set(
+            t for t in re.findall(r'\w+', new_text.lower())
+            if len(t) >= 2
+        )
+        if not new_tokens:
+            return (False, '', 0.0)
+        best_hit_id = ''
+        best_jacc = 0.0
+        for (eid, etext) in existing:
+            if not etext:
+                continue
+            ex_tokens = set(
+                t for t in re.findall(r'\w+', etext.lower())
+                if len(t) >= 2
+            )
+            if not ex_tokens:
+                continue
+            inter = len(new_tokens & ex_tokens)
+            union = len(new_tokens | ex_tokens)
+            jacc = inter / union if union > 0 else 0.0
+            if jacc > best_jacc:
+                best_jacc = jacc
+                best_hit_id = eid
+        if best_jacc >= threshold:
+            try:
+                self._bg_log(
+                    f"🚫 [F5/jaccard_dedup] kind={kind} new='{new_text[:50]}' "
+                    f"hit existing={best_hit_id} jaccard={best_jacc:.2f} "
+                    f"(threshold {threshold}) → reject (LLM 下轮学习)"
+                )
+            except Exception:
+                pass
+            return (True, best_hit_id, best_jacc)
+        return (False, '', 0.0)
+
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
         """🆕 [Sir 2026-05-26 SOUL Phase A] propose UnspokenProtocol from B-class.
@@ -4188,6 +4620,17 @@ class InnerThoughtDaemon:
             return False, 'no_relational_state'
         if not hasattr(self.relational_state, 'propose_protocol'):
             return False, 'propose_protocol method not found'
+        # 🆕 [governor Phase 2 F5 / Sir 2026-05-29 拍板] hard jaccard dedup guard
+        # 修复缺口 ④: 入口自 jaccard check (default 0.5, 比 relational 0.7 更严)
+        # 命中 → 返 "jaccard_dedup_rejected:overlap_with_<id>:<jaccard>" 让 LLM 学.
+        _hit, _hit_id, _hit_jacc = self._check_propose_jaccard_dedup(
+            rule, kind='protocol',
+        )
+        if _hit:
+            return False, (
+                f'jaccard_dedup_rejected:overlap_with_{_hit_id}:'
+                f'jaccard={_hit_jacc:.2f}'
+            )
 
         try:
             from jarvis_relational import UnspokenProtocol
@@ -5628,6 +6071,11 @@ class InnerThoughtDaemon:
             'suggest_inside_joke:',
             'propose_protocol:',
         ],
+        # 🆕 [governor Phase 2 F5 / Sir 2026-05-29 拍板] hard jaccard dedup
+        # 比 relational_state 现有 0.7 dedup 更严, daemon 入口拦截 +
+        # 返具体 reject reason (overlap_with_<id>:<jaccard>) 让 LLM 下轮学习.
+        'jaccard_dedup_threshold': 0.5,
+        'jaccard_dedup_enabled': True,
     }
 
     def _load_propose_quality_vocab(self) -> dict:

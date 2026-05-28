@@ -636,6 +636,14 @@ _AGING_CFG_DEFAULT = {
         'content_prefix_chars': 60,
         'min_token_len': 3,
     },
+    # 🆕 [governor Phase 2 F4 / Sir 2026-05-29 拍板] topic_repeat
+    # 思考脑'放下'元能力配置. consumer:
+    # jarvis_inner_thought_daemon._get_topic_repeat_config().
+    'topic_repeat': {
+        'max_occurrences_in_window': 10,
+        'window_min': 60,
+        'default_let_go_ttl_min': 30,
+    },
 }
 
 
@@ -653,14 +661,17 @@ def _load_aging_config() -> dict:
             with open(_AGING_CONFIG_PATH, 'r', encoding='utf-8') as f:
                 loaded = json.load(f) or {}
             # merge with default (在 default 基础上覆盖)
+            # 🆕 [governor Phase 2 F4] 加 topic_repeat 入 merge whitelist
             merged = {
                 'spotlight': dict(_AGING_CFG_DEFAULT['spotlight']),
                 'ageing': dict(_AGING_CFG_DEFAULT['ageing']),
                 'surface_detection': dict(
                     _AGING_CFG_DEFAULT['surface_detection']
                 ),
+                'topic_repeat': dict(_AGING_CFG_DEFAULT['topic_repeat']),
             }
-            for section in ('spotlight', 'ageing', 'surface_detection'):
+            for section in ('spotlight', 'ageing', 'surface_detection',
+                              'topic_repeat'):
                 for k, v in (loaded.get(section) or {}).items():
                     if k.endswith('_note'):
                         continue

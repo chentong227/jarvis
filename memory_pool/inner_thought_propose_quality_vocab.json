@@ -32,5 +32,8 @@
   "gated_actionable_prefixes": [
     "suggest_inside_joke:",
     "propose_protocol:"
-  ]
+  ],
+  "jaccard_dedup_enabled": true,
+  "jaccard_dedup_threshold": 0.5,
+  "_jaccard_dedup_note": "🆕 [governor Phase 2 F5 / Sir 2026-05-29 拍板] propose hard jaccard dedup. daemon 入口拦截 (suggest_inside_joke / propose_protocol), 比 relational_state 现有 0.7 dedup 更严 (default 0.5). 命中 → actionable_result = 'jaccard_dedup_rejected:overlap_with_<id>:<jaccard>', LLM 下轮看到具体 id 学习不重复. 修复缺口 ④. enabled false 关 F5 hard guard (仅保 relational 0.7 fallback). threshold range 0.0-1.0 (sanity cap). 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F5."
 }
