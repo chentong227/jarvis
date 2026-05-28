@@ -115,6 +115,17 @@ class AutoArbiterDaemon:
     # vocab keyword pre-check, 命中 → bypass LLM 直接 REJECT (省 tokens + 不积压).
     # 准则 6 持久化 + Sir CLI 可改 (memory_pool/auto_arbiter_abstract_reject_vocab.json)
     ABSTRACT_REJECT_VOCAB_PATH = 'memory_pool/auto_arbiter_abstract_reject_vocab.json'
+    # 🆕 [Sir 2026-05-28 15:30 真痛 image 1 anchor] inside_joke 两层耦合 vocab
+    # Sir 真意: '真笑点得我复述/笑了/确认对才算 inside_joke',
+    # 反 LLM 自安. Python deterministic strong-gate (强 ACT/强 REJ) bypass LLM,
+    # 无强信号才走 LLM edge case, Python 保 final veto. 详 vocab 文档 _doc.
+    INSIDE_JOKE_VOCAB_PATH = 'memory_pool/auto_arbiter_inside_joke_vocab.json'
+    # 🆕 [Sir 2026-05-28 15:30 H.2] thread 两层耦合 vocab
+    THREAD_VOCAB_PATH = 'memory_pool/auto_arbiter_thread_vocab.json'
+    # 🆕 [Sir 2026-05-28 15:40 H.3] protocol 两层耦合 vocab
+    PROTOCOL_VOCAB_PATH = 'memory_pool/auto_arbiter_protocol_vocab.json'
+    # 🆕 [Sir 2026-05-28 16:00 H.4] concern 两层耦合 vocab
+    CONCERN_VOCAB_PATH = 'memory_pool/auto_arbiter_concern_vocab.json'
 
     DEFAULT_THRESHOLDS = {
         'inside_joke': 0.75,
@@ -157,6 +168,28 @@ class AutoArbiterDaemon:
         'monitor_bloat_alert_n': 40,        # active items > 40 → alert
         'monitor_revert_rate_warn': 0.30,   # 24h revert rate > 30% → warn
         'monitor_dedup_pair_jaccard': 0.5,  # 任一对 active >= 0.5 → warn
+        # 🆕 [Sir 2026-05-28 19:47 fix44 P0 LLM semantic dedup]
+        # Sir 真痛: jaccard lexical 算法骗过同义换皮 — 30 active jokes 内
+        # 'theoretical rest' vs 'conceptual rest' jaccard=0.33 < 0.6 → 双过
+        # 治本 (准则 6 拒绝硬编码 + 信任 LLM): jaccard grey-band [low, high) 调 LLM
+        # mini judge. jaccard < low 放行 / jaccard >= high 硬拒 / 灰色带 LLM 判.
+        'semantic_dedup_enabled': 1,                  # 0 = 退化为纯 jaccard (回滚开关)
+        'semantic_dedup_jaccard_low_joke': 0.15,      # joke 同义换皮密集 → 灰色带宽
+        'semantic_dedup_jaccard_low_protocol': 0.25,  # protocol 中等
+        'semantic_dedup_jaccard_low_thread': 0.35,    # thread 名词较具体, 窄
+        'semantic_dedup_llm_timeout_s': 3.0,          # 单次 LLM 调用上限
+        'semantic_dedup_cache_max': 200,              # in-mem LRU cap
+        'semantic_dedup_conf_threshold': 0.70,        # LLM conf >= 此值才信 DUP
+        'monitor_semantic_dedup_max_pairs': 30,       # monitor 单 tick 调 LLM 上限 (cost cap)
+        # 🆕 [Sir 2026-05-28 16:52 方案 A 治本] stale review reaper
+        # Sir 真痛: dashboard 7-8 页堆积 (139 review = 21 jokes + 118 protocols)
+        # 真因: 7d defer_to_sir 累积 163 个 (57%), 没 TTL → 永远等 Sir 拍板.
+        # 治本: 复用 _monitor_loop tick (15min), 末尾 reap stale review →
+        # created_at + N h 仍 review 状态 → 自动 archive (非 reject, Sir 可 restore).
+        # 准则 6 vocab 持久化 + Sir CLI 可改; 准则 8 复用 thread 不爆.
+        'stale_review_archive_after_h': 72.0,  # 72h 没 Sir 动 → 自动 archive
+        'stale_review_reap_per_tick_cap': 20,  # 每 tick 最多 reap N 个 (防一次扫光)
+        'stale_review_reap_enabled': 1,        # 0 = 禁 reaper (Sir 总开关)
     }
 
     # cap
@@ -184,6 +217,15 @@ class AutoArbiterDaemon:
         self._tick_count = 0
         self._llm_call_count = 0
         self._llm_fail_count = 0
+
+        # 🆕 [Sir 2026-05-28 19:47 fix44 P0] semantic dedup LRU cache
+        # key=(kind, sorted(text_a, text_b)) → (is_dup: bool, conf: float, reason: str)
+        # 避免相同 pair 反复调 LLM (eg monitor 每 15min 扫同 active list)
+        from collections import OrderedDict as _OD
+        self._semantic_dedup_cache: _OD = _OD()
+        self._semantic_dedup_llm_calls = 0
+        self._semantic_dedup_llm_hits = 0
+        self._semantic_dedup_cache_hits = 0
 
         # 启动加载
         self._load_persist()
@@ -275,6 +317,14 @@ class AutoArbiterDaemon:
                 self._bg_log(
                     f"⚠️ [AutoArbiter] monitor exception: {e}"
                 )
+            # 🆕 [Sir 2026-05-28 16:52 方案 A] stale review reaper 同 tick 跑
+            # 独立 try, reaper 异常不阻塞 monitor 主扫.
+            try:
+                self._do_stale_review_reap()
+            except Exception as e:
+                self._bg_log(
+                    f"⚠️ [AutoArbiter] stale_reap exception: {e}"
+                )
             runtime = self._effective_runtime()
             wait = float(runtime.get('monitor_interval_s', 900))
             self._stop.wait(timeout=wait)
@@ -356,7 +406,19 @@ class AutoArbiterDaemon:
                 })
 
         # 3. dedup miss — any pair in active >= jaccard threshold
+        #    🆕 [Sir 2026-05-28 19:47 fix44 P0] 升级: jaccard ≥ threshold (老 0.5
+        #    hard-warn) OR jaccard ∈ [kind_low, threshold) + LLM 判 DUP → warn.
+        #    LLM 调用上限 = monitor_semantic_dedup_max_pairs (默认 30 pair/tick).
         dedup_thr = float(runtime.get('monitor_dedup_pair_jaccard', 0.5))
+        semantic_enabled = bool(
+            int(runtime.get('semantic_dedup_enabled', 1))
+        )
+        llm_cap = int(runtime.get('monitor_semantic_dedup_max_pairs', 30))
+        low_default_map = {
+            'inside_joke': 0.15,
+            'protocol': 0.25,
+            'thread': 0.35,
+        }
         try:
             import re as _re
         except Exception:
@@ -376,9 +438,15 @@ class AutoArbiterDaemon:
                     ]
                 except Exception:
                     continue
-                # 用 dedup_thr 找 top 1 重复对 (不全列, 避免 SWM 爆)
-                worst_pair = None
+                low_thr = float(runtime.get(
+                    f'semantic_dedup_jaccard_low_{kind_name}',
+                    low_default_map.get(kind_name, 0.30)
+                ))
+                # pass 1: jaccard sweep — 收集 (worst lexical pair) +
+                #          (LLM 候选 grey-band pair list, 按 jaccard desc 排, llm_cap 截)
+                worst_pair = None     # (id_a, text_a, id_b, text_b, jac, source)
                 worst_jac = 0.0
+                grey_band = []        # [(jac, id_a, text_a, id_b, text_b), ...]
                 for i, (id_a, text_a) in enumerate(active_items):
                     if len(text_a) < 3:
                         continue
@@ -396,7 +464,25 @@ class AutoArbiterDaemon:
                         jac = (inter / union) if union > 0 else 0.0
                         if jac > worst_jac:
                             worst_jac = jac
-                            worst_pair = (id_a, text_a, id_b, text_b)
+                            worst_pair = (id_a, text_a, id_b, text_b, jac, 'lexical')
+                        # 灰色带 (LLM 候选): jac ∈ [low_thr, dedup_thr)
+                        if (semantic_enabled and low_thr <= jac < dedup_thr):
+                            grey_band.append((jac, id_a, text_a, id_b, text_b))
+
+                # pass 2: LLM 灰色带 (取 jaccard 最高 N pair, cost cap)
+                semantic_pair = None  # (id_a, text_a, id_b, text_b, jac, conf, reason)
+                if grey_band and semantic_enabled:
+                    grey_band.sort(key=lambda x: -x[0])
+                    for jac, id_a, text_a, id_b, text_b in grey_band[:llm_cap]:
+                        is_dup, conf, sem_reason = self._semantic_dedup_check(
+                            kind_name, text_a, text_b
+                        )
+                        if is_dup:
+                            semantic_pair = (id_a, text_a, id_b, text_b, jac,
+                                              conf, sem_reason)
+                            break  # 取首个命中, 不全扫 (cost cap)
+
+                # warn: 优先 lexical hard (>= thr) → semantic LLM hit
                 if worst_pair and worst_jac >= dedup_thr:
                     warnings.append({
                         'severity': 'warn',
@@ -413,6 +499,28 @@ class AutoArbiterDaemon:
                             'b_id': worst_pair[2],
                             'a_text': worst_pair[1][:80],
                             'b_text': worst_pair[3][:80],
+                        },
+                    })
+                elif semantic_pair:
+                    id_a, text_a, id_b, text_b, jac, conf, sem_reason = semantic_pair
+                    warnings.append({
+                        'severity': 'warn',
+                        'type': 'dedup_miss',
+                        'kind': kind_name,
+                        'msg': (
+                            f'{kind_name} semantic dup (LLM conf={conf:.2f}) '
+                            f'jaccard={jac:.2f} — {id_a[:15]} ↔ {id_b[:15]} '
+                            f'({sem_reason[:40]})'
+                        ),
+                        'metrics': {
+                            'jaccard': jac,
+                            'llm_conf': conf,
+                            'a_id': id_a,
+                            'b_id': id_b,
+                            'a_text': text_a[:80],
+                            'b_text': text_b[:80],
+                            'reason': sem_reason[:120],
+                            'source': 'semantic_llm',
                         },
                     })
 
@@ -441,6 +549,125 @@ class AutoArbiterDaemon:
                             'anomaly_type': w['type'],
                             'kind': w['kind'],
                             'metrics': w['metrics'],
+                        },
+                        ttl=86400.0,
+                    )
+            except Exception:
+                pass
+
+    # ==========================================================================
+    # 🆕 [Sir 2026-05-28 16:52 方案 A 治本 / dashboard 7-8 页堆积] stale_review_reaper
+    # ==========================================================================
+    # Sir 真痛: dashboard 139 review 待办 (21 jokes + 118 protocols) — Sir 看 7-8 页.
+    # 真因: 7d 内 163 个 defer_to_sir 累积 (57%), 没 TTL → 永远等 Sir 拍板.
+    # 治本: 复用 monitor_loop tick (15min), 末尾 reap 老 review:
+    #   - created_at + stale_review_archive_after_h 仍 review → 自动 archive
+    #   - 非 reject — Sir 可 dashboard restore (元否决保留)
+    #   - per-tick cap 防一次扫光 (默认 20/tick)
+    #   - log + publish SWM 'stale_review_archived' 让主脑/思考脑看
+    # 准则 6: 全 vocab 持久化 (calibration runtime 段, Sir CLI 可改 TTL/cap)
+    # 准则 7: archive 非 reject, Sir 可 restore
+    # 准则 8: 复用 thread, 不爆新 daemon
+    # ==========================================================================
+    def _do_stale_review_reap(self) -> None:
+        """扫 3 类 review (joke/protocol/thread), 老的 (≥ TTL) 自动 archive.
+
+        TTL 来自 calibration runtime['stale_review_archive_after_h'] (默认 72h).
+        Per-tick cap 防一次扫光 (默认 20). enabled=0 Sir 总开关关.
+        """
+        if self.relational is None:
+            return
+        runtime = self._effective_runtime()
+        if not int(runtime.get('stale_review_reap_enabled', 1)):
+            return
+        ttl_s = float(runtime.get('stale_review_archive_after_h', 72.0)) * 3600
+        cap = int(runtime.get('stale_review_reap_per_tick_cap', 20))
+        if ttl_s <= 0 or cap <= 0:
+            return
+        cutoff = time.time() - ttl_s
+
+        # (kind_name, list_review_method, archive_method, text_attr)
+        kinds = [
+            ('inside_joke', 'list_inside_jokes_review',
+             'archive_inside_joke', 'phrase'),
+            ('protocol', 'list_protocols_review',
+             'archive_protocol', 'rule'),
+            ('thread', 'list_threads_review',
+             'archive_thread', 'title'),
+        ]
+        reaped: List[dict] = []
+        reaped_n = 0
+        for kind, list_fn, arch_fn, text_attr in kinds:
+            if reaped_n >= cap:
+                break
+            try:
+                list_method = getattr(self.relational, list_fn, None)
+                arch_method = getattr(self.relational, arch_fn, None)
+                if list_method is None or arch_method is None:
+                    continue
+                items = list_method() or []
+            except Exception:
+                continue
+            for it in items:
+                if reaped_n >= cap:
+                    break
+                try:
+                    created = float(getattr(it, 'created_at', 0) or 0)
+                except Exception:
+                    continue
+                if created <= 0 or created >= cutoff:
+                    continue  # 太新, skip
+                try:
+                    ok = arch_method(it.id)
+                except Exception:
+                    ok = False
+                if not ok:
+                    continue
+                reaped_n += 1
+                age_h = (time.time() - created) / 3600.0
+                text_preview = (getattr(it, text_attr, '') or '')[:60]
+                reaped.append({
+                    'kind': kind,
+                    'id': getattr(it, 'id', ''),
+                    'text': text_preview,
+                    'age_h': round(age_h, 1),
+                })
+                self._bg_log(
+                    f"🍂 [AutoArbiter/Reaper] archived stale {kind} "
+                    f"'{text_preview}' (age {age_h:.1f}h ≥ "
+                    f"{ttl_s/3600:.0f}h TTL)"
+                )
+
+        # 持久化 relational state (archive 改了 _dirty)
+        if reaped:
+            try:
+                if hasattr(self.relational, 'persist'):
+                    self.relational.persist()
+                if hasattr(self.relational, 'write_review_queue'):
+                    self.relational.write_review_queue()
+            except Exception:
+                pass
+            # publish SWM 1 event 概要 (per-item 不 publish, 防爆)
+            try:
+                from jarvis_utils import get_event_bus
+                bus = get_event_bus()
+                if bus is not None:
+                    by_kind = {}
+                    for r in reaped:
+                        by_kind[r['kind']] = by_kind.get(r['kind'], 0) + 1
+                    bus.publish(
+                        etype='stale_review_archived',
+                        description=(
+                            f"AutoArbiter 自动 archive {len(reaped)} 个 "
+                            f"stale review (TTL={ttl_s/3600:.0f}h): {by_kind}"
+                        )[:200],
+                        source='AutoArbiterReaper',
+                        salience=0.5,
+                        metadata={
+                            'reaped_count': len(reaped),
+                            'by_kind': by_kind,
+                            'ttl_h': ttl_s / 3600,
+                            'sample': reaped[:5],
                         },
                         ttl=86400.0,
                     )
@@ -530,6 +757,16 @@ class AutoArbiterDaemon:
     # ----------------------------------------------------------
     _ABSTRACT_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
     _ABSTRACT_VOCAB_CHECK_INTERVAL_S = 30.0
+    # 🆕 [Sir 2026-05-28 15:30] inside_joke vocab 同 pattern cache
+    _INSIDE_JOKE_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    # 🆕 [Sir 2026-05-28 15:30 H.2] thread vocab cache
+    _THREAD_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    # 🆕 [Sir 2026-05-28 15:40 H.3] protocol vocab cache
+    _PROTOCOL_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    # 🆕 [Sir 2026-05-28 16:00 H.4] concern vocab cache
+    _CONCERN_VOCAB_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+    # 🆕 [Sir 2026-05-28 15:30] strong-gate stats (Sir CLI --show-stats 看近 24h)
+    _strong_gate_stats: dict = {}  # {kind: {act_count, rej_count, by_reason: {reason: count}}}
 
     def _load_abstract_reject_vocab(self) -> dict:
         """Lazy load abstract vocab + mtime 30s throttle. 失败 fallback empty.
@@ -568,6 +805,15 @@ class AutoArbiterDaemon:
     def _is_abstract_protocol(self, rule_text: str) -> Tuple[bool, str]:
         """检 protocol rule 是否过抽象, 命中 vocab keyword 即直接 REJECT.
 
+        🆕 [Sir 2026-05-27 23:40 P14 治本] 双 tier:
+          - hard_reject_keywords (1 hit 即 reject): 最确定 aspirational 词
+            ('prioritize', 'aspire', 'be more', 'sound like' ...)
+          - abstract_keywords (soft, N hits 才 reject): 含义模糊词
+            ('maintain', 'concise', 'tone' ...), 默 N=2
+
+        Sir dashboard 截图 7+ propose 含 1 个 'prioritize' / 'be more' 没 reject
+        是因为单 list min_hits=2 门槛. 升 schema 加 hard tier 治本.
+
         Args:
             rule_text: protocol 候选规则文本
 
@@ -580,22 +826,30 @@ class AutoArbiterDaemon:
         vocab = self._load_abstract_reject_vocab()
         if not vocab.get('enabled', False):
             return False, 'vocab_disabled'
-        keywords = vocab.get('abstract_keywords', []) or []
-        if not keywords:
-            return False, 'no_keywords'
+        hard_kws = vocab.get('hard_reject_keywords', []) or []
+        soft_kws = vocab.get('abstract_keywords', []) or []
         min_hits = int(vocab.get('min_keyword_hits_to_reject', 2))
         min_words = int(vocab.get('min_words_in_rule', 4))
 
         rule_lower = rule_text.lower().strip()
-        # 短 rule pre-reject (太短没具体内容)
+        # 短 rule pre-reject (独立 check, 不依赖 keyword list)
         word_count = len(rule_lower.split())
         if word_count < min_words:
             return True, f'too_short:{word_count}w<{min_words}'
-        # 数 abstract 关键词命中
-        hits = [kw for kw in keywords if kw.lower() in rule_lower]
-        if len(hits) >= min_hits:
-            return True, f'abstract_kw_hit:{",".join(hits[:5])}'
-        return False, f'concrete:{len(hits)}hits<{min_hits}'
+        # 无 keyword 配置 + 长度 OK → 不 reject (走 LLM eval)
+        if not hard_kws and not soft_kws:
+            return False, 'no_keywords'
+        # hard tier: 1 hit 即 reject (最确定的 aspirational verb)
+        hard_hits = [kw for kw in hard_kws if kw.lower() in rule_lower]
+        if hard_hits:
+            return True, f'hard_kw_hit:{",".join(hard_hits[:5])}'
+        # soft tier: N+ hits 才 reject (含义模糊词避免误伤)
+        soft_hits = [kw for kw in soft_kws if kw.lower() in rule_lower]
+        if len(soft_hits) >= min_hits:
+            return True, f'soft_kw_hit:{",".join(soft_hits[:5])}'
+        return False, (
+            f'concrete:hard=0,soft={len(soft_hits)}hits<{min_hits}'
+        )
 
     def _handle_pre_reject_abstract(self, kind: str, item_id: str,
                                           preview: str, risk: str,
@@ -643,6 +897,545 @@ class AutoArbiterDaemon:
                 f"🤖 [AutoArbiter] [{kind}/{item_id[:20]}] "
                 f"PRE_REJECT abstract (bypass LLM) | reason: {abs_reason} "
                 f"| rule_preview: {rule_text[:60]}"
+            )
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 15:30 真痛 image 1] inside_joke 两层耦合 strong-gate
+    # ----------------------------------------------------------
+    # Sir 真痛 (image 1): "真笑点得我大致复述 / 笑了 (现在能听语音) / 或者我
+    # 确认对笑才算 inside_joke". 反 LLM 自嗨, 让 Python deterministic 判强信号:
+    #   强 ACT: Sir 复述 phrase / AmbientSensor laughter ± 5min / Sir 文字确认
+    #   强 REJ: Sir dismiss 词 / dedup 现有 / stock butler 套话 / trivial
+    # 命中 → bypass LLM 直 activate/reject (省 token + 不让 LLM 自嗨).
+    # 无强信号 + 无强反信号 → 走 LLM edge case eval, Python 仍 final veto.
+    # 准则 6 + 准则 8: vocab 持久化 + CLI 可改 + LLM/python 两层耦合.
+    # ----------------------------------------------------------
+    def _load_inside_joke_vocab(self) -> dict:
+        """Lazy load inside_joke vocab + mtime 30s throttle. 失败 fallback empty."""
+        default_disabled = {'enabled': False}
+        path = self.INSIDE_JOKE_VOCAB_PATH
+        cache = AutoArbiterDaemon._INSIDE_JOKE_VOCAB_CACHE
+        now = time.time()
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._ABSTRACT_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        if not os.path.exists(path):
+            cache['data'] = default_disabled
+            return default_disabled
+        try:
+            mtime = os.path.getmtime(path)
+            if cache['data'] is not None and mtime == cache['mtime']:
+                return cache['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            cache['data'] = data
+            cache['mtime'] = mtime
+            return data
+        except Exception as e:
+            self._bg_log(f"⚠️ [AutoArbiter] load inside_joke_vocab fail: {e}")
+            cache['data'] = default_disabled
+            return default_disabled
+
+    def _inside_joke_strong_gate(
+            self, entity, evidence: dict) -> Tuple[Optional[str], str]:
+        """Inside_joke deterministic strong-signal gate.
+
+        Returns:
+            (decision, reason):
+                decision: 'activate' | 'reject' | None (None = 无强信号, 走 LLM)
+                reason: 短描述 (含命中信号 / 关键词 / metric)
+        """
+        vocab = self._load_inside_joke_vocab()
+        if not vocab.get('enabled', False):
+            return None, 'vocab_disabled'
+        phrase = (getattr(entity, 'phrase', '') or '').strip()
+        if not phrase:
+            return 'reject', 'empty_phrase'
+        phrase_lower = phrase.lower()
+
+        # ---------- 强 REJ 优先 (省判 ACT 浪费) ----------
+        # REJ-(d) Trivial: phrase 词数 < min / 字数 > max
+        min_words = int(vocab.get('min_phrase_words', 3))
+        max_chars = int(vocab.get('max_phrase_chars', 80))
+        word_count = len(phrase.split())
+        if word_count < min_words:
+            return 'reject', f'trivial:words={word_count}<{min_words}'
+        if len(phrase) > max_chars:
+            return 'reject', f'trivial:chars={len(phrase)}>{max_chars}'
+        # REJ-(c) Stock butler clichés
+        stock_kws = vocab.get('stock_butler_keywords', []) or []
+        stock_hits = [kw for kw in stock_kws if kw.lower() in phrase_lower]
+        if stock_hits:
+            return 'reject', f'stock_butler:{",".join(stock_hits[:3])}'
+        # REJ-(a) Sir dismiss in STM
+        stm = evidence.get('stm') or []
+        dismiss_kws = vocab.get('dismiss_keywords', []) or []
+        for turn in stm:
+            user_text = (turn.get('user') or '').lower()
+            if not user_text:
+                continue
+            dismiss_hits = [kw for kw in dismiss_kws
+                              if kw.lower() in user_text]
+            if dismiss_hits:
+                return 'reject', (
+                    f'sir_dismiss:{",".join(dismiss_hits[:3])} '
+                    f'in_stm="{user_text[:40]}"'
+                )
+
+        # ---------- 强 ACT ----------
+        # ACT-(b) AmbientSensor laughter ± window
+        ambient = evidence.get('ambient_laughter_events') or []
+        if ambient:
+            best = ambient[0]
+            return 'activate', (
+                f'sir_laughed:ambient_state laughter '
+                f'at_offset_s={best.get("offset_s", 0)}'
+            )
+        # ACT-(a) Sir 复述命中 (token overlap — 中英文统一, 避免英文 26 字母 set 误命中)
+        overlap_thr = float(vocab.get('sir_quote_token_overlap', 0.6))
+        try:
+            import re as _re
+        except Exception:
+            _re = None
+        if _re is not None:
+            phrase_tokens = set(_re.findall(r'\w+', phrase_lower))
+            if phrase_tokens:
+                for turn in stm:
+                    user_text = (turn.get('user') or '').lower().strip()
+                    if not user_text or len(user_text) < 3:
+                        continue
+                    # substring 直接命中 (Sir 原话含 phrase 整段)
+                    if phrase_lower in user_text:
+                        return 'activate', (
+                            f'sir_quoted_substring in_stm="{user_text[:40]}"'
+                        )
+                    # token overlap (Sir 大致复述, 关键词命中 ≥ N%)
+                    user_tokens = set(_re.findall(r'\w+', user_text))
+                    if not user_tokens:
+                        continue
+                    inter = len(phrase_tokens & user_tokens)
+                    ratio = inter / len(phrase_tokens)
+                    if ratio >= overlap_thr:
+                        return 'activate', (
+                            f'sir_quoted_token_overlap={ratio:.2f}>={overlap_thr} '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+        # ACT-(c) Sir 文字确认 (confirm_kw in STM 近 N turn)
+        confirm_kws = vocab.get('confirm_keywords', []) or []
+        confirm_turns = int(vocab.get('confirm_turns_after', 2))
+        recent_stm = stm[-confirm_turns:] if confirm_turns > 0 else stm
+        for turn in recent_stm:
+            user_text = (turn.get('user') or '').lower()
+            if not user_text:
+                continue
+            confirm_hits = [kw for kw in confirm_kws
+                              if kw.lower() in user_text]
+            if confirm_hits:
+                return 'activate', (
+                    f'sir_text_confirm:{",".join(confirm_hits[:3])} '
+                    f'in_stm="{user_text[:40]}"'
+                )
+
+        # 无强信号 / 无强反信号 → 走 LLM edge case
+        return None, 'no_strong_signal_fallback_to_llm'
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 15:30 H.2] thread 两层耦合 strong-gate
+    # ----------------------------------------------------------
+    # thread = 'Sir 提及重要 milestone / achievement', e.g.
+    #   'Built and deployed J.A.R.V.I.S.' / 'P0+19-5 architecture split done'
+    #   强 ACT: Sir 复述 title (token overlap) AND detail 不空 /
+    #            STM 含 milestone vocab AND detail 不空
+    #   强 REJ: title trivial (词数 < min / 字数 > max) /
+    #            detail 太短 (不是 milestone)
+    # ----------------------------------------------------------
+    def _load_thread_vocab(self) -> dict:
+        """Lazy load thread vocab + mtime 30s throttle."""
+        default_disabled = {'enabled': False}
+        path = self.THREAD_VOCAB_PATH
+        cache = AutoArbiterDaemon._THREAD_VOCAB_CACHE
+        now = time.time()
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._ABSTRACT_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        if not os.path.exists(path):
+            cache['data'] = default_disabled
+            return default_disabled
+        try:
+            mtime = os.path.getmtime(path)
+            if cache['data'] is not None and mtime == cache['mtime']:
+                return cache['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            cache['data'] = data
+            cache['mtime'] = mtime
+            return data
+        except Exception as e:
+            self._bg_log(f"⚠️ [AutoArbiter] load thread_vocab fail: {e}")
+            cache['data'] = default_disabled
+            return default_disabled
+
+    def _thread_strong_gate(
+            self, entity, evidence: dict) -> Tuple[Optional[str], str]:
+        """Thread deterministic strong-signal gate.
+
+        Returns:
+            (decision, reason):
+                decision: 'activate' | 'reject' | None (None = 无强信号, 走 LLM)
+        """
+        vocab = self._load_thread_vocab()
+        if not vocab.get('enabled', False):
+            return None, 'vocab_disabled'
+        title = (getattr(entity, 'title', '') or '').strip()
+        detail = (getattr(entity, 'detail', '') or '').strip()
+        if not title:
+            return 'reject', 'empty_title'
+        title_lower = title.lower()
+
+        # ---------- 强 REJ ----------
+        # REJ-(a) title 词数 < min
+        min_words = int(vocab.get('min_title_words', 2))
+        title_words = len(title.split())
+        if title_words < min_words:
+            return 'reject', f'trivial_title:words={title_words}<{min_words}'
+        # REJ-(c) title 字数 > max
+        max_chars = int(vocab.get('max_title_chars', 80))
+        if len(title) > max_chars:
+            return 'reject', f'trivial_title:chars={len(title)}>{max_chars}'
+        # REJ-(b) detail 字数 < min
+        min_detail = int(vocab.get('min_detail_chars', 10))
+        if len(detail) < min_detail:
+            return 'reject', f'no_detail:chars={len(detail)}<{min_detail}'
+
+        # ---------- 强 ACT ----------
+        stm = evidence.get('stm') or []
+        # ACT-(a) Sir 复述 title (token overlap)
+        try:
+            import re as _re
+        except Exception:
+            _re = None
+        if _re is not None:
+            overlap_thr = float(vocab.get('min_title_token_overlap', 0.5))
+            title_tokens = set(_re.findall(r'\w+', title_lower))
+            if title_tokens:
+                for turn in stm:
+                    user_text = (turn.get('user') or '').lower().strip()
+                    if not user_text or len(user_text) < 3:
+                        continue
+                    if title_lower in user_text:
+                        return 'activate', (
+                            f'sir_quoted_title_substring '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+                    user_tokens = set(_re.findall(r'\w+', user_text))
+                    if not user_tokens:
+                        continue
+                    inter = len(title_tokens & user_tokens)
+                    ratio = inter / len(title_tokens)
+                    if ratio >= overlap_thr:
+                        return 'activate', (
+                            f'sir_quoted_title_token_overlap='
+                            f'{ratio:.2f}>={overlap_thr} '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+        # ACT-(b) Sir milestone vocab in STM
+        milestone_kws = vocab.get('milestone_keywords', []) or []
+        for turn in stm:
+            user_text = (turn.get('user') or '').lower()
+            if not user_text:
+                continue
+            milestone_hits = [kw for kw in milestone_kws
+                                if kw.lower() in user_text]
+            if milestone_hits:
+                return 'activate', (
+                    f'sir_milestone_kw:{",".join(milestone_hits[:3])} '
+                    f'in_stm="{user_text[:40]}"'
+                )
+
+        # 无强信号 → LLM edge
+        return None, 'no_strong_signal_fallback_to_llm'
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 15:40 H.3] protocol 两层耦合 strong-gate
+    # ----------------------------------------------------------
+    # protocol = STRICT rule, Sir 真意 image 1 "严格把关":
+    #   强 ACT: STM Sir 复述 rule (token overlap)
+    #   强 REJ: rule trivial (词数 < min / 字数 > max) / 缺 imperative verb
+    #   (vague abstract 已 _llm_evaluate abstract_reject_vocab pre-reject cover)
+    # ----------------------------------------------------------
+    def _load_protocol_vocab(self) -> dict:
+        """Lazy load protocol vocab + mtime 30s throttle."""
+        default_disabled = {'enabled': False}
+        path = self.PROTOCOL_VOCAB_PATH
+        cache = AutoArbiterDaemon._PROTOCOL_VOCAB_CACHE
+        now = time.time()
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._ABSTRACT_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        if not os.path.exists(path):
+            cache['data'] = default_disabled
+            return default_disabled
+        try:
+            mtime = os.path.getmtime(path)
+            if cache['data'] is not None and mtime == cache['mtime']:
+                return cache['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            cache['data'] = data
+            cache['mtime'] = mtime
+            return data
+        except Exception as e:
+            self._bg_log(f"⚠️ [AutoArbiter] load protocol_vocab fail: {e}")
+            cache['data'] = default_disabled
+            return default_disabled
+
+    def _protocol_strong_gate(
+            self, entity, evidence: dict) -> Tuple[Optional[str], str]:
+        """Protocol deterministic strong-signal gate.
+
+        Returns:
+            (decision, reason):
+                decision: 'activate' | 'reject' | None
+        """
+        vocab = self._load_protocol_vocab()
+        if not vocab.get('enabled', False):
+            return None, 'vocab_disabled'
+        rule = (getattr(entity, 'rule', '') or '').strip()
+        if not rule:
+            return 'reject', 'empty_rule'
+        rule_lower = rule.lower()
+
+        # ---------- 强 REJ ----------
+        # REJ-(a) 词数 < min
+        min_words = int(vocab.get('min_rule_words', 4))
+        rule_words = len(rule.split())
+        if rule_words < min_words:
+            return 'reject', f'trivial_rule:words={rule_words}<{min_words}'
+        # REJ-(b) 字数 > max
+        max_chars = int(vocab.get('max_rule_chars', 200))
+        if len(rule) > max_chars:
+            return 'reject', f'trivial_rule:chars={len(rule)}>{max_chars}'
+        # REJ-(c) 缺 imperative verb (Sir 真意 STRICT 必命令式)
+        imperative_verbs = vocab.get('imperative_verbs', []) or []
+        if imperative_verbs:
+            has_imperative = any(
+                v.lower() in rule_lower for v in imperative_verbs
+            )
+            if not has_imperative:
+                return 'reject', 'missing_imperative_verb'
+
+        # ---------- 强 ACT ----------
+        stm = evidence.get('stm') or []
+        try:
+            import re as _re
+        except Exception:
+            _re = None
+        if _re is not None:
+            overlap_thr = float(vocab.get('min_rule_token_overlap', 0.5))
+            rule_tokens = set(_re.findall(r'\w+', rule_lower))
+            if rule_tokens:
+                for turn in stm:
+                    user_text = (turn.get('user') or '').lower().strip()
+                    if not user_text or len(user_text) < 3:
+                        continue
+                    if rule_lower in user_text:
+                        return 'activate', (
+                            f'sir_quoted_rule_substring '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+                    user_tokens = set(_re.findall(r'\w+', user_text))
+                    if not user_tokens:
+                        continue
+                    inter = len(rule_tokens & user_tokens)
+                    ratio = inter / len(rule_tokens)
+                    if ratio >= overlap_thr:
+                        return 'activate', (
+                            f'sir_quoted_rule_token_overlap='
+                            f'{ratio:.2f}>={overlap_thr} '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+
+        # 无强信号 → LLM edge
+        return None, 'no_strong_signal_fallback_to_llm'
+
+    # ----------------------------------------------------------
+    # 🆕 [Sir 2026-05-28 16:00 H.4] concern 两层耦合 strong-gate
+    # ----------------------------------------------------------
+    # concern = Jarvis 视角 "I'm watching", Sir 真意 image 1 严格把关:
+    #   强 ACT: source trusted (sir_added/sir_confirmed) /
+    #            Sir 抱怨 vocab + watch token overlap
+    #   强 REJ: watch trivial / why 缺
+    # ----------------------------------------------------------
+    def _load_concern_vocab(self) -> dict:
+        """Lazy load concern vocab + mtime 30s throttle."""
+        default_disabled = {'enabled': False}
+        path = self.CONCERN_VOCAB_PATH
+        cache = AutoArbiterDaemon._CONCERN_VOCAB_CACHE
+        now = time.time()
+        if (cache['data'] is not None and
+                now - cache['checked_at'] < self._ABSTRACT_VOCAB_CHECK_INTERVAL_S):
+            return cache['data']
+        cache['checked_at'] = now
+        if not os.path.exists(path):
+            cache['data'] = default_disabled
+            return default_disabled
+        try:
+            mtime = os.path.getmtime(path)
+            if cache['data'] is not None and mtime == cache['mtime']:
+                return cache['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            cache['data'] = data
+            cache['mtime'] = mtime
+            return data
+        except Exception as e:
+            self._bg_log(f"⚠️ [AutoArbiter] load concern_vocab fail: {e}")
+            cache['data'] = default_disabled
+            return default_disabled
+
+    def _concern_strong_gate(
+            self, entity, evidence: dict) -> Tuple[Optional[str], str]:
+        """Concern deterministic strong-signal gate.
+
+        Returns:
+            (decision, reason):
+                decision: 'activate' | 'reject' | None
+        """
+        vocab = self._load_concern_vocab()
+        if not vocab.get('enabled', False):
+            return None, 'vocab_disabled'
+        watch = (getattr(entity, 'what_i_watch', '') or '').strip()
+        why = (getattr(entity, 'why_i_care', '') or '').strip()
+        source = (getattr(entity, 'source', '') or '').strip()
+        if not watch:
+            return 'reject', 'empty_watch'
+
+        # ---------- 强 ACT-(a): source trusted (Sir 亲口加) ----------
+        trusted_sources = vocab.get('trusted_sources', []) or []
+        if source in trusted_sources:
+            return 'activate', f'trusted_source:{source}'
+
+        # ---------- 强 REJ ----------
+        # REJ-(a) watch 词数 < min
+        min_watch_words = int(vocab.get('min_watch_words', 3))
+        watch_words = len(watch.split())
+        if watch_words < min_watch_words:
+            return 'reject', f'trivial_watch:words={watch_words}<{min_watch_words}'
+        # REJ-(b) why 词数 < min
+        min_why_words = int(vocab.get('min_why_words', 3))
+        why_words = len(why.split()) if why else 0
+        if why_words < min_why_words:
+            return 'reject', f'missing_why:words={why_words}<{min_why_words}'
+
+        # ---------- 强 ACT-(b): Sir 抱怨 vocab + watch overlap ----------
+        stm = evidence.get('stm') or []
+        complaint_kws = vocab.get('sir_complaint_keywords', []) or []
+        try:
+            import re as _re
+        except Exception:
+            _re = None
+        if _re is not None and complaint_kws and stm:
+            overlap_thr = float(vocab.get('min_watch_token_overlap', 0.3))
+            watch_lower = watch.lower()
+            watch_tokens = set(_re.findall(r'\w+', watch_lower))
+            if watch_tokens:
+                for turn in stm:
+                    user_text = (turn.get('user') or '').lower().strip()
+                    if not user_text or len(user_text) < 3:
+                        continue
+                    complaint_hits = [
+                        kw for kw in complaint_kws
+                        if kw.lower() in user_text
+                    ]
+                    if not complaint_hits:
+                        continue
+                    user_tokens = set(_re.findall(r'\w+', user_text))
+                    if not user_tokens:
+                        continue
+                    inter = len(watch_tokens & user_tokens)
+                    ratio = inter / len(watch_tokens)
+                    if ratio >= overlap_thr:
+                        return 'activate', (
+                            f'sir_complaint+watch_overlap='
+                            f'{ratio:.2f}>={overlap_thr} '
+                            f'kw={complaint_hits[0]} '
+                            f'in_stm="{user_text[:40]}"'
+                        )
+
+        # 无强信号 → LLM edge
+        return None, 'no_strong_signal_fallback_to_llm'
+
+    def _handle_pre_decide_strong(self, kind: str, item_id: str,
+                                          preview: str, risk: str,
+                                          decision: str, reason: str) -> None:
+        """Python deterministic strong gate 命中 → bypass LLM 直接执行 decision.
+
+        类 _handle_pre_reject_abstract pattern, 但 decision 可 'activate' 或
+        'reject' (confidence=1.0 表 deterministic, 非 LLM 评). 真调 _execute
+        让 relational.activate_from_review / reject_from_review 真生效.
+        """
+        now = time.time()
+        d = ArbiterDecision(
+            id=f"aa_{time.strftime('%Y%m%d_%H%M%S')}_"
+                f"{int(now * 1000) % 10000:04x}",
+            ts=now,
+            ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+            kind=kind,
+            item_id=item_id,
+            item_preview=preview[:100],
+            risk_level=risk,
+            decision=decision,
+            confidence=1.0,
+            reason=f'pre_decide_strong:{decision}: {reason}'[:300],
+            threshold_at_decision=0.0,
+        )
+        try:
+            ok, msg = self._execute(kind, item_id, decision)
+            d.executed_ok = ok
+            d.executed_at = time.time()
+            d.execution_msg = msg[:200]
+        except Exception as e:
+            d.executed_ok = False
+            d.execution_msg = f'execute_exception:{e}'[:200]
+
+        with self._lock:
+            self._decisions.append(d)
+            # stats 记 (Sir CLI --show-stats 用)
+            ks = self._strong_gate_stats.setdefault(
+                kind, {'act_count': 0, 'rej_count': 0, 'by_reason': {}}
+            )
+            if decision == 'activate':
+                ks['act_count'] += 1
+            elif decision == 'reject':
+                ks['rej_count'] += 1
+            # reason 头 30 char 作 stats key (去掉 in_stm="..." 噪音)
+            key = reason.split(' in_stm=')[0][:30]
+            ks['by_reason'][key] = ks['by_reason'].get(key, 0) + 1
+        self._persist_decision(d)
+        self._publish_swm(d)
+
+        # log per-kind vocab.log_decisions (默 True), 不拉时 default True
+        log_enabled = True
+        if kind == 'inside_joke':
+            log_enabled = self._load_inside_joke_vocab().get(
+                'log_decisions', True)
+        elif kind == 'thread':
+            log_enabled = self._load_thread_vocab().get(
+                'log_decisions', True)
+        elif kind == 'protocol':
+            log_enabled = self._load_protocol_vocab().get(
+                'log_decisions', True)
+        elif kind == 'concern':
+            log_enabled = self._load_concern_vocab().get(
+                'log_decisions', True)
+        if log_enabled:
+            self._bg_log(
+                f"🤖 [AutoArbiter] [{kind}/{item_id[:20]}] "
+                f"PRE_{decision.upper()} strong-gate (bypass LLM) "
+                f"| reason: {reason[:80]} | preview: {preview[:60]}"
             )
 
     # ----------------------------------------------------------
@@ -826,6 +1619,58 @@ class AutoArbiterDaemon:
         # 收集 evidence
         evidence = self._collect_evidence(kind, entity)
 
+        # 🆕 [Sir 2026-05-28 15:30 真痛 image 1] inside_joke 两层耦合 pre-check
+        # ============================================================
+        # Sir 真意: Python deterministic strong-gate 决强信号 case (省 LLM 自嗨),
+        # 无强信号才走 LLM edge case. 类 protocol abstract pre-check pattern.
+        # ============================================================
+        if kind == 'inside_joke':
+            strong_decision, strong_reason = self._inside_joke_strong_gate(
+                entity, evidence
+            )
+            if strong_decision in ('activate', 'reject'):
+                self._handle_pre_decide_strong(
+                    kind=kind, item_id=item_id, preview=preview,
+                    risk=risk, decision=strong_decision, reason=strong_reason,
+                )
+                return  # bypass LLM eval (省 token)
+
+        # 🆕 [Sir 2026-05-28 15:30 H.2] thread 两层耦合 pre-check
+        if kind == 'thread':
+            strong_decision, strong_reason = self._thread_strong_gate(
+                entity, evidence
+            )
+            if strong_decision in ('activate', 'reject'):
+                self._handle_pre_decide_strong(
+                    kind=kind, item_id=item_id, preview=preview,
+                    risk=risk, decision=strong_decision, reason=strong_reason,
+                )
+                return
+
+        # 🆕 [Sir 2026-05-28 15:40 H.3] protocol 两层耦合 pre-check
+        if kind == 'protocol':
+            strong_decision, strong_reason = self._protocol_strong_gate(
+                entity, evidence
+            )
+            if strong_decision in ('activate', 'reject'):
+                self._handle_pre_decide_strong(
+                    kind=kind, item_id=item_id, preview=preview,
+                    risk=risk, decision=strong_decision, reason=strong_reason,
+                )
+                return
+
+        # 🆕 [Sir 2026-05-28 16:00 H.4] concern 两层耦合 pre-check
+        if kind == 'concern':
+            strong_decision, strong_reason = self._concern_strong_gate(
+                entity, evidence
+            )
+            if strong_decision in ('activate', 'reject'):
+                self._handle_pre_decide_strong(
+                    kind=kind, item_id=item_id, preview=preview,
+                    risk=risk, decision=strong_decision, reason=strong_reason,
+                )
+                return
+
         # LLM eval
         action, conf, reason = self._llm_evaluate(kind, entity, evidence)
 
@@ -905,12 +1750,131 @@ class AutoArbiterDaemon:
         # medium: 只建议不真做
         return 'defer_to_sir'
 
+    # ==========================================================================
+    # 🆕 [Sir 2026-05-28 19:47 fix44 P0] LLM semantic dedup
+    # ==========================================================================
+    # Sir 真痛 (19:20 monitor warn): inside_joke active 30 + protocol 29 bloat.
+    # 30 active jokes 内 9 个 sleep 主题同义换皮 ('theoretical rest' /
+    # 'conceptual rest' / 'Decorative slumber' / 'Productive somnambulism' / ...)
+    # 字面 jaccard < 0.6 全部漏拦. 准则 6 拒绝硬编码 + 信任 LLM:
+    # lexical jaccard 已不够, grey-band 调 LLM 判语义.
+    #
+    # 实施: jaccard < low (per-kind, joke=0.15/protocol=0.25/thread=0.35) → 放行
+    #       jaccard >= high (0.6) → 硬拒 (省 LLM cost)
+    #       jaccard ∈ [low, high) → call _semantic_dedup_check (LRU cache + timeout)
+    # 故障开放: LLM 失败 / 超时 → 不算 dup (准则 8 优雅, 不阻塞流)
+    def _semantic_dedup_check(self, kind: str, text_a: str,
+                                text_b: str) -> Tuple[bool, float, str]:
+        """LLM 语义判 text_a / text_b 是否同义换皮.
+
+        Returns:
+          (is_dup: bool, conf: float, reason: str)
+          is_dup = True 仅当 LLM DUP 且 conf >= semantic_dedup_conf_threshold
+          故障 (LLM 失败 / timeout / parse fail) → (False, 0.0, 'llm_<reason>')
+        """
+        runtime = self._effective_runtime()
+        if not int(runtime.get('semantic_dedup_enabled', 1)):
+            return False, 0.0, 'semantic_disabled'
+        a = (text_a or '').strip().lower()
+        b = (text_b or '').strip().lower()
+        if not a or not b or a == b:
+            return (a == b), 1.0, 'trivial_eq' if a == b else 'empty'
+
+        # LRU cache lookup (key 排序避免 (a,b) vs (b,a) miss)
+        cache_key = (kind, tuple(sorted([a, b])))
+        cached = self._semantic_dedup_cache.get(cache_key)
+        if cached is not None:
+            self._semantic_dedup_cache_hits += 1
+            self._semantic_dedup_cache.move_to_end(cache_key)
+            return cached
+
+        conf_thr = float(runtime.get('semantic_dedup_conf_threshold', 0.70))
+        system_prompt = (
+            "You are a strict semantic deduplication judge for an AI assistant's "
+            "persisted vocabulary (inside jokes / unspoken protocols / shared "
+            "history threads). Given TWO short texts, decide whether they are "
+            "semantically EQUIVALENT (paraphrases / synonyms / same core concept "
+            "with different wording) or genuinely DISTINCT (cover different ideas, "
+            "different temporal stages, or different scope).\n\n"
+            "DUP criteria — output DUP if ANY:\n"
+            "  - Same core idea with synonym swap (e.g. 'theoretical rest' ↔ "
+            "'conceptual rest', 'industrious insomnia' ↔ 'productive somnambulism')\n"
+            "  - Same imperative rule with different wording (e.g. 'Always use "
+            "concise language' ↔ 'Keep replies brief and direct')\n"
+            "  - Paraphrase covering identical observable behavior\n"
+            "UNIQUE criteria — output UNIQUE if ANY:\n"
+            "  - Different temporal stage / phase (e.g. 'exam_pending' ↔ "
+            "'exam_results' — same topic, different time)\n"
+            "  - Different scope / trigger condition (e.g. 'don't push when resting' "
+            "↔ 'don't push during meetings')\n"
+            "  - Different concrete behavior (e.g. 'no hydration reminder' ↔ "
+            "'no time-based alerts')\n"
+            "Be strict — when uncertain, prefer UNIQUE (false-positive dup is "
+            "costly — it silently archives legitimate vocab).\n\n"
+            "Output EXACTLY:\n"
+            "<DECISION>DUP|UNIQUE</DECISION>\n"
+            "<CONFIDENCE>0.0-1.0</CONFIDENCE>\n"
+            "<REASON><=25 word justification></REASON>"
+        )
+        user_prompt = (
+            f"KIND: {kind}\n"
+            f"TEXT A: {text_a[:200]}\n"
+            f"TEXT B: {text_b[:200]}"
+        )
+
+        # call LLM with timeout (run in same thread; rely on http timeout in reflector)
+        self._semantic_dedup_llm_calls += 1
+        raw = ''
+        try:
+            raw = self._call_llm(system_prompt, user_prompt)
+        except Exception as e:
+            result = (False, 0.0, f'llm_exc:{str(e)[:30]}')
+            self._cache_dedup_result(cache_key, result, runtime)
+            return result
+        if not raw:
+            result = (False, 0.0, 'llm_empty')
+            self._cache_dedup_result(cache_key, result, runtime)
+            return result
+
+        # parse
+        try:
+            import re as _re
+            dec_m = _re.search(r'<DECISION>\s*(DUP|UNIQUE)\s*</DECISION>',
+                                raw, _re.IGNORECASE)
+            conf_m = _re.search(r'<CONFIDENCE>\s*([0-9.]+)\s*</CONFIDENCE>', raw)
+            reason_m = _re.search(r'<REASON>(.*?)</REASON>', raw, _re.DOTALL)
+            if not (dec_m and conf_m):
+                result = (False, 0.0, f'parse_fail:{raw[:60]}')
+                self._cache_dedup_result(cache_key, result, runtime)
+                return result
+            decision = dec_m.group(1).upper()
+            conf = max(0.0, min(1.0, float(conf_m.group(1))))
+            reason = (reason_m.group(1).strip()[:80]) if reason_m else ''
+            is_dup = (decision == 'DUP' and conf >= conf_thr)
+            if is_dup:
+                self._semantic_dedup_llm_hits += 1
+            result = (is_dup, conf, f'llm_{decision.lower()}:{reason}')
+        except Exception as e:
+            result = (False, 0.0, f'parse_exc:{str(e)[:30]}')
+
+        self._cache_dedup_result(cache_key, result, runtime)
+        return result
+
+    def _cache_dedup_result(self, key, result, runtime: dict) -> None:
+        """LRU cache put (evict oldest when over cap)."""
+        cap = int(runtime.get('semantic_dedup_cache_max', 200))
+        self._semantic_dedup_cache[key] = result
+        while len(self._semantic_dedup_cache) > cap:
+            self._semantic_dedup_cache.popitem(last=False)
+
     def _pre_activate_dedup_check(self, kind: str,
                                        entity) -> Tuple[bool, str]:
         """🆕 [Sir 2026-05-26 21:04 真痛 "拍板必须去重" / 方案 F 治本]
+           🆕 [Sir 2026-05-28 19:47 fix44 P0] grey-band LLM semantic dedup 升级
 
         即将 ACTIVATE 前最后一道防线: 与现有 active list 算 jaccard, 命中
         vocab.pre_activate_dedup_jaccard (默认 0.6) → 阻止激活.
+        fix44: jaccard ∈ [low_per_kind, high) 灰色带 → 调 LLM semantic check.
 
         Args:
           kind: 'inside_joke' / 'thread' / 'protocol'
@@ -969,8 +1933,20 @@ class AutoArbiterDaemon:
         except Exception as e:
             return True, f'active_list_fail:{str(e)[:40]}'
 
-        threshold = float(
-            self._effective_runtime().get('pre_activate_dedup_jaccard', 0.6)
+        runtime = self._effective_runtime()
+        threshold = float(runtime.get('pre_activate_dedup_jaccard', 0.6))
+        # 🆕 [Sir 2026-05-28 19:47 fix44 P0] kind-specific 灰色带下沿
+        low_key = f'semantic_dedup_jaccard_low_{kind}'
+        low_default_map = {
+            'inside_joke': 0.15,
+            'protocol': 0.25,
+            'thread': 0.35,
+        }
+        low_threshold = float(
+            runtime.get(low_key, low_default_map.get(kind, 0.30))
+        )
+        semantic_enabled = bool(
+            int(runtime.get('semantic_dedup_enabled', 1))
         )
         cand_id = self._entity_id(entity)
 
@@ -999,6 +1975,17 @@ class AutoArbiterDaemon:
                     f'jaccard={jaccard:.2f}>={threshold} '
                     f'active={ex_id[:20]} (ex="{ex_text[:50]}")'
                 )
+            # 🆕 [fix44 P0] 3. grey-band LLM semantic check
+            # (jaccard ∈ [low_threshold, threshold) → LLM 判)
+            if semantic_enabled and jaccard >= low_threshold:
+                is_dup, conf, sem_reason = self._semantic_dedup_check(
+                    kind, cand_text, ex_text
+                )
+                if is_dup:
+                    return False, (
+                        f'semantic_dup jaccard={jaccard:.2f} conf={conf:.2f} '
+                        f'active={ex_id[:20]} ({sem_reason[:50]})'
+                    )
         return True, 'no_dup'
 
     # ----------------------------------------------------------
@@ -1055,11 +2042,42 @@ class AutoArbiterDaemon:
                 ev['active_count_total'] = len(active_protocols)
         except Exception:
             pass
-        # STM 最近 5 turn (主脑近况)
+        # STM 最近 N turn (主脑近况)
+        # 🆕 [Sir 2026-05-28 15:30 H.1+H.2] inside_joke/thread vocab stm_lookback_turns 控 N
+        # 老固定 5, 现 vocab 可扩 (Sir 复述 detect 需要更长窗).
+        stm_n = 5  # 默 5 turn (向后兼容 concern/directive)
+        if kind == 'inside_joke':
+            try:
+                stm_n = int(self._load_inside_joke_vocab().get(
+                    'stm_lookback_turns', 10
+                ))
+            except Exception:
+                stm_n = 10
+        elif kind == 'thread':
+            try:
+                stm_n = int(self._load_thread_vocab().get(
+                    'stm_lookback_turns', 10
+                ))
+            except Exception:
+                stm_n = 10
+        elif kind == 'protocol':
+            try:
+                stm_n = int(self._load_protocol_vocab().get(
+                    'stm_lookback_turns', 10
+                ))
+            except Exception:
+                stm_n = 10
+        elif kind == 'concern':
+            try:
+                stm_n = int(self._load_concern_vocab().get(
+                    'stm_lookback_turns', 10
+                ))
+            except Exception:
+                stm_n = 10
         try:
             stm = []
             if self.nerve and getattr(self.nerve, 'short_term_memory', None):
-                for t in list(self.nerve.short_term_memory)[-5:]:
+                for t in list(self.nerve.short_term_memory)[-stm_n:]:
                     stm.append({
                         'user': (t.get('user') or '')[:120],
                         'jarvis': (t.get('jarvis') or '')[:150],
@@ -1067,6 +2085,57 @@ class AutoArbiterDaemon:
             ev['stm'] = stm
         except Exception:
             ev['stm'] = []
+
+        # 🆕 [Sir 2026-05-28 15:30 H.1] inside_joke ambient laughter signal
+        # ============================================================
+        # AmbientSensor publish 'ambient_state' SWM event (ambient_type=laughter),
+        # 在 entity.created_at ± laughter_window_s 内命中 → 强 ACT 信号.
+        # 不影响 thread/protocol (只 inside_joke 用此 evidence).
+        # ============================================================
+        if kind == 'inside_joke':
+            ev['ambient_laughter_events'] = []
+            try:
+                vocab = self._load_inside_joke_vocab()
+                if vocab.get('enabled', False):
+                    window_s = float(vocab.get('laughter_window_s', 300))
+                    birth_ts = float(getattr(entity, 'created_at', 0) or 0)
+                    if birth_ts > 0:
+                        from jarvis_utils import get_event_bus
+                        bus = get_event_bus()
+                        if bus is not None and hasattr(bus, 'top_n'):
+                            now = time.time()
+                            since_birth_s = now - birth_ts
+                            # 拉近 (since_birth + window) s 内 ambient_state event
+                            lookback_s = max(since_birth_s + window_s, window_s)
+                            events = bus.top_n(
+                                n=20,
+                                types={'ambient_state'},
+                                within_seconds=lookback_s,
+                            ) or []
+                            for ev_dict in events:
+                                if not isinstance(ev_dict, dict):
+                                    continue
+                                meta = ev_dict.get('metadata') or {}
+                                a_type = (meta.get('ambient_type', '')
+                                            or '').lower()
+                                if a_type != 'laughter':
+                                    continue
+                                ev_ts = float(ev_dict.get('ts', 0) or 0)
+                                offset_s = abs(ev_ts - birth_ts)
+                                # 在 birth ± window 内
+                                if offset_s <= window_s:
+                                    ev['ambient_laughter_events'].append({
+                                        'ts': ev_ts,
+                                        'offset_s': int(offset_s),
+                                        'desc': (ev_dict.get('description', '')
+                                                   or '')[:80],
+                                    })
+                            # sort by offset_s asc (closest 先)
+                            ev['ambient_laughter_events'].sort(
+                                key=lambda x: x['offset_s']
+                            )
+            except Exception:
+                pass
         return ev
 
     # ----------------------------------------------------------
@@ -1346,6 +2415,35 @@ class AutoArbiterDaemon:
                     return False, f'unknown action {action}'
             except Exception as e:
                 return False, f'exec exception: {str(e)[:100]}'
+        # 🆕 [Sir 2026-05-28 16:00 H.4] concern 通 concerns_ledger.activate/reject
+        if kind == 'concern':
+            if self.concerns_ledger is None:
+                return False, 'no concerns_ledger'
+            try:
+                if action == 'activate':
+                    ok = self.concerns_ledger.activate(item_id)
+                    if not ok:
+                        return False, f'concerns_ledger.activate returned False (item_id={item_id})'
+                    try:
+                        self.concerns_ledger.persist()
+                        self.concerns_ledger.write_review_queue()
+                    except Exception:
+                        pass
+                    return True, 'activated as concern'
+                elif action == 'reject':
+                    ok = self.concerns_ledger.reject(item_id)
+                    if not ok:
+                        return False, f'concerns_ledger.reject returned False'
+                    try:
+                        self.concerns_ledger.persist()
+                        self.concerns_ledger.write_review_queue()
+                    except Exception:
+                        pass
+                    return True, 'rejected as concern'
+                else:
+                    return False, f'unknown action {action}'
+            except Exception as e:
+                return False, f'exec concern exception: {str(e)[:100]}'
         return False, f'kind {kind} not supported for auto-execute'
 
     # ----------------------------------------------------------
