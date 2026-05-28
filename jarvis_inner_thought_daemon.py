@@ -816,6 +816,16 @@ _RED_LINES_DEFAULT_VOCAB = {
             'enabled': True,
             'check': 'let_go_thread_id_vs_active_promise',
         },
+        'protected_vocab_files': {
+            'enabled': True,
+            'check': 'vocab_adjustment_filename_blocklist',
+            'blocked_patterns': [
+                'claim_classify', 'evidence_requirements',
+                'claim_revision', 'integrity', 'red_lines',
+                'commitment', 'self_promise', 'chronos', 'health',
+                'sensor_thresholds', 'key_router', 'llm_routing',
+            ],
+        },
     },
 }
 
@@ -923,6 +933,51 @@ def _check_red_line_let_go(thread_id: str) -> Tuple[bool, str]:
         return (False, '')
     except Exception:
         return (False, '')
+
+
+def _check_red_line_vocab_adjustment(vocab_file: str) -> tuple:
+    """🆕 [SOUL Phase 5 P3] Check propose_vocab_adjustment 是否撞 protected_vocab 红线.
+
+    思考脑 self-debug 不可改 INTEGRITY / commitment / safety / 红线自己 vocab.
+    Returns: (violated, hit_pattern).
+    """
+    if not vocab_file or not isinstance(vocab_file, str):
+        return (False, '')
+    try:
+        cfg = _load_red_lines_vocab()
+        if not cfg.get('enabled', True):
+            return (False, '')
+        rl = cfg.get('red_lines', {}).get('protected_vocab_files', {})
+        if not rl.get('enabled', True):
+            return (False, '')
+        blocked = rl.get('blocked_patterns', []) or []
+        vf_lower = vocab_file.lower()
+        for pat in blocked:
+            if pat and str(pat).lower() in vf_lower:
+                return (True, str(pat))
+        return (False, '')
+    except Exception:
+        return (False, '')
+
+
+# 🆕 [SOUL Phase 5 P3] vocab adjustment review queue (propose → Sir 拍板)
+_VOCAB_ADJ_REVIEW_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'vocab_adjustment_review.jsonl',
+)
+
+
+def _append_vocab_adjustment_review(entry: dict) -> bool:
+    """🆕 [SOUL Phase 5 P3] append propose 到 review queue (Sir CLI 看/拍板)."""
+    try:
+        os.makedirs(
+            os.path.dirname(_VOCAB_ADJ_REVIEW_PATH), exist_ok=True
+        )
+        with open(_VOCAB_ADJ_REVIEW_PATH, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        return True
+    except Exception:
+        return False
 
 
 def _load_emergency_vocab() -> dict:
@@ -3262,7 +3317,15 @@ class InnerThoughtDaemon:
             # 主脑 chat_bypass 入口前读 → 注入 prompt top → 主脑 reply 守 directive.
             # sal>=0.75 gate (防低质 directive). 元学习闭环 (F6改3): Sir reaction 反馈思考脑.
             "compose_main_brain_directive:<short imperative for next "
-            "main brain reply, e.g. 'be brief, skip health advice'>"
+            "main brain reply, e.g. 'be brief, skip health advice'> | "
+            # 🆕 [SOUL Phase 5 P3 / Sir 2026-05-29 拍板] self-debug
+            # 看 [MY ARCHITECTURE] block 发现系统问题 → propose 改管辖 vocab.
+            # 例: protocol bloat → propose_vocab_adjustment 调 auto_arbiter cap.
+            # 不可改 INTEGRITY/safety vocab (红线). sal>=0.8. 走 Sir review.
+            "propose_vocab_adjustment:<vocab_file>:<key_path>:<value> "
+            "(SELF-DEBUG: if [MY ARCHITECTURE] above shows a system issue "
+            "e.g. bloat/repeated-nudge, propose fixing the governing vocab "
+            "— goes to Sir review, NOT auto-applied)"
             "</ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
@@ -4689,6 +4752,12 @@ class InnerThoughtDaemon:
             # 准则 6 信任 LLM 自决何时装 directive (sal gate 0.75 防低质 spam).
             if a.startswith('compose_main_brain_directive:'):
                 return self._do_compose_main_brain_directive(thought, a)
+            # 🆕 [SOUL Phase 5 P3 / Sir 2026-05-29 拍板] propose_vocab_adjustment
+            # 思考脑 self-debug: 看 [MY ARCHITECTURE] 发现系统问题 → propose 改
+            # 管辖该问题的 vocab → review queue → Sir 拍板. 复用 E5 红线
+            # (不改 INTEGRITY/commitment/safety vocab) + F5 review pattern.
+            if a.startswith('propose_vocab_adjustment:'):
+                return self._do_propose_vocab_adjustment(thought, a)
             # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] surface_to_sir 全退化
             # =================================================================
             # 历史: 方案 C (Sir 2026-05-26 20:55) thought 主动 surface 通道
@@ -5185,6 +5254,97 @@ class InnerThoughtDaemon:
             return False, 'set_directive_returned_false'
         except Exception as e:
             return False, f'compose_directive_fail:{str(e)[:60]}'
+
+    # 🆕 [SOUL Phase 5 P3 / Sir 2026-05-29 拍板] propose_vocab_adjustment
+    # =====================================================================
+    # 思考脑 self-debug 真闭环: 看 [MY ARCHITECTURE] (P2) 知道异常关联哪
+    # module + vocab → propose 改 vocab → review queue → Sir 拍板 → 真修.
+    # 复用 E5 红线 (protected_vocab_files) + F5 review pattern.
+    # =====================================================================
+    _VOCAB_ADJ_MIN_SAL = 0.8   # 改自己配置要高确信
+
+    def _do_propose_vocab_adjustment(
+        self, thought: InnerThought, a: str,
+    ) -> Tuple[bool, str]:
+        """🆕 [SOUL Phase 5 P3] 思考脑 self-debug propose 改 vocab.
+
+        actionable=propose_vocab_adjustment:<vocab_file>:<key_path>:<value>
+        - sal >= 0.8 (改自己配置要高确信)
+        - 红线 check (不改 INTEGRITY/commitment/safety vocab, 复用 E5)
+        - 写 review queue (memory_pool/vocab_adjustment_review.jsonl) → Sir 拍板
+        - 不直改 vocab (准则 7 Sir 元否决 + 准则 5 不假装改了)
+
+        真 case (Sir 2026-05-29 日志): protocol/joke bloat → 思考脑看
+        [MY ARCHITECTURE] 知 bloat 关联 relational + auto_arbiter → propose
+        调 auto_arbiter daily_cap / dedup jaccard → review → Sir 拍板 → 解决.
+        """
+        if thought.salience < self._VOCAB_ADJ_MIN_SAL:
+            return False, (
+                f'gated:vocab_adj_requires_sal>={self._VOCAB_ADJ_MIN_SAL} '
+                f'(got {thought.salience:.2f})'
+            )
+        # parse propose_vocab_adjustment:<file>:<key_path>:<value>
+        parts = a.split(':', 3)
+        if len(parts) < 4:
+            return False, (
+                'parse_fail (expected propose_vocab_adjustment:'
+                '<file>:<key_path>:<value>)'
+            )
+        _, vocab_file, key_path, value = parts
+        vocab_file = (vocab_file or '').strip()
+        key_path = (key_path or '').strip()
+        value = (value or '').strip()
+        if not vocab_file or not key_path:
+            return False, 'empty_file_or_key'
+        # 🆕 E5 红线 check (protected vocab 不可改)
+        _hit, _pat = _check_red_line_vocab_adjustment(vocab_file)
+        if _hit:
+            self._bg_log(
+                f"🚫 [P3/red_line] vocab_adjustment '{vocab_file}' 撞 "
+                f"protected (pattern='{_pat}') → reject. "
+                f"INTEGRITY/safety vocab 不可由 LLM 改."
+            )
+            return False, (
+                f'red_line_violated:protected_vocab:pattern={_pat}'
+            )
+        # 写 review queue (不直改, Sir 拍板)
+        entry = {
+            'ts': time.time(),
+            'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'vocab_file': vocab_file,
+            'key_path': key_path,
+            'proposed_value': value,
+            'thought_id': thought.id,
+            'rationale': (thought.thought or '')[:200],
+            'salience': float(thought.salience),
+            'status': 'pending',
+        }
+        ok = _append_vocab_adjustment_review(entry)
+        if not ok:
+            return False, 'review_queue_write_fail'
+        self._bg_log(
+            f"🔧 [P3/self-debug] propose vocab adj "
+            f"{vocab_file}:{key_path}={value[:40]} → review queue "
+            f"(Sir CLI scripts/vocab_adjustment_dump.py 拍板)"
+        )
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is not None:
+                bus.publish(
+                    etype='vocab_adjustment_proposed',
+                    description=(
+                        f"思考脑 self-debug propose: "
+                        f"{vocab_file}:{key_path}={value[:40]}"
+                    ),
+                    source='inner_thought',
+                    salience=0.6,
+                )
+        except Exception:
+            pass
+        return True, (
+            f'vocab_adj_proposed:{vocab_file}:{key_path}={value[:30]}'
+        )
 
     # 🆕 [Sir 2026-05-26 SOUL Phase B] adjust_concern_notes constants
     _NOTES_MAX_CHARS = 500             # concern.notes_for_self 总长 cap (schema)

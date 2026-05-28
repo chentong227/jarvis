@@ -48,6 +48,25 @@
       "enabled": false,
       "check": "writable_paths_whitelist",
       "_note": "V2 实施 (但 β.6 fix44 现有 writable_paths whitelist 已 cover 大部分 — Sir 把 health_probe/commitment_watcher/chronos 阈值 不放 writable_paths 即可). 现 enabled=false. 后续如需更细颗粒 read_only list, 此处加."
+    },
+    "protected_vocab_files": {
+      "enabled": true,
+      "check": "vocab_adjustment_filename_blocklist",
+      "blocked_patterns": [
+        "claim_classify",
+        "evidence_requirements",
+        "claim_revision",
+        "integrity",
+        "red_lines",
+        "commitment",
+        "self_promise",
+        "chronos",
+        "health",
+        "sensor_thresholds",
+        "key_router",
+        "llm_routing"
+      ],
+      "_note": "🆕 [SOUL Phase 5 P3 / Sir 2026-05-29 拍板] 思考脑 propose_vocab_adjustment 不可改这些 vocab (INTEGRITY 诚信栈 / commitment 承诺 / safety sensor / 红线自己 / LLM 路由). vocab_file 含任一 pattern (substring) → red_line_violated. Sir CLI 改任何 vocab 不受限 (元否决). 防 LLM self-debug 关掉自己的诚信/安全护栏."
     }
   }
 }
