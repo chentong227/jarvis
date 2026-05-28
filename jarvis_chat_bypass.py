@@ -3290,6 +3290,13 @@ Spoken English:"""
                                 self._last_ttft_s = _t_first_chunk - _t_api_start
                             except Exception:
                                 pass
+                            # 🆕 [BUG C / Sir 2026-05-28 16:08] 暂存 checkpoint ts 供
+                            # stream 末尾分段 timing log 算 pre_stream / stream_only / post_stream
+                            try:
+                                self._last_t_api_start_ts = _t_api_start
+                                self._last_t_first_chunk_ts = _t_first_chunk
+                            except Exception:
+                                pass
                             try:
                                 from jarvis_utils import bg_log
                                 bg_log(f"⏱️ [Pipeline Timer] 首Token到达(TTFT): {_t_first_chunk - _t_api_start:.1f}s (连接{_t_api_connected - _t_api_start:.1f}s + 等待{_t_first_chunk - _t_api_connected:.1f}s)")
@@ -5091,6 +5098,16 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             except Exception:
                 pass
 
+            # 🆕 [BUG C / Sir 2026-05-28 16:08 真痛 "15.4秒？" + "23.4s"]
+            # ===================================================================
+            # stream loop 终点 checkpoint, 后面 post-stream hook 累计耗时算定位:
+            #   pre_stream_s = _t_api_start - _t0  (截图 + audio + prompt assemble)
+            #   ttft_s = _last_ttft_s
+            #   stream_only_s = _t_stream_end - _t_first_chunk
+            #   post_stream_s = _t_total - _t_stream_end + _t0  (注 _t_total 含 _t0)
+            # 不改 logic, 只 emit timing log 让 Sir 下次真测看具体瓶颈.
+            # ===================================================================
+            _t_stream_end = time.time()
             final_reply = full_text.split("---ZH---")[0].strip()
             
             if "---ZH---" in full_text:
@@ -5432,11 +5449,48 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
         _t_total = time.time() - _t0
+        # 🆕 [BUG C / Sir 2026-05-28 16:08 真痛 "15.4秒？" + "23.4s"]
+        # 分段 break-down log: 让 Sir 下次真测看具体瓶颈在哪段
+        #   pre_stream  = _t_api_start - _t0           (截图 + audio + prompt assemble)
+        #   ttft        = _last_ttft_s                  (connect + 首 token 等待)
+        #   stream_only = _t_stream_end - _t_first_chunk (流式 chunk 接收)
+        #   post_stream = _t_total - (_t_stream_end - _t0) (post-stream hook: ClaimTracer / IR / record_nudge)
+        _ss_dur = max(0, _t_ss_done - _t_ss_start)
+        _pre_stream_s = None
+        _ttft_s = getattr(self, '_last_ttft_s', None)
+        _stream_only_s = None
+        _post_stream_s = None
+        try:
+            _t_api_start_abs = getattr(self, '_last_t_api_start_ts', None)
+            _t_first_chunk_abs = getattr(self, '_last_t_first_chunk_ts', None)
+            if _t_api_start_abs:
+                _pre_stream_s = max(0, _t_api_start_abs - _t0)
+            # _t_stream_end 定义在 stream loop 内部的 try block (line 5201),
+            # 若 stream 抛 exception 未到 5201, 此变量未赋值 → 用 locals() 守
+            _locals_snapshot = locals()
+            if _t_first_chunk_abs and '_t_stream_end' in _locals_snapshot:
+                _stream_only_s = max(0, _locals_snapshot['_t_stream_end'] - _t_first_chunk_abs)
+            if '_t_stream_end' in _locals_snapshot:
+                _post_stream_s = max(0, (time.time() - _locals_snapshot['_t_stream_end']))
+        except Exception:
+            pass
         try:
             from jarvis_utils import bg_log
-            bg_log(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)")
+            bg_log(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_ss_dur:.1f}s + API+流式{_t_total - _ss_dur:.1f}s)")
+            # 分段 break-down
+            _seg_parts = []
+            if _pre_stream_s is not None:
+                _seg_parts.append(f"pre_stream={_pre_stream_s:.1f}s")
+            if _ttft_s is not None:
+                _seg_parts.append(f"ttft={_ttft_s:.1f}s")
+            if _stream_only_s is not None:
+                _seg_parts.append(f"stream_only={_stream_only_s:.1f}s")
+            if _post_stream_s is not None:
+                _seg_parts.append(f"post_stream={_post_stream_s:.1f}s")
+            if _seg_parts:
+                bg_log(f"⏱️ [Pipeline Timer/Breakdown] {' | '.join(_seg_parts)} | total={_t_total:.1f}s")
         except Exception:
-            print(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_t_ss_done - _t_ss_start:.1f}s + API+流式{_t_total - (_t_ss_done - _t_ss_start):.1f}s)", file=sys.stderr)
+            print(f"⏱️ [Pipeline Timer] stream_chat总耗时: {_t_total:.1f}s (截图{_ss_dur:.1f}s + API+流式{_t_total - _ss_dur:.1f}s)", file=sys.stderr)
 
         # 🩹 [P3-BUG#1 / 2026-05-20 23:30] stream_chat 主对话 reply 也 record 进
         # RecentNudgeMemory. P2 Gap12 只 wire 在 stream_nudge, 主对话漏了 → 主脑
