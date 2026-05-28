@@ -989,6 +989,28 @@ class CommitmentWatcher(threading.Thread):
         if not description:
             return
 
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.5]
+        # 主脑近 10s emit quiet_exit (Sir 自言自语/唱歌) → 拒注册 commit
+        # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1.5
+        # 防回退: testcase _test_fix38_sir_20260528_1842_quiet_exit_phase1.py L1.5
+        try:
+            from jarvis_utils import get_event_bus as _qe_geb_cw
+            _qe_bus_cw = _qe_geb_cw()
+            if _qe_bus_cw is not None and _qe_bus_cw.has_type(
+                    'main_brain_quiet_exit', within_seconds=10.0):
+                try:
+                    from jarvis_utils import bg_log as _qe_bg_cw
+                    _qe_bg_cw(
+                        f"📝 [CommitmentWatcher] 🛡️ main_brain_quiet_exit ≤ 10s "
+                        f"→ skip register '{description[:60]}' "
+                        f"(Sir 自言自语/唱歌场景, 主脑已退 focus)"
+                    )
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
         # 🛡️ 反误判守门（Bug A 修复）：用户对 Jarvis 下指令 ≠ 用户自己承诺
         # Gate LLM 偶尔会把"帮我把音量调到 30%"识别成承诺，这里做硬过滤兜底
         desc_lower = description.lower().strip()

@@ -149,6 +149,39 @@
       "source": "integrity_reflector",
       "created_at": 1779893380.6619678,
       "note": "Repeated unverified 'past_action' claims suggest a need to track promises made by the system."
+    },
+    {
+      "id": "reflector_past_1779970890",
+      "claim_type": "Past",
+      "accepted_evidence_kinds": [
+        "tool_results_any"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779970890.2631125,
+      "note": "Past action claims are frequently unverified, suggesting a need to capture any tool result, not just successful ones."
+    },
+    {
+      "id": "reflector_count_1779972007",
+      "claim_type": "Count",
+      "accepted_evidence_kinds": [
+        "stm_match"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779972007.202587,
+      "note": "Many count claims (e.g., durations) lack verification; short-term memory match could reduce unverified rate."
+    },
+    {
+      "id": "reflector_percent_1779972007",
+      "claim_type": "Percent",
+      "accepted_evidence_kinds": [
+        "tool_results_any"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779972007.208323,
+      "note": "Percent claims often originate from tool outputs; allowing any tool result evidence could capture them."
     }
   ]
 }

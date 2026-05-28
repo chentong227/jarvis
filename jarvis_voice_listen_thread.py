@@ -169,6 +169,12 @@ class VoiceListenThread(QThread):
         self._last_audio_wav_bytes: bytes = b''
         self._last_audio_ts: float = 0.0
         self._last_audio_duration_sec: float = 0.0
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.3/L1.4]
+        # 主脑 emit reaction=quiet_exit 时 chat_bypass._apply_quiet_exit 设
+        # self.quiet_exit_until = now + JARVIS_QUIET_EXIT_WINDOW_S (default 60s).
+        # _emit_with_attention 顶部检查: 非 wake word ASR 句 → skip emit.
+        # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+        self.quiet_exit_until: float = 0.0
 
     def get_recent_audio_for_brain(self,
                                        max_age_sec: float = 30.0) -> tuple:
@@ -739,6 +745,47 @@ class VoiceListenThread(QThread):
         slot 未挂上时不挂；抓拍异常吞掉不影响 emit 主路径。
         capture_now 内部已做 try/except + ≤ 10ms 防御，不会阻塞 ASR 节奏。
         """
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.3/L1.4]
+        # 主脑近 60s emit reaction=quiet_exit → chat_bypass 设 self.quiet_exit_until.
+        # 试探期内: 非 wake word ASR 句 → skip emit (不送主脑, 不开新 turn).
+        #            wake word 出现 → reset quiet_exit_until + 立刻 cancel + 继续 emit.
+        # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1.3/L1.4
+        # 防回退: testcase _test_fix38_sir_20260528_1842_quiet_exit_phase1.py L1.3/L1.4
+        try:
+            _qe_until = float(getattr(self, 'quiet_exit_until', 0.0) or 0.0)
+            if _qe_until > 0:
+                _now_qe = time.time()
+                if _now_qe < _qe_until:
+                    _cmd_lower = (cmd or '').lower()
+                    _has_wake = bool(_cmd_lower) and any(
+                        w in _cmd_lower for w in self._JARVIS_DIRECT_WAKE
+                    )
+                    if not _has_wake:
+                        try:
+                            from jarvis_utils import bg_log as _qe_bg_vt
+                            _qe_bg_vt(
+                                f"🤫 [QuietExit/Skip] '{(cmd or '')[:40]}' — "
+                                f"main brain 已退, 剩 {_qe_until - _now_qe:.0f}s 试探期, "
+                                f"非 wake word skip emit"
+                            )
+                        except Exception:
+                            pass
+                        return  # 不 emit, 不开新 turn, 不送主脑
+                    # wake word → cancel 试探期 + re-engage
+                    self.quiet_exit_until = 0.0
+                    try:
+                        from jarvis_utils import bg_log as _qe_bg_vt2
+                        _qe_bg_vt2(
+                            f"🎤 [QuietExit/Cancel] wake word '{cmd[:40]}' "
+                            f"→ re-engage, quiet_exit_until cleared"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    # 过期 → 清零 (省下次访问开销)
+                    self.quiet_exit_until = 0.0
+        except Exception:
+            pass
         try:
             slot = getattr(self, '_attention_slot', None)
             if slot is not None:

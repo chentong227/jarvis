@@ -2768,9 +2768,13 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                                             result['gate_result_text'] = f"Memory deletion FAILED: {str(e)[:80]}. The memory may still exist."
 
                                 elif isinstance(correction, dict) and correction.get("has_correction"):
-                                    old_val = correction.get("old_value", "")
-                                    new_val = correction.get("new_value", "")
-                                    search_hint = correction.get("search_hint", old_val)
+                                    # 🆕 [Sir 2026-05-27 23:38 P16 治本] None coalesce 兜底
+                                    # Sir 真测痛点: dict 值若是 None (LLM 输出 "old_value": null),
+                                    # .get(_, "") 不走默认值返 None, 下游 .lower() 抛
+                                    # 'NoneType has no attribute lower'. 改 `or ''` 兜 None.
+                                    old_val = correction.get("old_value") or ""
+                                    new_val = correction.get("new_value") or ""
+                                    search_hint = correction.get("search_hint") or old_val
                                     if new_val and len(new_val) >= 2:
                                         if any(kw in new_val for kw in ['删除', '删掉', '去掉', '清除', 'delete', 'remove']):
                                             print(f"║ ⚠️ [Correction Guard] new_value='{new_val}' 看起来是删除指令，跳过correction，转为delete_memory")

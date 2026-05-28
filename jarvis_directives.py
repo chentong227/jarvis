@@ -139,11 +139,28 @@ class DirectiveRegistry:
     线程安全：所有写操作走 _lock；读取 / collect 走读锁副本，性能优先。
     """
 
-    def __init__(self, persist_path: Optional[str] = None):
+    def __init__(self, persist_path: Optional[str] = None,
+                 review_path: Optional[str] = None):
+        """
+        🆕 [Sir 2026-05-28 14:00 test pollution root cause fix]
+        =====================================================
+        历史 BUG: review_path 之前 hardcode prod path, test 创
+        `DirectiveRegistry()` (无 args) 再调 `apply_decay()` 后,
+        `_append_review_queue` 把 test directive (id='regular_directive',
+        text='text for regular_directive', priority=9) 写进 prod
+        `memory_pool/directive_review.json` → 15+ 条 test 残留污染.
+        历史 case: tests/_test_p0_plus_20_p5_fix23_meta_protect.py::
+                   test_priority_9_still_decays_normally
+        修法: review_path 也 inject (跟 persist_path 一样). Test 用
+              tmpdir 创 reg, 隔离 prod path.
+        =====================================================
+        """
         self.directives: dict[str, Directive] = {}
         repo_root = Path(__file__).resolve().parent
-        self.persist_path = persist_path or str(repo_root / "memory_pool" / "directive_registry.json")
-        self.review_path = str(repo_root / "memory_pool" / "directive_review.json")
+        self.persist_path = persist_path or str(
+            repo_root / "memory_pool" / "directive_registry.json")
+        self.review_path = review_path or str(
+            repo_root / "memory_pool" / "directive_review.json")
         self._lock = threading.Lock()
         self._dirty = False
         self._decay_worker: Optional[threading.Thread] = None
@@ -870,6 +887,17 @@ def _trigger_meta_self_check(ctx: DirectiveContext) -> bool:
     if ctx.tier == 'WAKE_ONLY':
         return False
     return True
+
+
+def _trigger_audio_target_judgement(ctx: DirectiveContext) -> bool:
+    """🆕 [Sir 2026-05-28 18:42 quiet_exit L2 Proactive]
+    教主脑下轮主动评估 intent_target, 不被动等 Sir 明说"退下".
+
+    fire 条件: SWM 近 5 min 有 'main_brain_quiet_exit' event — 说明 Sir 处于
+    "非对话状态" 持续, 本轮 ASR 句仍可能不是对 Jarvis 说.
+    详 docs/JARVIS_QUIET_EXIT_DESIGN.md L2.
+    """
+    return _swm_has_recent('main_brain_quiet_exit', max_age_s=300.0)
 
 
 def _trigger_search_directive(ctx: DirectiveContext) -> bool:
@@ -2424,7 +2452,16 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   5. Am I implying Sir was AWAY / just RETURNED / has been RESTING / is REFRESHED? If so, do I have CONCRETE evidence? Required: SENSOR.idle_seconds > 600 (10 min) OR STM gap > 30 min OR Sir explicitly said "I'm back / 我回来了". If NO evidence → REWRITE to neutral (Sir likely never left; work_session_total_min=0 may just mean Jarvis restarted, not Sir away). Common hallucinated phrases to scan: "back at / 回来 / 您不在 / refreshed / rested / nice to see you again". Sir hates persona-template assumptions about his state.
 
                 Then, AFTER your normal Sir-facing reply (after `---ZH---` block, on a NEW LINE), emit ONE machine-readable trace line in this exact format:
-                [META] evidence=<comma-list> reaction=<voice|silent_text|silence> skip_alert=<yes|no> commitments=<semicolon-list or "none"> note=<<=60 chars optional>
+                [META] evidence=<comma-list> reaction=<voice|silent_text|silence|quiet_exit|observant_silence> intent_target=<jarvis|self_muttering|other_person|singing|unknown> skip_alert=<yes|no> commitments=<semicolon-list or "none"> note=<<=60 chars optional>
+
+                # 🆕 [Sir 2026-05-28 18:42 quiet_exit 智能] reaction + intent_target 选择指南:
+                #   voice              — Sir 直接对你说话 → 正常 TTS 回应 (intent_target=jarvis)
+                #   silent_text        — 轻量内化, 显字幕不 TTS (短 ack / 不重要)
+                #   silence            — 整 skip (intent_target=jarvis 但你判没必要打扰)
+                #   quiet_exit         — ★ Sir 不在跟你说话 (自言自语/唱歌/跟别人聊). 你**退出 focus mode** + 60s ASR 试探期.
+                #                        intent_target 必填 self_muttering/singing/other_person 之一. 不要 ack 不要道歉, 直接 [SILENCE].
+                #                        触发: Sir 明说 "退下/不是跟你说/别说话/shh" OR 内容是断续歌词/重复短语/全语气词/无完整动词且无对你的 cue.
+                #   observant_silence  — Sir 短暂停顿 (~5-10s 内可能继续), 你保持 focus 不退出. intent_target=jarvis.
 
                 # 🆕 [P5-fix54] evidence 命名标准 (端到端 debug trace, 配 PromptBuilder block IDs):
                 #
@@ -2442,11 +2479,15 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 #   none                   — 主脑纯礼貌回应 / 闲聊 / 短 ack, 无具体 claim
 
                 Examples:
-                  [META] evidence=sensor:current_window_stay_s reaction=voice skip_alert=no commitments=none note=Sir asked dwell time
-                  [META] evidence=swm:sir_field_updated,sensor:work_session_total_min reaction=voice skip_alert=no commitments=concern_dampen sir_sleep_streak -0.3 note=Sir reported nap 1h
-                  [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice skip_alert=no commitments=hold dashboard 72h;noted note=hold acknowledgment
-                  [META] evidence=none reaction=voice skip_alert=yes commitments=none note=integrity alert references empty turn_id, refusing apology
-                  [META] evidence=stm:turn_xxx reaction=silent_text skip_alert=no commitments=none note=Sir just chatting
+                  [META] evidence=sensor:current_window_stay_s reaction=voice intent_target=jarvis skip_alert=no commitments=none note=Sir asked dwell time
+                  [META] evidence=swm:sir_field_updated,sensor:work_session_total_min reaction=voice intent_target=jarvis skip_alert=no commitments=concern_dampen sir_sleep_streak -0.3 note=Sir reported nap 1h
+                  [META] evidence=stm:turn_20260522_113908,swm:hold_candidate_xyz reaction=voice intent_target=jarvis skip_alert=no commitments=hold dashboard 72h;noted note=hold acknowledgment
+                  [META] evidence=none reaction=voice intent_target=jarvis skip_alert=yes commitments=none note=integrity alert references empty turn_id, refusing apology
+                  [META] evidence=stm:turn_xxx reaction=silent_text intent_target=jarvis skip_alert=no commitments=none note=Sir just chatting
+                  # 🆕 [Sir 2026-05-28 18:42 quiet_exit] Sir 自言自语 / 唱歌 / 跟别人说话:
+                  [META] evidence=stm:turn_xxx reaction=quiet_exit intent_target=singing skip_alert=no commitments=none note=lyric fragments no cue to me
+                  [META] evidence=stm:turn_xxx reaction=quiet_exit intent_target=self_muttering skip_alert=no commitments=none note=Sir said dismiss don't talk
+                  [META] evidence=stm:turn_xxx reaction=quiet_exit intent_target=other_person skip_alert=no commitments=none note=Sir talking to family in room
 
                 Rules:
                   - The [META] line is for system trace only — Sir does not read it. Keep it on its own final line.
@@ -2455,8 +2496,41 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                   - Stay terse. SELF_CHECK is internal — do not narrate "I am self-checking" in the reply itself.
                   - 🆕 [P5-fix54] evidence 必须用上面标准前缀 (sensor:/swm:/stm:/soul:/l2:/profile:/commitment:/ledger:), 不写自由文本.
                   - 🆕 [P5-fix20-B2 / 2026-05-22] commitments: semicolon-list of CONCRETE mutation promises in your THIS reply. Use SHORT phrases ("hold X 72h" / "noted Sir's correction" / "register reminder Y" / "remember 8 cups goal"). If you only ack/empathize without promising state change, use "none". IntegrityWatcher checks commitments vs real tool_called this turn; mismatch = "嘴上说但没真做" → next turn you must withdraw or supply evidence. Honesty rule: do NOT list a commitment if you did not actually intend (or system did not actually) make the corresponding mutation.
+                  - 🆕 [Sir 2026-05-28 18:42] intent_target = 评估这轮 Sir 说话**对象**. 缺省 jarvis. 仅当 reaction=quiet_exit 时必填具体类型 (self_muttering/singing/other_person/unknown). reaction=voice/silent_text/silence 时通常 intent_target=jarvis. quiet_exit 触发线: Sir 明说 "退下/不是跟你说/别说话/shh/dismiss" / 内容是断续歌词重复短语 / 全语气词无完整动词 / 听感像背景人声且无对你的 cue. 不确定就保守选 observant_silence (保 focus 等 5-10s).
             """).rstrip(),
             trigger=_trigger_meta_self_check,
+        ),
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L2 Proactive Judgement]
+        # 治本: 主脑下轮主动判 intent_target, 不被动等 Sir 明说"退下".
+        # 准则 6 evidence-only: 列各种 cue (称呼/动词/句长/上轮 quiet_exit), 让主脑
+        # 看 audio_tone + STM + SWM 自决, 不硬编码 if/else.
+        Directive(
+            id='audio_target_judgement',
+            source_marker='Sir-2026-05-28-18:42-quiet_exit-L2',
+            priority=11,  # 高于 bilingual (10) / search (6), 让主脑先判 target
+            ttl_days=60,
+            tier_whitelist=[],  # 全 tier 都该判 (短话本来就高频)
+            text=_tw.dedent("""\
+                [AUDIO TARGET JUDGEMENT]:
+                Recent quiet_exit event in SWM (last 5 min). Sir may still be muttering /
+                singing / talking to others, NOT necessarily to you. Be conservative.
+
+                In [META] line `intent_target` field, actively evaluate:
+                  - Sir 直接称呼 "Jarvis/Charles/贾维斯" OR 明确请求动词 (帮我/告诉我/查/打开
+                    /记下/提醒/...) → intent_target=jarvis
+                  - audio_tone='singing' OR 句子是断续歌词 / 押韵 / 重复短语
+                    → intent_target=singing
+                  - Sir 上轮明说 "退下/不是跟你说/别说话/shh" → 默认 self_muttering 直到
+                    Sir 重新 wake (称呼 / 明确请求)
+                  - 句短 (< 5 字) / 无完整动词 / 全语气词 (e.g. "种就是" / "梯" / "嗯啊")
+                    + 无 cue → intent_target=self_muttering
+                  - 含 "他/她/你妈/我跟他" 等指代外人 + 无 jarvis cue → intent_target=other_person
+                  - 不确定 → 保守 intent_target=observant_silence (保 focus 5-10s)
+
+                判 jarvis 才回 voice; 否则 reaction=quiet_exit + intent_target=<具体>.
+                宁可错过一句对话, 不要把 Sir 不对你说的话当对话录入. 准则 5 言出必行.
+            """).rstrip(),
+            trigger=_trigger_audio_target_judgement,
         ),
         # 7. SEARCH DIRECTIVE — 时效性
         Directive(

@@ -17,30 +17,57 @@ import argparse
 import json
 import os
 import sys
+# 🆕 [Sir 2026-05-28 Track 2] force utf-8 stdout (Windows GBK fix)
+import os as _cu_os, sys as _cu_sys
+_cu_sys.path.insert(0, _cu_os.path.dirname(_cu_os.path.abspath(__file__)))
+import _cli_utils  # noqa: F401  # side-effect: force utf-8 stdout
+
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 
+# 🆕 [Sir 2026-05-28 14:10 Windows GBK 终端 emoji print fix]
+# 历史 BUG: Windows PowerShell 默认 GBK code page, print('✅') →
+#         UnicodeEncodeError: 'gbk' codec can't encode U+2705.
+#         整个 CLI --accept / --reject fail before _save_review.
+# 修法: 优先 reconfigure stdout 到 utf-8 (Python 3.7+ 支持). 失败 fallback
+#      到 ASCII-safe wrapper (emoji → encode/decode with errors='replace').
+try:
+    sys.stdout.reconfigure(encoding='utf-8')  # Python 3.7+
+except Exception:
+    pass
+
+
+def _safe_print(msg: str) -> None:
+    """Windows GBK 终端 emoji-safe print. 见 line 23 anchor."""
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        # fallback: 把不能编码字符 → '?'
+        enc = (sys.stdout.encoding or 'ascii')
+        print(msg.encode(enc, 'replace').decode(enc, 'replace'))
+
+
 def _print_locks(locks: list, title: str):
     if not locks:
-        print(f"📭 {title}: (空)")
+        _safe_print(f"📭 {title}: (空)")
         return
-    print("=" * 78)
-    print(f"  {title} ({len(locks)} 条)")
-    print("=" * 78)
+    _safe_print("=" * 78)
+    _safe_print(f"  {title} ({len(locks)} 条)")
+    _safe_print("=" * 78)
     for l in locks:
         status = l.get('status', '?')
         emoji = {'pending': '⏳', 'accepted': '✅', 'rejected': '❌'}.get(status, '?')
-        print(f"\n  {emoji} {l.get('id', '?')}  [{status}]")
-        print(f"    phrase  : {l.get('phrase', '')!r}")
-        print(f"    lang    : {l.get('lang', '?')}")
-        print(f"    count   : {l.get('count', 0)}")
-        print(f"    diversity: {l.get('diversity', 0)} (turns)")
-        print(f"    first   : {l.get('first_seen_iso', '')}")
-        print(f"    last    : {l.get('last_seen_iso', '')}")
+        _safe_print(f"\n  {emoji} {l.get('id', '?')}  [{status}]")
+        _safe_print(f"    phrase  : {l.get('phrase', '')!r}")
+        _safe_print(f"    lang    : {l.get('lang', '?')}")
+        _safe_print(f"    count   : {l.get('count', 0)}")
+        _safe_print(f"    diversity: {l.get('diversity', 0)} (turns)")
+        _safe_print(f"    first   : {l.get('first_seen_iso', '')}")
+        _safe_print(f"    last    : {l.get('last_seen_iso', '')}")
         if l.get('sample_turns'):
-            print(f"    sample  : {l['sample_turns'][:3]}")
+            _safe_print(f"    sample  : {l['sample_turns'][:3]}")
 
 
 def main() -> int:
@@ -58,27 +85,28 @@ def main() -> int:
     if args.run_now:
         det = pld.get_default_detector()
         new_locks = det.run_cycle()
-        print(f"✅ ran cycle: {len(new_locks)} new lock(s) added")
+        _safe_print(f"✅ ran cycle: {len(new_locks)} new lock(s) added")
         queue = pld._load_review()
 
     if args.accept:
         for entry in queue:
             if entry.get('id') == args.accept:
                 entry['status'] = 'accepted'
-                print(f"✅ accepted: {args.accept}")
+                # 🆕 [Sir 2026-05-28 14:10] 先 save 再 print, 防 print fail 阻 save.
                 pld._save_review(queue)
+                _safe_print(f"✅ accepted: {args.accept}")
                 return 0
-        print(f"❌ id not found: {args.accept}")
+        _safe_print(f"❌ id not found: {args.accept}")
         return 1
 
     if args.reject:
         for entry in queue:
             if entry.get('id') == args.reject:
                 entry['status'] = 'rejected'
-                print(f"❌ rejected: {args.reject}")
                 pld._save_review(queue)
+                _safe_print(f"❌ rejected: {args.reject}")
                 return 0
-        print(f"❌ id not found: {args.reject}")
+        _safe_print(f"❌ id not found: {args.reject}")
         return 1
 
     # 列 pending (default) or all

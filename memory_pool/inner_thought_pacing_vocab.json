@@ -63,6 +63,22 @@
     "salience": 0.3,
     "_note": "publish 每 tick — 主脑 / Reflector / Dashboard 看. ttl 30min 防膨胀. salience 0.3 不挤 top 但可查."
   },
+  "attention_focus_channels": {
+    "_meta": {
+      "purpose": "β.6 Phase 1b — 思考脑自标 NEXT_ATTENTION_FOCUS 用的合法 channel 白名单. 持久化在此 (准则 6: 不在 .py 硬编码 list).",
+      "consumer": "jarvis_inner_thought_daemon.py:_build_channel_view (合法 channel 才能被 focus_hint 标 deep, 其余忽略)",
+      "design_rule": "LLM 在 prompt 教学下学会标 channel 名, 但 invalid 名静默忽略 (不破坏). 加新 channel 需 Sir CLI 改本 vocab 或人工 review."
+    },
+    "valid": [
+      "recent_sensor_events",
+      "concern_status",
+      "nudge_history",
+      "sir_activity_snapshot",
+      "last_main_brain_reply",
+      "my_recent_thoughts",
+      "lifetime_overview"
+    ]
+  },
   "history": [
     {
       "when": "2026-05-27T22:37:08",

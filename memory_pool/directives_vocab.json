@@ -593,6 +593,17 @@
       "tier_whitelist": [],
       "trigger_fn_name": "_trigger_no_hallucinated_tool_use_judge",
       "text_source": ".py seed (long text 不 sync, 留 source-of-truth)"
+    },
+    {
+      "id": "audio_target_judgement",
+      "state": "active",
+      "priority": 11,
+      "ttl_days": 60,
+      "source_marker": "Sir-2026-05-28-18:42-quiet_exit-L2",
+      "purpose_short": "主脑下轮主动评估 intent_target (quiet_exit recently → 谨慎判 jarvis/singing/self_muttering/other_person)",
+      "tier_whitelist": [],
+      "trigger_fn_name": "_trigger_audio_target_judgement",
+      "text_source": ".py seed (long text 不 sync, 以 source-of-truth)"
     }
   ]
 }

@@ -1,0 +1,23 @@
+{
+  "_doc": "Sir 2026-05-28 19:20 真意 — 'Jarvis 该懂得自己休息'. 思考脑反复同 thread + 都 SHOULD_SPEAK=false → 视为 saturation → publish raw signal + 软推主动拉长间隔 + 同步软衰减 concern. 准则 6 vocab 持久化, 准则 8 优雅. CLI: scripts/inner_thought_saturation_dump.py.",
+  "saturation_trigger": {
+    "_doc": "L1 + L3 触发条件 — 多少同 thread + 全 no-speak 视为 saturated. min_thoughts_same_thread 控 publish 触发, min_consecutive_saturated_for_force 控 python 物理 force.",
+    "min_thoughts_same_thread": 3,
+    "require_all_should_speak_false": true,
+    "actionable_done_states": ["none", "rejected", "gated", "failed"]
+  },
+  "concern_fatigue_softening": {
+    "_doc": "L2 — 当某 thread saturated 且 LLM 真在 thought 里提到 concern_id, ProactiveCare 给该 concern 软衰减 (-delta). 24h 自然 decay 回去. 防 jarvis 一直缠住 Sir 不在意的事.",
+    "enabled": true,
+    "fatigue_delta_per_saturation": 0.05,
+    "decay_back_half_life_hours": 24.0,
+    "fatigue_cap": 0.5
+  },
+  "python_physical_force": {
+    "_doc": "L3 — LLM 跑偏: 已收到 N 次 saturation raw signal 仍输 NEXT_INTERVAL ≤ 60, python 物理 force NEXT_INTERVAL = force_next_interval_s. 类 _SMOOTH_LOW_SAL 物理保底.",
+    "enabled": true,
+    "min_consecutive_saturated_for_force": 5,
+    "force_next_interval_s": 600,
+    "force_max_short_choice_s": 60
+  }
+}

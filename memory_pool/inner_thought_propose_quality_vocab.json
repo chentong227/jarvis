@@ -1,0 +1,36 @@
+{
+  "_doc": "Inner thought daemon 自适应 propose 质量 gate. propose 类 actionable (suggest_inside_joke / propose_protocol) 受 salience >= sal_threshold gate. 周期反思 24h activate rate 动态调阈值: rate 高 → 降阈 (放松); rate 低 → 升阈 (收紧). Sir CLI: scripts/propose_quality_dump.py (TODO).",
+  "enabled": true,
+  "sal_threshold": 0.65,
+  "sal_threshold_floor": 0.4,
+  "sal_threshold_ceiling": 0.85,
+  "auto_calibrate_enabled": true,
+  "calibrate_cooldown_h": 24,
+  "calibrate_lookback_h": 24,
+  "calibrate_min_samples": 10,
+  "activate_rate_high": 0.7,
+  "activate_rate_low": 0.3,
+  "raise_step": 0.05,
+  "lower_step": 0.02,
+  "last_calibrated_at_ts": 1779965339.2121372,
+  "last_calibrated_at_iso": "2026-05-28T18:48:59",
+  "history": [
+    {
+      "ts_iso": "2026-05-28T18:48:59",
+      "old_threshold": 0.6,
+      "new_threshold": 0.65,
+      "reason": "activate_rate=24%<=30%, raise threshold 0.60→0.65 (收紧)",
+      "stats": {
+        "activate": 17,
+        "reject": 35,
+        "defer": 18,
+        "total": 70,
+        "activate_rate": 0.243
+      }
+    }
+  ],
+  "gated_actionable_prefixes": [
+    "suggest_inside_joke:",
+    "propose_protocol:"
+  ]
+}

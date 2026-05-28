@@ -595,6 +595,45 @@ class ChatBypass:
         except Exception:
             pass
 
+    def _sanitize_outgoing(self, sentence: str) -> str:
+        """🆕 [Sir 2026-05-28 15:19 真痛] 统一 subtitle + TTS 出口 sanitize.
+
+        Sir image: '{"intent": "set_reminder", "args": {...}}' 漏到字幕.
+        Root cause: subtitle_queue.put 30+ 处全没调 sanitize, 主脑 emit 半成
+        JSON 越过 splitter → 字幕直显. 加 helper 让 hot path 统一调.
+
+        剥 4 类内部 token (双源 same regex):
+          - <TAG>...</TAG> 整段
+          - 裸 {"intent":"X","args":{...}} JSON
+          - 裸 intent_<lower_snake> identifier
+          - <organ>.<command> 工具名 (替 'a quick check')
+
+        Args:
+            sentence: 输入句子 (splitter 切完的 sentence / buffer flush)
+
+        Returns:
+            sanitize 后的字符串. 空输入 / 全 sanitize 后空 → 返 ''.
+        """
+        if not sentence:
+            return ''
+        # 老 inline: <[^>]+> 剥 HTML-like tag
+        sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+        if not sentence:
+            return ''
+        # 🆕 Sir 2026-05-28: TOOL_CALL tag + 裸 JSON + intent identifier 全剥
+        try:
+            from jarvis_safety import _strip_structural_tag_blocks
+            sentence = _strip_structural_tag_blocks(sentence)
+        except Exception:
+            pass
+        # 🆕 organ.command + 4 类内部 token (双源同源)
+        try:
+            from jarvis_utils import scrub_internal_names
+            sentence = scrub_internal_names(sentence)
+        except Exception:
+            pass
+        return sentence.strip()
+
     def _put_audio(self, text: str, is_response: bool = True):
         # 🆕 [P5-fix25-stand-down / 2026-05-22] Stand Down 模式 — TTS 静默
         # active 时彻底拦 audio_queue.put — 主脑可能仍生成 voice 文本, 但
@@ -1289,7 +1328,8 @@ Spoken English:"""
                                 pass
                             self.subtitle_queue.put(("zh", sentence))
                             sentence = ""
-                        sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                        # 🆕 Sir 2026-05-28 15:19: 统一 sanitize (剥 tag/JSON/identifier)
+                        sentence = self._sanitize_outgoing(sentence)
                         sentence = sentence.replace("J A R V I S", "Jarvis").replace("JARVIS", "Jarvis")
                         if sentence:
                             self._put_audio(sentence)
@@ -1322,7 +1362,7 @@ Spoken English:"""
                         pass
                     self.subtitle_queue.put(("zh", sentence))
                     sentence = ""
-                sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                 if sentence:
                     self._put_audio(sentence)
                     self.subtitle_queue.put(("en", sentence))
@@ -2542,7 +2582,8 @@ Spoken English:"""
                                         pass
                                     self.subtitle_queue.put(("zh", sentence))
                                     sentence = ""
-                                sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                                # 🆕 Sir 2026-05-28 15:19: 统一 sanitize
+                                sentence = self._sanitize_outgoing(sentence)
                                 sentence = re.sub(r'\[(?:WORK_MODE|WAKE_ONLY|RELAX_MODE)\]', '', sentence).strip()
                                 sentence = sentence.replace("J A R V I S", "Jarvis").replace("JARVIS", "Jarvis")
                                 if sentence:
@@ -2591,7 +2632,7 @@ Spoken English:"""
                                 pass
                             self.subtitle_queue.put(("zh", sentence))
                             sentence = ""
-                        sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                        sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                         if sentence:
                             self._put_audio(sentence)
                             self.subtitle_queue.put(("en", sentence))
@@ -2645,7 +2686,7 @@ Spoken English:"""
                             pass
                         self.subtitle_queue.put(("zh", sentence))
                         sentence = ""
-                    sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                    sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                     if sentence:
                         self._put_audio(sentence)
                         self.subtitle_queue.put(("en", sentence))
@@ -2874,6 +2915,104 @@ Spoken English:"""
             if '_stream_key_name' in dir():
                 self.key_router.release(_stream_key_name)
             return ""
+
+    # ==========================================
+    # 🆕 [Sir 2026-05-28 18:42 quiet_exit 智能 L1 Reactive]
+    # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+    def _apply_quiet_exit(self, meta, turn_id: str = ''):
+        """主脑 emit reaction=quiet_exit 时的接通逻辑.
+
+        Sir 真意 (18:42): 主脑发现 Sir 不在跟它说话 → 不能再持续 focus mode,
+        否则又把 Sir 自言自语录进去, 主脑被迫一句一句回应.
+
+        3 步动作:
+          1. release focus mode lock (return_sentinel.soft_focus_active=False)
+          2. voice_thread 60s ASR 试探期 (quiet_exit_until = now + 60s)
+             试探期内: ASR 仍跑, 非 wake word 不送主脑 (voice_thread 侧 gate)
+             Sir 喊 wake word → 立刻 cancel 试探期 (re-engage)
+          3. publish 'main_brain_quiet_exit' SWM event
+             CW / ProactiveCare / Conductor / SmartNudge / Wellness 看 cooldown,
+             短期 (10-60s) 内 skip register / skip nudge
+        """
+        import time as _qe_time
+        try:
+            from jarvis_utils import bg_log as _qe_bg
+        except Exception:
+            _qe_bg = lambda *a, **k: None
+
+        _intent_target = getattr(meta, 'intent_target', 'unknown')
+        _note = getattr(meta, 'note', '')
+
+        # 1. release focus mode lock
+        try:
+            _rs = getattr(self.jarvis, 'guardian_center', None)
+            _rs = getattr(_rs, 'return_sentinel', None) if _rs else None
+            if _rs is None:
+                _rs = getattr(self.jarvis, 'return_sentinel', None)
+            if _rs is not None:
+                _was_active = bool(getattr(_rs, 'soft_focus_active', False))
+                _rs.soft_focus_active = False
+                _rs.soft_focus_until = 0.0
+                if _was_active:
+                    _qe_bg(f"🤫 [QuietExit/FocusRelease] return_sentinel "
+                           f"soft_focus_active True→False (intent={_intent_target})")
+        except Exception as _e1:
+            _qe_bg(f"⚠️ [QuietExit/FocusRelease] {type(_e1).__name__}: {str(_e1)[:80]}")
+
+        # 2. voice_thread 60s ASR 试探期
+        # window 可调: env JARVIS_QUIET_EXIT_WINDOW_S=N (default 60.0)
+        try:
+            import os as _qe_os
+            _win = float(_qe_os.environ.get('JARVIS_QUIET_EXIT_WINDOW_S', '60.0'))
+        except Exception:
+            _win = 60.0
+        try:
+            _vt = getattr(self.jarvis, 'voice_thread', None)
+            if _vt is not None:
+                _vt.quiet_exit_until = _qe_time.time() + _win
+                _vt.in_active_conversation = False
+                # 退出 active 后, 设 dismissal reason 让 wake weight 准确扣分
+                if hasattr(_vt, 'last_dismissal_reason'):
+                    _vt.last_dismissal_reason = 'main_brain_quiet_exit'
+                _qe_bg(f"🤫 [QuietExit/VoiceThread] quiet_exit_until = "
+                       f"now+{_win:.0f}s, in_active_conversation=False "
+                       f"(intent={_intent_target})")
+        except Exception as _e2:
+            _qe_bg(f"⚠️ [QuietExit/VoiceThread] {type(_e2).__name__}: {str(_e2)[:80]}")
+
+        # 3. publish 'main_brain_quiet_exit' SWM event
+        try:
+            _bus = getattr(self.jarvis, 'event_bus', None)
+            if _bus is not None:
+                _bus.publish(
+                    etype='main_brain_quiet_exit',
+                    description=(
+                        f"main brain self-decided quiet_exit "
+                        f"(intent_target={_intent_target}, note='{_note[:40]}')"
+                    ),
+                    source='chat_bypass.meta_hook',
+                    salience=0.75,
+                    ttl=float(_win),
+                    metadata={
+                        'turn_id': turn_id,
+                        'intent_target': _intent_target,
+                        'window_s': _win,
+                        'note': _note[:120],
+                    },
+                )
+                _qe_bg(f"🤫 [QuietExit/SWM] published main_brain_quiet_exit "
+                       f"turn={turn_id} ttl={_win:.0f}s")
+        except Exception as _e3:
+            _qe_bg(f"⚠️ [QuietExit/SWM] {type(_e3).__name__}: {str(_e3)[:80]}")
+
+        # 4. UI subtitle hint (let Sir see "Jarvis 已退出 focus")
+        try:
+            sq = getattr(self, 'subtitle_queue', None)
+            if sq is not None:
+                sq.put(("focus", False))
+                sq.put(("silent_nudge", "🤫 已退出 focus (听到 wake word 再激活)"))
+        except Exception:
+            pass
 
     # ==========================================
     def stream_chat(self, prompt: str, user_input: str = "", clean_intent: str = None,
@@ -3611,7 +3750,7 @@ Spoken English:"""
                                     self.subtitle_queue.put(("zh", sentence))
                                     sentence = ""
 
-                                sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                                sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                                 sentence = sentence.replace("J A R V I S", "Jarvis").replace("JARVIS", "Jarvis")
                                 if sentence:
                                     self._put_audio(sentence)
@@ -3664,7 +3803,7 @@ Spoken English:"""
                                 pass
                             self.subtitle_queue.put(("zh", sentence))
                             sentence = ""
-                        sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                        sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                         if sentence:
                             self._put_audio(sentence)
                             self.subtitle_queue.put(("en", sentence))
@@ -3794,7 +3933,7 @@ Spoken English:"""
                         sentence = _bf_pre_fc.strip()
                         if "---ZH---" in sentence:
                             sentence = sentence.split("---ZH---")[0]
-                        sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                        sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                         if sentence:
                             self._put_audio(sentence)
                             self.subtitle_queue.put(("en", sentence))
@@ -4303,17 +4442,28 @@ Spoken English:"""
                     chat_history.append(types.Content(role="model", parts=[types.Part(text=spoken_so_far)]))
 
                     # 🆕 [Sir 2026-05-26 22:03 真痛 BUG-Q+S 治本] tool fail 时主脑必须承认
+                    # 🆕 [Sir 2026-05-28 19:31 真痛 BUG-RPT 治本] tool success + 已 speak
+                    #     完整 ack → 第二轮又 repeat 同句 (Sir 看见英文双份)
                     # =====================================================================
-                    # Sir 真测 22:03:15-22:03:24 痛点: concerns.dismiss fail (concern_id 不存在)
-                    # 但主脑 iter 2 又重复 iter 1 的 ack "I have archived" — 撒谎 + 双段 reply.
-                    # 治本 (准则 5 言出必行 + 准则 6 不硬编码句式 + 准则 8 优雅):
-                    # tool_result 以 ❌ 开头 → 注 dedup_directive 教主脑 acknowledge fail,
-                    # MUST NOT 重复 iter 1 ack. 不教具体句式, 给反例 + 正例让主脑自决.
+                    # Sir 真测 22:03:15-22:03:24 痛点 (fail 案): concerns.dismiss fail
+                    # (concern_id 不存在) 但主脑 iter 2 又重复 iter 1 的 ack — 撒谎.
+                    # Sir 真测 19:31 痛点 (success 案 / image 截图): 主脑已 speak
+                    # "Very well, Sir. I have set a reminder for 8:00 PM. I suggest
+                    # resting your hands..." + <FAST_CALL>add_reminder</FAST_CALL>;
+                    # tool ✅ 成功; iter 2 被 continuation_prompt "Speak a SINGLE
+                    # concluding sentence summarizing ALL the actions" 引导
+                    # **又说一遍同句** — 主脑技术性破坏对话 (Sir 看见英文双份, 中文翻
+                    # 译只覆盖第一份).
+                    # 治本 (准则 5 言出必行 + 准则 6 evidence + 准则 8 优雅):
+                    # _speak_already 即注 dedup directive (无论 fail/success); 内部
+                    # 分 fail / success 两套教学, 都不教具体句式, 给反例 + 正例让主
+                    # 脑自决. continuation_prompt "Speak a SINGLE concluding..." 那
+                    # 段只在 NOT _speak_already 时 apply (主脑没 speak 才需 summary).
                     # =====================================================================
                     _tool_failed = bool(tool_result and str(tool_result).startswith("❌"))
                     _speak_already = bool(spoken_so_far and spoken_so_far.strip())
                     _dedup_directive = ""
-                    if _tool_failed and _speak_already:
+                    if _speak_already and _tool_failed:
                         _spoken_excerpt = spoken_so_far.strip()[:200]
                         _dedup_directive = f"""
 
@@ -4351,6 +4501,48 @@ Pattern to FOLLOW (your own words; these are examples, not templates):
   ✓ "Apologies Sir — that concern ID is not in my ledger; the dismiss did not go through."
   ✓ "我搞错了, 先生 — 那条 concern_id 在我清单里找不到, 没归档成功."
   ✓ "Welcome back, Sir. I noted the status verbally but the system mutation did not commit."
+"""
+                    elif _speak_already and not _tool_failed:
+                        # 🆕 [Sir 2026-05-28 19:31 真痛 BUG-RPT] tool success + 已 speak
+                        # 完整 ack → 不允许 repeat (Sir 听见 2 次同句).
+                        _spoken_excerpt = spoken_so_far.strip()[:200]
+                        _dedup_directive = f"""
+
+🚨 [INTEGRITY ENFORCE — Sir 2026-05-28 BUG-RPT] NO-REPEAT after successful tool:
+The tool returned ✅ (success). You ALREADY spoke this complete ack BEFORE the
+FAST_CALL:
+  "{_spoken_excerpt}"
+
+🚨 准则 5 (言出必行) — Sir already heard that full ack live. Speaking the SAME
+ack again here = Sir hears the line TWICE in one turn (English doubled, ZH
+subtitle only covers half — Sir's real 19:31 image痛点). That is NOT integrity;
+it is technical noise breaking the conversation.
+
+Override the "Speak a SINGLE concluding sentence summarizing ALL the actions"
+rule below — that rule applies only when you have NOT yet spoken. Since you
+DID speak the full ack, your iter-2 reply MUST take ONE of these forms:
+
+Option A (preferred — silent confirmation):
+  Output ONLY `---ZH---` followed by Chinese translation covering your earlier
+  English ack (β.5.21-A coverage rule still applies). Do NOT add any new English.
+
+Option B (brief confirmation, ONLY if tool result reveals NEW info worth saying):
+  ONE very short English fragment that adds NEW info from [SYSTEM TOOL RESULT]
+  (e.g. an ID, a count, a confirmation that earlier ack did NOT state), then
+  `---ZH---` + ZH covering BOTH your earlier ack AND the new fragment.
+
+Pattern to AVOID (Sir 真测 19:31 image 痛点):
+  ❌ Re-stating the same action verb: "I have set a reminder for 8:00 PM. I
+       suggest resting your hands..." (you ALREADY said this).
+  ❌ Paraphrasing the same content: "The 8 PM reminder is now in place..."
+       (Sir already heard the equivalent — adds nothing).
+  ❌ Re-emitting an inside-joke / playful tag you already used (e.g. quoting
+       the same '"theoretical rest"' line twice).
+
+Pattern to FOLLOW (your own words; these are examples, not templates):
+  ✓ Option A: [silence in EN] + `---ZH---` + 中文翻译覆盖第一轮 EN
+  ✓ Option B: "Reminder ID 2329 logged." + `---ZH---` + 中文 cover 全部
+  ✓ Option B: "Confirmed." + `---ZH---` + 完整中文翻译
 """
 
                     continuation_prompt = f"""[SYSTEM TOOL RESULT for {command}]: {tool_result}{_dedup_directive}
@@ -4977,16 +5169,90 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                 # 续播下半句. 有 ~1s audio gap (续写延迟) 但比卡死好.
                                 # 准则 5 言出必行 + 准则 8 优雅 (1 次 LLM 双用).
                                 # =====================================================
+                                # 🆕 [Sir 2026-05-27 23:38 P15 治本] dedup post-check
+                                # =====================================================
+                                # Sir 真痛点 (23:38 turn): 主流已念 "...9/10 cups.", worker
+                                # 又 put_audio "Of course, Sir. I've updated the log to
+                                # 9/10 cups...." (50ch 几乎完整重复). Sir 听到"连续念了两遍".
+                                # 根因: LLM 看 EN snippet 已 ends_ok 但 ZH 缺失 → 触发 worker,
+                                # prompt 教 "empty if EN already ends naturally" 但 LLM 误判
+                                # 把已完整 EN 当 continuation 重念. prompt 加强不够安全 (LLM
+                                # 不一定遵守), 必须 Python 端 dedup 兜底.
+                                # 治本 (准则 8 优雅高效): worker 收 _en_cont 后 jaccard 比对
+                                # _en_snippet, ≥ 0.6 overlap 或完全 substring → skip put_audio.
+                                # ZH 字幕仍补 (Sir 看, 不重复念). dedup 阈值 0.6 (系统级常量,
+                                # 准则 6 边界: 不进 vocab; 进 vocab 反成本高).
+                                # =====================================================
                                 if _en_cont and len(_en_cont) >= 2:
+                                    # post-check dedup 防 LLM 把完整 EN 当 cont 重念
+                                    _skip_cont = False
+                                    _skip_reason = ''
                                     try:
-                                        # _en_cont 已是英文续写, 不要再加 ---ZH--- (避免再触发 truncate 检)
-                                        self._put_audio(_en_cont, is_response=True)
+                                        _cont_lower = _en_cont.lower().strip()
+                                        _snip_lower = (en_snippet or '').lower().strip()
+                                        if _cont_lower and _snip_lower:
+                                            # check 1: cont 是 snip 的 substring (完全重复)
+                                            if _cont_lower in _snip_lower:
+                                                _skip_cont = True
+                                                _skip_reason = 'substring_of_snip'
+                                            # check 2: snip 末尾就是 cont 开头 (大段 overlap)
+                                            elif (len(_cont_lower) >= 20 and
+                                                  _snip_lower.endswith(_cont_lower[:20])):
+                                                _skip_cont = True
+                                                _skip_reason = 'snip_endswith_cont_head'
+                                            else:
+                                                # check 3: jaccard token overlap ≥ 0.6
+                                                _ctoks = set(re.findall(r'\w+', _cont_lower))
+                                                _stoks = set(re.findall(r'\w+', _snip_lower))
+                                                if _ctoks and _stoks:
+                                                    _inter = len(_ctoks & _stoks)
+                                                    _union = len(_ctoks | _stoks)
+                                                    _jacc = _inter / _union if _union else 0.0
+                                                    if _jacc >= 0.6:
+                                                        _skip_cont = True
+                                                        _skip_reason = f'jaccard={_jacc:.2f}>=0.6'
+                                                    # 🆕 [Sir 2026-05-28 18:55 fix39 真测追根]
+                                                    # ============================================
+                                                    # Sir 真痛点 (turn 20260528_185529_795e):
+                                                    #   cont = "7.75 cups for the day, Sir." (27ch)
+                                                    #   snip = "That brings you to approximately
+                                                    #          7.75 cups for the day, Sir" (59ch)
+                                                    #   jaccard = 7/12 = 0.583 just < 0.6 →
+                                                    #   check 3 漏一刀 → put_audio → Sir 听 2 遍.
+                                                    # 治本 (准则 8 优雅, 不糖衣调阈值 0.6 → 0.55):
+                                                    #   cont token set ⊆ snip token set 且 cont
+                                                    #   ≥ 3 token → cont 没引入任何新信息 = 重复
+                                                    #   → skip. 合法 cont 必含新词
+                                                    #   (e.g. "Sir, anything else?" ⊄ snip)
+                                                    #   不会被误伤.
+                                                    # 系统级常量 (准则 6 边界, 不进 vocab).
+                                                    # ============================================
+                                                    elif (_ctoks <= _stoks
+                                                          and len(_ctoks) >= 3):
+                                                        _skip_cont = True
+                                                        _skip_reason = (
+                                                            f'cont_tokens_subset_of_snip'
+                                                            f'(jacc={_jacc:.2f},'
+                                                            f'n_cont={len(_ctoks)})'
+                                                        )
+                                    except Exception:
+                                        pass
+                                    if _skip_cont:
                                         _tr_bg(
-                                            f"✅ [Truncate/Cont] EN 续 TTS ({len(_en_cont)}ch): "
-                                            f"'{_en_cont[:60]}...'"
+                                            f"⚠️ [Truncate/Cont] EN cont 重复 ({_skip_reason}), "
+                                            f"skip put_audio. snip='{(en_snippet or '')[:40]}...' "
+                                            f"cont='{_en_cont[:40]}...'"
                                         )
-                                    except Exception as _e_au:
-                                        _tr_bg(f"⚠️ [Truncate/Cont] EN put_audio fail: {_e_au}")
+                                    else:
+                                        try:
+                                            # _en_cont 已是英文续写, 不要再加 ---ZH--- (避免再触发 truncate 检)
+                                            self._put_audio(_en_cont, is_response=True)
+                                            _tr_bg(
+                                                f"✅ [Truncate/Cont] EN 续 TTS ({len(_en_cont)}ch): "
+                                                f"'{_en_cont[:60]}...'"
+                                            )
+                                        except Exception as _e_au:
+                                            _tr_bg(f"⚠️ [Truncate/Cont] EN put_audio fail: {_e_au}")
                             except Exception as _e_tr:
                                 try:
                                     from jarvis_utils import bg_log as _tr_bg2
@@ -5016,7 +5282,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 elif is_subtitle_mode:
                     sentence = ""
 
-                sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                 sentence = re.sub(r'\[(?:WORK_MODE|WAKE_ONLY|RELAX_MODE)\]', '', sentence).strip()
                 sentence = sentence.replace("J A R V I S", "Jarvis").replace("JARVIS", "Jarvis")
                 if sentence:
@@ -5066,6 +5332,24 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                     publish_meta(_meta, turn_id=_t_id,
                                   user_input=clean_user_input or '',
                                   event_bus=getattr(self.jarvis, 'event_bus', None))
+                    # 🆕 [Sir 2026-05-28 18:42 quiet_exit 智能 L1 Reactive]
+                    # 主脑 emit reaction=quiet_exit → release focus + 60s ASR 试探期
+                    # + publish 'main_brain_quiet_exit' SWM event (5 sentinel cooldown)
+                    # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+                    # 可回撤: env JARVIS_QUIET_EXIT_DISABLED=1 → 跳 hook
+                    try:
+                        import os as _qe_os
+                        if (_qe_os.environ.get('JARVIS_QUIET_EXIT_DISABLED',
+                                               '').strip() != '1'
+                                and _meta.reaction == 'quiet_exit'):
+                            self._apply_quiet_exit(_meta, turn_id=_t_id)
+                    except Exception as _qe_e:
+                        try:
+                            from jarvis_utils import bg_log as _qe_bg
+                            _qe_bg(f"⚠️ [QuietExit/Hook] apply failed: "
+                                   f"{type(_qe_e).__name__}: {str(_qe_e)[:80]}")
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -6019,13 +6303,20 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
             "stretch": "Sir has been at this for a long stretch.",
             "late_night": late_night_directive,
             "atmosphere": (
-                f"Sir is watching or listening to something. "
-                f"Current window: '{window_title}'. "
-                f"You can see what's on screen — respond however feels natural."
+                # 🆕 [Sir 2026-05-28 09:57 真痛 anchor] title 不是 content
+                f"Sir's foreground app TITLE is: '{window_title}'. "
+                f"This is the app/tab name ONLY — you do NOT see the actual content "
+                f"inside. Don't infer Sir's specific activity from the title alone "
+                f"(e.g. a tab named '心率' might be a Gemini chat, not Sir checking "
+                f"heart metrics). React to the AMBIENT pattern (Sir has something "
+                f"open), not invented specifics."
             ),
             "screen_tease": (
-                f"Sir's screen shows: '{window_title}'. "
-                f"You see it, you know him."
+                # 🆕 [Sir 2026-05-28 09:57 真痛 anchor] 同上, 不编 specific activity
+                f"Sir's foreground window TITLE: '{window_title}'. "
+                f"Title shows app/tab name — NOT the content Sir is reading or doing. "
+                f"You see the title, you don't see what's inside. Don't fabricate "
+                f"specifics from title alone."
             ),
             "afternoon": "It's the afternoon slump hours.",
             "flow_end": "Sir just finished a coding session and switched to something else.",
@@ -6485,7 +6776,7 @@ hallucinate "another night's rest" / "this morning" / "tonight" 等与 SYSTEM CL
 Time: {current_time} ({weekday})
 work_session_total_min: {int(work_duration)} (整 Jarvis 启动以来 {work_category} 累计, **非当前 app 时长**)
 current_window_stay_s: {_window_stay_s} (Sir 在**当前 active window** 停留秒数 — 问"在 X 多久"用此)
-Active window: {window_title}
+Active window TITLE (app/tab name ONLY, NOT proof of Sir's activity): {window_title}
 Process: {process_name}
 {sensor_hints}
 {_time_anchor_block}
@@ -6759,7 +7050,7 @@ No ZH translation. No closing remark. Nothing else.
                                 _zh_seen = True
                                 sentence = sentence.split("---ZH---")[0]
 
-                            sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                            sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                             sentence = re.sub(r'\[(?:WORK_MODE|WAKE_ONLY|RELAX_MODE)\]', '', sentence).strip()
                             sentence = sentence.replace("J A R V I S", "Jarvis").replace("JARVIS", "Jarvis")
                             if sentence and not _zh_seen:
@@ -6809,7 +7100,7 @@ No ZH translation. No closing remark. Nothing else.
                 if "---ZH---" in sentence:
                     _zh_seen = True
                     sentence = sentence.split("---ZH---")[0]
-                sentence = re.sub(r'<[^>]+>', '', sentence).strip()
+                sentence = self._sanitize_outgoing(sentence)  # 🆕 Sir 2026-05-28 15:19
                 if sentence and not _zh_seen:
                     _last_audio = (getattr(self, '_last_audio_text', '') or '').strip()
                     _is_dup = bool(_last_audio) and (

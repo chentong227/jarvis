@@ -480,6 +480,22 @@ _STRAY_INTENT_JSON_RE = re.compile(
     r'(?:,\s*"[^"]+"\s*:\s*(?:"[^"]*"|\{[^{}]*\}|\[[^\[\]]*\]|[^,}]+)\s*)*\}',
     re.DOTALL,
 )
+# 🆕 [Sir 2026-05-28 14:54 真痛 BUG] 裸 intent identifier (无 JSON 无 tag)
+# Sir image: subtitle 显示 'Done, Sir.' 干净, 但 TTS 还**念出** 'intent_dashboard_open'.
+# 主脑 emit 纯 identifier `intent_dashboard_open` 当 verbal hint, 没 JSON 包装,
+# _STRUCTURAL_TAG_BLOCK_RE / _STRAY_INTENT_JSON_RE 都 miss (那都需 tag/JSON 包).
+# 加 regex 剥 `intent_<lower_snake>` / `intent:<lower_snake>` 两种形式.
+# 双源同源: jarvis_utils._INTERNAL_INTENT_IDENTIFIER_RE 一致 regex (避发散).
+# 安全约束 (避 false positive):
+#   - 只匹配 lowercase snake_case (主脑 normal reply 不会写 `intent_xxx` 全小写)
+#   - 必须 `_` 或 `:` 连接 (不剥单独 "intent" 普通英语词)
+#   - \b 单词边界
+# 例:
+#   ✅ 剥: 'intent_dashboard_open', 'intent:dashboard_open', 'intent: dashboard_open'
+#   ❌ 不剥: 'What is your intent?', 'My intent is clear.', 'Intent matters.'
+_STRAY_INTENT_IDENTIFIER_RE = re.compile(
+    r'\bintent[_:]\s*[a-z][a-z0-9_]*\b'
+)
 # 🩹 [β.2.9.9] MEMORY_UPDATE 单独 regex (self-closing 形式 + 含 attributes)
 _MEMORY_UPDATE_RE = re.compile(
     r'<MEMORY_UPDATE\s+([^>]+?)\s*/?>',
@@ -570,11 +586,15 @@ def _strip_structural_tag_blocks(text: str) -> str:
     单独跑一次自闭合 regex 也剥掉.
     🆕 [Sir 2026-05-25 23:14] 增 stray bare intent JSON 剥离 (主脑可能不包
     <TOOL_CALL> tag emit 裸 `{"intent":"X"}` — Sir 截图真发生过泄 TTS).
+    🆕 [Sir 2026-05-28 14:54] 增裸 intent identifier 剥离 (主脑 emit
+    `intent_dashboard_open` 当 verbal hint, 无 JSON/tag, TTS 真念出来 — Sir
+    image 真痛).
     """
     text = _STRUCTURAL_TAG_BLOCK_RE.sub('', text)
     text = _MEMORY_UPDATE_SELF_CLOSING_RE.sub('', text)
     text = _CONCERN_DAMPEN_SELF_CLOSING_RE.sub('', text)
     text = _STRAY_INTENT_JSON_RE.sub('', text)
+    text = _STRAY_INTENT_IDENTIFIER_RE.sub('', text)  # 🆕 Sir 2026-05-28
     return text
 
 

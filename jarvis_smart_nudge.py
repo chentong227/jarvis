@@ -262,6 +262,20 @@ class SmartNudgeSentinel(threading.Thread):
                     time.sleep(10)
                     continue
 
+                # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.5/L1.6 SmartNudge]
+                # 主脑近 60s emit reaction=quiet_exit → Sir 自言自语/唱歌/跟别人说话.
+                # SmartNudge skip tick, 不抢话不打扰. 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+                try:
+                    from jarvis_utils import get_event_bus as _qe_geb_sn
+                    _qe_bus_sn = _qe_geb_sn()
+                    if _qe_bus_sn is not None and _qe_bus_sn.has_type(
+                            'main_brain_quiet_exit', within_seconds=60.0):
+                        _publish_skip('main_brain_quiet_exit')
+                        time.sleep(30)
+                        continue
+                except Exception:
+                    pass
+
                 # 🩹 [β.2.7.10 / 2026-05-17] Sir 旁路对话期间 (打电话/和家人说话) 静默
                 # Jarvis 察觉 Sir 在和外人说 → 当前不打扰. 旁路计数 ≥ 2 即静默 90s
                 try:

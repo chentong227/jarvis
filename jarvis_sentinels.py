@@ -429,12 +429,21 @@ class ChronosTick(threading.Thread):
                     mail = self.mailbox.pop_mail()
                     if mail:
                         reminder_id = mail.get("reminder_id")
+                        # 🆕 [Sir 2026-05-28 15:46 真痛 image 1 anchor]
+                        # BUG: last_spoke 老用 _speak_mail 后 ts. 但 _speak_mail
+                        # blocking ~10s (LLM stream + TTS), Sir 在此期间已回
+                        # (last_user_speech_time 已 update), 注册时 last_spoke
+                        # > last_user_speech_time → 下次 tick _user_responded_since
+                        # 返 False → 错过 ack → 3 min 后 escalate tier 2.
+                        # 修: 用 _speak_mail 开始的 ts (Sir 看到 mail 最早时刻),
+                        # 让 last_user_speech_time > last_spoke 比较成立.
+                        speak_start_ts = time.time()
                         self._speak_mail(mail)
                         
                         if reminder_id:
                             self.jarvis._pending_reminders[reminder_id] = {
                                 "tier": 1,
-                                "last_spoke": time.time(),
+                                "last_spoke": speak_start_ts,
                                 "intent": mail.get("reminder_intent", ""),
                                 "trigger_time": mail.get("reminder_trigger_time", 0)
                             }
@@ -1815,6 +1824,19 @@ class WellnessGuardian(threading.Thread):
                     # [β.5.14] AFK skip 也 publish (主脑看到 Sir 不在屏前的事实)
                     self._publish_skip('afk_not_at_screen', {'work_category': 'AFK'})
                     continue  # AFK = Sir 不在屏前, 不应该触发任何 break suggestion
+
+                # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.5/L1.6 WellnessGuardian]
+                # 主脑近 60s emit reaction=quiet_exit → Sir 自言自语/唱歌/跟别人说话.
+                # WellnessGuardian skip tick, 不抢话不打扰. 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+                try:
+                    from jarvis_utils import get_event_bus as _qe_geb_wg
+                    _qe_bus_wg = _qe_geb_wg()
+                    if _qe_bus_wg is not None and _qe_bus_wg.has_type(
+                            'main_brain_quiet_exit', within_seconds=60.0):
+                        self._publish_skip('main_brain_quiet_exit')
+                        continue
+                except Exception:
+                    pass
                 if work_category == "Coding" and work_duration > 120:
                     should_suggest = True
                     suggestion_reason = f"continuous coding for {int(work_duration)} minutes"

@@ -44,8 +44,25 @@ _AUDIT_PATH = os.path.join(
     'memory_pool', 'main_brain_meta_audit.jsonl'
 )
 
-_VALID_REACTIONS = {'voice', 'silent_text', 'silence'}
+_VALID_REACTIONS = {
+    'voice',              # 正常 reply (TTS)
+    'silent_text',        # 字幕但不 TTS
+    'silence',            # 整 skip
+    # 🆕 [Sir 2026-05-28 18:42 quiet_exit 智能设计]
+    # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1 Reactive
+    'quiet_exit',         # Sir 不在跟我说话, 退出 focus + 60s ASR 试探期
+    'observant_silence',  # 旁观但保持 focus (Sir 短暂停顿)
+}
 _VALID_SKIP_ALERT = {'yes', 'no'}
+# 🆕 [Sir 2026-05-28 18:42] intent_target 选项 — 主脑判别这句 ASR “是对谁说的”
+# 供 L1 chat_bypass hook / L2 directive / L3 sensor reflector 多处消费
+_VALID_INTENT_TARGETS = {
+    'jarvis',          # 给 Jarvis 听 (默认)
+    'self_muttering',  # Sir 自言自语 / 思考 / 调便
+    'other_person',    # 对别人说 (打电话 / 在场人)
+    'singing',         # 唱歌 / 哼唱 / 念叨
+    'unknown',         # 不确定
+}
 
 
 # ============================================================
@@ -57,13 +74,16 @@ class MetaSelfCheck:
     """主脑 1 行 [META] 解析结果."""
 
     evidence: List[str] = field(default_factory=list)  # ['stm:turn_xxx', 'swm:cand_yyy', ...]
-    reaction: str = 'voice'                             # voice / silent_text / silence
+    reaction: str = 'voice'                             # voice / silent_text / silence / quiet_exit / observant_silence
     skip_alert: bool = False                            # 主脑明确拒绝道歉?
     note: str = ''                                       # 自由文本 note (<= 60 chars)
     # 🆕 [P5-fix20-B2 / 2026-05-22] commitments 列表 — 主脑承认本轮承诺哪些 mutation
     # IntegrityWatcher 看 commitments vs 真 tool_called 数, 差异 = '嘴上说没真做'.
     # e.g. ['note', 'remember 8 cups goal', 'hold dashboard 72h']
     commitments: List[str] = field(default_factory=list)
+    # 🆕 [Sir 2026-05-28 18:42 quiet_exit] intent_target — 主脑判这句是对谁说
+    # jarvis / self_muttering / other_person / singing / unknown
+    intent_target: str = 'jarvis'
     raw_line: str = ''                                   # 原始 [META] 行 (debug)
     parse_ok: bool = False                              # parse 成功?
 
@@ -74,6 +94,7 @@ class MetaSelfCheck:
             'skip_alert': bool(self.skip_alert),
             'note': self.note,
             'commitments': list(self.commitments),
+            'intent_target': self.intent_target,
             'raw_line': self.raw_line,
             'parse_ok': bool(self.parse_ok),
         }
@@ -134,8 +155,19 @@ def parse_meta(reply_text: str) -> Tuple[str, MetaSelfCheck]:
         # skip_alert
         sa = kv_dict.get('skip_alert', 'no').strip().lower()
         meta.skip_alert = (sa == 'yes' or sa == 'true' or sa == '1')
-        # note
-        meta.note = kv_dict.get('note', '').strip()[:60]
+        # note (🆕 [Sir 18:25 BUG #5] strip 代 ''  / '' empty-quoted artifact)
+        _note_raw = kv_dict.get('note', '').strip()
+        # 去掉多余包裹引号: '\'\'' / '""' / ''中文引号''
+        for _quote_pair in ("''", '""', '‘’', '“”'):
+            if _note_raw == _quote_pair:
+                _note_raw = ''
+                break
+        meta.note = _note_raw[:60]
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit] intent_target parse
+        _it_raw = kv_dict.get('intent_target', 'jarvis').strip().lower()
+        meta.intent_target = (
+            _it_raw if _it_raw in _VALID_INTENT_TARGETS else 'jarvis'
+        )
         # 🆕 [P5-fix20-B2 / 2026-05-22] commitments — 'a;b;c' or 'a,b,c' (分号优先, 防 note 内有逗号)
         co_str = kv_dict.get('commitments', '').strip()
         if co_str and co_str.lower() not in ('none', '[]', '-'):

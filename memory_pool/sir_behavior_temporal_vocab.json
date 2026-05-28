@@ -2,7 +2,7 @@
   "patterns": {},
   "patterns_by_hour": {},
   "learned_routines": [],
-  "last_reflector_run": "2026-05-27T22:28:37",
+  "last_reflector_run": "2026-05-28T19:55:20",
   "reflector_min_interval_s": 3600,
   "min_sample_count_to_surface": 3
 }

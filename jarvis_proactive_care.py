@@ -1249,6 +1249,29 @@ class CareSpeechSynth:
     def push(self, worker, evi: CareEvidence, dry_run: bool,
               channel: str = 'voice',
               original_channel_hint: str = None) -> bool:
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.6]
+        # 主脑近 30s emit quiet_exit → ProactiveCare skip push
+        # 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1.6
+        # 防回退: testcase _test_fix38_sir_20260528_1842_quiet_exit_phase1.py L1.6
+        if not dry_run:
+            try:
+                from jarvis_utils import get_event_bus as _qe_geb_pc
+                _qe_bus_pc = _qe_geb_pc()
+                if _qe_bus_pc is not None and _qe_bus_pc.has_type(
+                        'main_brain_quiet_exit', within_seconds=30.0):
+                    try:
+                        from jarvis_utils import bg_log as _qe_bg_pc
+                        _qe_bg_pc(
+                            f"🌱 [ProactiveCare] 🛡️ main_brain_quiet_exit ≤ 30s "
+                            f"→ skip push concern={evi.concern_id} "
+                            f"urg={evi.urgency_score:.2f} "
+                            f"(Sir 自言自语/唱歌, 主脑已退 focus)"
+                        )
+                    except Exception:
+                        pass
+                    return False
+            except Exception:
+                pass
         directive = self.build_directive(evi)
         # 🩹 [β.5.13 / 2026-05-19] original_channel_hint 注入 (env=1 时 channel='voice'
         # 主脑接管, 但仍想让主脑知道老规则会选啥 — silent_text hint 表示"轻量提醒,
@@ -1295,13 +1318,37 @@ class CareSpeechSynth:
                     if _gate_would_block:
                         _sal_adv = max(0.20, _sal_adv * 0.5)  # 降权 50%
 
+                    # 🆕 [Sir 2026-05-28 19:04 D2+D3 升级 准则 6 §6 三维耦合]
+                    # ================================================================
+                    # Sir 真痛 (19:01): "全局冷却是必须加的吗? 靠思考脑和主脑的决策
+                    # 做不到合适的时机选择吗?"
+                    # 治本 (不删 cooldown 计算, 但 §6 升级):
+                    # D2 字眼软化: gate string 'BLOCKED:' → 'would_skip:' 让 LLM 不
+                    #   被字面震慑 (BLOCKED 是威慑词, 思考脑看到就被劝退).
+                    #   gate 本质是 advice 不是禁止 (publish_only 模式).
+                    # D3 raw signal evidence: advice metadata 加 raw "上次 nudge 距今
+                    #   多久 + 上次 nudge 哪个 concern" 真数据让 LLM 自决 (而非只看
+                    #   '300s cooldown' python 算的字符串). LLM 能 reason "刚 nudge
+                    #   的是 hydration 不同 topic, 这次 interview_prep_balance 可
+                    #   override" 这种 nuanced 判断.
+                    # ================================================================
+                    _now_d3 = time.time()
+                    _last_any_d3 = float(getattr(self, 'last_any_nudge_ts', 0) or 0)
+                    _last_cid_d3 = str(getattr(self, 'last_nudge_concern_id', '') or '')
+                    _sec_since_last = (
+                        int(_now_d3 - _last_any_d3) if _last_any_d3 > 0 else -1
+                    )
+                    _gate_str = (
+                        ('would_skip:' + _gate_reason) if _gate_would_block else 'ok'
+                    )
+
                     _bus_adv.publish(
                         etype='proactive_care_advice',
                         description=(
                             f"ProactiveCare wants to nudge "
                             f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
                             f"channel_hint={channel} "
-                            f"gate={'BLOCKED:'+_gate_reason if _gate_would_block else 'ok'}"
+                            f"gate={_gate_str}"
                         ),
                         source='ProactiveCare',
                         salience=_sal_adv,
@@ -1320,6 +1367,9 @@ class CareSpeechSynth:
                             # 🆕 β.6: gate sensor 状态作 evidence 让思考脑自决
                             'gate_would_block': _gate_would_block,
                             'gate_reason': _gate_reason,
+                            # 🆕 D3: raw signal 让 LLM 看真数据自决 (而非只看 python 算的字串)
+                            'seconds_since_last_nudge': _sec_since_last,
+                            'last_nudge_concern_id': _last_cid_d3,
                         },
                         ttl=600.0,
                     )
@@ -1327,8 +1377,9 @@ class CareSpeechSynth:
                         f"🤝 [ProactiveCare/PublishOnly] published advice "
                         f"concern={evi.concern_id} urgency={evi.urgency_score:.2f} "
                         f"channel_hint={channel} "
-                        f"gate={'BLOCKED:'+_gate_reason if _gate_would_block else 'ok'} "
-                        f"(思考脑自决 SHOULD_SPEAK)"
+                        f"gate={_gate_str} "
+                        f"(思考脑自决 SHOULD_SPEAK, last_nudge {_sec_since_last}s ago "
+                        f"cid={_last_cid_d3[:30]})"
                     )
                     # 仍记 last_nudge_concern_id 让 Sir 后续 2min 回应可关联
                     return False  # publish-only, 不 push __NUDGE__

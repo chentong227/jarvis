@@ -224,6 +224,24 @@
       "source": "integrity_reflector",
       "created_at": 1779798637.207712,
       "note": "Specific percentage values are often factual states rather than past or future actions."
+    },
+    {
+      "id": "count_duration_claims",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "hour",
+        "second",
+        "week",
+        "day",
+        "month",
+        "year"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779970890.2620504,
+      "note": "New keyword for claims expressing durations or quantities of time."
     }
   ]
 }

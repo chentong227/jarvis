@@ -27,6 +27,42 @@ from typing import Optional
 
 
 # ============================================================
+# 🆕 [Sir 2026-05-28 12:59 mojibake 检测 helper]
+# ============================================================
+# 历史 case: directive_review.json `directive_open_verb.trigger_pattern`
+#           = '鎵撳紑浜?' — '打开了' GBK→UTF-8 mis-decode 残形.
+# 检测 GBK→UTF-8 mis-decode 后常见特征字 (CJK Unified 高字节区
+# E000-9FFF 内特定罕用字 + 含 U+FFFD 替换字符 + '?' 紧跟非 ASCII).
+# 准则 6 递归边界 (β.3.5): 这是 system-internal encoding 防御常量,
+# 不下钻 vocab JSON (Sir 不需 CLI 维护这个表).
+_MOJIBAKE_CHARS = frozenset(
+    # GBK→UTF-8 mis-decode 常见输出字 (历史 case + 经验集).
+    # 🆕 [Sir 2026-05-28 13:05 false positive fix] 移除 ASCII '?' (U+003F):
+    #   含 ASCII `?` 的合法英文 directive (e.g. fuzzy_candidates_policy
+    #   "Which one, Sir?") 不应判 mojibake. 真 mojibake 含 `？` 全角 U+FF1F.
+    '鎵撳鎻紑浜閮ㄦ璇风偣鍑诲ぇ閲忎腑寰呴棶棰擼鍙浣跨敤鏉ュ幓鍔ㄤ綔'
+    '鎴戜竴鎴愪簨鏃讹紝銆傦细锛涳紒锛'
+)
+
+
+def _looks_mojibake(s: str) -> bool:
+    """检测字串是否含 GBK→UTF-8 mis-decode mojibake / replacement 字符.
+
+    triggers:
+      - 任何 1 个已知 mojibake 特征字 → True
+      - 含 U+FFFD (replacement char, 'errors=replace' 标记) → True
+
+    准则 6: 这是 sink-side 防御, root cause 修在 audit 读 (errors='replace'
+    + skip > 3 \\ufffd 行). 见 _gather_audit_window line 386 anchor.
+    """
+    if not s:
+        return False
+    if '\ufffd' in s:
+        return True
+    return any(c in _MOJIBAKE_CHARS for c in s)
+
+
+# ============================================================
 # β.4.5.1: ClaimStatsDumper — _CLAIM_STATS 跨进程持久化
 # ============================================================
 
@@ -341,12 +377,17 @@ class IntegrityReflector(threading.Thread):
             return False
 
     def _count_recent_audit(self) -> int:
-        """count 7d audit 条数 (用 file seek -512KB 避免 OOM)."""
+        """count 7d audit 条数 (用 file seek -512KB 避免 OOM).
+
+        🆕 [Sir 2026-05-28 12:59] errors='ignore' → 'replace' 与
+        _gather_audit_window consistent (见 line 386 anchor).
+        """
         if not os.path.exists(self.audit_path):
             return 0
         try:
             size = os.path.getsize(self.audit_path)
-            with open(self.audit_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(self.audit_path, 'r', encoding='utf-8',
+                       errors='replace') as f:
                 if size > 512 * 1024:
                     f.seek(size - 512 * 1024)
                     f.readline()  # 弃 partial 首行
@@ -381,12 +422,28 @@ class IntegrityReflector(threading.Thread):
     # ---------------------------------------------------------
 
     def _gather_audit_window(self) -> list:
-        """读 7d audit, 返 records list."""
+        """读 7d audit, 返 records list.
+
+        🆕 [Sir 2026-05-28 12:59 mojibake 溯源修] errors='ignore' → 'replace'
+        ===================================================================
+        历史 root cause: errors='ignore' 在 audit 含 non-UTF8 byte (e.g. STT
+        残留 / 早期 GBK encoded log) 时**丢字节** → 后续 LLM 看到的 claim 含
+        字符割裂 (e.g. '打开了' GBK b'\\xb4\\xf2\\xbf\\xaa\\xc1\\xcb' → 丢部分
+        → mojibake 残形 '鎵撳紑浜?'), LLM propose 进 directive_review 形成
+        `directive_open_verb.trigger_pattern = '鎵撳紑浜?'` 这种垃圾 directive.
+        历史 case: memory_pool/directive_review.json `directive_open_verb`
+                  (created_at 1779893380 = 2026-05-27 21:29).
+        改 'replace' 把 bad byte → \\ufffd (replacement char), 然后 sanitize 把
+        含 \\ufffd > 阈值的整条 record skip (skip 比 mojibake 入 LLM 安全).
+        sink-side validation 也在 _propose_directive 加, 双重保险.
+        ==================================================================
+        """
         if not os.path.exists(self.audit_path):
             return []
         try:
             size = os.path.getsize(self.audit_path)
-            with open(self.audit_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(self.audit_path, 'r', encoding='utf-8',
+                       errors='replace') as f:
                 if size > 512 * 1024:
                     f.seek(size - 512 * 1024)
                     f.readline()
@@ -398,6 +455,10 @@ class IntegrityReflector(threading.Thread):
         for line in lines:
             line = line.strip()
             if not line:
+                continue
+            # 🆕 [mojibake skip] 整行含 > 3 个 \ufffd 替换字符 = encoding 错重 →
+            # skip 防 LLM 看到 mojibake. 阈值 3 容忍偶发单字符 corruption.
+            if line.count('\ufffd') > 3:
                 continue
             try:
                 rec = json.loads(line)
@@ -706,13 +767,32 @@ class IntegrityReflector(threading.Thread):
         return self._save_vocab_atomic(self.evreq_vocab_path, vocab)
 
     def _propose_directive(self, entry: dict) -> bool:
-        """加新 directive 进 directive_review.json (list)."""
+        """加新 directive 进 directive_review.json (list).
+
+        🆕 [Sir 2026-05-28 12:59 mojibake sink validation] 双重保险.
+        ===================================================================
+        Root-cause fix 在 _gather_audit_window (errors='replace' + skip
+        >3 \\ufffd 行). 此 sink-side validation 防 LLM 即便看到干净 audit
+        也可能 hallucinate 含 \\ufffd 或 mojibake 字符的 trigger_pattern.
+        ===================================================================
+        """
         if not isinstance(entry, dict):
             return False
         did = str(entry.get('id') or '').strip()
         trigger = str(entry.get('trigger_pattern') or '').strip()
         rule = str(entry.get('rule_summary') or '').strip()
         if not did or not trigger or not rule:
+            return False
+        # 🆕 [Sir 2026-05-28 12:59] mojibake / encoding 错垃圾 reject
+        if _looks_mojibake(trigger) or _looks_mojibake(rule) or _looks_mojibake(did):
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(
+                    f"⚠️ [IntegrityReflector] reject mojibake directive "
+                    f"propose: id={did[:30]} trigger={trigger[:30]!r}"
+                )
+            except Exception:
+                pass
             return False
         # 读现有 review
         review_list = []

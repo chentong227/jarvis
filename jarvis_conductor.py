@@ -199,6 +199,19 @@ class Conductor(threading.Thread):
         if getattr(self.worker, 'is_active_task', False):
             _log_block("is_active_task")
             return
+
+        # 🆕 [Sir 2026-05-28 18:42 quiet_exit L1.5/L1.6 Conductor]
+        # 主脑近 60s emit reaction=quiet_exit → Sir 自言自语/唱歌, 不在跟 Jarvis 说.
+        # Conductor path_a/b 都 skip, 别 nudge 打扰. 详 docs/JARVIS_QUIET_EXIT_DESIGN.md L1
+        try:
+            from jarvis_utils import get_event_bus as _qe_geb_cd
+            _qe_bus_cd = _qe_geb_cd()
+            if _qe_bus_cd is not None and _qe_bus_cd.has_type(
+                    'main_brain_quiet_exit', within_seconds=60.0):
+                _log_block("main_brain_quiet_exit")
+                return
+        except Exception:
+            pass
         
         if current_time - self._last_action_time < self._action_cooldown:
             _log_block(f"action_cooldown ({int(self._action_cooldown - (current_time - self._last_action_time))}s left)")

@@ -435,9 +435,99 @@ def observe_sir_utterance_async(text: str, turn_id: str = '') -> threading.Threa
     return t
 
 
+def _try_auto_reconcile_afk_short(store: 'SirStatusStore') -> None:
+    """🆕 [Sir 2026-05-28 19:08 真痛 BUG-AfkShortStale 治本] sensor 自动 reset.
+
+    Sir 真痛 (log 多处):
+      💭 [InnerThought] Sir remains active despite his status lingering as
+        'afk_short', indicating a manual toggle was overlooked.
+      💭 [InnerThought] Sir's sustained engagement with the terminal confirms
+        he is no longer 'afk_short', a status now nearly two and a half hours
+        out of date.
+    根因:
+      jarvis_sir_status_tracker 只接 utterance vocab 触发 (observe_sir_utterance),
+      没物理活动 sensor 自动 reset. Sir 说"afk 一下"触发 STATUS_AFK_SHORT 后
+      没说"back" → store 卡 afk_short 2.5h, age 远超 expected 1800s,
+      is_overdue=True 但 store 不自 reset → 思考脑反复看 stale → spam log.
+    治本 (准则 6 数据强耦合 + 8 优雅, §6 4 问全 Yes):
+      ✓ 数据 publish: reconcile 发 SWM 'sir_status_auto_reconciled' raw signal
+      ✓ 决策 LLM: 不是, 这是 sensor 自治 reset (idle 物理事实 → 直接 update,
+        无需 LLM. 'back' transition 已是 store 内置 idempotent reset 入口).
+      ✓ 配置持久化 CLI: 阈值用 _STATUS_EXPECTED_DURATION_S (已持久化 = code 里
+        const, 跟其他常量同档. 极少改, 准则 6 边界).
+      ✓ 正交: tracker 内自治, 不和 ReturnSentinel 重复 (RS 出话术, 这里仅 reset
+        store state).
+    边界 (保守 — 只 reconcile afk_short, 不动 sleep/lunch/out):
+      sleep/nap/lunch/out 期间 Sir 真离开, 临时 idle<300s (开手机/上厕所)
+      不该 reset (反破 sleep return greeting 上下文). 只 afk_short 这种短时
+      非关键状态 overdue + 物理真在 → reset.
+    """
+    cur = store.current()
+    if cur.status != STATUS_AFK_SHORT:
+        return
+    if not cur.is_overdue():
+        return
+    # 拿物理 idle (env_probe 真源, 可能没 init / 拿不到)
+    try:
+        from jarvis_env_probe import PhysicalEnvironmentProbe as _P
+        _idle_real = float(getattr(_P, 'idle_seconds_real', 0) or 0)
+    except Exception:
+        return  # env_probe 不可用 = test/CI = 不做任何事 (安全)
+    if _idle_real <= 0:
+        return  # 没真 sample = 不 reconcile (防 stale init=0 误判)
+    if _idle_real >= 300:
+        return  # Sir 真还离开 (5min+ 没动) → afk_short overdue 也合理 keep
+    # 触发 reset (store.update_status('back') 是 idempotent reset 入口)
+    _overdue_age = int(cur.status_age_s())
+    _idle_int = int(_idle_real)
+    try:
+        store.update_status(
+            new_status='back',
+            keyword='auto_reconcile_afk_short_overdue',
+            utterance=(
+                f'auto: afk_short overdue {_overdue_age}s '
+                f'+ physical idle {_idle_int}s (sensor reconcile)'
+            ),
+            turn_id='sensor_auto',
+        )
+    except Exception:
+        return  # update 失败 = 不 publish 误信号
+    # publish raw signal 让思考脑/主脑知道 (准则 6 数据强耦合 — 不教句式)
+    try:
+        from jarvis_utils import get_event_bus as _geb
+        _bus = _geb()
+        if _bus is not None:
+            _bus.publish(
+                etype='sir_status_auto_reconciled',
+                description=(
+                    f"auto reset afk_short→active "
+                    f"(overdue {_overdue_age}s, physical idle {_idle_int}s)"
+                ),
+                source='SirStatusTracker',
+                salience=0.55,
+                metadata={
+                    'from_status': 'afk_short',
+                    'to_status': 'active',
+                    'reason': 'overdue_and_physically_active',
+                    'overdue_age_s': _overdue_age,
+                    'physical_idle_s': _idle_int,
+                },
+                ttl=300.0,
+            )
+    except Exception:
+        pass
+    bg_log(
+        f"🔄 [SirStatusTracker/AutoReconcile] afk_short→active "
+        f"(overdue {_overdue_age}s, idle {_idle_int}s, "
+        f"reason=overdue+physically_active)"
+    )
+
+
 def current_status() -> Dict[str, Any]:
     """供外部查 (ReturnSentinel / SmartNudge / Conductor)."""
     store = get_default_store()
+    # 🆕 reconcile pre-check (afk_short overdue + 物理活跃 → 自动 reset)
+    _try_auto_reconcile_afk_short(store)
     cur = store.current()
     return {
         'status': cur.status,

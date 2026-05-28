@@ -51,6 +51,7 @@ import argparse
 import json
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import time
 
 
@@ -567,6 +568,87 @@ def _reject_review(s: RelationalStateStore, item_id: str) -> int:
 
 
 # ============================================================
+# 🆕 [Sir 2026-05-28 17:05 方案 A 配套 / C2] stale review reaper CLI
+# ============================================================
+# Sir 真痛 dashboard 7-8 页堆积: AutoArbiter 已有 _do_stale_review_reap (15min
+# tick 跑), 这里给 Sir 一个**手动 trigger 一次性扫**的 CLI flag —
+# 不用等 daemon 15min, dry-run 安全看一眼 + --apply 真 archive.
+def _archive_stale_reviews(s: RelationalStateStore, days: float,
+                              apply: bool = False) -> int:
+    """扫 3 类 review (joke/protocol/thread), 老的 (≥ N 天) archive.
+
+    days: 多少天前 created_at → 视为 stale (默认 3 天, 同 AutoArbiter)
+    apply: False = dry-run (默, 只列); True = 真 reject_from_review
+    """
+    if days <= 0:
+        print(f"[ERROR] days must be > 0, got {days}")
+        return 2
+    cutoff = time.time() - days * 86400
+    stale: list = []  # [(kind, item)]
+    for j in s.list_inside_jokes_review():
+        if j.created_at <= cutoff:
+            stale.append(('joke', j))
+    for p in s.list_protocols_review():
+        if p.created_at <= cutoff:
+            stale.append(('protocol', p))
+    for t in s.list_threads_review():
+        if t.created_at <= cutoff:
+            stale.append(('thread', t))
+    if not stale:
+        print(f"[REVIEW] 没有 ≥ {days} 天的 review 待办 (cutoff="
+              f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(cutoff))})")
+        return 0
+    print("=" * 80)
+    mode = "🔴 APPLY (真 archive)" if apply else "🟡 DRY-RUN (仅列, 不改)"
+    print(f"[STALE REVIEW] {len(stale)} 条 ≥ {days} 天的待办  [{mode}]")
+    print(f"  cutoff: {time.strftime('%Y-%m-%d %H:%M', time.localtime(cutoff))}")
+    print("=" * 80)
+    by_kind: dict = {}
+    for kind, item in stale:
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+        age_d = (time.time() - item.created_at) / 86400
+        if kind == 'joke':
+            label = f"phrase={item.phrase!r}"
+        elif kind == 'protocol':
+            label = f"rule={item.rule[:60]!r}"
+        else:
+            label = f"title={item.title!r}"
+        print(f"  [{kind:8}] {item.id}  age={age_d:.1f}d  {label[:80]}")
+    print()
+    print(f"  by_kind: {by_kind}")
+    if not apply:
+        print()
+        print("  ⚠️  DRY-RUN — 加 --apply 真 archive (走 reject_from_review):")
+        print(f"     python scripts/relational_dump.py "
+              f"--archive-stale-review {days} --apply")
+        return 0
+    # apply mode
+    archived = 0
+    failed = 0
+    for kind, item in stale:
+        try:
+            res = s.reject_from_review(item.id)
+            if res:
+                archived += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"  ⚠️  failed to archive {item.id}: {e}")
+            failed += 1
+    s.persist()
+    try:
+        s.write_review_queue()
+    except Exception:
+        pass
+    print()
+    print(f"  ✅ archived: {archived}")
+    if failed:
+        print(f"  ❌ failed: {failed}")
+    print(f"  ℹ️  Sir 元否决: dashboard 可 restore (state ARCHIVED ↔ ACTIVE)")
+    return 0
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -633,6 +715,13 @@ def main():
     parser.add_argument('--reject', metavar='ID',
                         help='把 review 状态的条目转 archived（Sir 拒绝）')
 
+    # 🆕 [Sir 2026-05-28 17:05 方案 A C2] stale review reaper 手动 trigger
+    parser.add_argument('--archive-stale-review', metavar='DAYS', type=float,
+                        help='手动扫 ≥ N 天 review 待办自动 archive '
+                             '(默 dry-run, 加 --apply 真改; 同 AutoArbiter 后台 reaper)')
+    parser.add_argument('--apply', action='store_true',
+                        help='配合 --archive-stale-review: 真 archive (默 dry-run)')
+
     args = parser.parse_args()
 
     if args.add_inside_joke:
@@ -660,6 +749,10 @@ def main():
         return _activate_review(s, args.activate)
     if args.reject:
         return _reject_review(s, args.reject)
+    if args.archive_stale_review is not None:
+        return _archive_stale_reviews(
+            s, args.archive_stale_review, apply=args.apply,
+        )
     if args.review:
         _print_review(s, interactive=True)
         return 0

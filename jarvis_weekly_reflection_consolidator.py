@@ -234,84 +234,22 @@ class WeeklyReflectionConsolidator:
     MIN_OUTCOME_RESOLVED_RATE = 0.3
 
     def _do_inner_thought_outcome_consolidation(self, week_key: str) -> None:
-        """周反思 inner_thoughts.jsonl 7d outcome → propose vocab tune."""
-        stats = self._collect_thought_outcome_stats()
-        n_total = stats.get('total', 0)
-        n_resolved = (stats.get('outcomes', {}).get('sir_engaged', 0) +
-                      stats.get('outcomes', {}).get('sir_silenced', 0) +
-                      stats.get('outcomes', {}).get('sir_rejected', 0))
-        if n_total < self.MIN_THOUGHT_COUNT_FOR_TUNE:
-            self._bg_log(
-                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
-                f"only {n_total} thoughts in 7d "
-                f"(min {self.MIN_THOUGHT_COUNT_FOR_TUNE}), skip"
-            )
-            return
-        resolved_rate = n_resolved / float(n_total) if n_total > 0 else 0.0
-        if resolved_rate < self.MIN_OUTCOME_RESOLVED_RATE:
-            self._bg_log(
-                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
-                f"only {resolved_rate * 100:.0f}% outcomes resolved "
-                f"(min {self.MIN_OUTCOME_RESOLVED_RATE * 100:.0f}%), "
-                f"signal too low to tune, skip"
-            )
-            return
-        # LLM propose tune
-        cur_vocab = self._load_surface_vocab()
-        tune = self._llm_propose_vocab_tune(stats, cur_vocab)
-        if not tune or not tune.get('target_field'):
-            self._bg_log(
-                f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
-                f"LLM 没 propose 有效 vocab tune, skip"
-            )
-            return
-        # 建 WeeklyInsight (type=vocab_tune)
-        now = time.time()
-        end_d = time.strftime('%Y-%m-%d', time.localtime(now))
-        start_d = time.strftime(
-            '%Y-%m-%d', time.localtime(now - 7 * 86400)
-        )
-        # 准备 evidence excerpts (per-cat 简要 stats)
-        ex = []
-        for cat in 'ABCDE':
-            cs = stats.get('by_category', {}).get(cat, {})
-            if cs.get('total', 0) == 0:
-                continue
-            ex.append(
-                f"{cat}: {cs['total']} thoughts, "
-                f"engaged={cs.get('sir_engaged', 0)} "
-                f"silenced={cs.get('sir_silenced', 0)} "
-                f"rejected={cs.get('sir_rejected', 0)}"
-            )
-        insight = WeeklyInsight(
-            id=f'wi_voc_{time.strftime("%Y%m%d_%H%M%S")}_'
-                f'{int(now * 1000) % 10000:04x}',
-            ts=now,
-            ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S',
-                                   time.localtime(now)),
-            week_range_iso=f'{start_d} → {end_d}',
-            pattern_summary=tune.get('pattern_summary', '')[:200],
-            suggested_action=tune.get('suggested_action', '')[:300],
-            evidence_count=n_total,
-            evidence_excerpts=ex[:3],
-            confidence=tune.get('confidence', 0.0),
-            insight_type='inner_thought_vocab_tune',
-            target_vocab_path=self.SURFACE_VOCAB_PATH,
-            target_field=tune.get('target_field', ''),
-            proposed_old_value=tune.get('old_value'),
-            proposed_new_value=tune.get('new_value'),
-        )
-        with self._lock:
-            self._insights.append(insight)
-        self._persist_insight(insight)
-        self._publish_swm(insight)
+        """周反思 inner_thoughts.jsonl 7d outcome → propose vocab tune.
+
+        🆕 [Sir 2026-05-28 12:30 β.5.45 退化]
+        =================================================================
+        surface_to_sir 机制全退化 (见 jarvis_inner_thought_daemon.py:271-300
+        顶部 anchor). 主脑改走 Layer 1.5 [MY RECENT INNER THOUGHTS] chain pull
+        自决 reference, 不再有 push 通道. 此 reflector path 提的是 vocab
+        阈值 (salience_threshold / cooldown / max_per_hour), 阈值现已 dead.
+        早退 no-op, 等真 retire surface_to_sir_vocab.json 后再删 method body.
+        =================================================================
+        """
         self._bg_log(
             f"🪞 [WeeklyConsolidator/thought_outcome] {week_key}: "
-            f"proposed vocab tune {tune.get('target_field')}: "
-            f"{tune.get('old_value')} → {tune.get('new_value')} "
-            f"(conf {insight.confidence:.2f}, "
-            f"based on {n_total} thoughts, {n_resolved} resolved)"
+            f"surface_to_sir retired (β.5.45), reflector path no-op skip"
         )
+        return
 
     def _collect_thought_outcome_stats(self) -> dict:
         """从 inner_thoughts.jsonl 读 7d thought, 统计 per-cat outcome."""
