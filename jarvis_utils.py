@@ -12,6 +12,7 @@ from collections import deque
 # silent except -> beta.5 publish_only 全失效一直跑 hard mode. 顶部加裸 import 修.
 import os
 import json
+from typing import Optional, Tuple
 
 import httpx
 
@@ -486,6 +487,36 @@ _BG_LOG_DIAG_MARKERS = (
     '[ConcernsDecayWorker]',
     '[DirectiveDecayWorker]',
     '[Embedding Backfill Worker]',
+    # 🆕 [Sir 2026-05-28 19:15 BUG 2 终端日志治理 方案 2]
+    # ===============================================================
+    # Sir 原话: "把我能直观看出性能和行动的日志打印在终端, 其他保留在
+    # 日志输出供你 debug". 选方案 2 = 留 状态/主脑/Sir input/思考脑/AutoArbiter,
+    # 砍 sentinel/sensor/dedup/internal cleanup spam.
+    # 准则 6 边界 (AGENTS.md): hide list = 系统级硬编码常量, 不下钻 vocab.
+    # JARVIS_VERBOSE_BG=1 env 可全显示给 debug.
+    # ===============================================================
+    # ProactiveCare publish-only / dedup / sensor / health — Sir 看不动作
+    '[ProactiveCare/PublishOnly]',     # 🤝 publish advice (publish-only, 不真 nudge)
+    '[ProactiveCare/Dedup]',           # 🔇 dedup skip event
+    '[ProactiveCare/Sensor]',          # 📡 tick fed signals
+    '[ProactiveCare/Health]',          # 📊 tick 健康统计
+    '[ProactiveCare/DRY]',             # 🤝 dry-run 模拟
+    # CommitmentWatcher publish-only / PromiseLog cleanup
+    '[CommitmentWatcher/PromiseLog]',  # 🛁 skip dirty / 📥 恢复 pending (内部清理)
+    '[CommitmentWatcher/M4.4]',        # 📥 周期 reload (sensor 内部)
+    '[CommitmentWatcher/PublishOnly]', # 🤝 commitment_check SWM (publish-only)
+    # SirStatusTracker sensor reconcile (Sir 看一次知道就够)
+    '[SirStatusTracker/AutoReconcile]', # 🔄 afk_short overdue auto reset
+    # ReturnSentinel skip/bypass (不是真 fire greeting)
+    '[ReturnSentinel/Skip]',           # 📞 skip (距上轮太近)
+    '[ReturnSentinel/Bypass]',         # 📞 reminder occupied 豁免
+    # DaemonHealthMonitor 内部巡检 (cooldown skip 大量)
+    '[DaemonHealthMonitor]',           # 🩺 1 issue 但常常 dedup cooldown
+    # SoulArchivist / ScreenVision / Sentinel 内部 daemon spam
+    '[SoulArchivist]',                 # 📚 内部归档 (除非 force_now flag)
+    '[ScreenVision/backfill]',         # 📷 backfill describe (大量)
+    '[ScreenshotSentinel]',            # 📷 周期截图
+    '[ReflectionScheduler]',           # 📚 LLM 反思调度 (cost log)
 )
 
 
@@ -1025,6 +1056,39 @@ _INTERNAL_TOOL_CALL_TAG_RE = _re_internal_names.compile(
     _re_internal_names.IGNORECASE | _re_internal_names.DOTALL,
 )
 
+# 🆕 [Sir 2026-05-27 23:34 P13 治本] 裸 inline intent JSON regex (复用 jarvis_safety 风格)
+# ========================================================================
+# Sir 截图: subtitle 字幕显示 'Of course, Sir. Opening the dashboard now.
+# {"intent": "dashboard_open"}' — 主脑省 <TOOL_CALL> tag, JSON 漏到 subtitle.
+# scrub_internal_names 之前只剥 paired tag, 没剥裸 JSON. 治本: 同 jarvis_safety
+# 的 _STRAY_INTENT_JSON_RE 双源同源 (单 regex 复用, 避免发散).
+# 严格限 prefix `{"intent"` 避免误伤合法文本含 {.
+# ========================================================================
+_INTERNAL_STRAY_INTENT_JSON_RE = _re_internal_names.compile(
+    r'\{\s*"intent"\s*:\s*"[^"]+"\s*'
+    r'(?:,\s*"[^"]+"\s*:\s*(?:"[^"]*"|\{[^{}]*\}|\[[^\[\]]*\]|[^,}]+)\s*)*\}',
+    _re_internal_names.DOTALL,
+)
+
+# 🆕 [Sir 2026-05-28 14:54 真痛 BUG] 裸 intent identifier (无 JSON 无 tag)
+# ========================================================================
+# Sir 截图: subtitle 显示 'Done, Sir.' 干净, 但 TTS 还**念出** 'intent_dashboard_open'.
+# 主脑 emit 纯 identifier `intent_dashboard_open` 当 verbal hint, 没 JSON 包装,
+# 3 个 sanitizer 全 miss (TOOL_CALL tag / 裸 JSON / organ.command 三套 regex 都
+# 不匹配 snake_case identifier). 加 regex 剥 `intent_<lower_snake>` /
+# `intent:<lower_snake>` 两种形式.
+# 安全约束 (避 false positive):
+#   - 只匹配 lowercase snake_case (主脑 normal reply 不会写 `intent_xxx` 全小写)
+#   - 必须 `_` 或 `:` 连接 (不剥单独 "intent" 普通英语词)
+#   - 单词后必须有非字母数字或行尾 (\b)
+# 例:
+#   ✅ 剥: 'intent_dashboard_open', 'intent:dashboard_open', 'intent: dashboard_open'
+#   ❌ 不剥: 'What is your intent?', 'My intent is clear.', 'Intent matters.'
+# ========================================================================
+_INTERNAL_INTENT_IDENTIFIER_RE = _re_internal_names.compile(
+    r'\bintent[_:]\s*[a-z][a-z0-9_]*\b'
+)
+
 
 def scrub_internal_names(text, *, replacement: str = 'a quick check') -> str:
     """剥工具名 (organ.command) + <TOOL_CALL> tag, 返人话.
@@ -1045,6 +1109,15 @@ def scrub_internal_names(text, *, replacement: str = 'a quick check') -> str:
         return text or ''
     # 先剥 <TOOL_CALL> tag (整段干掉)
     out = _INTERNAL_TOOL_CALL_TAG_RE.sub('', text)
+    # 🆕 [Sir 2026-05-27 23:34 P13 治本] 再剥裸 inline intent JSON
+    # Sir 截图: subtitle 显示 '... {"intent": "dashboard_open"}' — 主脑省 tag
+    # 漏到字幕. 剥后 strip 两端余白避免 "Opening dashboard.   " 多空格.
+    out = _INTERNAL_STRAY_INTENT_JSON_RE.sub('', out)
+    # 🆕 [Sir 2026-05-28 14:54 真痛 BUG] 剥裸 intent identifier
+    # Sir image: TTS 念出 'intent_dashboard_open' (无 JSON 无 tag, 纯 identifier).
+    # 必须在 organ.command scrub 之前剥 (intent_xxx 不含 dot, 跟 organ pattern
+    # 不冲突, 顺序无所谓但保持显式).
+    out = _INTERNAL_INTENT_IDENTIFIER_RE.sub('', out)
     # 再剥 organ.command 工具名 (替换 placeholder)
     if _INTERNAL_TOOL_NAME_RE.search(out):
         out = _INTERNAL_TOOL_NAME_RE.sub(replacement, out)
@@ -1057,12 +1130,15 @@ def scrub_internal_names(text, *, replacement: str = 'a quick check') -> str:
 
 
 def has_internal_name(text) -> bool:
-    """快查 text 含工具名 / <TOOL_CALL> tag. 用于日志诊断."""
+    """快查 text 含工具名 / <TOOL_CALL> tag / 裸 intent JSON / 裸 intent
+    identifier. 用于日志诊断 + claim_tracer audit."""
     if not text or not isinstance(text, str):
         return False
     return bool(
         _INTERNAL_TOOL_NAME_RE.search(text) or
-        _INTERNAL_TOOL_CALL_TAG_RE.search(text)
+        _INTERNAL_TOOL_CALL_TAG_RE.search(text) or
+        _INTERNAL_STRAY_INTENT_JSON_RE.search(text) or
+        _INTERNAL_INTENT_IDENTIFIER_RE.search(text)  # 🆕 Sir 2026-05-28
     )
 
 
@@ -4488,7 +4564,8 @@ def get_quick_classifier() -> QuickClassifier:
 
 def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                          max_tokens: int = 100, temperature: float = 0.2,
-                         max_retries: int = 3, base_delay: float = 1.5) -> str:
+                         max_retries: int = 3, base_delay: float = 1.5,
+                         caller: str = '') -> str:
     """
     🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: KeyRouter resource leak fix
     Sir 18:09 真测痛点: '所有 OpenRouter Key 均不可用' — 但 key_router_health.json
@@ -4499,9 +4576,40 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
 
     修法 (caller 责任): 每个 caller 加 try/finally release once.
     wrapper 本身不持 key_router 引用 (避免 caller fallback 路径双 release 污染池).
+
+    🆕 [Sir 2026-05-28 fix45] caller 参数 + routing layer:
+      memory_pool/llm_routing_vocab.json enabled=1 且 model 命中 deepseek_route.
+      replace_models 且 caller 不在 exclude_callers → 改路 safe_deepseek_call.
+      路由失败 + fallback_on_fail=1 → fall through 老 path (双层故障开放).
     """
     import time as _time
     from openai import OpenAI
+
+    # 🆕 [Sir 2026-05-28 fix45] routing layer — vocab 命中 → deepseek path
+    _route_ok, _route_reason = should_route_to_deepseek(model, caller)
+    if _route_ok:
+        try:
+            return safe_deepseek_call(
+                prompt=prompt,
+                model=None,  # 用 vocab.deepseek_route.model
+                max_tokens=max_tokens,
+                temperature=temperature,
+                caller=caller or 'unknown',
+                max_retries=max_retries,
+            )
+        except Exception as _ds_exc:
+            # fallback check — vocab.deepseek_route.fallback_on_fail
+            _vocab = _load_llm_routing_vocab()
+            _fb = int(_vocab.get('deepseek_route', {}).get('fallback_on_fail', 1))
+            _record_deepseek_usage(
+                caller=caller or 'unknown',
+                input_tok=0, output_tok=0,
+                success=False, fallback=bool(_fb),
+                error=f'route_fail:{str(_ds_exc)[:80]}',
+            )
+            if not _fb:
+                raise  # fallback 关 → 抛出 (caller 老 fallback 路径接)
+            # fallback 开 → fall through 老 OpenRouter path 继续
 
     if not openrouter_key or not openrouter_key.strip():
         raise RuntimeError("[OpenRouter] 未配置 API Key，请在 jarvis_config 中设置 openrouter_key")
@@ -4603,6 +4711,1052 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
         # 🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: caller 责任 release.
         # wrapper 不 release (避免 caller fallback 路径双 release 污染池).
         pass
+
+
+# ============================================================================
+# 🆕 [Sir 2026-05-28 fix45] DeepSeek routing layer (准则 6 持久化 + Sir CLI)
+# ============================================================================
+# 17 USD OpenRouter key (DS_ONLY) 被 ban Google/Anthropic/OpenAI, 仅 deepseek
+# 可用. enabled=1 且 model 命中 vocab.deepseek_route.replace_models →
+# safe_openrouter_call 顶部改路 safe_deepseek_call. 钱用完 Sir CLI gate off
+# → 自动 fallback 回原 google/gemini-* 模型 + 原 KeyRouter 池. 不破任何老 caller.
+#
+# 故障开放 3 层:
+#   1. DS_ONLY env 缺失 → should_route_to_deepseek 返 False (vocab 仍 enabled 但 key 没)
+#   2. routing 命中但调 deepseek 异常 → fallback_on_fail=1 fall through 老 path
+#   3. vocab 加载异常 → 默认 disabled (return False)
+#
+# usage_stats 持久化: per call 写 input/output tokens + est_cost_usd + per_caller
+# breakdown. CLI scripts/llm_routing_dump.py usage 看 17 USD 剩余进度.
+# ============================================================================
+_LLM_ROUTING_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'llm_routing_vocab.json'
+)
+_LLM_ROUTING_CACHE = {'data': None, 'mtime': 0.0, 'last_check': 0.0}
+_LLM_ROUTING_LOCK = threading.RLock()
+_LLM_ROUTING_CACHE_TTL_S = 5.0  # mtime check throttle (避免 hot loop stat 风暴)
+
+_LLM_ROUTING_DEFAULT = {
+    'enabled': 0,
+    'deepseek_route': {
+        'model': 'deepseek/deepseek-v4-pro',
+        'replace_models': [],
+        'exclude_callers': [],
+        'fallback_on_fail': 1,
+        'timeout_s': 60,
+        'temperature_default': 0.2,
+        'max_tokens_default': 600,
+    },
+    'cost': {
+        'input_per_1m_usd': 0.435,
+        'output_per_1m_usd': 0.87,
+        'budget_total_usd': 17.0,
+    },
+    'usage_stats': {
+        'call_count': 0, 'success_count': 0, 'fallback_count': 0,
+        'input_tokens_total': 0, 'output_tokens_total': 0,
+        'est_cost_usd': 0.0,
+        'first_call_ts': 0.0, 'first_call_iso': '',
+        'last_call_ts': 0.0, 'last_call_iso': '', 'last_error': '',
+        'per_caller': {},
+    },
+    'history': [],
+}
+
+
+def _llm_routing_vocab_path() -> str:
+    """允许 testcase override path."""
+    return os.environ.get('JARVIS_LLM_ROUTING_VOCAB_PATH', _LLM_ROUTING_VOCAB_PATH)
+
+
+def _load_llm_routing_vocab(force: bool = False) -> dict:
+    """Load routing vocab, mtime cache 5s TTL. 故障 → default disabled."""
+    path = _llm_routing_vocab_path()
+    now = time.time()
+    with _LLM_ROUTING_LOCK:
+        if (not force and _LLM_ROUTING_CACHE['data'] is not None
+                and (now - _LLM_ROUTING_CACHE['last_check']) < _LLM_ROUTING_CACHE_TTL_S):
+            return _LLM_ROUTING_CACHE['data']
+        try:
+            if not os.path.exists(path):
+                _LLM_ROUTING_CACHE['data'] = dict(_LLM_ROUTING_DEFAULT)
+                _LLM_ROUTING_CACHE['last_check'] = now
+                return _LLM_ROUTING_CACHE['data']
+            mtime = os.path.getmtime(path)
+            if (not force and _LLM_ROUTING_CACHE['data'] is not None
+                    and mtime <= _LLM_ROUTING_CACHE['mtime']):
+                _LLM_ROUTING_CACHE['last_check'] = now
+                return _LLM_ROUTING_CACHE['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            _LLM_ROUTING_CACHE['data'] = data
+            _LLM_ROUTING_CACHE['mtime'] = mtime
+            _LLM_ROUTING_CACHE['last_check'] = now
+            return data
+        except Exception:
+            # 故障 → default disabled (绝不阻塞主流)
+            _LLM_ROUTING_CACHE['data'] = dict(_LLM_ROUTING_DEFAULT)
+            _LLM_ROUTING_CACHE['last_check'] = now
+            return _LLM_ROUTING_CACHE['data']
+
+
+def invalidate_llm_routing_cache() -> None:
+    """Public: testcase / CLI 改 vocab 后立刻失效缓存."""
+    with _LLM_ROUTING_LOCK:
+        _LLM_ROUTING_CACHE['data'] = None
+        _LLM_ROUTING_CACHE['mtime'] = 0.0
+        _LLM_ROUTING_CACHE['last_check'] = 0.0
+
+
+def _get_deepseek_key() -> str:
+    """读 OPENROUTER_DS_ONLY env. 缺失/占位符 → 空字符串."""
+    raw = (os.environ.get('OPENROUTER_DS_ONLY', '') or '').strip()
+    if not raw or 'REPLACE_ME' in raw or 'DEPRECATED' in raw:
+        return ''
+    return raw
+
+
+def should_route_to_deepseek(model: str, caller: str = '') -> Tuple[bool, str]:
+    """Gate check — 是否应改路 deepseek.
+
+    返 (True, route_model) 即 OK; (False, reason) 即不改路.
+    故障开放 — 任何异常返 (False, 'error:...').
+    """
+    try:
+        if not _get_deepseek_key():
+            return False, 'no_ds_key'
+        vocab = _load_llm_routing_vocab()
+        if not int(vocab.get('enabled', 0)):
+            return False, 'gate_off'
+        route = vocab.get('deepseek_route', {}) or {}
+        replace = route.get('replace_models', []) or []
+        if not replace:
+            return False, 'empty_replace_list'
+        if model not in replace:
+            return False, f'model_not_in_list:{model}'
+        exclude = route.get('exclude_callers', []) or []
+        if caller and caller in exclude:
+            return False, f'caller_excluded:{caller}'
+        target_model = (route.get('model') or '').strip()
+        if not target_model:
+            return False, 'no_target_model'
+        return True, target_model
+    except Exception as e:
+        return False, f'error:{str(e)[:60]}'
+
+
+def safe_deepseek_call(prompt: str, system_prompt: str = '',
+                       model: Optional[str] = None,
+                       max_tokens: Optional[int] = None,
+                       temperature: Optional[float] = None,
+                       timeout: Optional[float] = None,
+                       caller: str = 'unknown',
+                       max_retries: int = 3,
+                       base_delay: float = 1.5) -> str:
+    """直接走 OpenRouter API + OPENROUTER_DS_ONLY key + DeepSeek 模型.
+
+    与 safe_openrouter_call 隔离 (不进 KeyRouter pool, 钱专走 DS_ONLY).
+    model/max_tokens/temperature/timeout None → 取 vocab.deepseek_route 默认.
+    成功后写 usage_stats (input/output tokens + est_cost_usd).
+    故障抛 RuntimeError, caller (safe_openrouter_call) 根据 fallback_on_fail 处理.
+    """
+    import time as _time
+    from openai import OpenAI
+
+    vocab = _load_llm_routing_vocab()
+    route = vocab.get('deepseek_route', {}) or {}
+    use_model = (model or route.get('model') or 'deepseek/deepseek-v4-pro').strip()
+    use_max_tokens = int(max_tokens if max_tokens is not None
+                         else route.get('max_tokens_default', 600))
+    use_temp = float(temperature if temperature is not None
+                     else route.get('temperature_default', 0.2))
+    use_timeout = float(timeout if timeout is not None
+                        else route.get('timeout_s', 60))
+
+    ds_key = _get_deepseek_key()
+    if not ds_key:
+        raise RuntimeError("[DeepSeek] OPENROUTER_DS_ONLY 未配置 (env 缺失或为 REPLACE_ME)")
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=ds_key,
+        default_headers={"HTTP-Referer": "https://jarvis-local.com",
+                         "X-Title": "Jarvis-DeepSeek-Reflector"},
+        timeout=use_timeout,
+    )
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=use_model,
+                messages=messages,
+                max_tokens=use_max_tokens,
+                temperature=use_temp,
+            )
+            content = response.choices[0].message.content or ''
+            # usage stats
+            try:
+                usage = getattr(response, 'usage', None)
+                in_tok = int(getattr(usage, 'prompt_tokens', 0) or 0) if usage else 0
+                out_tok = int(getattr(usage, 'completion_tokens', 0) or 0) if usage else 0
+            except Exception:
+                in_tok, out_tok = 0, 0
+            _record_deepseek_usage(
+                caller=caller, input_tok=in_tok, output_tok=out_tok,
+                success=True, fallback=False, error='',
+            )
+            return content
+        except Exception as e:
+            last_error = e
+            error_str = str(e).lower()
+            if any(kw in error_str for kw in ['401', '402', '403', 'unauthorized',
+                                                'forbidden', 'invalid api key',
+                                                'invalid_key', 'payment',
+                                                'insufficient', 'billing',
+                                                'credits']):
+                # auth/billing 失败 → 不重试
+                raise RuntimeError(
+                    f"[DeepSeek] API key 异常 (401/402/403): {str(e)[:200]}"
+                ) from e
+            if any(kw in error_str for kw in ['404', 'model not found']):
+                raise RuntimeError(
+                    f"[DeepSeek] 模型 {use_model} 不存在: {str(e)[:200]}"
+                ) from e
+            is_retryable = any(kw in error_str for kw in [
+                '429', '503', 'rate', 'overloaded', 'capacity', 'timeout',
+                'connection', 'reset', 'unavailable', 'temporarily',
+                'server error', 'bad gateway',
+            ])
+            if is_retryable and attempt < max_retries - 1:
+                _time.sleep(base_delay * (2 ** min(attempt, 4)))
+                continue
+            break
+
+    raise RuntimeError(
+        f"[DeepSeek] 调用失败 (caller={caller}, model={use_model}, "
+        f"retries={max_retries}): {str(last_error)[:200]}"
+    ) from last_error
+
+
+def _record_deepseek_usage(caller: str, input_tok: int, output_tok: int,
+                            success: bool, fallback: bool,
+                            error: str = '') -> None:
+    """Atomic write usage_stats 进 vocab JSON. 故障静默 (不阻塞主流)."""
+    try:
+        path = _llm_routing_vocab_path()
+        with _LLM_ROUTING_LOCK:
+            # 直接 read disk (不靠 cache, 防并发 stale)
+            data = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            if not data:
+                data = dict(_LLM_ROUTING_DEFAULT)
+            stats = data.setdefault('usage_stats', {})
+            cost_cfg = data.get('cost', {}) or {}
+            in_cost = float(cost_cfg.get('input_per_1m_usd', 0.435))
+            out_cost = float(cost_cfg.get('output_per_1m_usd', 0.87))
+
+            stats['call_count'] = int(stats.get('call_count', 0)) + 1
+            if success:
+                stats['success_count'] = int(stats.get('success_count', 0)) + 1
+            if fallback:
+                stats['fallback_count'] = int(stats.get('fallback_count', 0)) + 1
+            stats['input_tokens_total'] = int(stats.get('input_tokens_total', 0)) + int(input_tok)
+            stats['output_tokens_total'] = int(stats.get('output_tokens_total', 0)) + int(output_tok)
+            est = (stats['input_tokens_total'] / 1e6 * in_cost
+                   + stats['output_tokens_total'] / 1e6 * out_cost)
+            stats['est_cost_usd'] = round(est, 6)
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            if not stats.get('first_call_ts'):
+                stats['first_call_ts'] = now
+                stats['first_call_iso'] = iso
+            stats['last_call_ts'] = now
+            stats['last_call_iso'] = iso
+            if error:
+                stats['last_error'] = error[:200]
+            per = stats.setdefault('per_caller', {})
+            slot = per.setdefault(caller, {
+                'call_count': 0, 'success_count': 0, 'fallback_count': 0,
+                'input_tokens': 0, 'output_tokens': 0, 'est_cost_usd': 0.0,
+            })
+            slot['call_count'] += 1
+            if success:
+                slot['success_count'] += 1
+            if fallback:
+                slot['fallback_count'] += 1
+            slot['input_tokens'] += int(input_tok)
+            slot['output_tokens'] += int(output_tok)
+            slot['est_cost_usd'] = round(
+                slot['input_tokens'] / 1e6 * in_cost
+                + slot['output_tokens'] / 1e6 * out_cost, 6
+            )
+
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+
+            # atomic write
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+
+            # 立刻刷 cache
+            _LLM_ROUTING_CACHE['data'] = data
+            _LLM_ROUTING_CACHE['mtime'] = os.path.getmtime(path)
+            _LLM_ROUTING_CACHE['last_check'] = now
+    except Exception:
+        # 静默 — usage stats 失败不阻塞 LLM 调用主路
+        pass
+
+
+def get_deepseek_routing_stats() -> dict:
+    """Public: 供 CLI 看. 返当前 vocab + budget 剩余进度估算."""
+    vocab = _load_llm_routing_vocab()
+    stats = dict(vocab.get('usage_stats', {}))
+    cost_cfg = vocab.get('cost', {}) or {}
+    budget = float(cost_cfg.get('budget_total_usd', 17.0))
+    est = float(stats.get('est_cost_usd', 0.0))
+    stats['budget_total_usd'] = budget
+    stats['budget_remaining_usd'] = max(0.0, round(budget - est, 4))
+    stats['budget_pct_used'] = round((est / budget * 100.0) if budget > 0 else 0.0, 2)
+    stats['enabled'] = int(vocab.get('enabled', 0))
+    stats['ds_key_configured'] = bool(_get_deepseek_key())
+    stats['route_model'] = (vocab.get('deepseek_route', {}) or {}).get('model', '')
+    stats['replace_models'] = list(
+        (vocab.get('deepseek_route', {}) or {}).get('replace_models', [])
+    )
+    stats['exclude_callers'] = list(
+        (vocab.get('deepseek_route', {}) or {}).get('exclude_callers', [])
+    )
+    return stats
+
+
+def set_deepseek_routing_gate(enabled: bool, source: str = 'sir_cli',
+                                rationale: str = '') -> Tuple[bool, str]:
+    """CLI 开关 gate. atomic write + history."""
+    try:
+        path = _llm_routing_vocab_path()
+        with _LLM_ROUTING_LOCK:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if not data:
+                data = dict(_LLM_ROUTING_DEFAULT)
+            old = int(data.get('enabled', 0))
+            new = 1 if enabled else 0
+            data['enabled'] = new
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            hist = data.setdefault('history', [])
+            hist.append({
+                'action': 'gate_toggle',
+                'old_value': old,
+                'new_value': new,
+                'source': source,
+                'rationale': rationale[:200],
+                'applied_at': now,
+                'applied_iso': iso,
+            })
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_llm_routing_cache()
+            return True, f'gate {old} -> {new}'
+    except Exception as e:
+        return False, f'gate_toggle_exception:{str(e)[:80]}'
+
+
+def add_deepseek_replace_model(model: str, source: str = 'sir_cli',
+                                 rationale: str = '') -> Tuple[bool, str]:
+    """CLI 加 model 到 replace_models."""
+    if not model or not model.strip():
+        return False, 'empty model'
+    model = model.strip()
+    try:
+        path = _llm_routing_vocab_path()
+        with _LLM_ROUTING_LOCK:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if not data:
+                data = dict(_LLM_ROUTING_DEFAULT)
+            route = data.setdefault('deepseek_route', {})
+            replace = route.setdefault('replace_models', [])
+            if model in replace:
+                return False, f'already in list: {model}'
+            replace.append(model)
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            hist = data.setdefault('history', [])
+            hist.append({
+                'action': 'add_replace_model',
+                'model': model,
+                'source': source,
+                'rationale': rationale[:200],
+                'applied_at': now,
+                'applied_iso': iso,
+            })
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_llm_routing_cache()
+            return True, f'added {model} (now {len(replace)} models)'
+    except Exception as e:
+        return False, f'add_model_exception:{str(e)[:80]}'
+
+
+def remove_deepseek_replace_model(model: str, source: str = 'sir_cli',
+                                    rationale: str = '') -> Tuple[bool, str]:
+    """CLI 从 replace_models 移 model."""
+    if not model or not model.strip():
+        return False, 'empty model'
+    model = model.strip()
+    try:
+        path = _llm_routing_vocab_path()
+        with _LLM_ROUTING_LOCK:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if not data:
+                return False, 'vocab missing'
+            route = data.get('deepseek_route', {}) or {}
+            replace = route.get('replace_models', []) or []
+            if model not in replace:
+                return False, f'not in list: {model}'
+            replace.remove(model)
+            route['replace_models'] = replace
+            data['deepseek_route'] = route
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            hist = data.setdefault('history', [])
+            hist.append({
+                'action': 'remove_replace_model',
+                'model': model,
+                'source': source,
+                'rationale': rationale[:200],
+                'applied_at': now,
+                'applied_iso': iso,
+            })
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_llm_routing_cache()
+            return True, f'removed {model} (now {len(replace)} models)'
+    except Exception as e:
+        return False, f'remove_model_exception:{str(e)[:80]}'
+
+
+def reset_deepseek_usage_stats(source: str = 'sir_cli',
+                                rationale: str = '') -> Tuple[bool, str]:
+    """CLI 清零 usage stats (Sir 充值新一轮后 reset 计数)."""
+    try:
+        path = _llm_routing_vocab_path()
+        with _LLM_ROUTING_LOCK:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if not data:
+                return False, 'vocab missing'
+            old_est = float(data.get('usage_stats', {}).get('est_cost_usd', 0.0))
+            data['usage_stats'] = {
+                'call_count': 0, 'success_count': 0, 'fallback_count': 0,
+                'input_tokens_total': 0, 'output_tokens_total': 0,
+                'est_cost_usd': 0.0,
+                'first_call_ts': 0.0, 'first_call_iso': '',
+                'last_call_ts': 0.0, 'last_call_iso': '', 'last_error': '',
+                'per_caller': {},
+            }
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            hist = data.setdefault('history', [])
+            hist.append({
+                'action': 'reset_usage_stats',
+                'old_est_cost_usd': old_est,
+                'source': source,
+                'rationale': rationale[:200],
+                'applied_at': now,
+                'applied_iso': iso,
+            })
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_llm_routing_cache()
+            return True, f'reset (old est=${old_est:.4f})'
+    except Exception as e:
+        return False, f'reset_usage_exception:{str(e)[:80]}'
+
+
+# ============================================================================
+# 🆕 [Sir 2026-05-28 fix46] Thinking-brain selective DeepSeek routing
+# ============================================================================
+# fix45 接力: 思考脑 (jarvis_inner_thought_daemon._call_llm) 大多数 tick 走
+# gemini-3-flash-preview (Google 直 API, ~$15/月), 但深度推理 tick 选择性走
+# safe_deepseek_call (fix45 基础设施 + 17 USD OPENROUTER_DS_ONLY budget).
+#
+# 4 类 trigger (any truthy → 走 ds): tick_origins / categories / salience /
+# prompt_size. 持久化 memory_pool/thinking_brain_ds_trigger_vocab.json,
+# Sir CLI scripts/thinking_brain_ds_dump.py 可改.
+#
+# 双层 gate (准则 7 元否决):
+#   1. fix45 llm_routing_vocab.enabled=0 → 全停 (含本 routing)
+#   2. 本 vocab.enabled=0 → 只停思考脑, fix45 6 reflector 仍走 ds
+#
+# rate_limit 防爆: hourly (3) + daily (30) cap. 触顶 → fallback flash.
+#
+# 故障开放 3 层: ① DS_ONLY key 缺失 → False ② ds 调用失败 + fallback → fall through
+# 老 LlmReflector.reflect(flash) ③ vocab 加载异常 → _DEFAULT (enabled=0).
+#
+# 设计 + 4 问筛: docs/JARVIS_PYTHON_STYLE.md §6.5 stateful vocab 范式.
+# ============================================================================
+
+_THINKING_BRAIN_DS_VOCAB_PATH = os.path.join(
+    'memory_pool', 'thinking_brain_ds_trigger_vocab.json',
+)
+_THINKING_BRAIN_DS_CACHE: dict = {'data': None, 'mtime': 0.0, 'last_check': 0.0}
+_THINKING_BRAIN_DS_CACHE_TTL_S = 5.0
+_THINKING_BRAIN_DS_LOCK = threading.RLock()  # 🆕 [Sir 2026-05-28 21:45 fix48 真痛追根] RLock 防自我死锁: _record_thinking_brain_routing 在持锁状态下调 invalidate_thinking_brain_ds_cache() → 后者又 acquire 同把 lock → 普通 Lock 不可重入 → InnerThoughtDaemon thread 真死锁 (py-spy 51892 验证). RLock 同 thread 重入 OK, 改 1 字符根治.
+
+# fallback (vocab load fail → daemon 不崩, 直接 disable routing)
+_THINKING_BRAIN_DS_DEFAULT: dict = {
+    'schema_version': 1,
+    'enabled': 0,
+    'triggers': {
+        'tick_origins': {'list': []},
+        'categories': {'list': []},
+        'salience_threshold': {'value': 1.0},
+        'prompt_size_threshold': {'value': 999999},
+    },
+    'rate_limit': {
+        'max_calls_per_hour': 0,
+        'max_calls_per_day': 0,
+        '_recent_call_ts': [],
+        '_today_date': '',
+        '_today_count': 0,
+    },
+    'fallback_on_fail': 1,
+    'timeout_s': 25,
+    'usage_stats': {},
+    'history': [],
+}
+
+
+def _thinking_brain_ds_vocab_path() -> str:
+    """允许 testcase override path via env."""
+    return os.environ.get(
+        'JARVIS_THINKING_BRAIN_DS_VOCAB_PATH',
+        _THINKING_BRAIN_DS_VOCAB_PATH,
+    )
+
+
+def _load_thinking_brain_ds_vocab() -> dict:
+    """mtime cache 5s 读 vocab. 故障 → _DEFAULT (enabled=0)."""
+    path = _thinking_brain_ds_vocab_path()
+    now = time.time()
+    with _THINKING_BRAIN_DS_LOCK:
+        if (
+            _THINKING_BRAIN_DS_CACHE['data'] is not None
+            and now - _THINKING_BRAIN_DS_CACHE['last_check'] < _THINKING_BRAIN_DS_CACHE_TTL_S
+        ):
+            return _THINKING_BRAIN_DS_CACHE['data']
+        try:
+            mtime = os.path.getmtime(path) if os.path.exists(path) else 0.0
+        except OSError:
+            mtime = 0.0
+        if (
+            _THINKING_BRAIN_DS_CACHE['data'] is not None
+            and mtime == _THINKING_BRAIN_DS_CACHE['mtime']
+        ):
+            _THINKING_BRAIN_DS_CACHE['last_check'] = now
+            return _THINKING_BRAIN_DS_CACHE['data']
+        try:
+            if not os.path.exists(path):
+                _THINKING_BRAIN_DS_CACHE['data'] = dict(_THINKING_BRAIN_DS_DEFAULT)
+                _THINKING_BRAIN_DS_CACHE['mtime'] = 0.0
+                _THINKING_BRAIN_DS_CACHE['last_check'] = now
+                return _THINKING_BRAIN_DS_CACHE['data']
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = dict(_THINKING_BRAIN_DS_DEFAULT)
+            _THINKING_BRAIN_DS_CACHE['data'] = data
+            _THINKING_BRAIN_DS_CACHE['mtime'] = mtime
+            _THINKING_BRAIN_DS_CACHE['last_check'] = now
+            return data
+        except Exception:
+            _THINKING_BRAIN_DS_CACHE['data'] = dict(_THINKING_BRAIN_DS_DEFAULT)
+            _THINKING_BRAIN_DS_CACHE['mtime'] = mtime
+            _THINKING_BRAIN_DS_CACHE['last_check'] = now
+            return _THINKING_BRAIN_DS_CACHE['data']
+
+
+def invalidate_thinking_brain_ds_cache() -> None:
+    """CLI mutation 后立刻失效, 下次读重新 load."""
+    with _THINKING_BRAIN_DS_LOCK:
+        _THINKING_BRAIN_DS_CACHE['data'] = None
+        _THINKING_BRAIN_DS_CACHE['mtime'] = 0.0
+        _THINKING_BRAIN_DS_CACHE['last_check'] = 0.0
+
+
+def _check_thinking_brain_rate_limit(vocab: dict) -> Tuple[bool, str]:
+    """检查 hourly + daily rate_limit (sliding window + date counter).
+
+    返 (True, '') 或 (False, 'rate_limit_hour'|'rate_limit_day').
+    NOTE: 不 mutate vocab — 单纯只读判断. _record_thinking_brain_routing
+    在 ds_routed=True 时 mutate _recent_call_ts + _today_count.
+    """
+    rl = vocab.get('rate_limit', {})
+    now = time.time()
+    today_str = time.strftime('%Y-%m-%d', time.localtime(now))
+    # daily: 日期换了 → 视为 0
+    today_count = 0
+    if rl.get('_today_date', '') == today_str:
+        today_count = int(rl.get('_today_count', 0))
+    max_day = int(rl.get('max_calls_per_day', 0))
+    if max_day > 0 and today_count >= max_day:
+        return False, 'rate_limit_day'
+    # hourly: 1h sliding window
+    cutoff = now - 3600.0
+    recent = [t for t in rl.get('_recent_call_ts', []) if isinstance(t, (int, float)) and t >= cutoff]
+    max_hour = int(rl.get('max_calls_per_hour', 0))
+    if max_hour > 0 and len(recent) >= max_hour:
+        return False, 'rate_limit_hour'
+    return True, ''
+
+
+def should_route_thinking_to_ds(ctx: dict) -> Tuple[bool, str]:
+    """思考脑 _call_llm 顶部调. ctx = {
+        'tick_origin': str (e.g. 'saturation_force' / 'default' / 'llm_chosen'),
+        'last_thought_category': str (e.g. 'A_soul' / 'B_reflection' / 'C_observation'),
+        'last_thought_salience': float (0.0-1.0),
+        'prompt_size': int (system + user prompt 字符数),
+    }
+
+    返 (True, '<trigger_name>') → 走 ds. e.g. 'tick_origin:saturation_force'
+    返 (False, '<skip_reason>') → 走老 flash. e.g. 'no_trigger' / 'rate_limit_hour'
+
+    skip_reason enum: 'fix45_gate_off' / 'no_ds_key' / 'thinking_gate_off' /
+                       'no_trigger' / 'rate_limit_hour' / 'rate_limit_day' / 'error:...'
+    """
+    try:
+        # 1. fix45 全局 gate (准则 7 元否决一键关 全部)
+        fix45_vocab = _load_llm_routing_vocab()
+        if int(fix45_vocab.get('enabled', 0)) == 0:
+            return False, 'fix45_gate_off'
+        # 2. DS_ONLY key 检查 (fix45 layer 1 故障开放)
+        ds_key = os.environ.get('OPENROUTER_DS_ONLY', '').strip()
+        if not ds_key or ds_key == 'REPLACE_ME_OPTIONAL':
+            return False, 'no_ds_key'
+        # 3. 思考脑专用 vocab gate
+        vocab = _load_thinking_brain_ds_vocab()
+        if int(vocab.get('enabled', 0)) == 0:
+            return False, 'thinking_gate_off'
+        # 4. predicate eval (4 类 trigger, any truthy → ds)
+        triggers = vocab.get('triggers', {})
+        tick_origin = str(ctx.get('tick_origin', '') or '')
+        tick_origin_list = triggers.get('tick_origins', {}).get('list', []) or []
+        if tick_origin and tick_origin in tick_origin_list:
+            matched = f'tick_origin:{tick_origin}'
+        else:
+            cat = str(ctx.get('last_thought_category', '') or '')
+            cat_list = triggers.get('categories', {}).get('list', []) or []
+            if cat and cat in cat_list:
+                matched = f'category:{cat}'
+            else:
+                sal = float(ctx.get('last_thought_salience', 0) or 0)
+                sal_thr = float(
+                    triggers.get('salience_threshold', {}).get('value', 1.0)
+                )
+                if sal >= sal_thr:
+                    matched = f'salience:{sal:.2f}>={sal_thr:.2f}'
+                else:
+                    psize = int(ctx.get('prompt_size', 0) or 0)
+                    psize_thr = int(
+                        triggers.get('prompt_size_threshold', {}).get('value', 999999)
+                    )
+                    if psize >= psize_thr:
+                        matched = f'prompt_size:{psize}>={psize_thr}'
+                    else:
+                        return False, 'no_trigger'
+        # 5. rate_limit
+        rl_ok, rl_reason = _check_thinking_brain_rate_limit(vocab)
+        if not rl_ok:
+            return False, rl_reason
+        return True, matched
+    except Exception as e:
+        return False, f'error:{str(e)[:60]}'
+
+
+def _record_thinking_brain_routing(routed: bool, trigger: str = '',
+                                    success: bool = True, fallback: bool = False,
+                                    skip_reason: str = '',
+                                    format_invalid: bool = False) -> None:
+    """Atomic write usage_stats + tick_total + per-skip / per-trigger breakdown.
+    routed=True 时同步 advance rate_limit window (_recent_call_ts append + _today_count++).
+
+    format_invalid=True (🆕 Sir 2026-05-28 21:20 fix47 件 2.1): DS 返 raw 但缺
+    <CATEGORY>/<SALIENCE> XML tag (DS-v4-pro schema 顺从性弱) → ds_format_invalid++
+    + ds_fallback++ (caller 视作 fail → fall through flash). 长期 > 0 → prompt
+    加强或 Sir 关 fix46 gate.
+
+    故障静默 (不阻塞思考脑 tick).
+    """
+    try:
+        path = _thinking_brain_ds_vocab_path()
+        with _THINKING_BRAIN_DS_LOCK:
+            data = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            stats = data.setdefault('usage_stats', {})
+            stats['tick_total'] = int(stats.get('tick_total', 0)) + 1
+            if routed:
+                stats['ds_routed'] = int(stats.get('ds_routed', 0)) + 1
+                stats['last_routed_at'] = now
+                stats['last_routed_iso'] = iso
+                stats['last_routed_trigger'] = trigger
+                if success:
+                    stats['ds_success'] = int(stats.get('ds_success', 0)) + 1
+                if fallback:
+                    stats['ds_fallback'] = int(stats.get('ds_fallback', 0)) + 1
+                if format_invalid:
+                    stats['ds_format_invalid'] = int(
+                        stats.get('ds_format_invalid', 0)
+                    ) + 1
+                    stats['last_format_invalid_at'] = now
+                    stats['last_format_invalid_iso'] = iso
+                # trigger_breakdown
+                tb = stats.setdefault('trigger_breakdown', {})
+                trig_type = (trigger.split(':', 1)[0] if ':' in trigger else trigger) or 'unknown'
+                tb[trig_type] = int(tb.get(trig_type, 0)) + 1
+                # rate_limit window advance
+                rl = data.setdefault('rate_limit', {})
+                rl_recent = rl.setdefault('_recent_call_ts', [])
+                rl_recent.append(now)
+                cutoff = now - 3600.0
+                rl['_recent_call_ts'] = [t for t in rl_recent if isinstance(t, (int, float)) and t >= cutoff]
+                today_str = time.strftime('%Y-%m-%d', time.localtime(now))
+                if rl.get('_today_date', '') == today_str:
+                    rl['_today_count'] = int(rl.get('_today_count', 0)) + 1
+                else:
+                    rl['_today_date'] = today_str
+                    rl['_today_count'] = 1
+            else:
+                stats['last_skipped_reason'] = skip_reason
+                key_map = {
+                    'fix45_gate_off': 'ds_skipped_fix45_gate',
+                    'no_ds_key': 'ds_skipped_no_key',
+                    'thinking_gate_off': 'ds_skipped_thinking_gate',
+                    'no_trigger': 'ds_skipped_no_trigger',
+                    'rate_limit_hour': 'ds_skipped_rate_limit_hour',
+                    'rate_limit_day': 'ds_skipped_rate_limit_day',
+                }
+                k = key_map.get(skip_reason)
+                if k:
+                    stats[k] = int(stats.get(k, 0)) + 1
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_thinking_brain_ds_cache()
+    except Exception:
+        pass  # 故障静默, 不阻塞思考脑
+
+
+def _thinking_brain_ds_atomic_mutate(
+    action: str, mutator_fn, source: str = 'sir_cli', rationale: str = '',
+) -> Tuple[bool, str]:
+    """通用 mutation helper — 读 vocab, 跑 mutator_fn(data) → (ok, msg, extra),
+    atomic write + history append + cache invalidate.
+
+    mutator_fn signature: (data: dict) -> Tuple[bool, str, dict]
+        - 返 (True, msg, extra_history_fields) 写盘
+        - 返 (False, msg, {}) 不写
+    """
+    try:
+        path = _thinking_brain_ds_vocab_path()
+        with _THINKING_BRAIN_DS_LOCK:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            if not data:
+                return False, 'vocab missing'
+            ok, msg, extra = mutator_fn(data)
+            if not ok:
+                return False, msg
+            now = time.time()
+            iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))
+            hist = data.setdefault('history', [])
+            hist_entry = {
+                'action': action,
+                'source': source,
+                'rationale': (rationale or '')[:200],
+                'applied_at': now,
+                'applied_iso': iso,
+            }
+            if isinstance(extra, dict):
+                hist_entry.update(extra)
+            hist.append(hist_entry)
+            data['last_modified_at'] = now
+            data['last_modified_iso'] = iso
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            invalidate_thinking_brain_ds_cache()
+            return True, msg
+    except Exception as e:
+        return False, f'mutate_exception:{str(e)[:80]}'
+
+
+def set_thinking_brain_ds_gate(enabled: bool, source: str = 'sir_cli',
+                                rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        old = int(data.get('enabled', 0))
+        new = 1 if enabled else 0
+        if old == new:
+            return False, f'gate already {"on" if new else "off"}', {}
+        data['enabled'] = new
+        return True, f'gate {"on" if new else "off"} (was {"on" if old else "off"})', {
+            'old_value': old, 'new_value': new,
+        }
+    return _thinking_brain_ds_atomic_mutate('gate_toggle', _mut, source, rationale)
+
+
+def add_thinking_brain_tick_origin(origin: str, source: str = 'sir_cli',
+                                    rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        lst = data.setdefault('triggers', {}).setdefault('tick_origins', {}).setdefault('list', [])
+        if origin in lst:
+            return False, f'{origin} already in list', {}
+        lst.append(origin)
+        return True, f'added tick_origin {origin} (now {len(lst)})', {
+            'tick_origin': origin,
+        }
+    return _thinking_brain_ds_atomic_mutate('add_tick_origin', _mut, source, rationale)
+
+
+def remove_thinking_brain_tick_origin(origin: str, source: str = 'sir_cli',
+                                       rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        lst = data.setdefault('triggers', {}).setdefault('tick_origins', {}).setdefault('list', [])
+        if origin not in lst:
+            return False, f'{origin} not in list', {}
+        lst.remove(origin)
+        return True, f'removed tick_origin {origin} (now {len(lst)})', {
+            'tick_origin': origin,
+        }
+    return _thinking_brain_ds_atomic_mutate('remove_tick_origin', _mut, source, rationale)
+
+
+def add_thinking_brain_category(category: str, source: str = 'sir_cli',
+                                 rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        lst = data.setdefault('triggers', {}).setdefault('categories', {}).setdefault('list', [])
+        if category in lst:
+            return False, f'{category} already in list', {}
+        lst.append(category)
+        return True, f'added category {category} (now {len(lst)})', {
+            'category': category,
+        }
+    return _thinking_brain_ds_atomic_mutate('add_category', _mut, source, rationale)
+
+
+def remove_thinking_brain_category(category: str, source: str = 'sir_cli',
+                                    rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        lst = data.setdefault('triggers', {}).setdefault('categories', {}).setdefault('list', [])
+        if category not in lst:
+            return False, f'{category} not in list', {}
+        lst.remove(category)
+        return True, f'removed category {category} (now {len(lst)})', {
+            'category': category,
+        }
+    return _thinking_brain_ds_atomic_mutate('remove_category', _mut, source, rationale)
+
+
+def set_thinking_brain_sal_threshold(value: float, source: str = 'sir_cli',
+                                      rationale: str = '') -> Tuple[bool, str]:
+    if not (0.0 <= value <= 1.0):
+        return False, f'invalid sal threshold {value} (must 0.0-1.0)'
+
+    def _mut(data):
+        old = float(data.setdefault('triggers', {}).setdefault(
+            'salience_threshold', {}).get('value', 1.0))
+        data['triggers']['salience_threshold']['value'] = float(value)
+        return True, f'sal_threshold {old:.2f} → {value:.2f}', {
+            'old_value': old, 'new_value': float(value),
+        }
+    return _thinking_brain_ds_atomic_mutate('set_sal_threshold', _mut, source, rationale)
+
+
+def set_thinking_brain_prompt_threshold(value: int, source: str = 'sir_cli',
+                                         rationale: str = '') -> Tuple[bool, str]:
+    if value < 0:
+        return False, f'invalid prompt threshold {value} (must >= 0)'
+
+    def _mut(data):
+        old = int(data.setdefault('triggers', {}).setdefault(
+            'prompt_size_threshold', {}).get('value', 999999))
+        data['triggers']['prompt_size_threshold']['value'] = int(value)
+        return True, f'prompt_size_threshold {old} → {value}', {
+            'old_value': old, 'new_value': int(value),
+        }
+    return _thinking_brain_ds_atomic_mutate('set_prompt_threshold', _mut, source, rationale)
+
+
+def set_thinking_brain_rate_limit(hourly: Optional[int] = None,
+                                   daily: Optional[int] = None,
+                                   source: str = 'sir_cli',
+                                   rationale: str = '') -> Tuple[bool, str]:
+    if hourly is None and daily is None:
+        return False, 'must provide hourly or daily'
+    if hourly is not None and hourly < 0:
+        return False, f'invalid hourly {hourly}'
+    if daily is not None and daily < 0:
+        return False, f'invalid daily {daily}'
+
+    def _mut(data):
+        rl = data.setdefault('rate_limit', {})
+        msgs = []
+        extra = {}
+        if hourly is not None:
+            old_h = int(rl.get('max_calls_per_hour', 0))
+            rl['max_calls_per_hour'] = int(hourly)
+            msgs.append(f'hourly {old_h}→{hourly}')
+            extra['old_hourly'] = old_h
+            extra['new_hourly'] = int(hourly)
+        if daily is not None:
+            old_d = int(rl.get('max_calls_per_day', 0))
+            rl['max_calls_per_day'] = int(daily)
+            msgs.append(f'daily {old_d}→{daily}')
+            extra['old_daily'] = old_d
+            extra['new_daily'] = int(daily)
+        return True, ', '.join(msgs), extra
+    return _thinking_brain_ds_atomic_mutate('set_rate_limit', _mut, source, rationale)
+
+
+def set_thinking_brain_max_tokens(value: int, source: str = 'sir_cli',
+                                    rationale: str = '') -> Tuple[bool, str]:
+    """🆕 [Sir 2026-05-28 21:20 fix47 件 1] vocab.max_tokens setter.
+
+    Override fix45 vocab.deepseek_route.max_tokens_default=600 (老值致思考脑
+    输出被截 ~19%). 思考脑 prompt 要 10+ XML tag, 平均 70 tok/tag → 1500 留
+    余地. Sir CLI 可调 (e.g. DS-v5 schema 顺从性改善后下调省 budget).
+    """
+    if value < 100 or value > 8000:
+        return False, f'invalid max_tokens {value} (expect 100-8000)'
+
+    def _mut(data):
+        old = int(data.get('max_tokens', 1500))
+        data['max_tokens'] = int(value)
+        return True, f'max_tokens {old} → {value}', {
+            'old_value': old, 'new_value': int(value),
+        }
+    return _thinking_brain_ds_atomic_mutate('set_max_tokens', _mut, source, rationale)
+
+
+def reset_thinking_brain_ds_usage_stats(source: str = 'sir_cli',
+                                         rationale: str = '') -> Tuple[bool, str]:
+    def _mut(data):
+        old_routed = int(data.get('usage_stats', {}).get('ds_routed', 0))
+        data['usage_stats'] = {
+            'tick_total': 0, 'ds_routed': 0,
+            'ds_skipped_fix45_gate': 0, 'ds_skipped_no_key': 0,
+            'ds_skipped_thinking_gate': 0, 'ds_skipped_no_trigger': 0,
+            'ds_skipped_rate_limit_hour': 0, 'ds_skipped_rate_limit_day': 0,
+            'ds_success': 0, 'ds_fallback': 0,
+            'trigger_breakdown': {
+                'tick_origin': 0, 'category': 0, 'salience': 0, 'prompt_size': 0,
+            },
+            'last_routed_at': '', 'last_routed_iso': '',
+            'last_routed_trigger': '', 'last_skipped_reason': '',
+        }
+        # 也清零 rate_limit window (Sir 充值/新一轮)
+        rl = data.setdefault('rate_limit', {})
+        rl['_recent_call_ts'] = []
+        rl['_today_date'] = ''
+        rl['_today_count'] = 0
+        return True, f'reset (old ds_routed={old_routed})', {
+            'old_ds_routed': old_routed,
+        }
+    return _thinking_brain_ds_atomic_mutate('reset_usage', _mut, source, rationale)
+
+
+def get_thinking_brain_ds_stats() -> dict:
+    """读 vocab + computed stats (for CLI list / dashboard)."""
+    try:
+        vocab = _load_thinking_brain_ds_vocab()
+        fix45_vocab = _load_llm_routing_vocab()
+        ds_key = os.environ.get('OPENROUTER_DS_ONLY', '').strip()
+        rl = vocab.get('rate_limit', {})
+        now = time.time()
+        cutoff = now - 3600.0
+        recent_n = len([
+            t for t in rl.get('_recent_call_ts', [])
+            if isinstance(t, (int, float)) and t >= cutoff
+        ])
+        today_str = time.strftime('%Y-%m-%d', time.localtime(now))
+        today_n = int(rl.get('_today_count', 0)) if rl.get('_today_date') == today_str else 0
+        return {
+            'enabled_thinking': int(vocab.get('enabled', 0)),
+            'enabled_fix45': int(fix45_vocab.get('enabled', 0)),
+            'ds_key_present': bool(ds_key and ds_key != 'REPLACE_ME_OPTIONAL'),
+            'triggers': vocab.get('triggers', {}),
+            'rate_limit_config': {
+                'max_calls_per_hour': int(rl.get('max_calls_per_hour', 0)),
+                'max_calls_per_day': int(rl.get('max_calls_per_day', 0)),
+            },
+            'rate_limit_current': {
+                'hourly_used': recent_n,
+                'daily_used': today_n,
+                'today_date': rl.get('_today_date', ''),
+            },
+            'usage_stats': vocab.get('usage_stats', {}),
+            'fallback_on_fail': int(vocab.get('fallback_on_fail', 1)),
+            'timeout_s': int(vocab.get('timeout_s', 25)),
+            'last_modified_iso': vocab.get('last_modified_iso', ''),
+            'vocab_path': _thinking_brain_ds_vocab_path(),
+        }
+    except Exception as e:
+        return {'error': str(e)[:120]}
 
 
 def create_genai_client_old(api_key=None, model_name='gemini-2.5-flash'):
