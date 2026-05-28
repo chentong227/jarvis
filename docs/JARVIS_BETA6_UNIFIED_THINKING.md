@@ -366,6 +366,40 @@ OUTPUT (XML tags, all required except SPEAK_*):
 
 **验证**: ProactiveCare 不再 fire 自己的 nudge, 全由思考脑决.
 
+#### Phase 2 治本 sub-step (Sir 2026-05-28 17:14 真意 — anchor commit `23134d8`)
+
+> Sir 17:14 真意: "除了归来招呼和我设置的定时提醒走强制性编码唤醒, 其他的所
+> 有模块都集成到思考链, 把思考链给主脑让主脑演的像他一直存在, 因为他知道他
+> 之前在想什么, 运行了多久, 什么的."
+
+**目标**: 把主脑 prompt 端 lifetime + thinking directive 的**独立 push** 退化
+到 **Layer 1.6 voice block 内部聚合呈现**. 主脑只读 Layer 1.6 一处即看到完整
+"思考链" (lifetime + 之前的想法 + 思考脑现在建议).
+
+**改 files**:
+- `jarvis_central_nerve.py`:
+  - `_build_layer_1b_inner_thoughts_block` (Layer 1.5) 退化 stub 永返 `''`
+  - `_build_layer_1d_thinking_directive_block` (Layer 1.7) 退化 stub 永返 `''`
+  - `_build_layer_1c_inner_voice_block` (Layer 1.6) 传 daemon + prompt_tier 给 voice block
+- `jarvis_inner_voice_track.py`:
+  - `build_prompt_block_for_brain` 加 daemon + prompt_tier 参数
+  - 顶部按 vocab tier_mode 聚合 `daemon.build_lifetime_block`
+  - 紧接聚合 `daemon.build_should_speak_directive`
+  - 再下 SPOTLIGHT (★ wants_voice pending) + L1/L2/L3 voice digest
+
+**保留**:
+- `daemon.build_lifetime_block` / `daemon.build_should_speak_directive` 仍是 source of truth (不删 method)
+- Layer 1.5/1.7 method 保留 backward compat (永返 `''` 不影响 `_assemble_prompt` 拼接)
+- `_assemble_prompt` 拼接段 `if l15/l17: append` 保留 (永空, dead path, 但 backward compat 保险)
+
+**testcase**:
+- `tests/_test_fix15_*.py` P3 调整反映 stub 契约 (永返 `''`)
+- `tests/_test_fix37_*.py` 新加 8 testcase 端到端验聚合架构 (8/8 通过)
+
+**验证**: 主脑只读 Layer 1.6 voice block 一处即看到完整思考链 (lifetime + thoughts + spotlight + thinking directive). 准则 6 决策集中主脑 + 准则 8 优雅可持续维护.
+
+**防回退 anchor**: fix15 P3 + fix37 守 stub 契约 + 端到端聚合. 如 Layer 1.5/1.7 重新返非空 → 说明有人误恢复独立 push 老路径 (违反 Sir β.6 真意), 删它.
+
 ### Phase 3 — Conductor + WellnessDaemon + SmartNudgeDaemon 砍
 
 **目标**: 3 daemon reflect 砍, 退化 publish-only 或整个删.
