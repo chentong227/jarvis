@@ -1,5 +1,319 @@
 ﻿# Jarvis TODO
 
+> 🆕 **2026-05-29 00:00 — 思考脑 = Governor (Sir vision 完整版 design doc) PENDING SIR VERDICT** (准则 6 + β.6 Phase Final)
+>
+> ## 缘起
+> Sir 真测 80min log (22:00-23:35), 22+ 次重复思考 "stale sleep" + 20+ 次重复 "ProactiveCare 重推" + 7 个同义 protocol propose + bloat 警告 protocol=29 joke=30. Sir 真痛: "重复思考过于严重, '放下'元能力一直没立".
+>
+> ## 谈话 1.5h 演化
+> 1. 4 缺口诊断: `recent_thoughts[:3]` 窗口太窄 / 心声给思考脑过滤自家 thought / B 类 self-reflection publish-only 闭环没闭 / propose dedup soft hint 无 hard enforce
+> 2. 我提"三脑独立元大脑" → Sir 反对 (token 翻倍)
+> 3. Sir 真意定向: **思考脑就是元大脑, 我最早设计就是让思考脑干这事** (V1-V6 共 6 点愿景, 原话 anchor)
+> 4. Sir 强调心流 log 复用 (Jarvis 已有"日记本", 现状人为剥离了思考脑视野)
+> 5. Sir 强调元学习闭环 (主脑用旧 directive 说错 → Sir 反应 → 强制唤醒思考脑 → 重组 directive)
+> 6. 我补 6 工程点 (紧急中断 + fast path 不阻塞 + 元学习 + evidence 维度化 + 红线 + idle first-class)
+> 7. Sir 拍 "现在完整写 design, 不要工程误差, 100% 描述今晚架构和功能"
+>
+> ## design doc
+> `docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md` — Sir vision V1-V6 + 我补 E1-E6 + 4 缺口 + 7 修缮点 (F1-F7) + 4 测试 phase + 迁移路径 + 反对方向 + 准则 1-8 映射 + 4 问筛查
+>
+> ## 修缮汇总 (~400 行代码, ~10-15% token 增)
+>
+> | # | 文件 | 改 | Token | Sir vision |
+> |---|---|---|---|---|
+> | F1 | `jarvis_inner_thought_daemon.py:2782` | 1 行删 (心声不过滤自家 thought) | +100 | 缺口 ② |
+> | F2 | `jarvis_inner_thought_daemon.py:1728` + pacing vocab | ~10 行 (recent_thoughts 30min 窗口可调) | +200 | 缺口 ① + V1 长视野 |
+> | F3 | `jarvis_inner_thought_daemon.py:2774` 后 | ~30 行 (topic distribution hint) | +50 | E4 evidence 维度化 |
+> | F4 | `jarvis_inner_voice_track.py` + aging vocab + CLI | ~80 行 (topic_repeat ageing → let_go 自动) | 0 | V5 自决放权重 / 放下元能力 |
+> | F5 | actionable handler | ~30 行 (python jaccard hard guard) | 0 | 缺口 ④ |
+> | F6 | `chat_bypass.py` + 新 channel + reply hook | ~80 行 (元学习 meta_feedback_loop) | +50 | 缺口 ③ + V6 元学习 |
+> | F7 | actionable + chat_bypass injection | ~50 行 (思考脑装 directive 写心声 channel, 主脑读) | 0 | V5 装配 prompt |
+>
+> ## Phase 1-4 迁移
+>
+> - Phase 1 (~1 周): F1+F2+F3+F6改1+改2 (基础 — 释放心流 log 给思考脑全用)
+> - Phase 2 (~1-2 周): F4+F5 (放下元能力 + jaccard guard)
+> - Phase 3 (~1-2 周): F6改3+F7 (元学习闭环 + directive 装配, 改主脑路径)
+> - Phase 4 (~1 周): E1+E5 (紧急通路 + 红线 vocab)
+>
+> ## 准则 6 — 4 问筛查 (全 ✅)
+>
+> | # | 答 |
+> |---|---|
+> | 1 publish SWM? | ✅ 紧急 event + actionable_result + 元学习反馈全 publish |
+> | 2 LLM 决策? | ✅ LLM 自决 `<LET_GO>` / `<TICK_DECISION>idle` / `compose_main_brain_directive`, python 只 enforce vocab 阈值 |
+> | 3 持久化 + CLI? | ✅ 4 vocab JSON + 4 CLI (let_go_dump / red_lines_dump / pacing_dump / inner_voice_aging_dump) |
+> | 4 正交? | ✅ 0 新 daemon, 0 新 LLM call. 复用思考脑 LLM + 心声框架 + 心声 ageing |
+>
+> ## 待 Sir 拍板
+>
+> 1. ✅ 接受 design → Phase 1 开工 (F1 改 1 行 + 1 个 regression test, ~30min)
+> 2. ⚠️ 调点 → 改 doc
+> 3. ❌ 反对 → 重谈
+>
+> Sir 拍板时 anchor 时刻 + verdict 写 doc 顶部.
+>
+> 详 `docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md`.
+>
+> ---
+
+> 🆕 **2026-05-28 23:55 — fix50 Screen Watch (Vague Clarify + Active Backfill + Mirror 6 Scenarios) DONE** (准则 5+6+8)
+>
+> ## 背景
+> Sir 23:36 真痛 (原话):
+> > "我最需要的就是让他盯着直播, 直播发生什么画面提醒我, 或者让他盯着你, 你出现 API
+> >  限速提醒我之类的这种."
+>
+> 摸底发现 — `jarvis_screen_vision.py` (Gemini Vision describe) + `jarvis_watch_task.py`
+> (β.5.46-fix13 Registrar+Judge+daemon) + fix49 mirror **都有**, 但 5 个缺口:
+> 1. Registrar 不处理 vague request ('盯一下' 没说具体 X → 系统装答应但没真注册, 违 §5)
+> 2. 主脑 prompt 看不到 vague 请求 → 不主动澄清
+> 3. active WatchTask 期间 vision 仍 5min backfill → fire 延迟可 5min
+> 4. vague phrases 写死 .py (违 §6 持久化)
+> 5. Mirror 没法注入 fake screen → Cascade 测不了 4 类视觉场景
+>
+> ## 治本方案 (5 改动 + 6 mirror 场景)
+>
+> | # | 件 | 路径 | 说明 |
+> |---|---|---|---|
+> | 1 | vocab 持久化 | `memory_pool/watch_task_config.json` | + `vague_trigger_phrases_zh/en` (15+8) + `vague_clarify` config + `vision_refresh_advice` config |
+> | 2 | Registrar vague branch | `jarvis_watch_task.py` | `_REGISTRAR_PROMPT` 三分类 (concrete/vague/not_a_watch) + `_has_vague_phrase` 兜底 + `_publish_vague_clarify` SWM + `render_vague_clarify_block` helper + `_load_*` 默认参数 runtime resolve (测试友好) |
+> | 3 | 主脑 prompt 注入 | `jarvis_central_nerve.py:3739-3762` | `_assemble_prompt` 接 `render_vague_clarify_block` (跟 fail/active block 同 try/except, light tier 跳) |
+> | 4 | InnerThought tick + ScreenVision 提频 | `jarvis_inner_thought_daemon.py` + `jarvis_screen_vision.py` | tick 顶 `_check_active_watch_task_and_publish_vision_refresh` publish SWM advice (dedup 5s); daemon `_compute_effective_backfill_s` 听 advice 临时 5min → 30s |
+> | 5 | Mirror screen mock | `jarvis_mirror_mode.py` + `jarvis_screen_vision.py` | `get_mirror_screen_path` / `read_latest_mirror_screen` (mtime cache) / `append_mirror_screen`; `_do_describe` 顶 mirror fake gate + `_do_describe_from_fake` 跳过截图+vision LLM 直接构 ScreenSnapshot 走持久化+publish+judge 全链 |
+> | 6 | CLI | `scripts/watch_task_dump.py` | + `vague-phrases` subcommand (list/add-zh/add-en/remove) |
+> | 7 | Mirror 注入 CLI | `scripts/jarvis_mirror_screen.py` 新 | CLI 参数 / JSON file / --clear 三模式注入 fake snapshot |
+> | 8 | 6 场景一键跑 | `scripts/jarvis_mirror_run_screen_scenarios.py` 新 | E/F (Sir P0 真用例 直播+限速) + A-D (P1 文字/图标/图形/图像) |
+> | 9 | testcase | `tests/_test_fix50_sir_20260528_screen_watch_clarify.py` | **39 pass**: vocab / Registrar 7 branch / vague_clarify SWM / render block / inner_thought tick / ScreenVision backfill / mirror screen 8 case / CLI smoke |
+> | 10 | 文档 | `docs/JARVIS_SCREEN_WATCH_DESIGN.md` | 5 改动 + 4 问筛查 + 6 场景方案 + Sir CLI 用法 + 边界 (音频/多屏/采样间隔) |
+>
+> ## Sir 真测命令 (mirror 6 场景 ~10 min, ~$0.05 LLM)
+>
+> ```powershell
+> # 1. 另开窗启 mirror (~15s)
+> python scripts/jarvis_mirror.py --task "fix50 6 screen scenarios"
+>
+> # 2. 等 mirror init 完
+> python scripts/jarvis_mirror_tail.py --event mirror_voice_worker_started --limit 1
+>
+> # 3. 跑全 6 场景 (~10min) — 或 --scenarios E,F 只跑 Sir P0 真用例 (~3min)
+> python scripts/jarvis_mirror_run_screen_scenarios.py
+>
+> # 4. tail 另开窗看实时
+> python scripts/jarvis_mirror_tail.py --follow
+>
+> # 5. 完事清盘
+> taskkill /F /PID <mirror pid>
+> rmdir /S /Q "D:/jarvis_mirror_<ts>"
+> ```
+>
+> ## Sir 真改 vague vocab (准则 6 持久化, 不需改 .py + commit)
+>
+> ```powershell
+> python scripts/watch_task_dump.py vague-phrases                       # 查
+> python scripts/watch_task_dump.py vague-phrases --add-zh "守着"        # 加
+> python scripts/watch_task_dump.py vague-phrases --add-en "stay on"     # 加 en
+> python scripts/watch_task_dump.py vague-phrases --remove "守着"        # 删
+> ```
+>
+> ## 准则 6 — 4 问筛查 (合规)
+>
+> | # | 答 |
+> |---|---|
+> | 1 publish 进 SWM? | ✅ watch_task_vague_clarify + proactive_vision_refresh_advice + watch_task_fired (老) + mirror_screen_fake_applied (audit) |
+> | 2 决策让 LLM 做? | ✅ Registrar LLM 自判 vague/concrete (不 regex), 主脑 LLM 自由组织反问句, Judge LLM 真判 trigger 命中 |
+> | 3 持久化 + CLI 可改? | ✅ 4 类 config 入 `watch_task_config.json`, `scripts/watch_task_dump.py vague-phrases` CLI |
+> | 4 和已有 module 正交? | ✅ 复用 ScreenVision + WatchTask + InnerThought + Mirror, 0 新 sentinel/sensor |
+>
+> ## 边界 (准则 5 言出必行, 必须告诉 Sir)
+>
+> - ❌ 音频内容看不到 — 主播说啥/唱啥音频 Vision 抓不到, 字幕/口型/弹幕是间接 evidence
+> - ⚠️ 采样间隔 30s (default) — 瞬时事件 (< 30s) 可能错过, Sir 可改 `active_watch_backfill_s` 到 10s, token 3x
+> - ⚠️ 多屏副屏直播 — `ImageGrab.grab()` 默主屏, 多屏 enumeration 留 TODO
+> - ⚠️ Mirror 测软件链, 不测真截屏 + 真 vision LLM (Cascade 不能控制 Sir 真屏幕)
+>
+> ## ⚡ fix50.1 真测发现 (2026-05-29 00:09 Cascade 真跑 mirror 6 场景)
+>
+> Cascade 真跑 `D:/jarvis_mirror_20260529_000911` 6 场景 ~10min ~$0.05 LLM. 主体 mirror 全链 wire OK, 但暴露真因:
+>
+> **fix50.1 修 2 BUG (已 wire + 防回归 testcase pass)**:
+> 1. Registrar prompt 含 `jarvis_acknowledged` criterion → 主脑 pushback 让 LLM 误判 not_a_watch. 修: 加 `[IMPORTANT — judge BY SIR'S INTENT ONLY]` + `[JARVIS REPLY — context only, do not use as gate]`
+> 2. `_daemon_loop` 老 sleep(backfill_interval_s) 一觉 5min, advice publish 后 daemon 仍睡老周期. 修: `wait_s = min(eff, 30s)` reactive
+>
+> **真测改善 vs fix50 老**:
+> - F (限速): **POSITIVE ACK** "I shall keep a close watch on the Windsurf interface, Sir" (vs fix50 老 "outside my reach")
+> - A (build): 仍 POSITIVE ACK "I'll notify you the moment..."
+> - E/B/C/D: 主脑仍 pushback (主脑 prompt 没告诉它有 vision/watch 能力, fix50.2 待修)
+>
+> → 2/6 主脑 POSITIVE ACK (fix50 老 1/6). 但 0/6 mock_tts fire — 因 Registrar LLM 不出 schema (mirror stderr 显 `WatchTask/RegisterFail phrase hit but LLM 没出 schema` × 5).
+>
+> ## 🐛 fix50.2 待修 5 BUG (Sir 拍板触发, ~30min + $0.1 LLM)
+>
+> | # | BUG | 修法 |
+> |---|---|---|
+> | 1 | Registrar prompt 太长 + 复杂 verdict schema 让 gemini-3.5-flash 输不出 valid JSON | 简化 prompt < 50 行, JSON 加 explicit example, primary model 换 `gemini-2.5-flash` (full) |
+> | 2 | LLM fail fallback 只 publish_register_fail 不真注册 → §5 违反 (主脑 ack 系统没注册) | phrase_hit + LLM fail → 用 sir_text 关键名词构造 minimal task + 标 `requires_clarify=true` |
+> | 3 | InnerThought `propose_watch_task` actionable 写 PromiseLog kind=watch 但不 sync 到 watch_tasks.json | actionable 真调 `WatchTaskRegistrar.register_async` 写 watch_tasks.json |
+> | 4 | 主脑 prompt 没告诉它有 ScreenVision/WatchTask 能力 → 4/6 场景仍 pushback | 主脑 prompt 加 `[SCREEN WATCH CAPABILITY]` block 教 "ack any watch request, 系统会注册" |
+> | 5 | Registrar LLM 真 raw 没 debug log → 无法 root cause | `_call_registrar_llm` 加 raw response 写 SWM event `watch_task_registrar_raw_audit` |
+>
+> ## ✅ fix50/fix50.1 复核 (Sir 真测 cheat sheet)
+>
+> ```powershell
+> # testcase 验
+> python -m pytest tests/_test_fix50_sir_20260528_screen_watch_clarify.py -v  # 41 pass
+>
+> # 真跑 mirror 6 场景 (fix50.1 后期望 2-3/6 主脑 POSITIVE ACK, 0/6 fire 直到 fix50.2)
+> python scripts/jarvis_mirror.py --task "fix50 6 screens"
+> python scripts/jarvis_mirror_run_screen_scenarios.py
+> ```
+>
+> 详 `docs/JARVIS_SCREEN_WATCH_DESIGN.md` §10 (fix50.1 + fix50.2 路线).
+>
+> ---
+>
+> 🆕 **2026-05-28 23:00 — fix49 Jarvis Agent Mirror Testing DONE** (准则 6 数据强耦合 + 准则 8 优雅)
+>
+> ## 背景
+> Sir 22:00 真痛点: "我让 Cascade 帮我跑实机测试, 但 Cascade 没有麦克风, 也没法不影响主 Jarvis
+> 跑测试". Sir 原话:
+> > "甚至可以理解成把贾维斯目录复制一份那种, 只是不需要测我说话, 转录这些, 相当于你直接输入
+> > 文字等同于我说话就可以了, 其他完全一致, 主要用于测试贾维斯的能力是否能实现, 有没有实际
+> > 使用pajggb2004148@的 BUG"
+>
+> = 隔离 sandbox + 文本注入 + 全 audit + 0 影响主 Jarvis.
+>
+> ## 治本方案 (6 件套)
+>
+> | # | 件 | 路径 | 说明 |
+> |---|---|---|---|
+> | 1 | 核心 module | `jarvis_mirror_mode.py` | env gate `is_mirror_mode()` / path helpers / `append_mirror_output` / `MockVocalCord` (API 100% 兼容 VocalCord, skip CosyVoice GPU + audio device) / `MirrorVoiceWorker` factory (QThread + 1s poll `_mirror_input.jsonl`) / `MirrorBreathingLightUI` / `MirrorSubtitleOverlay` / `write_mirror_meta` |
+> | 2 | 4 hook 点 | `jarvis_central_nerve.py` (vocal) / `jarvis_nerve.py` (UI+voice_worker) / `jarvis_chat_bypass.py` (turn_complete + fast_call_attempt + dashboard mirror skip) | 全 wrap `if is_mirror_mode()` gate, 主进程 0 影响 |
+> | 3 | launcher | `scripts/jarvis_mirror.py` | `--task` / `--root` / `--dry-run` / `--keep-runtime-logs` / `--include-models` / `--no-detach`; 默 `D:/jarvis_mirror_<ts>/`, 复制 d:/Jarvis (skip .git / __pycache__ / _legacy / CosyVoice / ffmpeg.exe), 启 subprocess `python jarvis_nerve.py` + env JARVIS_MIRROR=1 |
+> | 4 | CLI 注入/审计 | `scripts/jarvis_mirror_say.py` (append text → `_mirror_input.jsonl`, 自动找最新 mirror) + `scripts/jarvis_mirror_tail.py` (`--event` filter + `--follow` + `--raw` + 人读 fmt_event) | Cascade 全程不碰真 Jarvis |
+> | 5 | testcase | `tests/_test_fix49_sir_20260528_mirror_mode.py` | env gate / path helpers / append_mirror_output noop+write / MockVocalCord 8 method API + 写事件 / MirrorSubtitleQueue+UI+Overlay / MirrorVoiceWorker factory / write_mirror_meta / tail fmt_event 集成 |
+> | 6 | 文档 | `docs/JARVIS_AGENT_MIRROR_TESTING.md` | 架构图 + 4 hook 点表 + 启动 cheat sheet + 输出事件类型表 + 限制 + TODO 后续 + 准则对应 |
+>
+> ## Cascade 标准用法 (~5 步)
+>
+> ```powershell
+> # 1. 启镜像 (复制 ~150 MB / ~15s, 起 subprocess)
+> python scripts/jarvis_mirror.py --task "测 reminder 链"
+>
+> # 2. 等 5s 让 nerve init 完成
+> python scripts/jarvis_mirror_tail.py --event mirror_voice_worker_started --limit 1
+>
+> # 3. 注入 Sir 说话
+> python scripts/jarvis_mirror_say.py "Hey Jarvis remind me in 2 hours to take medicine"
+>
+> # 4. 看主脑 turn_complete (~5-10s)
+> python scripts/jarvis_mirror_tail.py --event turn_complete --limit 1
+>
+> # 5. 完了清盘
+> taskkill /F /PID <pid>
+> rmdir /S /Q "D:/jarvis_mirror_<ts>"
+> ```
+>
+> ## 输出事件 (`_mirror_output.jsonl`) — Cascade audit 全靠这
+>
+> | event | 写者 | key |
+> |---|---|---|
+> | `sir_input_received` | MirrorVoiceWorker | text |
+> | `turn_complete` | chat_bypass stream_chat_local 末 | sir_utterance / final_reply / duration_sec / tool_results / circuit_broken_reason |
+> | `fast_call_attempt` | chat_bypass _handle_fast_call 顶 | organ / command / params_excerpt |
+> | `mock_tts` / `mock_tts_render` / `mock_audio_play` / `mock_tts_stop` | MockVocalCord | text / len_chars |
+> | `mirror_subtitle` | MirrorSubtitleQueue.put | channel / text |
+> | `mirror_ui_state` / `mirror_ui_awake` / `mirror_ui_visual_pulse` | MirrorBreathingLightUI | state/awake/kind |
+> | `mirror_fast_call_skipped` | chat_bypass ui_control.dashboard_* | 防主 port 8765 撞 |
+> | `mirror_voice_worker_started` | MirrorVoiceWorker.run 首帧 | input_path |
+>
+> ## 当前限制 (后续 TODO)
+>
+> - LLM key 共享 (mirror 真烧 token) — TODO `--llm-mock` env JARVIS_MIRROR_LLM_MOCK=1
+> - dashboard port 8765 撞主 — TODO env JARVIS_MIRROR_DASHBOARD_PORT
+> - 没自动 cleanup — TODO `scripts/jarvis_mirror_clean.py`
+> - 没批量 regression — TODO `scripts/jarvis_mirror_batch.py` (yaml 一组 sir utterance + expected substring)
+>
+> ## ✅ 复核状态 (2026-05-28 23:20 Cascade)
+>
+> 5 hook 点全部 wire (verify by grep):
+> - `jarvis_central_nerve.py:95-99` import gate + `:214-217` VocalCord swap
+> - `jarvis_nerve.py:49-52` VocalCord import gate + `:252-258` mirror module import + `:290-336` 3 处 UI/voice_worker swap (BreathingLightUI / SubtitleOverlay / VoiceListenThread)
+> - `jarvis_chat_bypass.py:356-364` init 末 `patch_chat_bypass_for_mirror` (monkey-patch stream_chat / stream_chat_local / stream_nudge try/finally 覆 13 return path) + `:1605-1639` fast_call_attempt audit + `:1647-1661` dashboard mirror skip
+>
+> 测试: `python -m pytest tests/_test_fix49_sir_20260528_mirror_mode.py -v` → **31 passed in 3.5s** (env gate / paths / append_mirror_output noop+write / MockVocalCord 8 method API + 写事件 / UI+Overlay+Queue / VoiceWorker factory / write_mirror_meta / tail fmt_event 集成).
+>
+> Sir 真测命令 cheat sheet (本机 PowerShell):
+> ```powershell
+> python scripts/jarvis_mirror.py --task "测 reminder 链"
+> python scripts/jarvis_mirror_tail.py --follow                  # 另开窗
+> python scripts/jarvis_mirror_say.py "Hey Jarvis what time"     # 触发主脑
+> ```
+>
+> ---
+>
+> 🆕 **2026-05-28 20:23 — fix45 DeepSeek routing layer DONE** (准则 6 持久化 + 准则 7 一键关 + 准则 8 优雅)
+>
+> ## 背景
+> Sir 17 USD OpenRouter key 被海外 selective ban (Google/Anthropic/OpenAI 403), 仅 deepseek 模型可调. 6 个真 prod caller 用 `google/gemini-3.1-pro-preview` (2 primary + 4 fallback) 随机抽到这把 key → 403 → "所有 openrouter key 均不可用" user-visible:
+>
+> | caller | role | 用法 |
+> |---|---|---|
+> | `jarvis_soul_reflector.py` | WeeklyReflector (灵魂 L4) | primary |
+> | `jarvis_integrity_reflector.py` | IntegrityReflector (言行一致 L7) | primary |
+> | `jarvis_struggle_reflector.py` | StruggleReflector | fallback (flash-lite 跪了才用) |
+> | `jarvis_sir_request_reflector.py` | SirRequestReflector L7 (60s tick) | fallback |
+> | `jarvis_screen_tease_reflector.py` | ScreenTeaseReflector (24h 一跑) | fallback |
+> | `jarvis_inside_joke_reflector.py` | InsideJokeReflector | fallback |
+>
+> ## 治本方案 (7 件套)
+>
+> | # | 件 | 路径 | 说明 |
+> |---|---|---|---|
+> | 1 | vocab JSON | `memory_pool/llm_routing_vocab.json` | enabled / route_model / replace_models / exclude_callers / usage_stats / history (准则 6 持久化) |
+> | 2 | helper API | `jarvis_utils.py` `should_route_to_deepseek` / `safe_deepseek_call` / `_record_deepseek_usage` / `set_deepseek_routing_gate` / `add_deepseek_replace_model` / `remove_deepseek_replace_model` / `reset_deepseek_usage_stats` / `get_deepseek_routing_stats` |
+> | 3 | routing gate | `safe_openrouter_call` 顶部 4 行 (命中 → 改路 ds, 失败 + fallback_on_fail=1 → fall through OpenRouter 老 path) |
+> | 4 | Sir CLI | `scripts/llm_routing_dump.py` (list / gate on/off / add-model / remove-model / add-exclude / remove-exclude / usage / reset-usage / history / json) |
+> | 5 | testcase | `tests/_test_fix45_sir_20260528_deepseek_routing.py` (21 pass, 14 类覆盖 happy / no_ds_key / gate_off / empty_list / model_not_in_list / caller_excluded / fallback / no_fallback_raises / usage_accumulate / gate_history / add_remove_history / reset_history / cli_importable / helpers_loadable) |
+> | 6 | env slot | `.env.example` `OPENROUTER_DS_ONLY=REPLACE_ME_OPTIONAL` + `jarvis_config/keys.py` 单独 read (不进 KeyRouter pool, 避免随机抽到给 google/gemini-* 调用) |
+> | 7 | 章程引用 | `docs/JARVIS_PYTHON_STYLE.md §6.5` (stateful runtime vocab 范式, 引用 fix45 作 reference impl) |
+>
+> ## 故障开放 3 层 (testcase 全覆盖)
+>
+> 1. `OPENROUTER_DS_ONLY` env 缺失 / `REPLACE_ME` → `should_route_to_deepseek` 返 `(False, 'no_ds_key')`, 主流不阻塞
+> 2. routing 命中但 `safe_deepseek_call` 异常 + `fallback_on_fail=1` → fall through OpenRouter 老 path + `_record_deepseek_usage(fallback=True)`
+> 3. vocab JSON 加载异常 → `_LLM_ROUTING_DEFAULT` (enabled=0)
+>
+> ## Sir 真机激活步骤 (~1 min)
+>
+> ```powershell
+> # 1. 编辑 .env, 把 OPENROUTER_DS_ONLY=REPLACE_ME_OPTIONAL 改成真 key
+> notepad .env
+>
+> # 2. 看一下状态
+> python scripts/llm_routing_dump.py
+>
+> # 3. 17 USD 用完 → 一键关 (回 google/gemini-* 原 path)
+> python scripts/llm_routing_dump.py --gate off --rationale "budget exhausted"
+>
+> # 4. 充值新一轮 → 清零 + 重开
+> python scripts/llm_routing_dump.py --reset-usage --rationale "new top-up"
+> python scripts/llm_routing_dump.py --gate on
+>
+> # 5. 看花到哪去了 (per_caller breakdown)
+> python scripts/llm_routing_dump.py --usage
+> ```
+>
+> ## 关键细节 (后人调试时回看)
+>
+> - `safe_deepseek_call` **不进 KeyRouter pool**, 独立用 OPENROUTER_DS_ONLY env (避免 router 把 ban 过的 key 随机抽给 gemini caller → 403)
+> - vocab `cost.budget_total_usd=17.0` + `est_cost_usd` 累计 — CLI list 显示进度条, >= 80% warn / >= 95% critical
+> - `per_caller` breakdown 让 Sir 看到哪个 reflector 烧钱最多
+> - `history[]` 记 Sir 每次 mutation (gate toggle / add/remove model / reset) 含 rationale
+> - 5s mtime cache (`_LLM_ROUTING_CACHE_TTL_S`) 避免 hot loop stat 风暴; CLI mutation 后 `invalidate_llm_routing_cache()` 立刻失效
+>
+> ---
+>
 > 🚨🚨🚨 **2026-05-24 09:10 Sir — Phase D 全部主体 done (32 commit), 等 Sir 1-2 周真测验稳定** 🚨🚨🚨
 >
 > Sir 8:52 "继续按顺序做完, 包括前面留着的子项" → Cascade catch-up 推 M3.B.Claim alias + M3.C-trace deprecation + M4.5.3 dual-mark, 然后用 Sir 准则 7 元否决权把 9 个 sub-step (M3.E / Claim rename / M3.C/D/G/F / M4.6 / M4.7 / M5.3 / M6.1 / M6.2 / M6.3) 合 **M6.4 真 class split 一起做**. 不重复改两次 import.

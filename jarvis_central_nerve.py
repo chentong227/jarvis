@@ -92,7 +92,11 @@ from jarvis_smart_nudge import SmartNudgeSentinel  # noqa: F401
 from jarvis_chat_bypass import ChatBypass  # noqa: F401
 
 from jarvis_blood import JarvisBlood, ExecutionResult, FeedbackSignal  # noqa: F401
-from jarvis_vocal_cord import VocalCord  # [P0+19-final fix / 2026-05-16]
+from jarvis_mirror_mode import is_mirror_mode as _jarvis_is_mirror_mode
+if _jarvis_is_mirror_mode():
+    VocalCord = None  # type: ignore
+else:
+    from jarvis_vocal_cord import VocalCord  # [P0+19-final fix / 2026-05-16]
 from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401
 
@@ -207,7 +211,10 @@ class CentralNerve:
         self.api_key = api_key           
         self.gemini_key = gemini_key
         self.key_router = key_router
-        self.vocal = VocalCord()  
+        # 🪞 [Sir 2026-05-28 22:00 fix49 mirror P2 hook-1] Mirror mode → MockVocalCord
+        # (跳 CosyVoice-300M GPU init + audio device). API 100% 兼容. 主进程 = 真 VocalCord.
+        from jarvis_mirror_mode import is_mirror_mode as _is_mirror, MockVocalCord as _MockVC
+        self.vocal = _MockVC() if _is_mirror() else VocalCord()  
         self.blood = JarvisBlood()
         # [Reshape M3.G 真删 / 2026-05-24 17:00] 3-brain 已彻底删除 (run / attr / init).
         self.hippocampus = Hippocampus(key_router=key_router)
@@ -3733,14 +3740,21 @@ User: {user_input}
         # Sir 14:50 痛点: jarvis 答应"盯着 X" 但 LLM 挂没真注册成功 → 下轮 prompt
         # 看到 fail event, 主脑必须自然承认 + 提议 (重说/手动加/换说法).
         # 同时显 [ACTIVE WATCH TASKS] block 让主脑知道自己正在 watch 哪些.
-        # [Phase 4b.2] light tier 跳 watch_task fail/active (~0.5K)
+        # 🆕 [fix50 / 2026-05-28] 加 [WATCH TASK VAGUE CLARIFY] block — Sir 说 vague
+        # request ('盯一下直播', '看着 Cursor') Registrar LLM 判 vague, 主脑下轮自然问
+        # Sir 具体盯啥事件 (准则 5 言出必行 — 不假装答应未注册).
+        # [Phase 4b.2] light tier 跳 watch_task fail/active/clarify (~0.5-0.8K)
         try:
             if not _is_light_tier:
                 from jarvis_watch_task import (render_register_fail_block as _wt_fail,
-                                                  render_active_tasks_block as _wt_active)
+                                                  render_active_tasks_block as _wt_active,
+                                                  render_vague_clarify_block as _wt_vague)
                 _fail_text = _wt_fail(within_seconds=600.0, max_show=2)
                 if _fail_text:
                     _parts.append(_fail_text)
+                _vague_text = _wt_vague()  # 参数从 watch_task_config.json vague_clarify 读
+                if _vague_text:
+                    _parts.append(_vague_text)
                 _active_text = _wt_active(max_show=5)
                 if _active_text:
                     _parts.append(_active_text)
@@ -5056,6 +5070,10 @@ User: {new_cmd}
 
     def _hot_reload_organs(self):
         def scan_dir(folder, class_name, registry, manifests):
+            # [BUG #5 Sir 2026-05-28 22:50 fix49] defensive: 镜像/fresh install/Sir 误删
+            # 任一 pool 目录都不应让整个 nerve init 崩. 缺 dir 就 noop, 继续启动.
+            if not os.path.isdir(folder):
+                return
             for file in os.listdir(folder):
                 if file.endswith('.py') and not file.startswith('__'):
                     mod_name = file[:-3]
@@ -5475,7 +5493,8 @@ try:
 except Exception:
     pass
 try:
-    from jarvis_vocal_cord import VocalCord  # noqa: F401
+    if not _jarvis_is_mirror_mode():
+        from jarvis_vocal_cord import VocalCord  # noqa: F401
 except Exception:
     pass
 try:

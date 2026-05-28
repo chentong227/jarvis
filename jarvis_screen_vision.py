@@ -222,14 +222,62 @@ class ScreenVisionEngine:
         self._daemon_stop.set()
 
     def _daemon_loop(self) -> None:
-        """长 idle backfill — 每 backfill_interval_s 检查上次 sample 时间, 太老就 sample."""
-        while not self._daemon_stop.wait(self.backfill_interval_s):
+        """长 idle backfill — 每 wait cycle 检查 effective backfill + last_call_at, 太老就 sample.
+
+        🆕 [fix50 / 2026-05-28] InnerThoughtDaemon 看到 active WatchTask 会 publish
+        'proactive_vision_refresh_advice' SWM. 本 daemon 每 wait cycle 看 SWM 有没有
+        近期 advice (< advice_ttl_s), 有则把 backfill_s 临时降到 advice 推荐值
+        (default 30s), 没则用 baseline 5min. 准则 6 三维耦合 — 数据进 SWM 让 daemon 自判.
+
+        🆕 [fix50.1 / 2026-05-28] reactive wait: wait_s = min(effective, 30s) 而非锁
+        老 5min cycle. 否则 advice 来了 daemon 仍在 sleep 老 300s 间隔不响应. 30s wake
+        让 daemon 30s 内 pick 新 advice; CPU 影响微 (30s wake 只读 SWM event list).
+        """
+        while True:
+            # reactive: wait 至多 30s, 防被锁老 backfill cycle
+            wait_s = min(self._compute_effective_backfill_s(), 30.0)
+            if self._daemon_stop.wait(wait_s):
+                break
             try:
+                eff = self._compute_effective_backfill_s()
                 last = self._stats.get('last_call_at', 0.0)
-                if time.time() - last >= self.backfill_interval_s:
-                    self.async_describe(trigger='backfill')
+                if time.time() - last >= eff:
+                    trigger = ('active_watch_backfill'
+                                if eff < self.backfill_interval_s
+                                else 'backfill')
+                    self.async_describe(trigger=trigger)
             except Exception:
                 pass
+
+    def _compute_effective_backfill_s(self) -> float:
+        """🆕 [fix50] 计算当前生效 backfill 间隔.
+
+        看 SWM 有没有近期 'proactive_vision_refresh_advice' event (< ttl):
+          - 有 → 用 advice.recommended_backfill_s (default 30s)
+          - 没 → baseline self.backfill_interval_s (default 5min)
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return self.backfill_interval_s
+            # 取 advice_ttl_s 默认 120s (跟 watch_task_config 一致). 取最近 120s 内.
+            events = bus.recent_events(
+                within_seconds=120.0,
+                types={'proactive_vision_refresh_advice'},
+            ) or []
+            if not events:
+                return self.backfill_interval_s
+            # 取最新一条 advice 的 recommended_backfill_s
+            latest = events[-1]
+            meta = latest.get('metadata') or {}
+            recommended = meta.get('recommended_backfill_s')
+            if not isinstance(recommended, (int, float)):
+                return self.backfill_interval_s
+            # 最小 10s 防过激, 最大 baseline 防退化
+            return max(10.0, min(float(recommended), self.backfill_interval_s))
+        except Exception:
+            return self.backfill_interval_s
 
     # ---- Async sample (主入口) ----
 
@@ -262,8 +310,29 @@ class ScreenVisionEngine:
 
         Args:
             jpeg_bytes: 已截图 → 复用; None → 自截图.
+
+        🆕 [fix50 / 2026-05-28] mirror mode fake snapshot bypass:
+          mirror process 看到 _mirror_screen.jsonl 最新一行 → 跳过截图 + vision LLM,
+          直接构造 ScreenSnapshot 走持久化 + publish + judge 全链. 让 Cascade 用
+          mirror 完整测试 WatchTask fire 链不烧 vision LLM token.
         """
         try:
+            # 🆕 [fix50] mirror fake bypass — 主进程 import 不触发, mirror process 才用
+            try:
+                from jarvis_mirror_mode import (
+                    is_mirror_mode as _imm,
+                    read_latest_mirror_screen as _read_fake,
+                )
+                if _imm():
+                    fake = _read_fake()
+                    if fake is not None:
+                        self._do_describe_from_fake(
+                            fake, trigger=f'mirror_fake_{trigger}'
+                        )
+                        return
+            except Exception:
+                pass  # mirror_mode import fail OK, fall through 老路径
+
             self._stats['total_calls'] += 1
             self._stats['last_call_at'] = time.time()
 
@@ -319,6 +388,113 @@ class ScreenVisionEngine:
         except Exception as e:
             self._stats['failed_calls'] += 1
             self._stats['last_error'] = f"{type(e).__name__}: {str(e)[:80]}"
+        finally:
+            self._sampling_in_progress = False
+
+    # ---- 🆕 [fix50] Mirror fake snapshot bypass ----
+
+    def _do_describe_from_fake(self, fake_data: Dict[str, Any],
+                                 trigger: str = 'mirror_fake') -> None:
+        """🆕 [fix50 / 2026-05-28] mirror mode: 直接用 Cascade 注入的 fake snapshot.
+
+        跳过截图 + vision LLM, 用 fake dict 构造 ScreenSnapshot, 走持久化 + publish
+        + WatchTask judge 全链. 让 Cascade mirror 测 6 类视觉场景 (文字/图标/图形/
+        图像 + 直播/限速) 不烧真 vision LLM token.
+
+        WatchTaskJudge 仍真用 LLM (judge 是核心决策, 需真验证 Sir trigger 命中).
+        """
+        try:
+            self._stats['total_calls'] += 1
+            self._stats['last_call_at'] = time.time()
+
+            now = time.time()
+            from datetime import datetime
+            iso = datetime.fromtimestamp(now).isoformat(timespec='seconds')
+
+            cursor_raw = fake_data.get('cursor_line_approx')
+            cursor_val = (int(cursor_raw)
+                          if isinstance(cursor_raw, (int, float)) else None)
+            snap = ScreenSnapshot(
+                captured_at=now,
+                captured_iso=iso,
+                active_app=str(fake_data.get('active_app', '') or '')[:60],
+                file_or_url_visible=str(
+                    fake_data.get('file_or_url_visible', '') or ''
+                )[:120],
+                cursor_line_approx=cursor_val,
+                screen_summary=str(
+                    fake_data.get('screen_summary', '') or ''
+                )[:300],
+                recent_visible_keywords=[
+                    str(k)[:40]
+                    for k in (fake_data.get('recent_visible_keywords') or [])
+                ][:5],
+                errors_visible=[
+                    str(e)[:120]
+                    for e in (fake_data.get('errors_visible') or [])
+                ][:3],
+                build_output_status=str(
+                    fake_data.get('build_output_status', '') or ''
+                )[:30],
+                notable_elements=[
+                    str(n)[:80]
+                    for n in (fake_data.get('notable_elements') or [])
+                ][:3],
+                confidence=float(fake_data.get('confidence', 0.9) or 0.9),
+                vision_model_used='mirror_fake',
+                sampling_trigger=trigger,
+                privacy_redacted=bool(
+                    fake_data.get('privacy_redacted', False)
+                ),
+            )
+
+            # 持久化 + publish 走老路径
+            with self._lock:
+                self._latest = snap
+                self._persist_latest()
+                self._append_history()
+            self._stats['success_calls'] += 1
+            if snap.privacy_redacted:
+                self._stats['privacy_redacted'] += 1
+
+            self._publish_swm(snap)
+
+            try:
+                bg_log(
+                    f"📷 [ScreenVision/{trigger}] mirror_fake applied: "
+                    f"app='{snap.active_app[:30]}' "
+                    f"summary='{snap.screen_summary[:60]}' "
+                    f"conf={snap.confidence:.2f}"
+                )
+            except Exception:
+                pass
+
+            # mirror audit: 写一行进 _mirror_output.jsonl
+            try:
+                from jarvis_mirror_mode import append_mirror_output
+                append_mirror_output({
+                    'event': 'mirror_screen_fake_applied',
+                    'screen_summary': snap.screen_summary[:200],
+                    'active_app': snap.active_app,
+                    'errors_visible': snap.errors_visible,
+                    'notable_elements': snap.notable_elements,
+                    'recent_visible_keywords': snap.recent_visible_keywords,
+                    'confidence': snap.confidence,
+                    'trigger': trigger,
+                })
+            except Exception:
+                pass
+
+            # WatchTask judge hook (跟老路径一致)
+            try:
+                if not snap.privacy_redacted:
+                    from jarvis_watch_task import judge_against_snapshot as _wt_judge
+                    _wt_judge(snapshot=snap, key_router=self.key_router)
+            except Exception:
+                pass
+        except Exception as e:
+            self._stats['failed_calls'] += 1
+            self._stats['last_error'] = f"fake: {str(e)[:80]}"
         finally:
             self._sampling_in_progress = False
 

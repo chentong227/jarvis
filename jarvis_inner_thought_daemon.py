@@ -813,6 +813,15 @@ class InnerThoughtDaemon:
         self._cooldown_skip_count = 0
         self._llm_fail_count = 0
 
+        # 🆕 [fix50 / 2026-05-28] vision refresh advice dedup ts
+        # =====================================================================
+        # _tick 顶 check active WatchTask, 有 active → publish 'proactive_vision_
+        # refresh_advice' SWM 让 ScreenVisionEngine 提频 backfill (5min → 30s).
+        # dedup: 按 vision_refresh_advice.dedup_window_s 不重复 publish, 避免 spam SWM.
+        # =====================================================================
+        self._last_vision_refresh_publish_ts: float = 0.0
+        self._vision_refresh_publish_count: int = 0
+
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM 决定的下次 interval (0 = 用 baseline)
         self._next_tick_interval_s = 0
         # tick origin 统计 (dashboard 看 LLM 真在 self-pacing 还是默认)
@@ -1101,10 +1110,88 @@ class InnerThoughtDaemon:
         return llm_choice, 'llm_chosen'
 
     # ----------------------------------------------------------
+    # 🆕 [fix50 / 2026-05-28] Active WatchTask → vision refresh advice (准则 6)
+    # ----------------------------------------------------------
+    def _check_active_watch_task_and_publish_vision_refresh(self) -> None:
+        """每 tick 顶调 — 有 active WatchTask → publish vision_refresh_advice SWM.
+
+        ScreenVisionEngine daemon 看到 advice 临时把 backfill 5min → 30s, 提高
+        WatchTask fire 点火率. dedup window 防 spam.
+
+        准则 6 三维耦合:
+          - 数据: publish 'proactive_vision_refresh_advice' SWM (含 active_count,
+                   backfill_s, 让 vision daemon 自判)
+          - 决策: vision daemon 看 advice 自调额, 不是 thought 脑硬改 vision
+          - 持久化: watch_task_config.json vision_refresh_advice.* (CLI 可改)
+        """
+        try:
+            from jarvis_watch_task import list_active_tasks, _load_config as _wt_load_cfg
+        except Exception:
+            return
+        cfg = (_wt_load_cfg().get('vision_refresh_advice') or {})
+        if not cfg.get('enabled', True):
+            return
+        # dedup
+        now = time.time()
+        dedup_s = float(cfg.get('dedup_window_s', 30.0)) if 'dedup_window_s' in cfg \
+                                                            else 30.0
+        if now - self._last_vision_refresh_publish_ts < dedup_s:
+            return
+        # 看 active WatchTask
+        try:
+            active = list_active_tasks() or []
+        except Exception:
+            active = []
+        if not active:
+            return
+        # publish SWM
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            bus.publish(
+                etype='proactive_vision_refresh_advice',
+                description=(
+                    f"InnerThought tick: {len(active)} active WatchTask → "
+                    f"recommend vision backfill "
+                    f"{float(cfg.get('active_watch_backfill_s', 30.0))}s"
+                ),
+                source='InnerThoughtDaemon',
+                salience=float(cfg.get('advice_salience', 0.6)),
+                ttl=float(cfg.get('advice_ttl_s', 120.0)),
+                metadata={
+                    'active_count': len(active),
+                    'active_task_ids': [t.id for t in active[:10]],
+                    'recommended_backfill_s': float(
+                        cfg.get('active_watch_backfill_s', 30.0)
+                    ),
+                    'ts': now,
+                },
+            )
+            self._last_vision_refresh_publish_ts = now
+            self._vision_refresh_publish_count += 1
+        except Exception:
+            pass
+
+    # ----------------------------------------------------------
     # Tick (the core)
     # ----------------------------------------------------------
     def _tick(self) -> None:
         self._tick_count += 1
+
+        # 🆕 [fix50 / 2026-05-28] active WatchTask 提频 vision (准则 6 三维耦合)
+        # =====================================================================
+        # 每 tick 顶检查 active WatchTask, 有 → publish 'proactive_vision_refresh_
+        # advice' SWM. ScreenVisionEngine daemon 看到 advice 临时提频 backfill
+        # (5min default → 30s active). 准则 6 数据进 SWM, 决策让 vision daemon 自判.
+        # fire-and-forget, 不阻塞 tick 主流 (cooldown skip / LLM call 不受影响).
+        # =====================================================================
+        try:
+            self._check_active_watch_task_and_publish_vision_refresh()
+        except Exception:
+            pass
+
         sir_state = self._classify_sir_state()
         tick_interval = self._compute_adaptive_interval()
 
@@ -1156,10 +1243,27 @@ class InnerThoughtDaemon:
         raw = self._call_llm(prompt_sys, prompt_user)
         if not raw:
             self._llm_fail_count += 1
+            # 🆕 [Sir 2026-05-28 21:10 silent-fail-instrument] 看真因
+            # ===================================================================
+            # Sir 痛点: thought 自 20:38 起 30+ min silent. daemon line 1157/1162
+            # 2 处 silent skip (raw='' / parse None), 0 log → 无法诊断. 加 _bg_log
+            # 让真因显形. 准则 6 publish evidence 类比. 准则 8 治本前置 audit.
+            # ===================================================================
+            self._bg_log(
+                f"⚠️ [InnerThought/silent] _call_llm 返空 raw "
+                f"(fail_count={self._llm_fail_count}, sir_state={sir_state}, "
+                f"tick={tick_interval}s)"
+            )
             return
 
         thought = self._parse_thought(raw, sir_state, tick_interval)
         if thought is None:
+            # 🆕 [Sir 2026-05-28 21:10 silent-fail-instrument] log raw 前 200 char
+            self._bg_log(
+                f"⚠️ [InnerThought/silent] _parse_thought 返 None "
+                f"(raw 缺 <CATEGORY>/<THOUGHT>/<SALIENCE> 或 thought=quiet). "
+                f"raw[:200]='{raw[:200]}'"
+            )
             return
 
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] speak rate cap smoothing
@@ -3106,6 +3210,46 @@ class InnerThoughtDaemon:
             )
             lines.append("")
 
+        # 🆕 [Sir 2026-05-28 21:20 fix47 件 3] STRICT OUTPUT FORMAT reminder
+        # =====================================================================
+        # Sir 真痛 fix46 silent fail 根因: DS-v4-pro XML schema 顺从性弱,
+        # 倾向 markdown / 自由文本. _parse_thought 必需 <CATEGORY>+<SALIENCE>
+        # 否则返 None → 思考脑无 thought 产生 → 14min 失语. _call_llm 件 2
+        # 加 raw sanity check + fallback flash 兜底, prompt 末尾再加 STRICT
+        # FORMAT reminder 双保险 (flash 看了不冲突, DS 看了大幅降 invalid 率).
+        # 此 reminder 列 6 必填 tag + 提醒 quiet 兜底 → 减 invalid + 减 silent.
+        # =====================================================================
+        lines.append("--- STRICT OUTPUT FORMAT (REQUIRED) ---")
+        lines.append(
+            "Output MUST be XML tags below. NOT markdown, NOT plain text, NOT JSON."
+        )
+        lines.append(
+            "6 required tags (in this order): <CATEGORY>X</CATEGORY> "
+            "<THOUGHT>...</THOUGHT> <SALIENCE>0.0-1.0</SALIENCE> "
+            "<ACTIONABLE>...</ACTIONABLE> <EVIDENCE_LINK>...</EVIDENCE_LINK> "
+            "<NEXT_INTERVAL>...</NEXT_INTERVAL>"
+        )
+        lines.append(
+            "4 optional β.6 tags: <CONTINUITY>...</CONTINUITY> "
+            "<SHOULD_SPEAK>yes|no</SHOULD_SPEAK> "
+            "<SPEAK_CONTENT>...</SPEAK_CONTENT> "
+            "<SPEAK_STYLE>...</SPEAK_STYLE> "
+            "<NEXT_ATTENTION_FOCUS>...</NEXT_ATTENTION_FOCUS>"
+        )
+        lines.append(
+            "Python parser REQUIRES literal <CATEGORY> + <SALIENCE> opening tags "
+            "to appear in your output. Without them the parse drops silently "
+            "and this whole tick is wasted."
+        )
+        lines.append(
+            "If nothing comes to mind, output the quiet template: "
+            "<CATEGORY>A</CATEGORY> <THOUGHT>(quiet)</THOUGHT> "
+            "<SALIENCE>0.0</SALIENCE> <ACTIONABLE>none</ACTIONABLE> "
+            "<EVIDENCE_LINK>none</EVIDENCE_LINK> "
+            "<NEXT_INTERVAL>default</NEXT_INTERVAL>"
+        )
+        lines.append("")
+
         lines.append("Now generate ONE inner thought (6 core tags + β.6 optional 4).")
         return system, '\n'.join(lines)
 
@@ -3117,11 +3261,129 @@ class InnerThoughtDaemon:
     # 略微提高智能". flash 在 LlmReflector 映射 = gemini-3-flash-preview
     # (主脑同款). env override JARVIS_THINKING_MODEL=flash_lite 可回退老模型.
     # ============================================================
-    def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
+    def _call_llm(self, system_prompt: str, user_prompt: str,
+                   caller_origin: str = '') -> str:
+        """LLM call for inner thought.
+
+        🆕 [Sir 2026-05-28 fix46] selective DeepSeek routing:
+        - 默认走 gemini-3-flash-preview (LlmReflector path, ~$15/月)
+        - 4 类 trigger 命中 + 双 gate 通过 + rate_limit 不超 → 走
+          safe_deepseek_call (DS_ONLY key + deepseek-v4-pro)
+        - ds 失败 + fallback_on_fail=1 → fall through 走 flash (故障开放)
+        - 所有路径都 _record_thinking_brain_routing → usage_stats 持久化
+
+        caller_origin: sub-caller (yesterday_recap / commitment_review 等)
+            显式传, 用作 trigger evidence. 主 tick caller 留空, helper 内部
+            从 self._thoughts[-1] 提 prev state 作 proxy.
+        """
         try:
             from jarvis_llm_reflector import LlmReflector
             from jarvis_key_router import KeyRouter
-            # LlmReflector 用 __new__ 单例 — 直接构造即拿已有实例
+            from jarvis_utils import (
+                should_route_thinking_to_ds,
+                _record_thinking_brain_routing,
+                safe_deepseek_call,
+                _load_thinking_brain_ds_vocab,
+            )
+            # 🆕 fix46: 构 ctx for routing decision
+            # prev_thought 状态作 proxy (本 tick category/salience 还没出)
+            prev_cat, prev_sal = '', 0.0
+            try:
+                if self._thoughts:
+                    last = self._thoughts[-1]
+                    prev_cat = getattr(last, 'category', '') or ''
+                    prev_sal = float(getattr(last, 'salience', 0.0) or 0.0)
+            except Exception:
+                pass
+            # tick_origin: 显式 caller (yesterday_recap) 优先, 否则用 prev thought 的
+            effective_origin = caller_origin or ''
+            if not effective_origin and self._thoughts:
+                try:
+                    effective_origin = getattr(self._thoughts[-1], 'tick_origin', '') or ''
+                except Exception:
+                    pass
+            prompt_size = len(system_prompt or '') + len(user_prompt or '')
+            ctx = {
+                'tick_origin': effective_origin,
+                'last_thought_category': prev_cat,
+                'last_thought_salience': prev_sal,
+                'prompt_size': prompt_size,
+            }
+            should_ds, trigger_or_reason = should_route_thinking_to_ds(ctx)
+
+            if should_ds:
+                # 走 DeepSeek path
+                vocab = _load_thinking_brain_ds_vocab()
+                fallback_enabled = int(vocab.get('fallback_on_fail', 1)) == 1
+                try:
+                    timeout_s = float(vocab.get('timeout_s', 25))
+                    # 🆕 [Sir 2026-05-28 21:20 fix47 件 1.5] 显式 max_tokens override
+                    # fix45 vocab.deepseek_route.max_tokens_default=600 → 思考脑
+                    # ~10 XML tag 输出会被截 (~719 tok 实测), 缺 closing tag →
+                    # _parse_thought 返 None → silent fail. 本 vocab.max_tokens=1500
+                    # 给足空间.
+                    max_tok = int(vocab.get('max_tokens', 1500))
+                    self._bg_log(
+                        f"💭 [InnerThought] fix46 → DeepSeek "
+                        f"(trigger={trigger_or_reason}, prompt_size={prompt_size}, "
+                        f"max_tokens={max_tok})"
+                    )
+                    raw = safe_deepseek_call(
+                        prompt=user_prompt,
+                        system_prompt=system_prompt,
+                        caller='inner_thought_daemon',
+                        timeout=timeout_s,
+                        max_tokens=max_tok,
+                        max_retries=2,  # 思考脑 LOW prio, 不死磕
+                    )
+                    # 🆕 [Sir 2026-05-28 21:20 fix47 件 2] DS raw sanity check
+                    # DS-v4-pro schema 顺从性弱 — 可能返自由文本 / markdown 不带
+                    # <CATEGORY>/<SALIENCE> XML tag. _parse_thought 必需此 2 tag
+                    # 否则返 None (silent fail). 提前拦: 缺 tag → format_invalid
+                    # + fall through flash, 既保住思考脑节奏又记 evidence.
+                    raw_str = raw or ''
+                    has_category = '<CATEGORY>' in raw_str.upper()
+                    has_salience = '<SALIENCE>' in raw_str.upper()
+                    if not (has_category and has_salience):
+                        self._bg_log(
+                            f"⚠️ [InnerThought] fix47 DS raw schema invalid "
+                            f"(category={has_category}, salience={has_salience}, "
+                            f"fallback={fallback_enabled}): raw[:120]="
+                            f"'{raw_str[:120]}'"
+                        )
+                        _record_thinking_brain_routing(
+                            routed=True, trigger=trigger_or_reason,
+                            success=False, fallback=fallback_enabled,
+                            format_invalid=True,
+                        )
+                        if not fallback_enabled:
+                            return raw_str
+                        # fall through 走 flash (保住思考脑节奏)
+                    else:
+                        _record_thinking_brain_routing(
+                            routed=True, trigger=trigger_or_reason,
+                            success=True, fallback=False,
+                        )
+                        return raw_str
+                except Exception as ds_exc:
+                    # ds 失败 → fallback 路径
+                    self._bg_log(
+                        f"⚠️ [InnerThought] fix46 DS call failed "
+                        f"(fallback={fallback_enabled}): {str(ds_exc)[:120]}"
+                    )
+                    _record_thinking_brain_routing(
+                        routed=True, trigger=trigger_or_reason,
+                        success=False, fallback=fallback_enabled,
+                    )
+                    if not fallback_enabled:
+                        return ''
+                    # fall through 走 flash
+            else:
+                _record_thinking_brain_routing(
+                    routed=False, skip_reason=trigger_or_reason,
+                )
+
+            # 默认 / fallback path: LlmReflector + gemini-3-flash-preview
             reflector = LlmReflector(key_router=self.key_router)
             _model = os.environ.get('JARVIS_THINKING_MODEL', 'flash')
             res = reflector.reflect(
@@ -5780,7 +6042,12 @@ class InnerThoughtDaemon:
             + "\n\nYour narrative (1-2 sentences, butler tone):"
         )
         try:
-            txt = (self._call_llm(system_prompt, user_prompt) or '').strip()
+            # 🆕 [Sir 2026-05-28 fix46] 显式 caller_origin='yesterday_recap'
+            # → trigger ds routing (1/day cold, high-stake summarize, ds 划算)
+            txt = (self._call_llm(
+                system_prompt, user_prompt,
+                caller_origin='yesterday_recap',
+            ) or '').strip()
             # 清 markdown / prefix
             for prefix in ('Narrative:', '"', '*', '- '):
                 if txt.startswith(prefix):

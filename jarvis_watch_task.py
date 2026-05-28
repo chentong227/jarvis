@@ -128,8 +128,13 @@ class WatchTask:
 _STORE_LOCK = threading.Lock()
 
 
-def _load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
-    """读 config JSON. 失败 fallback 默认."""
+def _load_config(path: Optional[str] = None) -> Dict[str, Any]:
+    """读 config JSON. 失败 fallback 默认.
+
+    默 None → runtime resolve `DEFAULT_CONFIG_PATH` (让 monkeypatch 生效).
+    """
+    if path is None:
+        path = DEFAULT_CONFIG_PATH
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -141,8 +146,13 @@ def _load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
         }
 
 
-def _load_tasks(path: str = DEFAULT_TASKS_PATH) -> List[WatchTask]:
-    """读 watch tasks. 失败返空 list."""
+def _load_tasks(path: Optional[str] = None) -> List[WatchTask]:
+    """读 watch tasks. 失败返空 list.
+
+    默 None → runtime resolve `DEFAULT_TASKS_PATH` (让 monkeypatch 生效).
+    """
+    if path is None:
+        path = DEFAULT_TASKS_PATH
     with _STORE_LOCK:
         if not os.path.exists(path):
             return []
@@ -161,8 +171,14 @@ def _load_tasks(path: str = DEFAULT_TASKS_PATH) -> List[WatchTask]:
         return tasks
 
 
-def _save_tasks(tasks: List[WatchTask], path: str = DEFAULT_TASKS_PATH) -> bool:
-    """原子写 tasks JSON. 失败返 False."""
+def _save_tasks(tasks: List[WatchTask],
+                  path: Optional[str] = None) -> bool:
+    """原子写 tasks JSON. 失败返 False.
+
+    默 None → runtime resolve `DEFAULT_TASKS_PATH` (让 monkeypatch 生效).
+    """
+    if path is None:
+        path = DEFAULT_TASKS_PATH
     with _STORE_LOCK:
         try:
             os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
@@ -219,30 +235,55 @@ def _sweep_expired() -> int:
 # ============================================================
 
 _REGISTRAR_PROMPT = """[ROLE]
-Extract a WatchTask if Sir EXPLICITLY asked Jarvis to watch for an EVENT on screen and notify when it happens.
+Classify Sir's utterance for screen-watch intent. Output one of three verdicts:
+  - "concrete": Sir said a CLEAR event with a DETECTABLE on-screen trigger
+                (e.g. "build finishes", "导出完成", "download icon turns green",
+                 "rate limit error appears in Windsurf")
+  - "vague":    Sir asked Jarvis to watch SOMETHING but the trigger is unclear / unspecified
+                (e.g. "盯一下这个直播" without saying what to look for, "看着 Cursor",
+                 "keep an eye on this" without specifying the event)
+  - "not_a_watch": no watch intent at all, OR fixed-time reminder (those go to Time Hook)
 
-[CRITERIA — All must hold]
-1. Sir's utterance contains EVENT-based watch request (e.g. "等导出完成提醒", "tell me when it's done", "when the build finishes ping me").
-2. NOT a fixed-time reminder ("提醒我 5min 后" / "in 30 min" goes to Time Hook, NOT here).
-3. The event is CONCRETE + DETECTABLE on screen (Adobe Media Encoder progress / build status / file download done / specific window appears / app exits).
-4. Jarvis acknowledged (no pushback).
+[IMPORTANT — judge BY SIR'S INTENT ONLY]
+- Use [SIR UTTERANCE] as the SOLE basis for verdict.
+- [JARVIS REPLY] is shown as background context (e.g. to extract a phrasing Jarvis
+  already committed to), NOT as a gate. DO NOT downgrade to "not_a_watch" just
+  because Jarvis pushed back ("That is outside my reach" / "I do not have a tool"
+  / "I cannot monitor that"). The system DOES have ScreenVisionEngine + WatchTask
+  + Mirror infrastructure that can monitor screen events regardless of what
+  Jarvis's reply LLM claimed; Jarvis's prompt simply may not have surfaced these
+  capabilities. Your job: register the watch task on Sir's behalf so the daemon
+  can fire when the screen event occurs.
+
+[GUIDANCE]
+- "等 X 完提醒我" → concrete (event = X completes)
+- "盯一下直播" → vague (盯啥? 主播动作 / 礼物 / 弹幕?)
+- "盯下直播主播开始唱歌就喊我" → concrete (event = 主播唱歌, 有字幕/口型/弹幕 evidence)
+- "看着 Windsurf 出 rate limit 提醒" → concrete (event = 'rate limit' text appears)
+- "提醒我 5min 后吃药" → not_a_watch (fixed time → Time Hook)
 
 [SIR UTTERANCE]
 {sir_text}
 
-[JARVIS REPLY]
+[JARVIS REPLY — context only, do not use as gate]
 {jarvis_reply}
 
 [OUTPUT — JSON only, no markdown fence]
-If NO event-watch request found, output: {{"watch": null}}
-Otherwise:
-{{"watch": {{
-  "what_to_watch": "<concrete thing being watched, e.g. 'Adobe Media Encoder export progress for 千寻vsshen.mp4'>",
-  "trigger_evidence": "<what visual signal should fire the notify, e.g. 'export progress reaches 100% / status changes to Done'>",
-  "notify_msg_en": "<one-line msg Jarvis will say when fired, in English>",
-  "notify_msg_zh": "<one-line msg in Chinese>",
-  "rationale": "<one sentence why this qualifies>"
-}}}}
+{{
+  "verdict": "concrete" | "vague" | "not_a_watch",
+  "watch": null OR {{
+    "what_to_watch": "<concrete thing, e.g. 'Adobe Media Encoder export of 千寻vsshen.mp4'>",
+    "trigger_evidence": "<visual signal that fires notify, e.g. 'export progress reaches 100% / status Done'>",
+    "notify_msg_en": "<one-line English msg when fired>",
+    "notify_msg_zh": "<one-line Chinese msg>",
+    "rationale": "<one sentence>"
+  }},
+  "vague_topic": "<rough topic if verdict=vague, e.g. '直播间' / 'Cursor 编辑器'>",
+  "clarify_question": "<one-line ask Sir for spec if verdict=vague, e.g. '盯主播啥具体动作 — 开播 / 唱歌 / 礼物 / 弹幕关键词?'>"
+}}
+
+If verdict="concrete", watch dict MUST be filled. If verdict="vague", vague_topic + clarify_question MUST be filled.
+If verdict="not_a_watch", set watch=null, vague_topic="", clarify_question="".
 """
 
 
@@ -306,28 +347,65 @@ class WatchTaskRegistrar:
                 return True
         return False
 
+    def _has_vague_phrase(self, sir_text: str) -> bool:
+        """[fix50 / 2026-05-28] 快速 vague phrase pre-filter (Sir 说 '盯一下' / 'keep an eye on' 类).
+
+        命中 vague phrase 但 Registrar LLM 也判 not_a_watch → 兜底走 vague_clarify
+        (准则 6 三维耦合: LLM 决策为主, vocab phrase 兜底防 LLM 漏判).
+        """
+        t = sir_text.lower()
+        phrases_zh = self._config.get('vague_trigger_phrases_zh') or []
+        phrases_en = self._config.get('vague_trigger_phrases_en') or []
+        for p in phrases_en:
+            if p.lower() in t:
+                return True
+        for p in phrases_zh:
+            if p in sir_text:
+                return True
+        return False
+
     def _register_blocking(self, sir_text: str, jarvis_reply: str,
                              turn_id: str, key_router: Any) -> None:
-        """实际 LLM call + persist."""
+        """实际 LLM call + persist (or vague clarify, or fail)."""
         try:
             extracted = self._call_registrar_llm(sir_text, jarvis_reply,
                                                     key_router=key_router)
             if extracted is None:
-                # 🆕 [P5-fix21-c / 2026-05-22] 区分两种 None:
-                # 1. LLM 判 not event-watch (Sir 没真要 watch) — 不需 SWM event
+                # 🆕 [P5-fix21-c / 2026-05-22] 区分多种 None:
+                # 1. LLM 判 not_a_watch (Sir 没真要 watch) — 不需 SWM event
                 # 2. LLM call fail / parse fail (无法判) — publish 'watch_task_register_fail'
-                #    让主脑下轮承认"答应了但 LLM 挂没真注册".
-                # 用 phrase pre-filter 来区分: 命中 phrase 但 None → fail; 没命中 → not watch.
+                # 3. [fix50] vague phrase 命中但 LLM 漏判 → 兜底 vague_clarify
                 phrase_hit = self._has_trigger_phrase(sir_text)
+                vague_hit = self._has_vague_phrase(sir_text)
                 if phrase_hit:
                     bg_log(f"⚠️ [WatchTask/RegisterFail] phrase hit but LLM 没出 schema "
                            f"(LLM 挂或返垃圾) → 拒注册 + publish SWM. sir='{sir_text[:60]}'")
                     self._publish_register_fail(sir_text, jarvis_reply, turn_id,
                                                     reason='llm_unavailable_or_parse_fail')
+                elif vague_hit:
+                    bg_log(f"📌 [WatchTask/VagueFallback] vague phrase hit but LLM 漏判 "
+                           f"→ 兜底 vague_clarify. sir='{sir_text[:60]}'")
+                    self._publish_vague_clarify(
+                        sir_text, jarvis_reply, turn_id,
+                        vague_topic='', clarify_question='',
+                        source_reason='vague_phrase_fallback',
+                    )
                 else:
                     bg_log(f"📌 [WatchTask/Skip] no trigger phrase / LLM judged not event-watch: "
                            f"'{sir_text[:60]}'")
                 return
+
+            # 🆕 [fix50 / 2026-05-28] verdict 字段分流
+            verdict = str(extracted.get('_verdict', '') or '').lower()
+            if verdict == 'vague':
+                self._publish_vague_clarify(
+                    sir_text, jarvis_reply, turn_id,
+                    vague_topic=extracted.get('_vague_topic', ''),
+                    clarify_question=extracted.get('_clarify_question', ''),
+                    source_reason='llm_verdict_vague',
+                )
+                return
+            # concrete (verdict='concrete' 或老 LLM 无 verdict 但有 watch dict)
             self._persist(extracted, sir_text, jarvis_reply, turn_id)
         except Exception as e:
             try:
@@ -367,12 +445,59 @@ class WatchTaskRegistrar:
         except Exception:
             pass
 
+    def _publish_vague_clarify(self, sir_text: str, jarvis_reply: str,
+                                  turn_id: str, vague_topic: str = '',
+                                  clarify_question: str = '',
+                                  source_reason: str = 'llm_verdict_vague') -> None:
+        """🆕 [fix50 / 2026-05-28] publish 'watch_task_vague_clarify' SWM event.
+
+        Sir 说 'vague watch req' (e.g. '盯一下这个直播') — Registrar LLM 判 vague
+        (或 vague phrase 兜底命中). 不真注册 (没空壳 task), 而是 publish 让主脑下轮
+        prompt 看到 [WATCH TASK VAGUE CLARIFY] block, 自然问 Sir 具体盯啥事件.
+
+        准则 5 言出必行 — 不假装答应 'I'll keep an eye on' 但其实没注册. 主脑主动问.
+        准则 6 三维耦合 — 数据 publish SWM, 决策让主脑下轮自由组织反问句.
+        """
+        try:
+            from jarvis_utils import get_event_bus
+            bus = get_event_bus()
+            if bus is None:
+                return
+            cfg = (self._config.get('vague_clarify') or {})
+            ttl = float(cfg.get('prompt_block_age_s', 600.0))
+            bus.publish(
+                etype='watch_task_vague_clarify',
+                description=(
+                    f"Sir vague watch req — needs clarification: "
+                    f"{(vague_topic or sir_text)[:80]}"
+                ),
+                source='WatchTaskRegistrar',
+                salience=0.85,  # 高 salience, 主脑下轮必看
+                ttl=ttl,
+                metadata={
+                    'sir_text': sir_text[:300],
+                    'jarvis_reply_excerpt': jarvis_reply[:300],
+                    'turn_id': turn_id,
+                    'vague_topic': (vague_topic or '')[:200],
+                    'clarify_question': (clarify_question or '')[:200],
+                    'source_reason': source_reason[:50],
+                    'ts': time.time(),
+                },
+            )
+            bg_log(
+                f"📌 [WatchTask/VagueClarify] published SWM "
+                f"(reason={source_reason}, topic='{(vague_topic or '?')[:40]}'): "
+                f"'{sir_text[:60]}'"
+            )
+        except Exception:
+            pass
+
     def _call_registrar_llm(self, sir_text: str, jarvis_reply: str,
-                              key_router: Any) -> Optional[Dict[str, str]]:
+                              key_router: Any) -> Optional[Dict[str, Any]]:
         """调 LLM 提取 schema. 失败 fallback 简单模板.
 
-        Returns dict {what_to_watch, trigger_evidence, notify_msg_en/zh, rationale}
-        or None if not a watch request.
+        Returns dict with '_verdict' ∈ {'concrete', 'vague'} 加其他字段,
+        or None if not a watch request / LLM fail.
         """
         cfg = self._config.get('registrar') or {}
         if key_router is None:
@@ -424,8 +549,15 @@ class WatchTaskRegistrar:
         return self._parse_llm_json(raw or '', sir_text, jarvis_reply)
 
     def _parse_llm_json(self, raw: str, sir_text: str,
-                          jarvis_reply: str) -> Optional[Dict[str, str]]:
-        """parse LLM JSON. 失败 fallback."""
+                          jarvis_reply: str) -> Optional[Dict[str, Any]]:
+        """parse LLM JSON. 失败 fallback.
+
+        🆕 [fix50 / 2026-05-28] verdict 字段三分类:
+          - 'concrete' (新): 老路径 → 返 dict with _verdict='concrete' + watch fields
+          - 'vague'    (新): 新路径 → 返 dict with _verdict='vague' + _vague_topic + _clarify_question
+          - 'not_a_watch' (新): 返 None (caller 走 skip)
+          - 老 LLM 无 verdict 字段: watch=null → None, watch 完整 → 当 concrete (向后兼容)
+        """
         t = (raw or '').strip()
         if t.startswith('```'):
             t = t.split('\n', 1)[-1] if '\n' in t else t
@@ -436,22 +568,38 @@ class WatchTaskRegistrar:
             data = json.loads(t)
         except Exception:
             return self._template_fallback(sir_text, jarvis_reply)
+
+        verdict = str(data.get('verdict', '') or '').strip().lower()
         watch = data.get('watch')
+
+        # vague branch
+        if verdict == 'vague':
+            return {
+                '_verdict': 'vague',
+                '_vague_topic': str(data.get('vague_topic', '') or '')[:200],
+                '_clarify_question': str(data.get('clarify_question', '') or '')[:200],
+            }
+
+        # explicit not_a_watch → None
+        if verdict == 'not_a_watch':
+            return None
+
+        # concrete (verdict='concrete' 或老 LLM 无 verdict)
         if not watch:
             return None
-        # required fields
-        what = watch.get('what_to_watch', '').strip()
-        trig = watch.get('trigger_evidence', '').strip()
+        what = (watch.get('what_to_watch', '') or '').strip()
+        trig = (watch.get('trigger_evidence', '') or '').strip()
         if not what or not trig:
             return None
         return {
+            '_verdict': 'concrete',
             'what_to_watch': what[:200],
             'trigger_evidence': trig[:300],
-            'notify_msg_en': watch.get('notify_msg_en', '').strip()[:200]
-                              or f"Sir, the event you were watching has occurred.",
-            'notify_msg_zh': watch.get('notify_msg_zh', '').strip()[:200]
+            'notify_msg_en': (watch.get('notify_msg_en', '') or '').strip()[:200]
+                              or "Sir, the event you were watching has occurred.",
+            'notify_msg_zh': (watch.get('notify_msg_zh', '') or '').strip()[:200]
                               or '先生, 您让我等的事件已经发生.',
-            'rationale': watch.get('rationale', '')[:200],
+            'rationale': (watch.get('rationale', '') or '')[:200],
         }
 
     def _template_fallback(self, sir_text: str,
@@ -932,6 +1080,89 @@ def render_active_tasks_block(max_show: int = 5) -> str:
             )
         if len(active) > max_show:
             lines.append(f"    ... +{len(active) - max_show} more")
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def render_vague_clarify_block(within_seconds: Optional[float] = None,
+                                  max_show: Optional[int] = None) -> str:
+    """🆕 [fix50 / 2026-05-28] 渲染 [WATCH TASK VAGUE CLARIFY] block — Sir vague req.
+
+    Sir 说 '盯一下这个直播' / '看着 Cursor' 这种 vague request → Registrar LLM 判 vague
+    (或 vague phrase 兜底) → publish 'watch_task_vague_clarify' SWM.
+    主脑下轮 prompt 看本 block → 自然问 Sir 具体盯啥事件 → Sir 答清楚 →
+    轮 Registrar concrete 路径真注册为 WatchTask.
+
+    准则 5 言出必行 — 不假装注册成功. 准则 6 三维耦合 — 数据进 SWM 让主脑决策.
+    """
+    try:
+        from jarvis_utils import get_event_bus
+        bus = get_event_bus()
+        if bus is None:
+            return ''
+
+        cfg = (_load_config().get('vague_clarify') or {})
+        if not cfg.get('enabled', True):
+            return ''
+        ws = float(within_seconds if within_seconds is not None
+                    else cfg.get('prompt_block_age_s', 600.0))
+        cap = int(max_show if max_show is not None
+                   else cfg.get('max_recent_show', 2))
+
+        events = bus.recent_events(within_seconds=ws,
+                                       types={'watch_task_vague_clarify'}) or []
+        if not events:
+            return ''
+        # de-dup by sir_text head
+        seen = set()
+        items = []
+        for e in events:
+            meta = e.get('metadata') or {}
+            sir_h = (meta.get('sir_text') or '')[:80]
+            if sir_h in seen:
+                continue
+            seen.add(sir_h)
+            items.append({
+                'sir_text': (meta.get('sir_text') or '')[:200],
+                'vague_topic': (meta.get('vague_topic') or '')[:150],
+                'clarify_question': (meta.get('clarify_question') or '')[:200],
+                'source_reason': (meta.get('source_reason') or '')[:40],
+                'turn_id': (meta.get('turn_id') or '')[:30],
+                'age_s': int(time.time() - float(meta.get('ts', 0) or 0)),
+            })
+        if not items:
+            return ''
+        items = items[:cap]
+        lines = [
+            '[WATCH TASK VAGUE CLARIFY — fix50: Sir 说了 vague watch 请求, 你要主动问清]',
+            '  Sir 刚说了模糊的 watch 请求, 系统未注册 (没空壳 task), 你本轮自然问 Sir 澄清:',
+        ]
+        for it in items:
+            lines.append(
+                f"    - turn={it['turn_id']} ({it['age_s']}s ago, reason={it['source_reason']})"
+            )
+            lines.append(f"      Sir said: \"{it['sir_text'][:120]}\"")
+            if it['vague_topic']:
+                lines.append(f"      topic: {it['vague_topic']}")
+            if it['clarify_question']:
+                lines.append(f"      建议问: {it['clarify_question']}")
+        lines.append('')
+        lines.append('  你本轮 reply (准则 5 言出必行):')
+        lines.append(
+            '    - 用一句反问 Sir 具体盯啥事件, 提议几种可能 trigger (从 vague_topic 推).'
+        )
+        lines.append(
+            '    - 例: Sir 说 "盯下这个直播" → '
+            '"Sir, 您想我盯主播啥具体动作? 开播 / 唱歌 / 礼物超 X / 弹幕关键词?"'
+        )
+        lines.append(
+            '    - 例: Sir 说 "看着 Windsurf" → '
+            '"您想我看 Cascade 出什么? rate limit / 错误弹窗 / 长时间 spinner?"'
+        )
+        lines.append(
+            '  ❌ 错误: 装答应 ("收到, 我盯着") 但其实没注册 → 准则 5 违反.'
+        )
         return '\n'.join(lines)
     except Exception:
         return ''

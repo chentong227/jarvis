@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -24,6 +25,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from jarvis_watch_task import (
+    DEFAULT_CONFIG_PATH,
     _load_tasks,
     cancel_task,
     expire_task,
@@ -124,6 +126,101 @@ def cmd_stats() -> int:
     return 0
 
 
+# ============================================================
+# 🆕 [fix50 / 2026-05-28] vague-phrases subcommand
+# 准则 6 持久化 + CLI 可改 — Sir 加新 phrase 不需改 .py
+# ============================================================
+
+
+def _load_config_for_edit() -> dict:
+    """读 watch_task_config.json. 不存在 → raise (避免误写空文件)."""
+    if not os.path.exists(DEFAULT_CONFIG_PATH):
+        raise SystemExit(
+            f"❌ config file 不存在: {DEFAULT_CONFIG_PATH}. "
+            f"先恢复 git 版本."
+        )
+    with open(DEFAULT_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _save_config(data: dict) -> None:
+    """atomic write watch_task_config.json."""
+    tmp = DEFAULT_CONFIG_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+    os.replace(tmp, DEFAULT_CONFIG_PATH)
+
+
+def cmd_vague_phrases(*, add_zh: str = '', add_en: str = '',
+                        remove: str = '', list_only: bool = False) -> int:
+    """list/add/remove vague_trigger_phrases_zh|en in watch_task_config.json."""
+    cfg = _load_config_for_edit()
+    zh_list = list(cfg.get('vague_trigger_phrases_zh') or [])
+    en_list = list(cfg.get('vague_trigger_phrases_en') or [])
+    changed = False
+    if add_zh:
+        if add_zh not in zh_list:
+            zh_list.append(add_zh)
+            cfg['vague_trigger_phrases_zh'] = zh_list
+            changed = True
+            print(f"✅ added vague_trigger_phrases_zh: '{add_zh}'")
+        else:
+            print(f"⚠️ already in zh list: '{add_zh}'")
+    if add_en:
+        if add_en.lower() not in [p.lower() for p in en_list]:
+            en_list.append(add_en)
+            cfg['vague_trigger_phrases_en'] = en_list
+            changed = True
+            print(f"✅ added vague_trigger_phrases_en: '{add_en}'")
+        else:
+            print(f"⚠️ already in en list: '{add_en}'")
+    if remove:
+        removed_from = []
+        if remove in zh_list:
+            zh_list.remove(remove)
+            cfg['vague_trigger_phrases_zh'] = zh_list
+            removed_from.append('zh')
+            changed = True
+        # case-insensitive remove for en
+        en_lower_to_orig = {p.lower(): p for p in en_list}
+        if remove.lower() in en_lower_to_orig:
+            orig = en_lower_to_orig[remove.lower()]
+            en_list.remove(orig)
+            cfg['vague_trigger_phrases_en'] = en_list
+            removed_from.append('en')
+            changed = True
+        if removed_from:
+            print(f"✅ removed '{remove}' from {removed_from}")
+        else:
+            print(f"⚠️ '{remove}' not found in either list")
+
+    if changed:
+        _save_config(cfg)
+
+    # 总是列出当前 vocab
+    print()
+    print(f"=== current vague_trigger_phrases ({DEFAULT_CONFIG_PATH}) ===")
+    print(f"zh ({len(zh_list)}):")
+    for p in zh_list:
+        print(f"  - {p}")
+    print(f"en ({len(en_list)}):")
+    for p in en_list:
+        print(f"  - {p}")
+
+    # 顺手显 vague_clarify + vision_refresh_advice config
+    print()
+    print("=== vague_clarify config ===")
+    print(json.dumps(cfg.get('vague_clarify') or {}, ensure_ascii=False, indent=2))
+    print()
+    print("=== vision_refresh_advice config ===")
+    print(
+        json.dumps(cfg.get('vision_refresh_advice') or {},
+                    ensure_ascii=False, indent=2)
+    )
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description='WatchTask CLI dump')
     sub = p.add_subparsers(dest='cmd')
@@ -143,6 +240,18 @@ def main() -> int:
 
     sub.add_parser('stats')
 
+    # 🆕 [fix50] vague-phrases subcommand
+    pv = sub.add_parser(
+        'vague-phrases',
+        help='list/add/remove vague_trigger_phrases_zh|en in watch_task_config.json'
+    )
+    pv.add_argument('--add-zh', type=str, default='',
+                     help='add 1 zh phrase (e.g. "盯一下")')
+    pv.add_argument('--add-en', type=str, default='',
+                     help='add 1 en phrase (e.g. "keep an eye on")')
+    pv.add_argument('--remove', type=str, default='',
+                     help='remove phrase from either list (case-insensitive en)')
+
     args = p.parse_args()
     if args.cmd == 'list':
         return cmd_list(show_all=args.all)
@@ -154,6 +263,10 @@ def main() -> int:
         return cmd_expire(args.task_id)
     if args.cmd == 'stats':
         return cmd_stats()
+    if args.cmd == 'vague-phrases':
+        return cmd_vague_phrases(
+            add_zh=args.add_zh, add_en=args.add_en, remove=args.remove,
+        )
     p.print_help()
     return 0
 

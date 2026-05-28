@@ -53,5 +53,46 @@
     "when it finishes",
     "when it's done",
     "once it completes"
-  ]
+  ],
+  "_doc_vague_branch": "[fix50 / 2026-05-28] Sir 说'盯一下' '看着' 但没说具体 X — Registrar LLM verdict='vague' → publish 'watch_task_vague_clarify' SWM (不真注册, 没空壳 task). 主脑下轮 prompt 看 clarify block 自然问 Sir 具体盯啥. 准则 5 言出必行 (不假装注册成功) + 准则 6 LLM 决策 vague/concrete 分类.",
+  "vague_clarify": {
+    "enabled": true,
+    "max_recent_show": 2,
+    "prompt_block_age_s": 600,
+    "dedup_window_s": 30.0
+  },
+  "vague_trigger_phrases_zh": [
+    "盯一下",
+    "盯下",
+    "盯着",
+    "盯住",
+    "看着",
+    "看一下",
+    "看下",
+    "关注一下",
+    "关注下",
+    "留意一下",
+    "留意下",
+    "留心",
+    "帮我注意",
+    "帮我看",
+    "帮我盯"
+  ],
+  "vague_trigger_phrases_en": [
+    "keep an eye on",
+    "watch for",
+    "look out for",
+    "monitor",
+    "track this",
+    "stay on top of",
+    "pay attention to",
+    "be on the lookout"
+  ],
+  "_doc_vision_refresh_advice": "[fix50 / 2026-05-28] InnerThoughtDaemon tick 时看 active WatchTask, 有 active 则 publish 'proactive_vision_refresh_advice' SWM. ScreenVisionEngine daemon 看到 advice 临时把 backfill 间隔从默认 300s 提到 active_watch_backfill_s (30s). Sir 改 active_watch_backfill_s 即可调节灵敏度 vs token 成本.",
+  "vision_refresh_advice": {
+    "enabled": true,
+    "active_watch_backfill_s": 30.0,
+    "advice_ttl_s": 120.0,
+    "advice_salience": 0.6
+  }
 }
