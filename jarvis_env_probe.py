@@ -439,6 +439,19 @@ Example: Coding|Working in VS Code on a Python project"""
                 hwnd = win32gui.GetForegroundWindow()
                 window_title = win32gui.GetWindowText(hwnd) if hwnd else ""
                 idle_time_ms = win32api.GetTickCount() - win32api.GetLastInputInfo()
+                # 🆕 [BUG FIX 锁屏降频 / Sir 2026-05-29 08:53 真测元凶] idle 更新前置.
+                # =====================================================================
+                # Sir 真测: 息屏/锁屏整晚, 思考脑 309 次空转 state 全 active 没降频.
+                # 元凶: 原 idle 更新在下方 (GetCursorPos 之后). 锁屏/secure desktop 后
+                # GetCursorPos 抛 Access denied → loop 每轮跳 except → idle 永不更新 →
+                # idle_seconds_real 冻结小值 → InnerThought 永远判 active → 降频死.
+                # (ReturnSentinel 不调 GetCursorPos 所以 idle 正确, 印证此根因.)
+                # 修法: idle 更新提到 GetLastInputInfo 后立即 (锁屏仍可用), 即使后续
+                # 任何桌面调用炸, idle 已 final. 准则 8 治本 (非 hot-fix 糖衣).
+                # =====================================================================
+                cls.idle_seconds = round(idle_time_ms / 1000.0, 1)
+                cls.last_real_input_ts = current_time - (idle_time_ms / 1000.0)
+                cls.idle_seconds_real = cls.idle_seconds
                 
                 if _has_psutil and hwnd:
                     try:
@@ -525,7 +538,14 @@ Example: Coding|Working in VS Code on a Python project"""
                         )
                 
                 # === 鼠标监控 ===
-                cursor_pos = win32api.GetCursorPos()
+                # 🆕 [BUG FIX 锁屏降级 / Sir 2026-05-29 08:53] GetCursorPos 在锁屏/secure
+                # desktop 抛 Access denied. 单独 try 防它炸整个 loop (原来它炸 → 下方
+                # 所有 sensor 更新都 skip). 锁屏降级: 用上次坐标 (move_dist=0, 锁屏 Sir
+                # 没动鼠标合理). idle 已在 loop 顶部前置更新, 不受此 try 影响.
+                try:
+                    cursor_pos = win32api.GetCursorPos()
+                except Exception:
+                    cursor_pos = cls._last_cursor_pos
                 dx = cursor_pos[0] - cls._last_cursor_pos[0]
                 dy = cursor_pos[1] - cls._last_cursor_pos[1]
                 move_dist = (dx * dx + dy * dy) ** 0.5
@@ -547,11 +567,8 @@ Example: Coding|Working in VS Code on a Python project"""
                     cls._click_timestamps.popleft()
                 cls.click_count_5min = len(cls._click_timestamps)
                 
-                # === 空闲时长 ===
-                cls.idle_seconds = round(idle_time_ms / 1000.0, 1)
+                # === 空闲时长 (已前置到 loop 顶部 GetLastInputInfo 后, 见上方锁屏修复) ===
                 # 🩹 [β.5.37-A / 2026-05-20] 真物理 input sensor (准则 6 evidence)
-                cls.last_real_input_ts = current_time - (idle_time_ms / 1000.0)
-                cls.idle_seconds_real = cls.idle_seconds  # alias 语义清晰
                 # cascade ghost source 检测: 当前 fg process 是否 IDE 类
                 # 🆕 [Sir 2026-05-28 19:47 fix44 P1] 改读 sensor_thresholds_vocab
                 # 准则 6: hardcode 列表 → memory_pool/sensor_thresholds_vocab.json

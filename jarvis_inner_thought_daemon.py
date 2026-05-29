@@ -362,6 +362,12 @@ _COST_DEFAULT_CONFIG: dict = {
         'enabled': True,
         'max_skip_streak': 20,
         'idle_buckets_s': [300, 1800],
+        # 🆕 [BUG FIX 支柱A 指纹净化 / Sir 2026-05-29 08:53] 排除自产/高频 event.
+        # 指纹只该反映"外部新输入". 自产 (inner_thought) + sensor (PhysicalEnvProbe)
+        # + 各 daemon advice (*_advice etype) 每 tick 变 → 指纹永变 → 永不 skip
+        # (Sir 实测整晚 skip=0, 支柱A 省 token 完全失效).
+        'fingerprint_exclude_sources': ['inner_thought', 'PhysicalEnvProbe'],
+        'fingerprint_exclude_etype_suffixes': ['_advice'],
     },
 }
 
@@ -1687,6 +1693,18 @@ class InnerThoughtDaemon:
     # Adaptive frequency + Sir state
     # ----------------------------------------------------------
     def _get_idle_seconds(self) -> float:
+        # 🆕 [BUG FIX 锁屏降频双保险 / Sir 2026-05-29 08:53] 直调 GetLastInputInfo,
+        # 不再首选 PhysicalEnvProbe.idle_seconds_real 缓存. 该缓存由 _monitor_loop
+        # 更新, Sir 锁屏后 GetCursorPos 炸 loop 曾致缓存冻结 → state 永远 active →
+        # 降频死 (env_probe 已修 loop). 这里再加一层: 即使缓存机制再坏, InnerThought
+        # idle 也实时正确, 和 ReturnSentinel/SmartNudge 等 7 组件一致. GetLastInputInfo
+        # 是系统级 API, 锁屏/secure desktop 仍可用 (不像 GetCursorPos 需桌面访问).
+        try:
+            import win32api
+            return (win32api.GetTickCount() - win32api.GetLastInputInfo()) / 1000.0
+        except Exception:
+            pass
+        # fallback: win32api 不可用 (非 Windows / 占位 None) → probe 缓存兜底
         try:
             from jarvis_env_probe import PhysicalEnvironmentProbe as P
             return float(P.idle_seconds_real or 0.0)
@@ -1876,11 +1894,23 @@ class InnerThoughtDaemon:
             parts.append(f'i{bidx}')
         except Exception:
             parts.append('i?')
-        # SWM events 内容 (type+desc, 不含 age_s — age 每 tick 变会破坏 skip)
+        # SWM events 内容 (type+desc, 不含 age_s — age 每 tick 变会破坏 skip).
+        # 🆕 [BUG FIX 支柱A 指纹净化 / Sir 2026-05-29 08:53] 排除自产/高频 event:
+        # 指纹只该反映"外部新输入". 思考脑自产 (source=inner_thought) + sensor
+        # (PhysicalEnvProbe) + 各 daemon advice (*_advice etype) 每 tick 变, 含进指纹
+        # → 永变 → 永不 skip (Sir 实测整晚 skip=0). 准则 6 vocab 持久化排除列表.
+        _gate_cfg = _load_cost_config().get('evidence_gate', {})
+        _excl_src = set(_gate_cfg.get('fingerprint_exclude_sources',
+                                     ['inner_thought', 'PhysicalEnvProbe']))
+        _excl_suf = tuple(_gate_cfg.get('fingerprint_exclude_etype_suffixes',
+                                       ['_advice']))
         for e in (evidence.get('swm_events') or []):
-            parts.append(
-                f"s:{e.get('type', '')}:{(e.get('desc') or '')[:40]}"
-            )
+            _etype = e.get('type', '')
+            if e.get('source', '') in _excl_src:
+                continue  # 自产/sensor 高频 event 不算外部新输入
+            if _excl_suf and _etype.endswith(_excl_suf):
+                continue  # daemon advice (*_advice) 每 tick 变, 不算外部新输入
+            parts.append(f"s:{_etype}:{(e.get('desc') or '')[:40]}")
         # STM 最新 turn (when 绝对 ts + user — Sir 说新话信号)
         stm = evidence.get('stm') or []
         if stm:
@@ -2814,6 +2844,8 @@ class InnerThoughtDaemon:
                         'type': e.get('type', '?'),
                         'desc': (e.get('description') or '')[:120],
                         'age_s': int(age),
+                        # 🆕 [支柱A 指纹净化] 存 source 供 fingerprint filter 自产 event
+                        'source': e.get('source', ''),
                     })
                 ev['swm_events'] = events[:8]
         except Exception:

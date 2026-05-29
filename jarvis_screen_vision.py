@@ -547,7 +547,16 @@ class ScreenVisionEngine:
             img.save(buf, format="JPEG", quality=JPEG_QUALITY)
             return buf.getvalue()
         except Exception as e:
-            self._stats['last_error'] = f"capture: {str(e)[:60]}"
+            # 🆕 [Sir 2026-05-29 08:53] 区分锁屏 (预期降级) vs 真截图 bug, 便于诊断.
+            # 锁屏/secure desktop → ImageGrab 抛 OSError 'screen grab failed' (与
+            # env_probe GetCursorPos 锁屏丢桌面访问同源). 这是预期非 bug, daemon
+            # 上游 _do_describe 已 None→return 不浪费 vision LLM. 标 locked 便于 Sir
+            # dashboard 一眼区分"锁屏暂停屏幕监控"(正常) vs "截图真坏了"(要查).
+            _es = str(e)
+            if 'grab' in _es.lower() or 'screen' in _es.lower():
+                self._stats['last_error'] = 'capture_locked (锁屏/息屏, 预期降级)'
+            else:
+                self._stats['last_error'] = f"capture: {_es[:60]}"
             return None
 
     # ---- Vision LLM call (复用 chat_bypass safe_gemini_call pattern) ----
