@@ -147,6 +147,14 @@ class RelationshipReflector:
     def _format_stm(stm: List[Dict[str, Any]]) -> str:
         lines = []
         for item in stm:
+            user = (item.get('user') or '').strip()
+            jarvis = (item.get('jarvis') or '').strip()
+            if user or jarvis:
+                if user:
+                    lines.append(f'[Sir] {user[:180]}')
+                if jarvis:
+                    lines.append(f'[Jarvis] {jarvis[:180]}')
+                continue
             src = item.get('source') or item.get('src') or item.get('role') or 'unknown'
             speaker = 'Sir' if src in ('user', 'user_voice', 'sir') else 'Jarvis'
             text = (item.get('text') or item.get('content') or '').strip()

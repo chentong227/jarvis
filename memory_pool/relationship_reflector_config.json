@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "min_interval_s": 21600,
+  "min_stm_turns": 2,
+  "use_llm": false,
+  "_field_doc": {
+    "enabled": "Master switch. Default false: no background token cost.",
+    "min_interval_s": "Minimum seconds between relationship reflector attempts.",
+    "min_stm_turns": "Minimum recent STM turns required before proposing.",
+    "use_llm": "If false, hook is inert unless called with forced/test JSON; future scheduler may enable explicitly."
+  }
+}

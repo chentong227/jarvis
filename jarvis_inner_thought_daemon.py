@@ -402,6 +402,49 @@ def _load_cost_config() -> dict:
         return _COST_DEFAULT_CONFIG
 
 
+_RELATIONSHIP_REFLECTOR_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool',
+    'relationship_reflector_config.json',
+)
+_RELATIONSHIP_REFLECTOR_CONFIG_CACHE: dict = {
+    'data': None, 'mtime': 0.0, 'checked_at': 0.0,
+}
+_RELATIONSHIP_REFLECTOR_DEFAULT_CONFIG: dict = {
+    'enabled': False,
+    'min_interval_s': 21600,
+    'min_stm_turns': 2,
+    'use_llm': False,
+}
+
+
+def _load_relationship_reflector_config() -> dict:
+    now = time.time()
+    cache = _RELATIONSHIP_REFLECTOR_CONFIG_CACHE
+    if cache['data'] is not None and now - cache['checked_at'] < 30.0:
+        return cache['data']
+    cache['checked_at'] = now
+    try:
+        if not os.path.exists(_RELATIONSHIP_REFLECTOR_CONFIG_PATH):
+            cache['data'] = dict(_RELATIONSHIP_REFLECTOR_DEFAULT_CONFIG)
+            return cache['data']
+        mtime = os.path.getmtime(_RELATIONSHIP_REFLECTOR_CONFIG_PATH)
+        if mtime == cache['mtime'] and cache['data']:
+            return cache['data']
+        with open(_RELATIONSHIP_REFLECTOR_CONFIG_PATH, 'r',
+                  encoding='utf-8') as f:
+            data = json.load(f) or {}
+        merged = dict(_RELATIONSHIP_REFLECTOR_DEFAULT_CONFIG)
+        for k in merged:
+            if k in data:
+                merged[k] = data[k]
+        cache['data'] = merged
+        cache['mtime'] = mtime
+        return merged
+    except Exception:
+        return dict(_RELATIONSHIP_REFLECTOR_DEFAULT_CONFIG)
+
+
 # ==========================================================================
 # 🆕 [Sir 2026-05-28 12:30 真痛 anchor] surface_to_sir 机制全退化
 # ==========================================================================
@@ -1445,6 +1488,7 @@ class InnerThoughtDaemon:
         # =====================================================================
         self._last_vision_refresh_publish_ts: float = 0.0
         self._vision_refresh_publish_count: int = 0
+        self._last_relationship_reflector_ts: float = 0.0
 
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM 决定的下次 interval (0 = 用 baseline)
         self._next_tick_interval_s = 0
@@ -2060,6 +2104,36 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+    def _maybe_run_relationship_reflector(self, evidence: dict) -> None:
+        cfg = _load_relationship_reflector_config()
+        if not cfg.get('enabled', False):
+            return
+        if not cfg.get('use_llm', False):
+            return
+        now = time.time()
+        min_interval = float(cfg.get('min_interval_s', 21600) or 21600)
+        if now - self._last_relationship_reflector_ts < min_interval:
+            return
+        stm = evidence.get('stm') or []
+        if len(stm) < int(cfg.get('min_stm_turns', 2) or 2):
+            return
+        try:
+            from jarvis_relationship_reflector import RelationshipReflector
+            reflector = RelationshipReflector(key_router=self.key_router)
+            result = reflector.reflect_once(stm)
+            self._last_relationship_reflector_ts = now
+            if result.get('proposed'):
+                self._bg_log(
+                    f"💭 [RelationshipReflector] proposed "
+                    f"{result.get('proposal_id', '')}"
+                )
+        except Exception as e:
+            self._last_relationship_reflector_ts = now
+            try:
+                self._bg_log(f"⚠️ [RelationshipReflector] hook failed: {e}")
+            except Exception:
+                pass
+
     # ----------------------------------------------------------
     # Tick (the core)
     # ----------------------------------------------------------
@@ -2247,6 +2321,11 @@ class InnerThoughtDaemon:
         # 主脑自己识别 "I keep repeating X" 类 → publish stop_repeating_topic
         # 让 SOUL inject 下轮主脑 prompt 真看到 → 真不重复.
         self._maybe_publish_self_correction(thought)
+
+        try:
+            self._maybe_run_relationship_reflector(evidence)
+        except Exception:
+            pass
 
         # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] saturation 检 + counter
         # =====================================================================

@@ -353,6 +353,7 @@ Sir 原话（姊妹篇 §0 收束）：
 - `scripts/relationship_state_dump.py`：CLI 支持 `list` / `set <dimension> <value> --note ...`，并支持 `--path` 用于镜像/测试隔离。
 - Review flow：`propose` 只写 `review[]` 并 publish `relationship_state_proposed`，不改 active 维度；`approve` 才应用，`reject` 只标记 rejected。
 - `jarvis_relationship_reflector.py`：新增 propose-only reflector helper；可从 STM/LLM JSON 生成 review proposal，但不自动改 active RelationshipState，也不默认启动 daemon。
+- `jarvis_inner_thought_daemon.py`：预留低频 hook，读取 `memory_pool/relationship_reflector_config.json`；默认 `enabled=false/use_llm=false`，因此不增加后台 token 成本。
 - `jarvis_central_nerve.py`：Layer 2 relational block 前注入一行 `RELATIONSHIP STATE: ...`；无 relational_state 时也可单独注入该行。
 - 暂未做：默认启动后台 daemon。原因：避免额外 token 与自动写关系；现阶段为手动/测试/后续调度入口。
-- 测试：`tests/_test_sir_20260529_1023_relationship_state_base.py` + `tests/_test_sir_20260529_1033_relationship_reflector.py` 覆盖 persistence / clamp / unknown dimension reject / central_nerve 一行注入 / CLI temp path / proposal approve/reject / reflector forced JSON propose-only。镜像 CLI smoke 使用 `JARVIS_MIRROR=1` + temp file。目标测试+关键回归 **20 passed / 0 failed**。
+- 测试：`tests/_test_sir_20260529_1023_relationship_state_base.py` + `tests/_test_sir_20260529_1033_relationship_reflector.py` + `tests/_test_sir_20260529_1043_relationship_reflector_inner_hook.py` 覆盖 persistence / clamp / unknown dimension reject / central_nerve 一行注入 / CLI temp path / proposal approve/reject / reflector forced JSON propose-only / inner_thought hook 默认关闭。镜像 CLI smoke 使用 `JARVIS_MIRROR=1` + temp file。
