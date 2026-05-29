@@ -263,6 +263,40 @@ class InnerVoiceTrack:
         mr.sort(key=lambda e: e.ts)
         return mr[-max_n:]
 
+    def mark_stale_pending_main_replies_ignored(
+        self, older_than_min: float = 8.0, max_age_min: float = 60.0,
+    ) -> int:
+        """🆕 [#2 / Sir 2026-05-29 Option A] 静默 sweep — pending main_reply 老于
+        older_than_min (Sir 没反应) 但不超 max_age_min → 标 'ignored'.
+
+        与 mark_pending_main_replies_reacted 互补: 那个标"刚被 Sir 反应"的 (新),
+        本方法标"Sir 久未反应"的 (老于阈值). 仅喂 V6 meta_feedback_loop (思考脑
+        看 Sir 没接住 → 可能太 pushy / AFK), **不触发 record_rejection** (ignored
+        太弱/歧义, 不该衰减 directive). 由 jarvis_inner_thought_daemon tick 调.
+
+        Returns: 被 mark 数.
+        """
+        now = time.time()
+        older_cut = now - max(0.0, older_than_min) * 60.0   # ts < 此 = 老于阈值
+        max_cut = now - max(0.0, max_age_min) * 60.0        # ts >= 此 = 不太老
+        marked = 0
+        with self._lock:
+            for e in self._buffer:
+                if not e.meta:
+                    continue
+                if e.meta.get('kind') != 'main_reply':
+                    continue
+                if e.meta.get('sir_reaction') != 'pending':
+                    continue
+                if e.ts >= older_cut:
+                    continue  # 还没到静默阈值, 继续等 Sir 反应
+                if e.ts < max_cut:
+                    continue  # 太老 (>max_age), 跳过不标 (避免标古早条目)
+                e.meta['sir_reaction'] = 'ignored'
+                e.meta['sir_reaction_marked_at'] = now
+                marked += 1
+        return marked
+
     # ============================================================
     # 🆕 [governor Phase 3 F7 / Sir 2026-05-29 拍板] thinking_brain_directive
     # ============================================================

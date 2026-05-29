@@ -3183,15 +3183,31 @@ Spoken English:"""
                     is_enabled as _iv_en_react,
                 )
                 if _iv_en_react():
-                    # 简版 negative keyword detect (V2 可接 SkepticismDetector vocab)
-                    _neg_kws = (
-                        '别提', '别说', '不要', '别再', '烦死', '够了',
-                        '别了', '不对', '错了', '不用', '醒醒',
-                        ' stop ', ' enough ', "don't ",
+                    # 🆕 [#2 / Sir 2026-05-29 Option A] vocab 分类器替写死 _neg_kws.
+                    # memory_pool/reaction_vocab.json + CLI(reaction_vocab_dump.py) +
+                    # 异步 LLM. classify_fast 窄判 rejected/engaged 喂 meta_feedback_loop
+                    # (热路径 O(1)). 详 docs/JARVIS_CLOSURE_AND_RELATIONAL_UPLIFT_DESIGN #2.
+                    from jarvis_reaction_classifier import (
+                        classify_fast as _classify_fast,
                     )
-                    _ui_lower = ' ' + clean_user_input.lower() + ' '
-                    _is_neg = any(k in _ui_lower for k in _neg_kws)
-                    _reaction_label = 'rejected' if _is_neg else 'engaged'
+                    _reaction_label = _classify_fast(clean_user_input)
+                    # 🆕 [#1 / Sir 2026-05-29 Option A] snapshot 上一轮 fired L2 +
+                    # pending reply. 本块跑在 _assemble_prompt 前, self.jarvis.
+                    # _l2_last_fired_ids 仍是产出 Sir 正反应那条 reply 的上一轮 fired ids.
+                    _prev_fired_l2 = []
+                    _prev_reply_excerpt = ''
+                    try:
+                        if hasattr(self, 'jarvis') and self.jarvis:
+                            _prev_fired_l2 = list(getattr(
+                                self.jarvis, '_l2_last_fired_ids', []) or [])
+                        for _e_pr in _giv_react().get_recent_main_replies(
+                                within_min=30.0, max_n=5):
+                            _m_pr = getattr(_e_pr, 'meta', None) or {}
+                            if _m_pr.get('sir_reaction') == 'pending':
+                                _prev_reply_excerpt = str(
+                                    _m_pr.get('reply_excerpt') or '')
+                    except Exception:
+                        pass
                     try:
                         _marked = _giv_react().mark_pending_main_replies_reacted(
                             reaction=_reaction_label, within_min=30.0,
@@ -3206,6 +3222,30 @@ Spoken English:"""
                                 )
                             except Exception:
                                 pass
+                    except Exception:
+                        pass
+                    # 🆕 [#1 精准归因] behavioral_reject=yes → record_rejection(上一轮
+                    # fired L2). 异步 fire-and-forget + 预筛闸: 非疑似负面不调 LLM,
+                    # 不阻 stream. 接通生产从未接线的 rejected 强闭环 (apply_decay
+                    # priority>=10 红线既有保护). 详 design #1.
+                    try:
+                        if _prev_fired_l2:
+                            from jarvis_reaction_classifier import (
+                                get_default_reaction_classifier as _gdrc,
+                            )
+                            from jarvis_directives import (
+                                get_default_registry as _gdr_rc,
+                            )
+                            _kr_rc = (getattr(self.jarvis, 'key_router', None)
+                                      if hasattr(self, 'jarvis') and self.jarvis
+                                      else None)
+                            _gdrc(
+                                key_router=_kr_rc, registry=_gdr_rc(),
+                            ).judge_behavioral_reject_async(
+                                sir_input=clean_user_input,
+                                prev_reply=_prev_reply_excerpt,
+                                prev_fired_ids=_prev_fired_l2,
+                            )
                     except Exception:
                         pass
         except Exception:

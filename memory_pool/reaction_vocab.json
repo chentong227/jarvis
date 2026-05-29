@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "purpose": "reaction 分类 vocab — V6 元学习闭环 (engaged/rejected/ignored) + #1 behavioral_reject LLM 预筛闸. 准则6: 持久化+CLI(scripts/reaction_vocab_dump.py)+L7 reflector.",
+    "guideline": "classify_fast 用 negative_candidates 判 rejected (热路径, O(1)); behavioral_reject LLM 仅在 negative_candidates 命中时才触发 (异步, 不每轮调); ignored 来自静默 sweep 非文本; strong_correction/soft 为 LLM 上下文 prior, 不单独驱动 fast 分类.",
+    "updated_at": "2026-05-29T09:20:00",
+    "source_marker": "JARVIS_CLOSURE_AND_RELATIONAL_UPLIFT_DESIGN #2 / Sir 2026-05-29 Option A"
+  },
+  "negative_candidates": [
+    "别提", "别说", "不要", "别再", "烦死", "够了", "别了",
+    "不对", "错了", "不用", "醒醒", "stop", "enough", "don't",
+    "不是这个", "不是我想要", "不太对", "不太行", "答非所问", "跑题",
+    "听错", "误会", "重说", "重新说", "搞错", "你错了", "别闹", "说错"
+  ],
+  "strong_correction": [
+    "不对", "错了", "答非所问", "跑题", "误会", "重说", "重新说",
+    "听错", "搞错", "你错了", "说错"
+  ],
+  "soft": [
+    "算了", "无所谓", "随便"
+  ],
+  "ignored_after_min": 8.0,
+  "history": [],
+  "review_queue": []
+}

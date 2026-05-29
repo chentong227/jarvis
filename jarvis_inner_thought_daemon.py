@@ -2028,11 +2028,51 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+    def _sweep_ignored_main_replies(self) -> None:
+        """🆕 [#2 / Sir 2026-05-29 Option A] 静默 sweep — pending main_reply 老于
+        reaction_vocab.ignored_after_min (Sir 久未反应) → 标 'ignored'.
+
+        仅喂 V6 meta_feedback_loop (思考脑看 Sir 没接住 → 可能太 pushy / AFK),
+        **不触发 record_rejection** (ignored 太弱/歧义). 纯 Python 不烧 token.
+        详 docs/JARVIS_CLOSURE_AND_RELATIONAL_UPLIFT_DESIGN.md #2.
+        """
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track,
+                is_enabled as _iv_enabled,
+            )
+            if not _iv_enabled():
+                return
+            try:
+                from jarvis_reaction_classifier import load_ignored_after_min
+                _older = load_ignored_after_min()
+            except Exception:
+                _older = 8.0
+            n = get_inner_voice_track().mark_stale_pending_main_replies_ignored(
+                older_than_min=_older, max_age_min=60.0,
+            )
+            if n > 0:
+                self._bg_log(
+                    f"⏸️ [#2/ignored-sweep] mark {n} stale pending "
+                    f"main_reply(s) as sir_reaction='ignored' "
+                    f"(silent >{_older}min)"
+                )
+        except Exception:
+            pass
+
     # ----------------------------------------------------------
     # Tick (the core)
     # ----------------------------------------------------------
     def _tick(self) -> None:
         self._tick_count += 1
+
+        # 🆕 [#2 / Sir 2026-05-29 Option A] ignored sweep — 每 tick 顶跑 (纯 Python
+        # 不烧 token, cooldown/evidence-gate skip 都不影响). pending main_reply
+        # 静默老于阈值 → 标 ignored (仅喂 meta_feedback_loop, 不衰减 directive).
+        try:
+            self._sweep_ignored_main_replies()
+        except Exception:
+            pass
 
         # 🆕 [fix50 / 2026-05-28] active WatchTask 提频 vision (准则 6 三维耦合)
         # =====================================================================
