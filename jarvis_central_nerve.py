@@ -2616,6 +2616,12 @@ User: {user_input}
         会按 trigger_tier/trigger_sir_state filter protocols (空 list = 全场景 inject).
         """
         try:
+            relationship_line = ''
+            try:
+                from jarvis_relationship_state import get_default_store as _get_relship
+                relationship_line = _get_relship().to_prompt_line(max_chars=180)
+            except Exception:
+                relationship_line = ''
             if self.relational_state is not None:
                 # 复用 Layer 1 的判断: 只有 summon/preflight_fail 才 inject baggage
                 _reason = getattr(self, '_soul_concern_inject_reason', 'silent')
@@ -2630,7 +2636,7 @@ User: {user_input}
                         _sir_state = _it_daemon._classify_sir_state()
                     except Exception:
                         _sir_state = ''
-                return self.relational_state.to_prompt_block(
+                relational_block = self.relational_state.to_prompt_block(
                     top_jokes=3,
                     top_unfinished=2 if _allow_baggage else 0,
                     top_threads=2 if _allow_baggage else 0,
@@ -2638,6 +2644,10 @@ User: {user_input}
                     current_tier=str(prompt_tier or ''),
                     current_sir_state=_sir_state,
                 )
+                if relationship_line and relational_block:
+                    return relationship_line + '\n' + relational_block
+                return relationship_line or relational_block
+            return relationship_line
         except Exception:
             pass
         return ''

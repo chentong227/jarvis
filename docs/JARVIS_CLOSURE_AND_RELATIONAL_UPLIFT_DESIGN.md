@@ -342,3 +342,15 @@ Sir 原话（姊妹篇 §0 收束）：
 - Prompt：`to_prompt_block(..., top_edges=0)` 默认不注入 edges，避免热路径 prompt 膨胀；显式 `top_edges>0` 时渲染 `[RELATIONAL LINKS]`，并受 `max_chars` 截断保护。
 - Dump：`dump_human()` 显示 edges count 与 edge 列表。
 - 测试：`tests/_test_sir_20260529_1008_relational_graph_edges.py` 覆盖 CRUD / archive / persist-load / prompt default-off / prompt explicit-on / dump。目标测试+关键回归 **21 passed / 0 failed**。
+
+### 9.10 #5 RelationshipState 第一类实体（base 已实现）
+
+- `jarvis_relationship_state.py`：新增 `RelationshipState` / `RelationshipStateStore`。
+  - 维度：`temperature` / `trust` / `rhythm` / `recent_friction` / `closeness`。
+  - 边界：所有维度 clamp 到 `0.0..1.0`；`to_prompt_line()` 永远一行且受 `max_chars` 限制。
+  - 更新：`set_dimension()` 持久化并 publish `relationship_state_updated` 到 SWM；不自动决策主脑行为。
+- `memory_pool/relationship_state.json`：默认状态文件落地，Sir 可直接看/改。
+- `scripts/relationship_state_dump.py`：CLI 支持 `list` / `set <dimension> <value> --note ...`，并支持 `--path` 用于镜像/测试隔离。
+- `jarvis_central_nerve.py`：Layer 2 relational block 前注入一行 `RELATIONSHIP STATE: ...`；无 relational_state 时也可单独注入该行。
+- 暂未做：自动 reflector 更新维度。原因：base 先立第一类实体 + CLI + prompt，一切自动更新后续需走 review/LLM publish-only 轨，避免 Python/LLM 擅自写关系整体状态。
+- 测试：`tests/_test_sir_20260529_1023_relationship_state_base.py` 覆盖 persistence / clamp / unknown dimension reject / central_nerve 一行注入 / CLI temp path。镜像 CLI smoke 使用 `JARVIS_MIRROR=1` + temp file。目标测试+关键回归 **14 passed / 0 failed**。

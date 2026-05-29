@@ -1,0 +1,19 @@
+{
+  "state": {
+    "temperature": 0.5,
+    "trust": 0.5,
+    "rhythm": 0.5,
+    "recent_friction": 0.0,
+    "closeness": 0.5,
+    "source": "default",
+    "source_marker": "#5_relationship_state_base",
+    "updated_at": 0.0,
+    "updated_turn_id": "",
+    "note": ""
+  },
+  "_meta": {
+    "schema_version": 1,
+    "persisted_at": 0.0,
+    "persisted_iso": "seed"
+  }
+}
