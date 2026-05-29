@@ -2969,6 +2969,23 @@ class InnerThoughtDaemon:
                 ev['swm_events'] = events[:8]
         except Exception:
             pass
+        # 🆕 [governor Phase 2 F4 扩展 / Sir 2026-05-29] let_go prune swm_events
+        # 同 let_go 机制: active let_go topics 中 swm: 前缀的 → 过滤对应 etype
+        try:
+            _active_lg = _load_let_go_topics()
+            if _active_lg and ev.get('swm_events'):
+                _swm_lg_etypes = {
+                    e.get('thread_id', '')[4:]  # strip 'swm:' prefix
+                    for e in _active_lg
+                    if e.get('thread_id', '').startswith('swm:')
+                }
+                if _swm_lg_etypes:
+                    ev['swm_events'] = [
+                        se for se in ev['swm_events']
+                        if se.get('type', '') not in _swm_lg_etypes
+                    ]
+        except Exception:
+            pass
         # 🆕 [Sir 2026-05-26 18:54 真意 anchor "让反思看真证据"] FIX A:
         # =====================================================================
         # 老 BUG: STM 只 2 turn, user 120 char, jarvis 200 char — 一句长 reply 看不全.
@@ -3710,8 +3727,11 @@ class InnerThoughtDaemon:
             "<LET_GO>thread_id_short</LET_GO>  ← 🆕 [Phase 2 F4] OPTIONAL. "
             "Only if [TOPIC DISTRIBUTION] above shows 🍂 AGED thread AND you "
             "judge further thinking is fruitless. Use thread_id_short EXACTLY "
-            "as shown above (must match a real thread you saw). Default TTL "
-            "30min. Leave empty if no thread should be let-go this tick.\n\n"
+            "as shown above (must match a real thread you saw). "
+            "Also supports <LET_GO>swm:etype</LET_GO> for persistent SWM "
+            "events (e.g. swm:auto_arbiter_anomaly) — prunes that event type "
+            "from evidence. Default TTL 30min. "
+            "Leave empty if nothing should be let-go this tick.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -4910,19 +4930,34 @@ class InnerThoughtDaemon:
                 _lg_claimed = (let_go_m.group(1) or '').strip()[:32]
                 if _lg_claimed:
                     _lg_target = ''
-                    try:
-                        # match against self._thoughts thread_id prefix
-                        for _t in list(self._thoughts)[-50:]:
-                            _candidate = (
-                                getattr(_t, 'thread_id', '') or _t.id
-                            )
-                            # 接受 prefix-match (LLM 看到 16 char short)
-                            if (_candidate.startswith(_lg_claimed)
-                                    or _lg_claimed.startswith(_candidate[:12])):
-                                _lg_target = _candidate[:32]
-                                break
-                    except Exception:
-                        pass
+                    _is_swm = _lg_claimed.startswith('swm:')
+                    if _is_swm:
+                        # swm:etype → validate etype exists in recent swm_events
+                        _swm_etype = _lg_claimed[4:]
+                        try:
+                            from jarvis_utils import get_event_bus
+                            _bus = get_event_bus()
+                            if _bus is not None:
+                                _top = _bus.top_n(n=20) or []
+                                for _e in _top:
+                                    if _e.get('type', '') == _swm_etype:
+                                        _lg_target = f'swm:{_swm_etype}'
+                                        break
+                        except Exception:
+                            pass
+                    else:
+                        # thread_id: match against self._thoughts
+                        try:
+                            for _t in list(self._thoughts)[-50:]:
+                                _candidate = (
+                                    getattr(_t, 'thread_id', '') or _t.id
+                                )
+                                if (_candidate.startswith(_lg_claimed)
+                                        or _lg_claimed.startswith(_candidate[:12])):
+                                    _lg_target = _candidate[:32]
+                                    break
+                        except Exception:
+                            pass
                     if _lg_target:
                         _ok = _add_let_go_topic(
                             thread_id=_lg_target,
@@ -4931,16 +4966,18 @@ class InnerThoughtDaemon:
                             reason=thought_text[:200],
                         )
                         if _ok:
+                            _kind = 'swm event' if _is_swm else 'thread'
                             self._bg_log(
                                 f"🍂 [InnerThought/let_go] LLM 自决 '放下' "
-                                f"thread={_lg_target[:16]} (TTL default), "
-                                f"下轮 tick prune 该 thread 从 evidence"
+                                f"{_kind}={_lg_target[:16]} (TTL default), "
+                                f"下轮 tick prune 该 {_kind} 从 evidence"
                             )
                     else:
                         self._bg_log(
                             f"🍂 [InnerThought/let_go] LLM 输出 <LET_GO>"
-                            f"{_lg_claimed}</LET_GO> 但 thread_id 未在 "
-                            f"recent_thoughts 中 (可能 LLM 编造 id), 跳."
+                            f"{_lg_claimed}</LET_GO> 但未在 "
+                            f"{'SWM events' if _is_swm else 'recent_thoughts'} "
+                            f"中 (可能 LLM 编造 id), 跳."
                         )
         except Exception:
             pass
@@ -5436,6 +5473,67 @@ class InnerThoughtDaemon:
             return (True, best_hit_id, best_jacc)
         return (False, '', 0.0)
 
+    def _check_directive_jaccard_dedup(
+        self, new_text: str,
+    ) -> Tuple[bool, str, float]:
+        """jaccard dedup against current active directive.
+
+        Returns: (hit, active_text, jaccard).
+          hit=True → reject compose (too similar to active directive).
+          hit=False → 放行.
+        """
+        if not new_text or not isinstance(new_text, str):
+            return (False, '', 0.0)
+        try:
+            vocab = self._load_propose_quality_vocab()
+            if not vocab.get('directive_dedup_enabled', True):
+                return (False, '', 0.0)
+            threshold = float(vocab.get('directive_dedup_threshold', 0.5))
+            threshold = max(0.0, min(1.0, threshold))
+        except Exception:
+            threshold = 0.5
+        try:
+            from jarvis_inner_voice_track import (
+                get_inner_voice_track, is_enabled as _iv_en,
+            )
+            if not _iv_en():
+                return (False, '', 0.0)
+            track = get_inner_voice_track()
+            active = track.get_active_directive()
+            if not active:
+                return (False, '', 0.0)
+            active_text = str(active.get('text', '') or '')
+            if not active_text:
+                return (False, '', 0.0)
+        except Exception:
+            return (False, '', 0.0)
+        new_tokens = set(
+            t for t in re.findall(r'\w+', new_text.lower())
+            if len(t) >= 2
+        )
+        if not new_tokens:
+            return (False, '', 0.0)
+        ex_tokens = set(
+            t for t in re.findall(r'\w+', active_text.lower())
+            if len(t) >= 2
+        )
+        if not ex_tokens:
+            return (False, '', 0.0)
+        inter = len(new_tokens & ex_tokens)
+        union = len(new_tokens | ex_tokens)
+        jacc = inter / union if union > 0 else 0.0
+        if jacc >= threshold:
+            try:
+                self._bg_log(
+                    f"🚫 [directive_jaccard_dedup] new='{new_text[:50]}' "
+                    f"overlaps active='{active_text[:50]}' "
+                    f"jaccard={jacc:.2f} (threshold {threshold}) → reject"
+                )
+            except Exception:
+                pass
+            return (True, active_text, jacc)
+        return (False, '', 0.0)
+
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
         """🆕 [Sir 2026-05-26 SOUL Phase A] propose UnspokenProtocol from B-class.
@@ -5575,6 +5673,13 @@ class InnerThoughtDaemon:
             return False, 'empty_directive_text'
         if len(text) < 5:
             return False, f'directive_too_short:{len(text)}<5'
+        # jaccard dedup against current active directive
+        _hit, _hit_text, _jacc = self._check_directive_jaccard_dedup(text)
+        if _hit:
+            return False, (
+                f'jaccard_dedup:directive_overlap_with_active:'
+                f'{_hit_text[:30]}:jaccard={_jacc:.2f}'
+            )
         try:
             from jarvis_inner_voice_track import (
                 get_inner_voice_track, is_enabled as _iv_enabled,
@@ -7108,6 +7213,9 @@ class InnerThoughtDaemon:
         # 返具体 reject reason (overlap_with_<id>:<jaccard>) 让 LLM 下轮学习.
         'jaccard_dedup_threshold': 0.5,
         'jaccard_dedup_enabled': True,
+        # directive dedup (against current active directive)
+        'directive_dedup_enabled': True,
+        'directive_dedup_threshold': 0.5,
     }
 
     def _load_propose_quality_vocab(self) -> dict:
