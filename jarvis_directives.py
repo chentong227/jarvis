@@ -87,14 +87,68 @@ MIN_FIRED_FOR_PRIORITY_DROP = 5
 NOT_HELPED_PRIORITY_DROP = 5     # not_helped >= 5 AND helped/(h+nh) < 0.3 → priority drop
 NOT_HELPED_REVIEW_THRESHOLD = 10  # not_helped >= 10 AND helped == 0 → state=review
 HELPED_RATIO_THRESHOLD = 0.3     # helped 占比 < 0.3 视为低效
+DIRECTIVE_REINFORCEMENT_CONFIG_PATH = (
+    Path(__file__).resolve().parent
+    / "memory_pool"
+    / "directive_reinforcement_config.json"
+)
+_REINFORCEMENT_CONFIG_CACHE: Optional[dict] = None
+_REINFORCEMENT_CONFIG_MTIME: float = 0.0
 
 # 运行时持久化字段（不存 trigger/text，避免 lambda 序列化）
 # 🆕 [Gap-Y / β.5.46-fix5 / 2026-05-21 23:30] 加 not_helped — 主脑被 7 条 directive 淹治本数据
 _PERSISTABLE_FIELDS = (
     'fired', 'rejected', 'helped', 'not_helped',
     'last_triggered', 'last_rejected', 'last_helped', 'last_not_helped',
+    'last_reinforced',
     'state', 'priority',
 )
+
+
+def _load_reinforcement_config() -> dict:
+    global _REINFORCEMENT_CONFIG_CACHE, _REINFORCEMENT_CONFIG_MTIME
+    defaults = {
+        'enabled': True,
+        'min_fired': 5,
+        'min_helped': 3,
+        'min_helped_ratio': 0.7,
+        'max_rejected_rate': 0.1,
+        'cooldown_hours': 24,
+        'priority_step': 1,
+        'max_priority': 9,
+    }
+    path = str(DIRECTIVE_REINFORCEMENT_CONFIG_PATH)
+    try:
+        mtime = os.path.getmtime(path)
+        if _REINFORCEMENT_CONFIG_CACHE is not None and mtime == _REINFORCEMENT_CONFIG_MTIME:
+            return dict(_REINFORCEMENT_CONFIG_CACHE)
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = json.load(f) or {}
+        cfg = dict(defaults)
+        cfg.update({k: v for k, v in raw.items() if not str(k).startswith('_')})
+        cfg['enabled'] = bool(cfg.get('enabled', True))
+        cfg['min_fired'] = max(1, int(cfg.get('min_fired', 5) or 5))
+        cfg['min_helped'] = max(1, int(cfg.get('min_helped', 3) or 3))
+        cfg['min_helped_ratio'] = max(
+            0.0, min(1.0, float(cfg.get('min_helped_ratio', 0.7) or 0.7))
+        )
+        cfg['max_rejected_rate'] = max(
+            0.0, min(1.0, float(cfg.get('max_rejected_rate', 0.1) or 0.1))
+        )
+        cfg['cooldown_hours'] = max(
+            0.0, float(cfg.get('cooldown_hours', 24) or 24)
+        )
+        cfg['priority_step'] = max(
+            1, int(cfg.get('priority_step', 1) or 1)
+        )
+        cfg['max_priority'] = max(
+            1, min(9, int(cfg.get('max_priority', 9) or 9))
+        )
+        _REINFORCEMENT_CONFIG_CACHE = dict(cfg)
+        _REINFORCEMENT_CONFIG_MTIME = mtime
+        return cfg
+    except Exception:
+        return defaults
 
 
 @dataclass
@@ -126,6 +180,7 @@ class Directive:
     last_rejected: float = 0.0
     last_helped: float = 0.0
     last_not_helped: float = 0.0
+    last_reinforced: float = 0.0
     state: str = STATE_ACTIVE
 
 
@@ -276,8 +331,9 @@ class DirectiveRegistry:
         返回统计 dict：{'dormant': N, 'review': N, 'priority_drop': N}
         """
         stats = {'dormant': 0, 'review': 0, 'priority_drop': 0,
-                  'critical_protected': 0}
+                  'priority_boost': 0, 'critical_protected': 0}
         now = time.time()
+        reinforce_cfg = _load_reinforcement_config()
         review_entries: list = []
         with self._lock:
             for d in self.directives.values():
@@ -348,6 +404,40 @@ class DirectiveRegistry:
                         if helped_ratio < HELPED_RATIO_THRESHOLD:
                             d.priority = max(1, d.priority - 2)
                             stats['priority_drop'] += 1
+                            self._dirty = True
+                            continue
+                if reinforce_cfg.get('enabled', True):
+                    total_eval = d.helped + d.not_helped
+                    if (
+                        d.fired >= int(reinforce_cfg.get('min_fired', 5))
+                        and d.helped >= int(reinforce_cfg.get('min_helped', 3))
+                        and d.not_helped < NOT_HELPED_PRIORITY_DROP
+                        and total_eval > 0
+                    ):
+                        helped_ratio = d.helped / total_eval
+                        rejected_rate = d.rejected / max(d.fired, 1)
+                        cooldown_s = (
+                            float(reinforce_cfg.get('cooldown_hours', 24))
+                            * 3600.0
+                        )
+                        max_priority = int(reinforce_cfg.get('max_priority', 9))
+                        if (
+                            helped_ratio >= float(
+                                reinforce_cfg.get('min_helped_ratio', 0.7)
+                            )
+                            and rejected_rate <= float(
+                                reinforce_cfg.get('max_rejected_rate', 0.1)
+                            )
+                            and d.priority < max_priority
+                            and (
+                                d.last_reinforced <= 0
+                                or now - d.last_reinforced >= cooldown_s
+                            )
+                        ):
+                            step = int(reinforce_cfg.get('priority_step', 1))
+                            d.priority = min(max_priority, d.priority + step)
+                            d.last_reinforced = now
+                            stats['priority_boost'] += 1
                             self._dirty = True
         if review_entries:
             try:
@@ -450,7 +540,13 @@ class DirectiveRegistry:
                     if any(v > 0 for v in stats.values()):
                         try:
                             from jarvis_utils import bg_log
-                            bg_log(f"♻️ [DirectiveDecayWorker] decay: dormant={stats['dormant']} review={stats['review']} priority_drop={stats['priority_drop']}")
+                            bg_log(
+                                f"♻️ [DirectiveDecayWorker] decay: "
+                                f"dormant={stats['dormant']} "
+                                f"review={stats['review']} "
+                                f"priority_drop={stats['priority_drop']} "
+                                f"priority_boost={stats.get('priority_boost', 0)}"
+                            )
                         except Exception:
                             pass
                     self.persist()

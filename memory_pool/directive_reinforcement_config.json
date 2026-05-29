@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "min_fired": 5,
+  "min_helped": 3,
+  "min_helped_ratio": 0.7,
+  "max_rejected_rate": 0.1,
+  "cooldown_hours": 24,
+  "priority_step": 1,
+  "max_priority": 9,
+  "_field_doc": {
+    "enabled": "Whether helped-based positive reinforcement is active.",
+    "min_fired": "Minimum fired count before a directive can be reinforced.",
+    "min_helped": "Minimum helped count before a directive can be reinforced.",
+    "min_helped_ratio": "helped / (helped + not_helped) must be at least this value.",
+    "max_rejected_rate": "rejected / fired must be no more than this value.",
+    "cooldown_hours": "Minimum hours between automatic priority boosts for one directive.",
+    "priority_step": "Priority increment per reinforcement event.",
+    "max_priority": "Upper cap for automatic positive reinforcement; keep below priority>=10 red lines."
+  }
+}

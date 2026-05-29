@@ -310,3 +310,13 @@ Sir 原话（姊妹篇 §0 收束）：
 ### 9.6 根因发现（留后续，非本次清理）
 
 29 条 active 协议有 **~5-6 个语义主题反复**（少正式/反 nudge/喝水/integrity/收尾告别），字面各异故 Jaccard 去不掉。**根因**：思考脑 propose 协议时 (a) dedup（F5 jaccard）只挡字面、挡不住语义近义；(b) 提议时没"看见"已有协议清单。建议单开一修：**语义去重**（embedding/LLM）+ **提议前注入已有协议清单**（让思考脑知道"这条我已经提过"）。这是 `思考脑不成熟` 的工程真因。
+
+### 9.7 #3 正向复利（已实现）
+
+- `memory_pool/directive_reinforcement_config.json`：`enabled` / `min_fired` / `min_helped` / `min_helped_ratio` / `max_rejected_rate` / `cooldown_hours` / `priority_step` / `max_priority`（默认 9，不越 priority≥10 红线）。
+- `scripts/directive_reinforcement_dump.py`：list/set/enable/disable/runtime CLI（Sir 不改源码即可调）。
+- `jarvis_directives.py`：`last_reinforced` 持久化 + `_load_reinforcement_config()` + `apply_decay()` 正向规则：
+  - `helped` 足够、`helped/(helped+not_helped)` 高、`rejected/fired` 低、未到 `not_helped` 降级阈值、冷却已过 → `priority += priority_step`。
+  - `priority` 自动升权 cap 到 `max_priority<=9`；`priority>=10` critical directive 仍先 `continue`，完全不被自动正/负向改。
+  - mixed signal（`not_helped >= NOT_HELPED_PRIORITY_DROP`）不奖励，只是不因高 helped ratio 被误降。
+- 测试：`tests/_test_sir_20260529_0955_directive_positive_reinforcement.py` 覆盖 boost / cooldown / cap / redline / disabled / mixed-signal no boost / persist-load。目标回归 **85 passed / 0 failed**。
