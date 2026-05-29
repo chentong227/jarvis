@@ -448,6 +448,30 @@ class RelationalStateStore:
             self._dirty = True
             return True
 
+    def resolve_turn(self, turn_id: str, max_records: int = 10) -> dict:
+        """惰性解引用 relational `*_turn_id` → lineage decision records.
+
+        只在 CLI/debug/高显著度引用时调用，不进 prompt 装配热路径。找不到时返回
+        not_found=True，不抛异常。
+        """
+        tid = (turn_id or '').strip()
+        if not tid:
+            return {'turn_id': '', 'decisions': [], 'not_found': True}
+        try:
+            from jarvis_lineage import get_default_tracer
+            tracer = get_default_tracer()
+            if not hasattr(tracer, 'find_decisions_by_turn'):
+                return {'turn_id': tid, 'decisions': [], 'not_found': True}
+            decisions = tracer.find_decisions_by_turn(
+                tid, max_records=max_records)
+            return {
+                'turn_id': tid,
+                'decisions': decisions,
+                'not_found': len(decisions) == 0,
+            }
+        except Exception:
+            return {'turn_id': tid, 'decisions': [], 'not_found': True}
+
     def mark_unfinished_done(self, uid: str) -> bool:
         with self._lock:
             u = self.unfinished_business.get(uid)

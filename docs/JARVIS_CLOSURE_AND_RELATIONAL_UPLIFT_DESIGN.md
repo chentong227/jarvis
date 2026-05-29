@@ -320,3 +320,13 @@ Sir 原话（姊妹篇 §0 收束）：
   - `priority` 自动升权 cap 到 `max_priority<=9`；`priority>=10` critical directive 仍先 `continue`，完全不被自动正/负向改。
   - mixed signal（`not_helped >= NOT_HELPED_PRIORITY_DROP`）不奖励，只是不因高 helped ratio 被误降。
 - 测试：`tests/_test_sir_20260529_0955_directive_positive_reinforcement.py` 覆盖 boost / cooldown / cap / redline / disabled / mixed-signal no boost / persist-load。目标回归 **85 passed / 0 failed**。
+
+### 9.8 #4a 交叉引用复活（已实现）
+
+- `jarvis_inner_thought_daemon.py`：思考脑创建 relational entity 时写入当前 `TraceContext.get_turn_id()`：
+  - `InsideJoke.birth_turn_id`
+  - `UnspokenProtocol.learned_from_turn_id`
+- `jarvis_lineage.py`：新增 `LineageTracer.find_decisions_by_turn(turn_id)`，惰性扫描 `lineage.jsonl` 的 decision record。
+- `jarvis_relational.py`：新增 `RelationalStateStore.resolve_turn(turn_id)`，封装 lineage resolver；空 id / 找不到均优雅返回 `not_found=True`。
+- 边界：resolver 不进 prompt 装配热路径；只给 CLI/debug/高显著度引用使用，避免 prompt 膨胀。
+- 测试：`tests/_test_sir_20260529_1000_relational_turn_cross_reference.py` 覆盖 turn lookup / empty id / resolver wrapper / thought proposal 写 turn id。相关回归 **61 passed / 0 failed**。

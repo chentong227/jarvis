@@ -5216,6 +5216,11 @@ class InnerThoughtDaemon:
         # build InsideJoke
         try:
             from jarvis_relational import InsideJoke
+            try:
+                from jarvis_utils import TraceContext
+                _turn_id = TraceContext.get_turn_id() or ''
+            except Exception:
+                _turn_id = ''
             joke = InsideJoke(
                 id=f"joke_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 10000:04x}",
                 phrase=phrase[:80],
@@ -5223,7 +5228,7 @@ class InnerThoughtDaemon:
                 tone='wry',  # default, Sir 可改
                 source='inner_thought',
                 source_marker=thought.id,
-                birth_turn_id='',
+                birth_turn_id=_turn_id,
             )
             ok = self.relational_state.propose_inside_joke(joke)
             if ok:
@@ -5418,6 +5423,11 @@ class InnerThoughtDaemon:
 
         try:
             from jarvis_relational import UnspokenProtocol
+            try:
+                from jarvis_utils import TraceContext
+                _turn_id = TraceContext.get_turn_id() or ''
+            except Exception:
+                _turn_id = ''
             pid = (
                 f"proto_{time.strftime('%Y%m%d_%H%M%S')}"
                 f"_{int(time.time() * 1000) % 10000:04x}"
@@ -5427,6 +5437,7 @@ class InnerThoughtDaemon:
                 rule=rule[:200],
                 source='inner_thought',
                 source_marker=thought.id,
+                learned_from_turn_id=_turn_id,
             )
             ok = self.relational_state.propose_protocol(protocol)
             if ok:

@@ -283,6 +283,38 @@ class LineageTracer:
                 'max_queue_size': self._queue.maxlen or 0,
             }
 
+    def find_decisions_by_turn(self, turn_id: str,
+                               max_records: int = 10) -> List[Dict[str, Any]]:
+        """按 turn_id 反查主脑 decision record.
+
+        这是 relational `*_turn_id` 交叉引用的惰性 resolver 底座；只在 CLI /
+        debug / 高显著度引用时调用，不进热路径。
+        """
+        tid = (turn_id or '').strip()
+        if not tid:
+            return []
+        self.flush_now()
+        if not os.path.exists(self.jsonl_path):
+            return []
+        out: List[Dict[str, Any]] = []
+        try:
+            with open(self.jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if rec.get('record_type') != 'decision':
+                        continue
+                    if rec.get('turn_id') != tid:
+                        continue
+                    out.append(rec)
+                    if len(out) >= max(1, int(max_records or 10)):
+                        break
+        except Exception:
+            return []
+        return out
+
     def trace_back(self, decision_id: str, depth: int = 5) -> Dict[str, Any]:
         """读 jsonl 反向追溯一个 decision 的完整 evidence DAG.
 
