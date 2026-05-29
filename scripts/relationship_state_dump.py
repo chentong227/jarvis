@@ -46,6 +46,49 @@ def cmd_set(args) -> None:
     print(st.to_prompt_line(max_chars=240))
 
 
+def cmd_propose(args) -> None:
+    st = _store(args.path)
+    ok, msg = st.propose_dimension(
+        args.dimension,
+        args.value,
+        reason=args.reason or '',
+        evidence_turn_id=args.turn_id or '',
+        source='sir_cli_propose',
+    )
+    if not ok:
+        raise SystemExit(f'❌ {msg}')
+    print(f'📝 proposed {msg}')
+
+
+def cmd_review(args) -> None:
+    st = _store(args.path)
+    items = st.list_review(include_decided=args.all)
+    print(f'📋 RelationshipState Review ({len(items)})')
+    for p in items:
+        print(
+            f'- {p.id} [{p.state}] {p.dimension}: '
+            f'{p.current_value:.2f}->{p.proposed_value:.2f} '
+            f'source={p.source} reason={p.reason[:100]}'
+        )
+
+
+def cmd_approve(args) -> None:
+    st = _store(args.path)
+    ok, msg = st.approve_proposal(args.proposal_id, reason=args.reason or '')
+    if not ok:
+        raise SystemExit(f'❌ {msg}')
+    print(f'✅ {msg}')
+    print(st.to_prompt_line(max_chars=240))
+
+
+def cmd_reject(args) -> None:
+    st = _store(args.path)
+    ok, msg = st.reject_proposal(args.proposal_id, reason=args.reason or '')
+    if not ok:
+        raise SystemExit(f'❌ {msg}')
+    print(f'✅ {msg}')
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description='RelationshipState CLI')
     p.add_argument('--path', default='', help='override relationship_state.json path')
@@ -57,12 +100,41 @@ def main(argv=None) -> int:
     p_set.add_argument('value', type=float)
     p_set.add_argument('--note', default='')
 
+    p_prop = sub.add_parser('propose')
+    p_prop.add_argument('dimension')
+    p_prop.add_argument('value', type=float)
+    p_prop.add_argument('--reason', default='')
+    p_prop.add_argument('--turn-id', default='')
+
+    p_review = sub.add_parser('review')
+    p_review.add_argument('--all', action='store_true')
+
+    p_approve = sub.add_parser('approve')
+    p_approve.add_argument('proposal_id')
+    p_approve.add_argument('--reason', default='')
+
+    p_reject = sub.add_parser('reject')
+    p_reject.add_argument('proposal_id')
+    p_reject.add_argument('--reason', default='')
+
     args = p.parse_args(argv)
     if args.cmd in (None, 'list'):
         cmd_list(args)
         return 0
     if args.cmd == 'set':
         cmd_set(args)
+        return 0
+    if args.cmd == 'propose':
+        cmd_propose(args)
+        return 0
+    if args.cmd == 'review':
+        cmd_review(args)
+        return 0
+    if args.cmd == 'approve':
+        cmd_approve(args)
+        return 0
+    if args.cmd == 'reject':
+        cmd_reject(args)
         return 0
     return 1
 

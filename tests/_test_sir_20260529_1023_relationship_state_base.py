@@ -86,6 +86,63 @@ class TestRelationshipStateBase(unittest.TestCase):
             data = json.load(f)
         self.assertEqual(data['state']['source'], 'sir_cli')
 
+    def test_proposal_review_approve_reject_flow(self):
+        store = RelationshipStateStore(self.path)
+        ok, pid = store.propose_dimension(
+            'temperature',
+            0.2,
+            reason='recent friction evidence',
+            evidence_turn_id='turn_rel_review_001',
+        )
+        self.assertTrue(ok, pid)
+        self.assertEqual(store.state.temperature, 0.5)
+        self.assertEqual(len(store.list_review()), 1)
+
+        loaded = RelationshipStateStore(self.path)
+        loaded.load()
+        self.assertEqual(len(loaded.list_review()), 1)
+        self.assertEqual(loaded.list_review()[0].id, pid)
+
+        ok, msg = loaded.approve_proposal(pid, reason='Sir approved')
+        self.assertTrue(ok, msg)
+        self.assertEqual(loaded.state.temperature, 0.2)
+        self.assertEqual(loaded.list_review(), [])
+        self.assertEqual(loaded.review[0].state, 'approved')
+
+        ok, rid = loaded.propose_dimension('trust', 0.1, reason='bad proposal')
+        self.assertTrue(ok, rid)
+        ok, msg = loaded.reject_proposal(rid, reason='Sir rejected')
+        self.assertTrue(ok, msg)
+        self.assertEqual(loaded.state.trust, 0.5)
+        self.assertEqual(loaded.review[-1].state, 'rejected')
+
+    def test_cli_propose_review_approve_with_temp_path(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = os.path.join(root, 'scripts', 'relationship_state_dump.py')
+        env = os.environ.copy()
+        env['PYTHONUTF8'] = '1'
+        env['JARVIS_MIRROR'] = '1'
+        r1 = subprocess.run(
+            [sys.executable, script, '--path', self.path, 'propose',
+             'closeness', '0.77', '--reason', 'mirror review'],
+            cwd=root, env=env, text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(r1.returncode, 0, r1.stderr + r1.stdout)
+        pid = r1.stdout.strip().split()[-1]
+        r2 = subprocess.run(
+            [sys.executable, script, '--path', self.path, 'review'],
+            cwd=root, env=env, text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(r2.returncode, 0, r2.stderr + r2.stdout)
+        self.assertIn(pid, r2.stdout)
+        r3 = subprocess.run(
+            [sys.executable, script, '--path', self.path, 'approve', pid,
+             '--reason', 'mirror approve'],
+            cwd=root, env=env, text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(r3.returncode, 0, r3.stderr + r3.stdout)
+        self.assertIn('closeness=0.77', r3.stdout)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
