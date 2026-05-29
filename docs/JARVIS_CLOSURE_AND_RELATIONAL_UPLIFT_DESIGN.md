@@ -330,3 +330,15 @@ Sir 原话（姊妹篇 §0 收束）：
 - `jarvis_relational.py`：新增 `RelationalStateStore.resolve_turn(turn_id)`，封装 lineage resolver；空 id / 找不到均优雅返回 `not_found=True`。
 - 边界：resolver 不进 prompt 装配热路径；只给 CLI/debug/高显著度引用使用，避免 prompt 膨胀。
 - 测试：`tests/_test_sir_20260529_1000_relational_turn_cross_reference.py` 覆盖 turn lookup / empty id / resolver wrapper / thought proposal 写 turn id。相关回归 **61 passed / 0 failed**。
+
+### 9.9 #4b list→graph edges（已实现）
+
+- `jarvis_relational.py`：新增一等 `RelationalEdge`：
+  - `from_kind/from_id` → `to_kind/to_id`
+  - `relation_type` / `weight` / `evidence_turn_id` / `note`
+  - `state` / `source` / `created_at` / `last_referenced`
+- `RelationalStateStore`：新增 `add_edge()` / `get_edge()` / `list_edges()` / `list_edges_for()` / `archive_edge()`。
+- 持久化：`relational_edges` 存入同一个 `relational_state.json`，`schema_version=3`；`load()` 保持旧四键返回兼容，同时恢复 edges。
+- Prompt：`to_prompt_block(..., top_edges=0)` 默认不注入 edges，避免热路径 prompt 膨胀；显式 `top_edges>0` 时渲染 `[RELATIONAL LINKS]`，并受 `max_chars` 截断保护。
+- Dump：`dump_human()` 显示 edges count 与 edge 列表。
+- 测试：`tests/_test_sir_20260529_1008_relational_graph_edges.py` 覆盖 CRUD / archive / persist-load / prompt default-off / prompt explicit-on / dump。目标测试+关键回归 **21 passed / 0 failed**。

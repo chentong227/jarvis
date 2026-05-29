@@ -305,6 +305,30 @@ class UnfinishedBusiness:
         return asdict(self)
 
 
+@dataclass
+class RelationalEdge:
+    id: str
+    from_kind: str
+    from_id: str
+    to_kind: str
+    to_id: str
+    relation_type: str = 'related_to'
+    weight: float = 0.5
+    state: str = STATE_ACTIVE
+    source: str = 'sir_added'
+    source_marker: str = ''
+    evidence_turn_id: str = ''
+    note: str = ''
+    created_at: float = field(default_factory=time.time)
+    last_referenced: float = 0.0
+
+    def mark_referenced(self) -> None:
+        self.last_referenced = time.time()
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 # ============================================================
 # Store
 # ============================================================
@@ -331,6 +355,7 @@ class RelationalStateStore:
         self.unspoken_protocols: dict[str, UnspokenProtocol] = {}
         self.unfinished_business: dict[str, UnfinishedBusiness] = {}
         self.shared_history_threads: dict[str, SharedHistoryThread] = {}
+        self.relational_edges: dict[str, RelationalEdge] = {}
         self._lock = threading.Lock()
         self._dirty = False
 
@@ -539,6 +564,54 @@ class RelationalStateStore:
             if t is None:
                 return False
             t.state = STATE_ARCHIVED
+            self._dirty = True
+            return True
+
+    # ---------------------------------------------------------
+    # Relational Edges
+    # ---------------------------------------------------------
+
+    def add_edge(self, edge: RelationalEdge) -> bool:
+        with self._lock:
+            if edge.id in self.relational_edges:
+                return False
+            edge.weight = max(0.0, min(1.0, float(edge.weight)))
+            self.relational_edges[edge.id] = edge
+            self._dirty = True
+            return True
+
+    def get_edge(self, eid: str) -> Optional[RelationalEdge]:
+        return self.relational_edges.get(eid)
+
+    def list_edges(self, include_archived: bool = False) -> List[RelationalEdge]:
+        out = []
+        for e in self.relational_edges.values():
+            if not include_archived and e.state != STATE_ACTIVE:
+                continue
+            out.append(e)
+        out.sort(key=lambda e: (-e.weight, -e.created_at))
+        return out
+
+    def list_edges_for(self, kind: str, item_id: str,
+                       include_archived: bool = False) -> List[RelationalEdge]:
+        k = (kind or '').strip()
+        iid = (item_id or '').strip()
+        if not k or not iid:
+            return []
+        out = []
+        for e in self.list_edges(include_archived=include_archived):
+            if e.from_kind == k and e.from_id == iid:
+                out.append(e)
+            elif e.to_kind == k and e.to_id == iid:
+                out.append(e)
+        return out
+
+    def archive_edge(self, eid: str) -> bool:
+        with self._lock:
+            e = self.relational_edges.get(eid)
+            if e is None:
+                return False
+            e.state = STATE_ARCHIVED
             self._dirty = True
             return True
 
@@ -960,10 +1033,13 @@ class RelationalStateStore:
                 'shared_history_threads': {
                     tid: t.to_dict() for tid, t in self.shared_history_threads.items()
                 },
+                'relational_edges': {
+                    eid: e.to_dict() for eid, e in self.relational_edges.items()
+                },
                 '_meta': {
                     'persisted_at': time.time(),
                     'persisted_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
-                    'schema_version': 2,  # β.2.4.1: 加入 shared_history_threads
+                    'schema_version': 3,
                 },
             }
             self._dirty = False
@@ -978,7 +1054,7 @@ class RelationalStateStore:
             return False
 
     def load(self) -> dict:
-        """从 disk 恢复。返回 {'jokes': N, 'protocols': N, 'ub': N, 'threads': N}。"""
+        """从 disk 恢复。返回各 entity 计数。"""
         result = {'jokes': 0, 'protocols': 0, 'ub': 0, 'threads': 0}
         if not os.path.exists(self.persist_path):
             return result
@@ -1074,6 +1150,28 @@ class RelationalStateStore:
                 except Exception:
                     continue
 
+            for eid, d in (snapshot.get('relational_edges') or {}).items():
+                try:
+                    e = RelationalEdge(
+                        id=d.get('id', eid),
+                        from_kind=d.get('from_kind', '')[:40],
+                        from_id=d.get('from_id', '')[:120],
+                        to_kind=d.get('to_kind', '')[:40],
+                        to_id=d.get('to_id', '')[:120],
+                        relation_type=d.get('relation_type', 'related_to')[:60],
+                        weight=max(0.0, min(1.0, float(d.get('weight', 0.5)))),
+                        state=d.get('state', STATE_ACTIVE),
+                        source=d.get('source', 'sir_added'),
+                        source_marker=d.get('source_marker', ''),
+                        evidence_turn_id=d.get('evidence_turn_id', ''),
+                        note=d.get('note', '')[:300],
+                        created_at=float(d.get('created_at', time.time())),
+                        last_referenced=float(d.get('last_referenced', 0.0)),
+                    )
+                    self.relational_edges[e.id] = e
+                except Exception:
+                    continue
+
         return result
 
     # ---------------------------------------------------------
@@ -1124,12 +1222,19 @@ class RelationalStateStore:
         active.sort(key=lambda t: -t.last_milestone_at)
         return active[:top_n]
 
+    def _rank_edges(self, top_n: int) -> List[RelationalEdge]:
+        """按 weight / recency 排序。top_n<=0 时默认不注入 prompt。"""
+        if top_n <= 0:
+            return []
+        return self.list_edges(include_archived=False)[:top_n]
+
     def to_prompt_block(self, top_jokes: int = 3, top_unfinished: int = 2,
                         top_threads: int = 2,
                         max_chars: int = PROMPT_BLOCK_DEFAULT_MAX,
                         current_tier: str = '',
                         current_sir_state: str = '',
-                        top_pending_review: int = 3) -> str:
+                        top_pending_review: int = 3,
+                        top_edges: int = 0) -> str:
         """构造注入 prompt 的 [BETWEEN US] 块。
 
         结构（参考 Layer 0/1 风格）：
@@ -1159,6 +1264,7 @@ class RelationalStateStore:
         ]
         unfinished = self._rank_unfinished(top_unfinished)
         threads = self._rank_threads(top_threads)
+        edges = self._rank_edges(top_edges)
 
         # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版 FIX C] PENDING REVIEW —
         # =====================================================================
@@ -1177,7 +1283,7 @@ class RelationalStateStore:
         except Exception:
             pass
 
-        if (not jokes and not protocols and not unfinished and not threads
+        if (not jokes and not protocols and not unfinished and not threads and not edges
                 and not review_jokes and not review_protos):
             return ''
 
@@ -1232,6 +1338,18 @@ class RelationalStateStore:
                     seg += f" ({int(age_days)}d ago)"
                 lines.append(seg[:200])
 
+        if edges:
+            lines.append("[RELATIONAL LINKS — connections between our memories]")
+            for e in edges:
+                seg = (
+                    f"  - {e.from_kind}:{e.from_id} "
+                    f"--{e.relation_type}/{e.weight:.2f}--> "
+                    f"{e.to_kind}:{e.to_id}"
+                )
+                if e.note:
+                    seg += f" | {e.note[:80]}"
+                lines.append(seg[:220])
+
         # 🆕 [Sir 2026-05-26 19:14 准则 6 极致版 FIX C] PENDING REVIEW block —
         # 让 LLM 在 natural 交互中主动问 Sir 确认 (替代 dashboard 手动拍板).
         # 显示 id 让主脑能精确调 confirm_pending_review tool.
@@ -1271,12 +1389,14 @@ class RelationalStateStore:
         protos = self.list_protocols(include_archived=show_archived)
         ubs = self.list_unfinished(include_done=show_archived)
         threads = self.list_threads(include_archived=show_archived)
+        edges = self.list_edges(include_archived=show_archived)
 
         lines = []
         lines.append("=" * 100)
         lines.append(
             f"[RelationalState] jokes={len(jokes)} protocols={len(protos)} "
-            f"unfinished={len(ubs)} threads={len(threads)} (path={self.persist_path})"
+            f"unfinished={len(ubs)} threads={len(threads)} edges={len(edges)} "
+            f"(path={self.persist_path})"
         )
         lines.append("=" * 100)
 
@@ -1336,6 +1456,21 @@ class RelationalStateStore:
                 if t.highlights:
                     last = t.highlights[-1]
                     lines.append(f"    last: {last.get('what', '')[:80]}")
+        else:
+            lines.append("  (none)")
+
+        # Relational Edges
+        lines.append("")
+        lines.append("[RELATIONAL EDGES]")
+        if edges:
+            for e in edges:
+                lines.append(
+                    f"  - {e.id} [{e.state}] {e.from_kind}:{e.from_id} "
+                    f"--{e.relation_type}/{e.weight:.2f}--> "
+                    f"{e.to_kind}:{e.to_id}"
+                )
+                if e.note:
+                    lines.append(f"    note: {e.note[:100]}")
         else:
             lines.append("  (none)")
 
