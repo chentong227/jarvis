@@ -1569,6 +1569,9 @@ class InnerThoughtDaemon:
         self._pending_recall_block = ''
         # 🆕 [Self-Memory P2 / Sir 2026-05-30] 河床/巩固 cooldown throttle
         self._last_consolidate_ts = 0.0
+        # 🆕 [言出必行 I2 / Sir 2026-05-30] 后台语义 claim 审计 throttle + dedup
+        self._last_semantic_audit_ts = 0.0
+        self._last_audited_reply = ''
         # cold_starts.jsonl append (daemon init 真发生) — 内含数据卫生 gate +
         # 真 dark_gap 计算 + 本 session 首心跳 (只在真 production session 写).
         try:
@@ -1663,6 +1666,12 @@ class InnerThoughtDaemon:
             # 衰减/分层 (遗忘). 周期 cooldown 守住 (类 yesterday_recap, 不每 tick 跑).
             try:
                 self._maybe_consolidate_threads()
+            except Exception:
+                pass
+            # 🆕 [言出必行 I2 / Sir 2026-05-30] 后台语义 claim 审计 (vocab-gated, 默 off;
+            # 准则 1 — LLM 替正则枚举判 claim 接地, 仅后台 daemon, 不碰主脑回复热路径).
+            try:
+                self._maybe_semantic_claim_audit()
             except Exception:
                 pass
             # 🆕 [Sir 2026-05-28 16:55 方案 B 治本] propose quality calibrate
@@ -7228,6 +7237,10 @@ class InnerThoughtDaemon:
         'thread_recall_bump_salience': 0.08,   # 主动召回命中 open 线程 → salience +bump
         'thread_recall_bump_cap': 0.95,        # bump 上限
         'open_threads_prompt_n': 3,            # tick prompt 顶显 N 个 open 线程 (salience 排)
+        # 🆕 [言出必行 I2 / Sir 2026-05-30] 后台语义 claim 审计 (默 off — 准则 1 token 谨慎,
+        # Sir 可 vocab 开. LLM 替正则枚举判 claim 接地, 仅后台 daemon, 不碰主脑热路径).
+        'semantic_claim_check_enabled': False,
+        'semantic_claim_check_cooldown_s': 300,
         'yesterday_recap_enabled': True,
         'yesterday_recap_hour': 23,          # 23 点窗 LLM 写昨日 recap
         'yesterday_recap_cooldown_s': 82800, # 23h
@@ -8226,6 +8239,110 @@ class InnerThoughtDaemon:
             pass
         return out
 
+    # ----------------------------------------------------------
+    # 🆕 [言出必行 I2 / Sir 2026-05-30] 语义 claim 审计 (LLM 替正则枚举)
+    # ----------------------------------------------------------
+    # Sir 真痛根因: ClaimTracer extract_claims 是正则枚举 — 每个新幻觉形式都要加一条
+    # regex (和"要他记得什么就 hand-code"同病). 治本 (准则 6 信任 LLM): 让思考脑后台
+    # LLM 语义判 "这句有没有凭据", 不靠无限加 regex. 准则 1: 仅后台 daemon + cooldown +
+    # vocab 默 off (Sir 可开), 绝不进主脑回复热路径.
+    # ----------------------------------------------------------
+    def semantic_claim_audit(self, reply: str, tool_results_str: str = '',
+                              stm_blob: str = '') -> List[dict]:
+        """LLM 语义查 reply 里**未被 evidence 支持**的 specific factual claim.
+
+        返 list[{claim, reason}] (仅 grounded=false 的). 无 key_router / 失败 → [].
+        准则 5: 只 flag 真没凭据的, 社交寒暄不算 claim.
+        """
+        if not self.key_router or not reply or len(reply) < 10:
+            return []
+        try:
+            sysp = (
+                "You are J.A.R.V.I.S.'s own integrity check. Given a reply you "
+                "just gave Sir, find any SPECIFIC FACTUAL CLAIM (a time, a "
+                "number, a past action you say you DID, a quote of Sir, a state "
+                "assertion) that is NOT supported by the evidence provided. "
+                "Output STRICT JSON only: a list of "
+                "{\"claim\":\"...\",\"grounded\":true|false,\"reason\":\"...\"}. "
+                "Use [] if every claim is grounded or there are none. Social "
+                "pleasantries / opinions / hedged statements are NOT claims."
+            )
+            usrp = (
+                f"Reply: {reply[:600]}\n\nEvidence available:\n"
+                f"- tool results: {(tool_results_str or '(none)')[:400]}\n"
+                f"- recent conversation: {(stm_blob or '(none)')[:400]}\n\n"
+                "JSON list (only grounded=false ones matter):"
+            )
+            raw = (self._call_llm(
+                sysp, usrp, caller_origin='semantic_claim_audit') or '').strip()
+            m = re.search(r'\[.*\]', raw, re.DOTALL)
+            if not m:
+                return []
+            arr = json.loads(m.group(0))
+            out = []
+            for it in (arr if isinstance(arr, list) else []):
+                if isinstance(it, dict) and it.get('grounded') is False:
+                    out.append({
+                        'claim': str(it.get('claim', ''))[:120],
+                        'reason': str(it.get('reason', ''))[:120],
+                    })
+            return out
+        except Exception:
+            return []
+
+    def _maybe_semantic_claim_audit(self) -> None:
+        """后台 (vocab-gated, cooldown) 对上一条主脑 reply 跑语义 claim 审计.
+
+        命中 ungrounded → bg_log + publish SWM 'semantic_claim_flagged' (主脑/dashboard
+        看到, 喂言出必行闭环). 准则 1: 默 off + cooldown + 只在 reply 变化时跑.
+        """
+        try:
+            vocab = self._load_lifetime_vocab()
+            if not bool(vocab.get('semantic_claim_check_enabled', False)):
+                return
+            cd = float(vocab.get('semantic_claim_check_cooldown_s', 300))
+            now = time.time()
+            if now - float(getattr(self, '_last_semantic_audit_ts', 0) or 0) < cd:
+                return
+            if not self.nerve:
+                return
+            stm = list(getattr(self.nerve, 'short_term_memory', []) or [])
+            if not stm or not isinstance(stm[-1], dict):
+                return
+            reply = str(stm[-1].get('jarvis', '') or '')
+            if not reply or reply == getattr(self, '_last_audited_reply', ''):
+                return
+            self._last_semantic_audit_ts = now
+            self._last_audited_reply = reply
+            stm_blob = ' | '.join(
+                (str(e.get('user', '')) + ' ' + str(e.get('jarvis', '')))
+                for e in stm[-4:] if isinstance(e, dict)
+            )
+            flagged = self.semantic_claim_audit(reply, '', stm_blob[:600])
+            if flagged:
+                self._bg_log(
+                    f"🔎 [SemanticClaim/I2] {len(flagged)} ungrounded claim(s); "
+                    f"first: \"{flagged[0].get('claim', '')[:60]}\""
+                )
+                try:
+                    from jarvis_utils import get_event_bus
+                    bus = get_event_bus()
+                    if bus is not None:
+                        bus.publish(
+                            etype='semantic_claim_flagged',
+                            description=(
+                                f"{len(flagged)} ungrounded claim(s): "
+                                f"{flagged[0].get('claim', '')[:80]}"),
+                            source='InnerThoughtDaemon.SemanticClaimAudit',
+                            salience=0.6,
+                            metadata={'flagged': flagged},
+                            ttl=3600.0,
+                        )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def build_lifetime_block(self, mode: str = 'full',
                                 max_chars: Optional[int] = None) -> str:
         """🆕 [Sir 2026-05-27 01:00 β.5.50] 主脑 + daemon 复用的 lifetime block.
@@ -8448,6 +8565,19 @@ class InnerThoughtDaemon:
                     )
         except Exception:
             pass
+
+        # (8) 🆕 [言出必行 I3 / Sir 2026-05-30] OPEN THREADS — 主脑开口前的接地
+        # prevention > interception: full mode (主聊) 把 Jarvis 活跃 open 线程注入,
+        # 主脑据此 grounded → 少凭空编造 → 减少 post-hoc 撤回. mini 省 token 不注.
+        # 经 Layer 1.6 inner-voice 既有管道到主脑, 不需改 central_nerve.
+        if mode == 'full':
+            try:
+                _ot = self._build_open_threads_block(
+                    int(vocab.get('open_threads_prompt_n', 3)))
+                if _ot:
+                    lines.append(_ot)
+            except Exception:
+                pass
 
         # Closing self-awareness directive
         lines.append(

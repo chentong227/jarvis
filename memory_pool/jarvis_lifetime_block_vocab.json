@@ -42,6 +42,8 @@
   "thread_recall_bump_salience": 0.08,
   "thread_recall_bump_cap": 0.95,
   "open_threads_prompt_n": 3,
+  "semantic_claim_check_enabled": false,
+  "semantic_claim_check_cooldown_s": 300,
   "yesterday_recap_enabled": true,
   "yesterday_recap_hour": 23,
   "yesterday_recap_cooldown_s": 82800
