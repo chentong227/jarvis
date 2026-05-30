@@ -446,6 +446,44 @@ def _trace_via_vocab(claim: 'Claim', tool_results: List, stm_recent: List,
     return False
 
 
+def _try_recall_match(claim: 'Claim', recall_provider) -> bool:
+    """🆕 [言出必行 I1 / Sir 2026-05-30] recall fallback — claim 对**自我记忆** verify.
+
+    Sir 真痛根因 (已核): ClaimTracer 老 evidence 源只 tool_results / STM 末 10 /
+    system_clock / promise tag. ④Recall 类 ("你昨天提过 X / 我们讨论过") **没有真
+    索引可命中** → false-positive (真说过却报 unverified) 或 false-negative.
+    治本 (本设计核心): 把 Self-Memory 召回底座 (MemoryHub + self-threads + self-notes,
+    带 provenance) 作为 evidence 源. recall_provider(query) → list[{source,content}]
+    (或 str). claim 词 >= 2 个出现在召回记忆 (或短 claim 全覆盖) → verified, 记
+    trace_to='recall' + trace_what=记忆片段 (provenance, I4-lite). 准则 5 接地.
+    """
+    if recall_provider is None:
+        return False
+    text = (getattr(claim, 'text', '') or '').strip()
+    if not text or len(text) < 3:
+        return False
+    try:
+        results = recall_provider(text) or []
+    except Exception:
+        return False
+    claim_words = {w for w in re.findall(r'\w+', text.lower()) if len(w) >= 2}
+    if not claim_words:
+        return False
+    for r in results:
+        try:
+            content = (r.get('content', '') if isinstance(r, dict)
+                       else str(r))
+        except Exception:
+            content = str(r)
+        cwords = set(re.findall(r'\w+', str(content).lower()))
+        overlap = len(claim_words & cwords)
+        if overlap >= 2 or (claim_words and claim_words <= cwords):
+            claim.trace_to = 'recall'
+            claim.trace_what = str(content)[:100]
+            return True
+    return False
+
+
 def trace_to_evidence(claim: 'Claim', tool_results: List,
                        stm_recent: List,
                        system_clock: Optional[float] = None,
@@ -453,7 +491,8 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
                        promise_log_tags: Optional[List[str]] = None,
                        use_vocab: bool = True,
                        classify_vocab_path: Optional[str] = None,
-                       evidence_vocab_path: Optional[str] = None) -> bool:
+                       evidence_vocab_path: Optional[str] = None,
+                       recall_provider=None) -> bool:
     """看 claim 是否能 trace 到 evidence. 返 True = 找到 trace.
 
     [β.4.3.3 / 2026-05-18] L1 + L2 表驱 默认 (use_vocab=True). Legacy 保留.
@@ -473,14 +512,22 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
         claim.trace_to = 'uncertainty'
         return True
     if use_vocab:
-        return _trace_via_vocab(
+        ok = _trace_via_vocab(
             claim, tool_results, stm_recent,
             system_clock=system_clock, ltm_context=ltm_context,
             promise_log_tags=promise_log_tags,
             classify_vocab_path=classify_vocab_path,
             evidence_vocab_path=evidence_vocab_path,
         )
-    return _trace_via_legacy(claim, tool_results, stm_recent)
+    else:
+        ok = _trace_via_legacy(claim, tool_results, stm_recent)
+    if ok:
+        return True
+    # 🆕 [言出必行 I1] 正常 evidence 路径未命中 → 对自我记忆召回 verify (兜底).
+    # recall_provider=None (老 caller) → no-op, 零行为改变. 准则 5 接地.
+    if recall_provider is not None and _try_recall_match(claim, recall_provider):
+        return True
+    return ok
 
 
 # ============================================================
@@ -613,7 +660,8 @@ def trace_reply(jarvis_reply: str,
                   classify_vocab_path: Optional[str] = None,
                   evidence_vocab_path: Optional[str] = None,
                   include_swm_tool_called: bool = True,
-                  swm_lookback_s: float = 180.0) -> dict:
+                  swm_lookback_s: float = 180.0,
+                  recall_provider=None) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -672,6 +720,7 @@ def trace_reply(jarvis_reply: str,
             promise_log_tags=promise_log_tags, use_vocab=use_vocab,
             classify_vocab_path=classify_vocab_path,
             evidence_vocab_path=evidence_vocab_path,
+            recall_provider=recall_provider,
         )
         if ok:
             n_verified += 1

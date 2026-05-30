@@ -42,6 +42,10 @@ memory_pool/*.db-shm
 memory_pool/*.db-wal
 # skill_registry.jsonl is a runtime artifact
 memory_pool/*.jsonl
+# [Self-Memory P0-P4 / 2026-05-30] daemon 心跳 / 河床 / 自写记忆 runtime 数据
+# (self_notes.jsonl 已被上面 *.jsonl 覆盖; 这两个 .json 含 ts / 线程摘要 / 可能私密内容)
+memory_pool/jarvis_last_alive.json
+memory_pool/self_threads.json
 # [P0+20-β.0.1 / 2026-05-16] directive 计数器（fired/rejected/helped）：runtime 状态
 memory_pool/directive_registry.json
 memory_pool/directive_review.json

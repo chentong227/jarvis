@@ -67,6 +67,13 @@ class JarvisKeys:
     # Google key 池（含 GEMINI 自身 + 2 个备份）
     GOOGLE_LIST: List[str] = field(default_factory=list)
 
+    # 🆕 [Sir 2026-05-28 fix45] DeepSeek 专用 key (optional).
+    # 不进 OPENROUTER_LIST 池 — 该 key 被 OpenRouter selective ban 海外, 进 pool
+    # 会随机抽到给 google/gemini-* 调用导致 403. 由 jarvis_utils.safe_deepseek_call
+    # 单独读, 仅供 llm_routing_vocab 路由命中时使用. 缺失或 'REPLACE_ME' → routing
+    # 自动 disabled (故障开放).
+    OPENROUTER_DS_ONLY: str = ""
+
 
 def _load_dotenv_if_present() -> None:
     """加载 .env（如果存在）。.env 不存在时不报错，由 _check_required 报告缺失。"""
@@ -80,7 +87,24 @@ def _load_dotenv_if_present() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
     dotenv_path = os.path.join(root, ".env")
-    load_dotenv(dotenv_path=dotenv_path)
+    # 🆕 [2026-05-30] 编码鲁棒 — .env 若含非 UTF-8 字节 (编辑器把 em-dash '—' /
+    # 智能引号 塞进注释), python-dotenv 严格 utf-8 解码会 UnicodeDecodeError 直接崩
+    # 整个启动 (load_keys 在 nerve/daemon init 之前 → 主程序 / mirror 都起不来).
+    # 治本: 正常加载; 解码失败 → errors='replace' 容错读后从 stream 加载.
+    # key 值是 ASCII, 不受影响; 仅注释里的坏字节被替换为 U+FFFD. 准则 8 优雅:
+    # 不让一个注释字节炸掉整个启动.
+    try:
+        load_dotenv(dotenv_path=dotenv_path)
+    except (UnicodeDecodeError, ValueError):
+        try:
+            import io
+            if os.path.exists(dotenv_path):
+                with open(dotenv_path, "r", encoding="utf-8",
+                          errors="replace") as _f:
+                    _txt = _f.read()
+                load_dotenv(stream=io.StringIO(_txt), override=True)
+        except Exception:
+            pass
 
 
 def _check_required() -> None:
@@ -133,6 +157,11 @@ def load_keys() -> JarvisKeys:
         if v and "DEPRECATED" not in v and "REPLACE_ME" not in v:
             _or_pool.append(v)
 
+    # 🆕 [Sir 2026-05-28 fix45] DeepSeek 专用 key — optional, 缺失/占位符 → 空字符串
+    _ds_raw = (os.environ.get("OPENROUTER_DS_ONLY", "") or "").strip()
+    if "REPLACE_ME" in _ds_raw or "DEPRECATED" in _ds_raw:
+        _ds_raw = ""
+
     return JarvisKeys(
         OPENROUTER_MAIN=os.environ["OPENROUTER_MAIN"],
         OPENROUTER_LIST=_or_pool,
@@ -142,4 +171,5 @@ def load_keys() -> JarvisKeys:
             os.environ["GOOGLE_KEY_2"],
             os.environ["GOOGLE_KEY_3"],
         ],
+        OPENROUTER_DS_ONLY=_ds_raw,
     )

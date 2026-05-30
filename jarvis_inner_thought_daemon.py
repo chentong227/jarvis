@@ -1562,7 +1562,15 @@ class InnerThoughtDaemon:
         self._yesterday_recap_cached: Optional[Dict[str, Any]] = None
         self._yesterday_recap_last_check_ts = 0.0
         self._yesterday_recap_last_written_ts = 0.0
-        # cold_starts.jsonl append (daemon init 真发生)
+        # 🆕 [Self-Memory P0 / Sir 2026-05-30] last_alive 心跳 throttle
+        self._last_heartbeat_ts = 0.0
+        # 🆕 [Self-Memory P1 / Sir 2026-05-30] brain-initiated recall (F1 后台自发深召回)
+        # 上 tick <RECALL>query</RECALL> 跑出的召回候选, 下 tick prompt 注入后清空.
+        self._pending_recall_block = ''
+        # 🆕 [Self-Memory P2 / Sir 2026-05-30] 河床/巩固 cooldown throttle
+        self._last_consolidate_ts = 0.0
+        # cold_starts.jsonl append (daemon init 真发生) — 内含数据卫生 gate +
+        # 真 dark_gap 计算 + 本 session 首心跳 (只在真 production session 写).
         try:
             self._append_cold_start_record()
         except Exception:
@@ -1639,10 +1647,22 @@ class InnerThoughtDaemon:
                     self._next_tick_interval_s = 0  # consumed
             except Exception as e:
                 self._bg_log(f"⚠️ [InnerThought] tick exception: {e}")
+            # 🆕 [Self-Memory P0 / Sir 2026-05-30] 持久 last_alive 心跳 (daemon 是
+            # 心跳 keeper) — 周期刷, 让下次 cold_start 能算真 dark_gap (离线时长).
+            try:
+                self._maybe_persist_heartbeat()
+            except Exception:
+                pass
             # 🆕 [Sir 2026-05-27 01:00 β.5.50] yesterday_recap sub-reflector
             # daemon tick 后 check (低频 — 内部 23h cooldown 真守住)
             try:
                 self._maybe_write_yesterday_recap()
+            except Exception:
+                pass
+            # 🆕 [Self-Memory P2 / Sir 2026-05-30] 河床巩固 — 把流水账卷成持久线程 +
+            # 衰减/分层 (遗忘). 周期 cooldown 守住 (类 yesterday_recap, 不每 tick 跑).
+            try:
+                self._maybe_consolidate_threads()
             except Exception:
                 pass
             # 🆕 [Sir 2026-05-28 16:55 方案 B 治本] propose quality calibrate
@@ -2236,6 +2256,19 @@ class InnerThoughtDaemon:
                 f"tick={tick_interval}s)"
             )
             return
+
+        # 🆕 [Self-Memory P1 / Sir 2026-05-30] brain-initiated recall —
+        # 解析 <RECALL>query</RECALL>, 跑召回, 存 pending block → 下 tick prompt 顶注入
+        # (F1 后台自发深召回, 不阻塞当前 tick; fire-and-forget, 异常不影响 thought).
+        try:
+            self._handle_recall_tag(raw)
+        except Exception:
+            pass
+        # 🆕 [Self-Memory P4 / Sir 2026-05-30] 解析 <NOTE>text</NOTE> → 自写记忆持久化
+        try:
+            self._handle_note_tag(raw)
+        except Exception:
+            pass
 
         thought = self._parse_thought(raw, sir_state, tick_interval)
         if thought is None:
@@ -3731,7 +3764,24 @@ class InnerThoughtDaemon:
             "Also supports <LET_GO>swm:etype</LET_GO> for persistent SWM "
             "events (e.g. swm:auto_arbiter_anomaly) — prunes that event type "
             "from evidence. Default TTL 30min. "
-            "Leave empty if nothing should be let-go this tick.\n\n"
+            "Leave empty if nothing should be let-go this tick.\n"
+            # 🆕 [Self-Memory P1 / Sir 2026-05-30] <RECALL> tag — 思考脑自查记忆
+            "<RECALL>a short query if THIS moment reminds you of something you "
+            "may have noted or discussed before (e.g. 'Sir's vet appointment', "
+            "'the deploy bug last week', 'what Sir said about his sleep')</RECALL>"
+            "  ← 🆕 OPTIONAL. Leave EMPTY unless something genuinely feels "
+            "familiar. Results (from your own memory, with [SOURCE] tags) appear "
+            "at the TOP of your NEXT tick so you can pick up the thread. You "
+            "decide whether to use them; if a recalled item is vague or "
+            "low-confidence, treat it as 'I vaguely recall…' — never assert it as "
+            "hard fact (准则 5).\n"
+            # 🆕 [Self-Memory P4 / Sir 2026-05-30] <NOTE> tag — schema-free 自写记忆
+            "<NOTE>a free-form note-to-self worth keeping that does NOT fit any "
+            "other schema (concern/directive/joke/milestone), e.g. 'Sir prefers "
+            "tea over coffee after 4pm' / 'Sir's sister visits next week'</NOTE>"
+            "  ← 🆕 OPTIONAL schema-free memory you choose to keep (recallable "
+            "later via your own memory). Leave EMPTY unless genuinely worth "
+            "remembering.\n\n"
             "5 categories (pick the ONE most fitting):\n"
             "  [A] OBSERVATION — Sir's current state (screen/app/mood/activity).\n"
             "  [B] SELF-REFLECT — your own recent reply (tone / mistake / pattern). "
@@ -3898,6 +3948,32 @@ class InnerThoughtDaemon:
             lifetime_mini = self.build_lifetime_block(mode='mini')
             if lifetime_mini:
                 for ln in lifetime_mini.splitlines():
+                    lines.append(ln)
+                lines.append("")
+        except Exception:
+            pass
+
+        # 🆕 [Self-Memory P1 / Sir 2026-05-30] 注入上 tick <RECALL> 召回结果 (F3 接地)
+        # 在 lifetime 之后、channel view 之前 — 让"自查到的记忆"成为本 tick 顶部上下文,
+        # 思考脑可据此延续 thread / 决定要不要 reference (consumed 后清空).
+        try:
+            if self._pending_recall_block:
+                for ln in self._pending_recall_block.splitlines():
+                    lines.append(ln)
+                lines.append("")
+                self._pending_recall_block = ''
+        except Exception:
+            pass
+
+        # 🆕 [Self-Memory P3 / Sir 2026-05-30] OPEN THREADS 视图 (强闭环的门控显形) —
+        # 河床里 open 线程按 (召回 bump 后) decayed salience 排序注入, resurfaced 线程
+        # 浮上来 → 思考脑本 tick 注意力被结构性导向, 自然延续而非每轮重新发现.
+        try:
+            _ot_n = int(self._load_lifetime_vocab().get(
+                'open_threads_prompt_n', 3))
+            _ot_block = self._build_open_threads_block(_ot_n)
+            if _ot_block:
+                for ln in _ot_block.splitlines():
                     lines.append(ln)
                 lines.append("")
         except Exception:
@@ -4664,22 +4740,22 @@ class InnerThoughtDaemon:
         return system, '\n'.join(lines)
 
     # ----------------------------------------------------------
-    # LLM call (β.6: gemini-3-flash-preview 默认, env override)
+    # LLM call (β.6: gemini-3.1-flash-lite 默认, env override)
     # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1a] LLM 升级 flash_lite → flash
+    # 🆕 [Sir 2026-05-30] 降级 flash → flash_lite (3.1-flash-lite, 省 token)
     # ============================================================
-    # Sir 真意: "思考脑我们也可以直接替换到 3-flash-preview, 不比现在的开销大,
-    # 略微提高智能". flash 在 LlmReflector 映射 = gemini-3-flash-preview
-    # (主脑同款). env override JARVIS_THINKING_MODEL=flash_lite 可回退老模型.
+    # flash_lite 在 LlmReflector 映射 = gemini-3.1-flash-lite.
+    # env override JARVIS_THINKING_MODEL=flash 可切回 3-flash-preview.
     # ============================================================
     def _call_llm(self, system_prompt: str, user_prompt: str,
                    caller_origin: str = '') -> str:
         """LLM call for inner thought.
 
         🆕 [Sir 2026-05-28 fix46] selective DeepSeek routing:
-        - 默认走 gemini-3-flash-preview (LlmReflector path, ~$15/月)
+        - 默认走 gemini-3.1-flash-lite (LlmReflector path)
         - 4 类 trigger 命中 + 双 gate 通过 + rate_limit 不超 → 走
           safe_deepseek_call (DS_ONLY key + deepseek-v4-pro)
-        - ds 失败 + fallback_on_fail=1 → fall through 走 flash (故障开放)
+        - ds 失败 + fallback_on_fail=1 → fall through 走 flash_lite (故障开放)
         - 所有路径都 _record_thinking_brain_routing → usage_stats 持久化
 
         caller_origin: sub-caller (yesterday_recap / commitment_review 等)
@@ -4793,9 +4869,9 @@ class InnerThoughtDaemon:
                     routed=False, skip_reason=trigger_or_reason,
                 )
 
-            # 默认 / fallback path: LlmReflector + gemini-3-flash-preview
+            # 默认 / fallback path: LlmReflector + gemini-3.1-flash-lite
             reflector = LlmReflector(key_router=self.key_router)
-            _model = os.environ.get('JARVIS_THINKING_MODEL', 'flash')
+            _model = os.environ.get('JARVIS_THINKING_MODEL', 'flash_lite')
             res = reflector.reflect(
                 model=_model,
                 system_prompt=system_prompt,
@@ -7093,6 +7169,21 @@ class InnerThoughtDaemon:
         os.path.dirname(os.path.abspath(__file__)),
         'memory_pool', 'jarvis_cold_starts.jsonl',
     )
+    # 🆕 [Self-Memory P0 / Sir 2026-05-30] last_alive 心跳 — 算真 dark_gap (离线时长)
+    _LAST_ALIVE_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'jarvis_last_alive.json',
+    )
+    # 🆕 [Self-Memory P2 / Sir 2026-05-30] self-threads 河床 — 巩固流水账成持久线程
+    _SELF_THREADS_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'self_threads.json',
+    )
+    # 🆕 [Self-Memory P4 / Sir 2026-05-30] self-notes — schema-free 自写记忆
+    _SELF_NOTES_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'self_notes.jsonl',
+    )
     _YESTERDAY_RECAP_PATH = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         'memory_pool', 'jarvis_yesterday_recap.jsonl',
@@ -7119,6 +7210,24 @@ class InnerThoughtDaemon:
         'recent_thoughts_lookback_s': 900,   # 15min
         'recent_actions_lookback_s': 7200,   # 2h
         'cross_session_max_records': 12,     # 跨 session 显前 N (最近优先)
+        # 🆕 [Self-Memory P0 / Sir 2026-05-30] 离线 gap 感知 (dark gap surfacing)
+        'dark_gap_min_surface_s': 3600,      # 离线 >= 1h 才 surface "你离线了多久"
+        'dark_gap_relevant_uptime_s': 3600,  # 仅 process 刚起 < 1h 内 surface (久了不算 news)
+        'heartbeat_persist_interval_s': 300, # daemon loop 5min 刷 last_alive 心跳
+        # 🆕 [Self-Memory P2 / Sir 2026-05-30] 河床/巩固 (consolidation) + 遗忘
+        'consolidate_enabled': True,
+        'consolidate_cooldown_s': 3600,        # 周期巩固 1h (类 yesterday_recap)
+        'consolidate_min_thoughts': 2,         # thread >= N thought 才巩固成河床
+        'consolidate_max_threads_per_run': 8,  # 每轮最多 LLM-summarize N (省 token)
+        'consolidate_llm_summary': True,       # LLM 写 1-liner (else 取最高 sal thought)
+        'thread_decay_half_life_days': 7.0,    # salience 衰减半衰期 (遗忘)
+        'thread_tier_hot_max_age_s': 86400,    # < 1d = hot
+        'thread_tier_warm_max_age_s': 604800,  # < 7d = warm, 否则 cold
+        'thread_max_kept': 200,                # cap, 超出按 last_touched prune (不删 evidence)
+        # 🆕 [Self-Memory P3 / Sir 2026-05-30] 强闭环 — 召回 mutate 门控态
+        'thread_recall_bump_salience': 0.08,   # 主动召回命中 open 线程 → salience +bump
+        'thread_recall_bump_cap': 0.95,        # bump 上限
+        'open_threads_prompt_n': 3,            # tick prompt 顶显 N 个 open 线程 (salience 排)
         'yesterday_recap_enabled': True,
         'yesterday_recap_hour': 23,          # 23 点窗 LLM 写昨日 recap
         'yesterday_recap_cooldown_s': 82800, # 23h
@@ -7446,7 +7555,17 @@ class InnerThoughtDaemon:
                 pass
 
     def _append_cold_start_record(self) -> None:
-        """daemon init 时 append 一条 cold_start record (跨 session 持久)."""
+        """daemon init 时 append 一条 cold_start record (跨 session 持久).
+
+        🆕 [Self-Memory P0 / Sir 2026-05-30] 数据卫生 + 真 dark_gap:
+          - 只在**真 production session** (session_id 非空) 时 append. test/script
+            import 构造 daemon 无 session → 不写 (修历史污染: 一秒 5 条空 session
+            record + prev=0 把"离线多久"信号冲烂).
+          - 同 session 已写过 → dedup skip (一进程多次构造 daemon 不重复 append).
+          - dark_gap_s: 用上次 last_alive 心跳算**真离线时长** (= now - 上次临死前
+            最后心跳). 比 prev_cold_start_age_s 准 (后者含上次 session 运行时长).
+            prev 心跳缺 (首次跑) → None.
+        """
         try:
             sess_id = ''
             try:
@@ -7454,17 +7573,36 @@ class InnerThoughtDaemon:
                 sess_id = TraceContext.get_session_id() or ''
             except Exception:
                 pass
-            # 读上一条算 prev_session_age_s
+            # 数据卫生 gate 1: 无真 session → 不写 (test/script import 不污染账本)
+            if not sess_id:
+                return
+            # 读末条 (算 prev_cold_start_age_s + dedup 判断)
             prev_age = None
+            last_rec = None
             try:
                 if os.path.exists(self._COLD_STARTS_PATH):
                     with open(self._COLD_STARTS_PATH, 'r', encoding='utf-8') as f:
                         lines = f.readlines()
                     if lines:
-                        last = json.loads(lines[-1].strip())
-                        prev_ts = float(last.get('ts', 0))
+                        last_rec = json.loads(lines[-1].strip())
+                        prev_ts = float(last_rec.get('ts', 0))
                         if prev_ts > 0:
                             prev_age = int(time.time() - prev_ts)
+            except Exception:
+                pass
+            # 数据卫生 gate 2: 同 session 已写 → dedup (幂等 per session)
+            if last_rec and (last_rec.get('session_id') or '') == sess_id:
+                return
+            # 真 dark_gap: now - 上次心跳 (上次 session 临死前最后 alive)
+            dark_gap_s = None
+            prev_alive_iso = ''
+            try:
+                prev_alive = self._read_last_alive()
+                if prev_alive:
+                    prev_alive_ts = float(prev_alive.get('ts', 0) or 0)
+                    if prev_alive_ts > 0:
+                        dark_gap_s = max(0, int(time.time() - prev_alive_ts))
+                        prev_alive_iso = str(prev_alive.get('ts_iso', '') or '')
             except Exception:
                 pass
             record = {
@@ -7473,6 +7611,8 @@ class InnerThoughtDaemon:
                                           time.localtime()),
                 'session_id': sess_id,
                 'prev_cold_start_age_s': prev_age,
+                'dark_gap_s': dark_gap_s,
+                'prev_last_alive_iso': prev_alive_iso,
                 'reason': 'first_run' if prev_age is None else 'restart',
             }
             os.makedirs(os.path.dirname(self._COLD_STARTS_PATH),
@@ -7480,6 +7620,68 @@ class InnerThoughtDaemon:
             with open(self._COLD_STARTS_PATH, 'a',
                        encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            # 写本 session 首个心跳 (覆盖上次 session 的 last_alive)
+            try:
+                self._persist_heartbeat()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _read_last_alive(self) -> Optional[dict]:
+        """🆕 [Self-Memory P0] 读 last_alive 心跳 (上次 session 临死前最后活着 ts).
+
+        失败 / 不存在 / 损坏 → None (fail-safe, dark_gap 退 None).
+        """
+        try:
+            if not os.path.exists(self._LAST_ALIVE_PATH):
+                return None
+            with open(self._LAST_ALIVE_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _persist_heartbeat(self) -> bool:
+        """🆕 [Self-Memory P0] 覆写 last_alive.json = now (atomic).
+
+        daemon 是心跳 keeper — cold_start 时调一次 + loop 周期调. 只在真 session
+        写 (test/script 无 session 不污染 → 下次 dark_gap 准). 失败 silent.
+        """
+        try:
+            sess_id = ''
+            try:
+                from jarvis_utils import TraceContext
+                sess_id = TraceContext.get_session_id() or ''
+            except Exception:
+                pass
+            if not sess_id:
+                return False
+            now = time.time()
+            rec = {
+                'ts': now,
+                'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                          time.localtime(now)),
+                'session_id': sess_id,
+            }
+            os.makedirs(os.path.dirname(self._LAST_ALIVE_PATH), exist_ok=True)
+            tmp = self._LAST_ALIVE_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(rec, f, ensure_ascii=False)
+            os.replace(tmp, self._LAST_ALIVE_PATH)
+            self._last_heartbeat_ts = now
+            return True
+        except Exception:
+            return False
+
+    def _maybe_persist_heartbeat(self) -> None:
+        """🆕 [Self-Memory P0] daemon loop 周期持久 last_alive (vocab interval throttle)."""
+        try:
+            vocab = self._load_lifetime_vocab()
+            interval = float(vocab.get('heartbeat_persist_interval_s', 300))
+            now = time.time()
+            if now - float(getattr(self, '_last_heartbeat_ts', 0.0) or 0.0) < interval:
+                return
+            self._persist_heartbeat()
         except Exception:
             pass
 
@@ -7550,6 +7752,480 @@ class InnerThoughtDaemon:
         if age_s < 86400: return f"{age_s // 3600}h"
         return f"{age_s // 86400}d"
 
+    def _format_duration_human(self, secs: float) -> str:
+        """🆕 [Self-Memory P0] gap 人读: '2d 3h' / '5h' / '45min' / '30s'
+        (比 _format_age_human 细 — surface dark_gap 时让主脑看清离线多久)."""
+        secs = max(0, int(secs))
+        d = secs // 86400
+        h = (secs % 86400) // 3600
+        m = (secs % 3600) // 60
+        if d > 0:
+            return f"{d}d {h}h" if h else f"{d}d"
+        if h > 0:
+            return f"{h}h {m}min" if m else f"{h}h"
+        if m > 0:
+            return f"{m}min"
+        return f"{secs}s"
+
+    # ----------------------------------------------------------
+    # 🆕 [Self-Memory P1 / Sir 2026-05-30] 思考脑自我回忆 (recall as an action)
+    # ----------------------------------------------------------
+    # Sir 真意: "高频思考脑能不能自我迭代自我理解? 随口的记忆/昨天那件事/好久没见".
+    # 根因 (已核): 思考脑只 _maybe_archive_to_hippocampus 写、tick 中**无召回路径**,
+    # 只看预塞的 24h 窗口 → 任何"随口的记忆"都得 hand-code 预 push.
+    # 治本: 复用 nerve.memory_gateway (MemoryHub.query, M2 已建) — 不造新存储.
+    # F1 混合: 后台 tick 允许脑子自发深召回 (<RECALL>tag); F3: 带 provenance + 允许
+    # "模糊记得" 但禁裸断言. 详 docs/JARVIS_GROUNDED_SELF_MEMORY_DESIGN.md.
+    # ----------------------------------------------------------
+    def recall(self, query_text: str, top_k: int = 4) -> List[dict]:
+        """思考脑自查记忆 — 跨 source (STM/LTM/Profile/Ledger) + self-threads 河床.
+
+        (a) MemoryHub.query (M2 已建, 需 nerve) — 语义跨源召回.
+        (b) 🆕 [P2] self-threads 河床 — 实体/关键词匹配 (不需 nerve).
+        返带 provenance (source 标签) 的候选 dict list. 接地红线 (F3): 失败/无源
+        → 空 list (诚实, 不编造记忆 — 准则 5).
+        """
+        out: List[dict] = []
+        if not query_text:
+            return out
+        # (a) 跨 source 语义召回 (MemoryHub, 需 nerve)
+        try:
+            hub = (getattr(self.nerve, 'memory_gateway', None)
+                   if self.nerve else None)
+            if hub is not None and hasattr(hub, 'query'):
+                frags = hub.query(
+                    query_text, top_k=top_k, nerve=self.nerve) or []
+                for fr in frags:
+                    src = getattr(fr, 'source', '') or '?'
+                    content = str(getattr(fr, 'content', '') or '')[:200]
+                    if content:
+                        out.append({'source': str(src), 'content': content})
+        except Exception:
+            pass
+        # (b) 🆕 [P2] self-threads 河床召回 (不需 nerve)
+        try:
+            out.extend(self.recall_threads(query_text, top_k=3))
+        except Exception:
+            pass
+        # (c) 🆕 [P4] self-notes schema-free 自写记忆召回
+        try:
+            out.extend(self.recall_notes(query_text, top_k=2))
+        except Exception:
+            pass
+        return out
+
+    def build_recall_block(self, results: List[dict], query: str = '') -> str:
+        """render 召回候选给 prompt (F3 接地纪律).
+
+        每条带 [SOURCE] provenance 标签. 明确这是召回的记忆 (可能不全/不准):
+        引用前确认, 不确定就说 '我模糊记得…', 禁止当确证事实裸断言 (准则 5).
+        """
+        if not results:
+            return ''
+        q = (query or '').strip()
+        head = (f"=== RECALLED MEMORY (你查 \"{q[:60]}\" 的候选"
+                if q else "=== RECALLED MEMORY (候选")
+        lines = [
+            f"{head} — 带来源标签; 这是你的记忆召回, 可能不全/不准. "
+            "引用前先确认; 不确定就说 '我模糊记得…', 别当确证事实裸断言 (准则 5)) ==="
+        ]
+        for r in results:
+            src = str(r.get('source', '?')).upper()
+            content = str(r.get('content', ''))[:160]
+            lines.append(f"  [{src}] {content}")
+        return '\n'.join(lines)
+
+    def _handle_recall_tag(self, raw: str) -> None:
+        """解析 <RECALL>query</RECALL> → 跑召回 → 存 pending block (下 tick 注入).
+
+        F1: 后台 tick 自发深召回, 不阻塞当前 tick (结果下 tick 顶部出现, 类比
+        _next_attention_focus 的本轮→下轮 pattern). 空/占位 query → 不召回.
+        """
+        try:
+            m = re.search(r'<RECALL>(.*?)</RECALL>', raw or '',
+                          re.DOTALL | re.IGNORECASE)
+            if not m:
+                return
+            query = (m.group(1) or '').strip()
+            if (not query or len(query) < 3
+                    or query.lower() in ('none', 'empty', '(none)', 'n/a')):
+                return
+            results = self.recall(query, top_k=4)
+            # 🆕 [P3 强闭环] 主动召回命中的 OPEN 线程 → 结构性 bump salience
+            # (mutate 会 gate 下 tick 注意力的持久态, 非装饰性 append).
+            try:
+                _bumped = self._bump_recalled_open_threads(query)
+            except Exception:
+                _bumped = 0
+            block = self.build_recall_block(results, query=query)
+            if block:
+                self._pending_recall_block = block
+            self._bg_log(
+                f"🔎 [Recall] query='{query[:50]}' → "
+                f"{len(results)} hit(s), {_bumped} open-thread(s) bumped"
+                + (", queued for next tick" if block else "")
+            )
+        except Exception:
+            pass
+
+    # ----------------------------------------------------------
+    # 🆕 [Self-Memory P2 / Sir 2026-05-30] 河床/巩固 (consolidation) + 遗忘
+    # ----------------------------------------------------------
+    # Sir 真意: "连续存在差什么? 河在流但没结河床." 流水账 (心流 jsonl) 越长但
+    # "自我"不变深. 治本: 把同 thread_id 的 thought 卷成持久线程 (running summary +
+    # last_touched + salience + status + 回链 evidence), 让"昨天那件事/你记得我那个"
+    # 是线程查找, 不靠 23:00 硬编码 recap. 遗忘: salience 衰减 + hot/warm/cold 分层
+    # (不删除, 删了丢 provenance). 决策锚 F4 线程为主 / F5 周期巩固.
+    # 详 docs/JARVIS_GROUNDED_SELF_MEMORY_DESIGN.md §5 P2.
+    # ----------------------------------------------------------
+    def _load_self_threads(self) -> dict:
+        """读 self_threads.json (河床). 失败/不存在 → 空 {threads: []}."""
+        try:
+            if not os.path.exists(self._SELF_THREADS_PATH):
+                return {'_meta': {'schema': 'self_threads'}, 'threads': []}
+            with open(self._SELF_THREADS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {'_meta': {'schema': 'self_threads'}, 'threads': []}
+            data.setdefault('threads', [])
+            return data
+        except Exception:
+            return {'_meta': {'schema': 'self_threads'}, 'threads': []}
+
+    def _save_self_threads(self, data: dict) -> bool:
+        """atomic 写 self_threads.json. 失败 silent."""
+        try:
+            data.setdefault('_meta', {
+                'schema': 'self_threads',
+                'doc': ('Jarvis 河床 — 巩固的持久思维线程. CLI: '
+                        'scripts/self_threads_dump.py'),
+            })
+            data['_meta']['updated_iso'] = time.strftime(
+                '%Y-%m-%dT%H:%M:%S', time.localtime()
+            )
+            os.makedirs(os.path.dirname(self._SELF_THREADS_PATH), exist_ok=True)
+            tmp = self._SELF_THREADS_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self._SELF_THREADS_PATH)
+            return True
+        except Exception:
+            return False
+
+    def _compute_thread_tier(self, th: dict, now: float, vocab: dict) -> str:
+        """遗忘分层: hot (<1d) / warm (<7d) / cold. let_go → cold."""
+        if (th.get('status') or '') == 'let_go':
+            return 'cold'
+        age = now - float(th.get('last_touched_ts', now) or now)
+        hot = float(vocab.get('thread_tier_hot_max_age_s', 86400))
+        warm = float(vocab.get('thread_tier_warm_max_age_s', 604800))
+        if age < hot:
+            return 'hot'
+        if age < warm:
+            return 'warm'
+        return 'cold'
+
+    def _decayed_salience(self, salience: float, last_touched_ts: float,
+                            now: float, half_life_days: float) -> float:
+        """salience 半衰期衰减 (遗忘) — 越久未碰越低. 不改 raw salience."""
+        try:
+            age_days = max(0.0, (now - float(last_touched_ts)) / 86400.0)
+            if half_life_days <= 0:
+                return float(salience)
+            return round(
+                float(salience) * (0.5 ** (age_days / half_life_days)), 4)
+        except Exception:
+            return float(salience)
+
+    def _llm_summarize_thread(self, thoughts: list) -> str:
+        """LLM 写线程 1-liner running summary (复用 _call_llm). 无 key_router → ''."""
+        if not self.key_router or not thoughts:
+            return ''
+        try:
+            joined = ' | '.join(
+                (getattr(t, 'thought', '') or '')[:120] for t in thoughts[-6:]
+            )
+            sysp = (
+                "You are J.A.R.V.I.S. Summarize this recurring inner-thought "
+                "thread into ONE concise third-person sentence (<140 chars, "
+                "English, butler tone). Capture the through-line, not each "
+                "thought. No preamble."
+            )
+            usrp = (
+                f"Thread thoughts (oldest→newest):\n{joined}\n\n"
+                "One-sentence summary:"
+            )
+            txt = (self._call_llm(
+                sysp, usrp, caller_origin='thread_consolidate',
+            ) or '').strip()
+            for p in ('Summary:', '"', '- ', '*'):
+                if txt.startswith(p):
+                    txt = txt[len(p):].strip()
+            return txt[:200]
+        except Exception:
+            return ''
+
+    def _consolidate_threads_once(self) -> int:
+        """把 self._thoughts 按 thread_id 卷成持久线程 + 衰减/分层 (遗忘). 返线程数."""
+        vocab = self._load_lifetime_vocab()
+        min_thoughts = int(vocab.get('consolidate_min_thoughts', 2))
+        max_llm = int(vocab.get('consolidate_max_threads_per_run', 8))
+        use_llm = bool(vocab.get('consolidate_llm_summary', True))
+        half_life = float(vocab.get('thread_decay_half_life_days', 7.0))
+        now = time.time()
+        with self._lock:
+            thoughts = list(self._thoughts)
+        # group by thread_id
+        groups: Dict[str, list] = {}
+        for t in thoughts:
+            tid = getattr(t, 'thread_id', '') or getattr(t, 'id', '')
+            if tid:
+                groups.setdefault(tid, []).append(t)
+        data = self._load_self_threads()
+        threads = {th.get('thread_id'): th for th in data.get('threads', [])
+                   if th.get('thread_id')}
+        llm_used = 0
+        for tid, ts_list in groups.items():
+            if len(ts_list) < min_thoughts:
+                continue
+            ts_list.sort(key=lambda x: x.ts)
+            last_touched = max(t.ts for t in ts_list)
+            first_ts = min(t.ts for t in ts_list)
+            max_sal = max(
+                float(getattr(t, 'salience', 0) or 0) for t in ts_list)
+            existing = threads.get(tid)
+            changed = (existing is None
+                       or float(existing.get('last_touched_ts', 0) or 0)
+                       < last_touched - 1)
+            top = max(ts_list,
+                      key=lambda x: float(getattr(x, 'salience', 0) or 0))
+            if existing and not changed:
+                summary = existing.get('summary', '') or (top.thought or '')[:160]
+            elif use_llm and self.key_router and llm_used < max_llm:
+                summary = (self._llm_summarize_thread(ts_list)
+                           or (top.thought or '')[:160])
+                llm_used += 1
+            else:
+                summary = (top.thought or '')[:160]
+            threads[tid] = {
+                'thread_id': tid,
+                'summary': summary[:300],
+                'first_ts': first_ts,
+                'last_touched_ts': last_touched,
+                'last_touched_iso': time.strftime(
+                    '%Y-%m-%dT%H:%M:%S', time.localtime(last_touched)),
+                'occurrences': len(ts_list),
+                'salience': round(max_sal, 3),
+                'salience_decayed': self._decayed_salience(
+                    max_sal, last_touched, now, half_life),
+                'status': (existing.get('status', 'open')
+                           if existing else 'open'),
+                'evidence_thought_ids': [t.id for t in ts_list[-5:]],
+            }
+        # 遗忘: 重算 tier + decayed salience for ALL (含老线程)
+        thread_list = list(threads.values())
+        for th in thread_list:
+            th['tier'] = self._compute_thread_tier(th, now, vocab)
+            th['salience_decayed'] = self._decayed_salience(
+                float(th.get('salience', 0) or 0),
+                float(th.get('last_touched_ts', now) or now),
+                now, half_life,
+            )
+        # cap: 按 last_touched 保留最近 N (超额最老的不再 keep)
+        max_kept = int(vocab.get('thread_max_kept', 200))
+        thread_list.sort(key=lambda th: -float(th.get('last_touched_ts', 0) or 0))
+        thread_list = thread_list[:max_kept]
+        data['threads'] = thread_list
+        self._save_self_threads(data)
+        return len(thread_list)
+
+    def _maybe_consolidate_threads(self) -> None:
+        """周期巩固 (cooldown throttle). tick 后调."""
+        vocab = self._load_lifetime_vocab()
+        if not bool(vocab.get('consolidate_enabled', True)):
+            return
+        cd = float(vocab.get('consolidate_cooldown_s', 3600))
+        now = time.time()
+        if now - float(getattr(self, '_last_consolidate_ts', 0) or 0) < cd:
+            return
+        self._last_consolidate_ts = now
+        try:
+            n = self._consolidate_threads_once()
+            self._bg_log(f"🪶 [Consolidate] 河床 {n} threads (流水账→持久线程)")
+        except Exception as e:
+            self._bg_log(f"⚠️ [Consolidate] exception: {e}")
+
+    def recall_threads(self, query_text: str, top_k: int = 3) -> List[dict]:
+        """🆕 [P2] self-threads 河床召回 — 关键词/实体重叠匹配. 返带 tier 的候选."""
+        out: List[dict] = []
+        try:
+            q = set(re.findall(r'\w+', (query_text or '').lower()))
+            q = {w for w in q if len(w) >= 2}
+            if not q:
+                return out
+            data = self._load_self_threads()
+            scored = []
+            for th in data.get('threads', []):
+                text = str(th.get('summary', '') or '').lower()
+                words = set(re.findall(r'\w+', text))
+                overlap = len(q & words)
+                if overlap > 0:
+                    scored.append((
+                        overlap,
+                        float(th.get('salience_decayed',
+                                     th.get('salience', 0)) or 0),
+                        th))
+            scored.sort(key=lambda x: (-x[0], -x[1]))
+            for _ov, _sal, th in scored[:top_k]:
+                out.append({
+                    'source': 'THREAD',
+                    'content': (f"[{th.get('tier', '?')}|seen×"
+                                f"{th.get('occurrences', '?')}] "
+                                f"{str(th.get('summary', ''))[:160]}"),
+                })
+        except Exception:
+            pass
+        return out
+
+    # ----------------------------------------------------------
+    # 🆕 [Self-Memory P3 / Sir 2026-05-30] 强闭环 — 召回 mutate 门控态
+    # ----------------------------------------------------------
+    # emergence doc §3: 弱闭环 = 注入文字指望 LLM 注意; 强闭环 = 后果 mutate 那个
+    # 会 gate 下一步的结构化态. 这里: 主动召回 (<RECALL>) 命中的 OPEN 线程 →
+    # salience 结构性 bump + 刷 last_touched + re-tier hot. 被 bump 的线程在未来
+    # recall_threads / open-threads 视图里**排序更靠前** → 思考脑下 tick 注意力被
+    # 结构性导向 resurfaced 线程. 这是真因果闭合, 不是装饰性 append.
+    # ----------------------------------------------------------
+    def _bump_recalled_open_threads(self, query_text: str) -> int:
+        """主动召回命中的 OPEN 线程 → 结构性 bump salience (gate 未来注意力). 返 bump 数."""
+        try:
+            vocab = self._load_lifetime_vocab()
+            bump = float(vocab.get('thread_recall_bump_salience', 0.08))
+            cap = float(vocab.get('thread_recall_bump_cap', 0.95))
+            half_life = float(vocab.get('thread_decay_half_life_days', 7.0))
+            q = set(re.findall(r'\w+', (query_text or '').lower()))
+            q = {w for w in q if len(w) >= 2}
+            if not q or bump <= 0:
+                return 0
+            data = self._load_self_threads()
+            now = time.time()
+            n = 0
+            for th in data.get('threads', []):
+                if (th.get('status') or 'open') != 'open':
+                    continue   # closed / let_go 不 resurface (尊重遗忘)
+                words = set(re.findall(
+                    r'\w+', str(th.get('summary', '')).lower()))
+                if not (q & words):
+                    continue
+                old = float(th.get('salience', 0) or 0)
+                th['salience'] = round(min(cap, old + bump), 3)
+                th['last_touched_ts'] = now
+                th['last_touched_iso'] = time.strftime(
+                    '%Y-%m-%dT%H:%M:%S', time.localtime(now))
+                th['salience_decayed'] = self._decayed_salience(
+                    th['salience'], now, now, half_life)
+                th['tier'] = 'hot'
+                n += 1
+            if n:
+                self._save_self_threads(data)
+            return n
+        except Exception:
+            return 0
+
+    def _build_open_threads_block(self, n: int = 3) -> str:
+        """render 顶 N 个 OPEN 线程 (按 decayed salience 排) 给 tick prompt.
+
+        强闭环的"门控"显形: 被召回 bump 过的 open 线程 decayed salience 升高 →
+        在此视图里浮到顶 → 思考脑本 tick 优先注意 → 自然延续 (而非每轮重新发现).
+        """
+        try:
+            data = self._load_self_threads()
+            opens = [t for t in data.get('threads', [])
+                     if (t.get('status') or 'open') == 'open']
+            if not opens:
+                return ''
+            opens.sort(key=lambda t: -float(
+                t.get('salience_decayed', t.get('salience', 0)) or 0))
+            opens = opens[:max(1, int(n))]
+            lines = [
+                "[OPEN THREADS — your live concerns, salience-ranked "
+                "(resurfaced ones float up; pick up a thread or let it go)]"
+            ]
+            for t in opens:
+                sal = float(
+                    t.get('salience_decayed', t.get('salience', 0)) or 0)
+                lines.append(
+                    f"  ({t.get('tier', '?')}|sal={sal:.2f}|seen×"
+                    f"{t.get('occurrences', '?')}) "
+                    f"{str(t.get('summary', ''))[:120]}"
+                )
+            return '\n'.join(lines)
+        except Exception:
+            return ''
+
+    # ----------------------------------------------------------
+    # 🆕 [Self-Memory P4 / Sir 2026-05-30] schema-free 自写记忆 (note-to-self)
+    # ----------------------------------------------------------
+    # Sir 真意: "随口的记忆" 不属于 concern/directive/joke/milestone 任何 schema →
+    # 无处可记 → 又得加 schema (hand-code). 治本: <NOTE> 让脑子写任意自由记忆,
+    # 持久 self_notes.jsonl, 纳入 recall. 准则 6 信任 LLM 自决记什么.
+    # ----------------------------------------------------------
+    def _handle_note_tag(self, raw: str) -> None:
+        """解析 <NOTE>text</NOTE> → append self_notes.jsonl (schema-free 自写记忆)."""
+        try:
+            m = re.search(r'<NOTE>(.*?)</NOTE>', raw or '',
+                          re.DOTALL | re.IGNORECASE)
+            if not m:
+                return
+            text = (m.group(1) or '').strip()
+            if (not text or len(text) < 5
+                    or text.lower() in ('none', 'empty', '(none)', 'n/a')):
+                return
+            rec = {
+                'ts': time.time(),
+                'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
+                'text': text[:300],
+            }
+            os.makedirs(os.path.dirname(self._SELF_NOTES_PATH), exist_ok=True)
+            with open(self._SELF_NOTES_PATH, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+            self._bg_log(f"📝 [SelfNote] kept: \"{text[:60]}\"")
+        except Exception:
+            pass
+
+    def recall_notes(self, query_text: str, top_k: int = 2) -> List[dict]:
+        """self-notes 召回 — 关键词重叠 (读末 200 条). 返 source=NOTE 候选."""
+        out: List[dict] = []
+        try:
+            if not os.path.exists(self._SELF_NOTES_PATH):
+                return out
+            q = set(re.findall(r'\w+', (query_text or '').lower()))
+            q = {w for w in q if len(w) >= 2}
+            if not q:
+                return out
+            with open(self._SELF_NOTES_PATH, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            scored = []
+            for ln in lines[-200:]:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                text = str(rec.get('text', '') or '')
+                words = set(re.findall(r'\w+', text.lower()))
+                ov = len(q & words)
+                if ov > 0:
+                    scored.append((ov, text))
+            scored.sort(key=lambda x: -x[0])
+            for _ov, text in scored[:top_k]:
+                out.append({'source': 'NOTE', 'content': text[:160]})
+        except Exception:
+            pass
+        return out
+
     def build_lifetime_block(self, mode: str = 'full',
                                 max_chars: Optional[int] = None) -> str:
         """🆕 [Sir 2026-05-27 01:00 β.5.50] 主脑 + daemon 复用的 lifetime block.
@@ -7594,16 +8270,48 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
-        # (2) Cross-session (跨 cold_start)
+        # (2) Cross-session continuity + dark gap (离线感知)
+        # 🆕 [Self-Memory P0 / Sir 2026-05-30] surface 真离线时长 (dark_gap), 让主脑
+        # 有"他没开着"的时间概念. 中性事实, 措辞留主脑自决 (准则 6 不硬编码 welcome).
+        # 仅 process 刚起 < relevant_uptime 内 surface (跑久了"刚回来"不再是 news).
         try:
             recs = self._load_cold_starts(
                 int(vocab.get('cross_session_max_records', 12))
             )
+            # dark gap: 本次 record (recs[0]) 的 dark_gap_s (真), fallback prev_cold_start_age_s
+            gap_s = None
+            prev_alive_iso = ''
+            if recs:
+                self_rec = recs[0]
+                g = self_rec.get('dark_gap_s')
+                if g is None:
+                    g = self_rec.get('prev_cold_start_age_s')
+                if g is not None:
+                    try:
+                        gap_s = int(g)
+                    except Exception:
+                        gap_s = None
+                prev_alive_iso = str(self_rec.get('prev_last_alive_iso', '') or '')
+            min_surface = int(vocab.get('dark_gap_min_surface_s', 3600))
+            relevant_uptime = float(vocab.get('dark_gap_relevant_uptime_s', 3600))
+            try:
+                uptime_s = time.time() - self._process_start_ts
+            except Exception:
+                uptime_s = 0.0
+            if (gap_s is not None and gap_s >= min_surface
+                    and uptime_s < relevant_uptime):
+                gap_human = self._format_duration_human(gap_s)
+                tail = (f", last alive {prev_alive_iso}"
+                        if prev_alive_iso else "")
+                lines.append(
+                    f"- You were NOT running for ~{gap_human}{tail} "
+                    f"(process dark — this is the gap since Sir last had you "
+                    f"on; you just came back)."
+                )
+            # 跨 session 连续性 (count + span) — 次要, 表明同一 Jarvis 身份
             if recs and len(recs) >= 2:
-                # recs[0] 是 self (本次), recs[1:] 是历史
                 hist = recs[1:]
                 if hist:
-                    # 计算 span
                     oldest_ts = float(hist[-1].get('ts', 0))
                     span_s = int(time.time() - oldest_ts) if oldest_ts > 0 else 0
                     span_human = (f"{span_s // 86400}d"
@@ -7611,8 +8319,7 @@ class InnerThoughtDaemon:
                                     else f"{span_s // 3600}h")
                     lines.append(
                         f"- Cross-session: {len(recs)} cold-starts "
-                        f"over {span_human} (same Jarvis identity, "
-                        f"multiple process restarts)"
+                        f"over {span_human} (same Jarvis identity)"
                     )
         except Exception:
             pass

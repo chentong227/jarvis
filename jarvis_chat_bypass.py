@@ -5766,6 +5766,21 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 _ltm_ctx_str = str(getattr(self, '_last_ltm_context', '') or '')[:2000]
             except Exception:
                 _ltm_ctx_str = ''
+            # 🆕 [言出必行 I1 / Sir 2026-05-30] 给 ClaimTracer 接 Self-Memory 召回底座
+            # 作 evidence 源 — ④Recall/③State claim 正常路径未命中时可对 MemoryHub/
+            # self-threads/self-notes verify (治"evidence 饿死"假阳性). 仅 unverified
+            # claim 才触发 (罕见, post-stream, 不碰 TTFT). 防御: daemon 缺/异常 → None
+            # → 老行为零变化 (准则 1 + 5).
+            _recall_provider = None
+            try:
+                from jarvis_inner_thought_daemon import (
+                    get_default_daemon as _gdd_ct)
+                _itd_ct = _gdd_ct()
+                if _itd_ct is not None and hasattr(_itd_ct, 'recall'):
+                    _recall_provider = (
+                        lambda _q: _itd_ct.recall(_q, top_k=4))
+            except Exception:
+                _recall_provider = None
             _claim_result = trace_reply(
                 jarvis_reply=final_reply,
                 tool_results=list(_tool_results) if '_tool_results' in dir() else [],
@@ -5773,6 +5788,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 turn_id=_ttid,
                 system_clock=_now_clock,
                 ltm_context=_ltm_ctx_str,
+                recall_provider=_recall_provider,
             )
             update_stats(_claim_result)
         except Exception:
