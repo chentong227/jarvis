@@ -229,6 +229,29 @@ class TestP0DSurface(unittest.TestCase):
         self.assertNotIn('NOT running', block,
             "跑久了不再 surface 'just came back'")
 
+    def test_null_dark_gap_hedges_not_fabricates(self):
+        """🆕 [诚信修 Sir 23:38 真机 BUG 回归] 首次重启 dark_gap=null →
+        不冒充精确离线时长 (老兜底说 'NOT running ~3h' 误导, 主脑还编出 '12min/23:14')
+        → 改成诚实 HEDGE: 真离线未知, 别编精确数字.
+        """
+        rec = {
+            'ts': time.time(),
+            'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'session_id': 'sess_now',
+            'prev_cold_start_age_s': 10689,   # ~3h 距上次 LAUNCH (含运行时长, 非真离线)
+            'dark_gap_s': None,               # 无前序心跳 → 真离线未知
+            'prev_last_alive_iso': '',
+            'reason': 'restart',
+        }
+        with open(self.daemon._COLD_STARTS_PATH, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        self.daemon._process_start_ts = time.time()  # fresh
+        block = self.daemon.build_lifetime_block(mode='full')
+        self.assertNotIn('NOT running for', block,
+            "dark_gap 未知时不该冒充精确离线时长 (老 BUG 根因)")
+        self.assertIn('UNKNOWN', block, "应诚实告知离线时长未知")
+        self.assertIn('do NOT invent', block, "应指示主脑别编精确数字 (准则 5)")
+
 
 # ============================================================
 # P0E — _format_duration_human

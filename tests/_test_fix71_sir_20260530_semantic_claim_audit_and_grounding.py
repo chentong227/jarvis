@@ -76,7 +76,10 @@ class TestI2MaybeAudit(unittest.TestCase):
         self.daemon = _make_daemon()
 
     def test_disabled_is_noop(self):
-        """默认 vocab disabled → 不调 LLM (准则 1 token 安全)."""
+        """vocab disabled → 不调 LLM (准则 1 token 安全). [Sir 23:38 默认已改 ON,
+        故此处显式 override 成 disabled 验证 gate 本身]."""
+        self.daemon._load_lifetime_vocab = lambda: {
+            'semantic_claim_check_enabled': False}
         calls = []
         self.daemon._call_llm = (
             lambda *a, **k: calls.append(1) or '[]')
@@ -84,7 +87,7 @@ class TestI2MaybeAudit(unittest.TestCase):
         self.daemon.nerve.short_term_memory = [
             {'user': 'hi', 'jarvis': 'The CPU is at 87%'}]
         self.daemon._maybe_semantic_claim_audit()
-        self.assertEqual(calls, [], "默 off 不该调 LLM")
+        self.assertEqual(calls, [], "disabled 不该调 LLM")
 
     def test_enabled_runs_on_new_reply(self):
         self.daemon._load_lifetime_vocab = lambda: {

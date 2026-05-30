@@ -7237,9 +7237,10 @@ class InnerThoughtDaemon:
         'thread_recall_bump_salience': 0.08,   # 主动召回命中 open 线程 → salience +bump
         'thread_recall_bump_cap': 0.95,        # bump 上限
         'open_threads_prompt_n': 3,            # tick prompt 顶显 N 个 open 线程 (salience 排)
-        # 🆕 [言出必行 I2 / Sir 2026-05-30] 后台语义 claim 审计 (默 off — 准则 1 token 谨慎,
-        # Sir 可 vocab 开. LLM 替正则枚举判 claim 接地, 仅后台 daemon, 不碰主脑热路径).
-        'semantic_claim_check_enabled': False,
+        # 🆕 [言出必行 I2 / Sir 2026-05-30; Sir 23:38 拍板开启] 后台语义 claim 审计.
+        # Sir "不怕花 tokens" → 默 ON. LLM 替正则枚举判 claim 接地, 仅后台 daemon +
+        # cooldown + 只在 reply 变化时跑 + 便宜 Flash-Lite caller, 不碰主脑回复热路径.
+        'semantic_claim_check_enabled': True,
         'semantic_claim_check_cooldown_s': 300,
         'yesterday_recap_enabled': True,
         'yesterday_recap_hour': 23,          # 23 点窗 LLM 写昨日 recap
@@ -8388,44 +8389,52 @@ class InnerThoughtDaemon:
             pass
 
         # (2) Cross-session continuity + dark gap (离线感知)
-        # 🆕 [Self-Memory P0 / Sir 2026-05-30] surface 真离线时长 (dark_gap), 让主脑
-        # 有"他没开着"的时间概念. 中性事实, 措辞留主脑自决 (准则 6 不硬编码 welcome).
+        # 🆕 [Self-Memory P0 / Sir 2026-05-30; 诚信修 Sir 2026-05-30 23:38] surface
+        # **真** dark_gap (来自心跳). 准则 5 诚信: dark_gap 未知 (本次无前序心跳) 时
+        # **绝不**用 prev_cold_start_age_s 兜底冒充离线时长 (那是"距上次启动", 含上个
+        # 会话运行时长, 误导) — 改成明确告诉主脑"真离线时长未知, 别编精确数字, hedge".
+        # 真机 BUG 根因: 首次部署心跳后 dark_gap=null, 老兜底让主脑编出"12min/23:14".
         # 仅 process 刚起 < relevant_uptime 内 surface (跑久了"刚回来"不再是 news).
         try:
             recs = self._load_cold_starts(
                 int(vocab.get('cross_session_max_records', 12))
             )
-            # dark gap: 本次 record (recs[0]) 的 dark_gap_s (真), fallback prev_cold_start_age_s
-            gap_s = None
-            prev_alive_iso = ''
-            if recs:
-                self_rec = recs[0]
-                g = self_rec.get('dark_gap_s')
-                if g is None:
-                    g = self_rec.get('prev_cold_start_age_s')
-                if g is not None:
-                    try:
-                        gap_s = int(g)
-                    except Exception:
-                        gap_s = None
-                prev_alive_iso = str(self_rec.get('prev_last_alive_iso', '') or '')
+            self_rec = recs[0] if recs else {}
+            dark_gap = self_rec.get('dark_gap_s')   # 真离线时长 (心跳算), 可能 None
+            prev_age = self_rec.get('prev_cold_start_age_s')  # 距上次启动 (≠ 真离线)
+            prev_alive_iso = str(self_rec.get('prev_last_alive_iso', '') or '')
             min_surface = int(vocab.get('dark_gap_min_surface_s', 3600))
             relevant_uptime = float(vocab.get('dark_gap_relevant_uptime_s', 3600))
             try:
                 uptime_s = time.time() - self._process_start_ts
             except Exception:
                 uptime_s = 0.0
-            if (gap_s is not None and gap_s >= min_surface
-                    and uptime_s < relevant_uptime):
-                gap_human = self._format_duration_human(gap_s)
-                tail = (f", last alive {prev_alive_iso}"
-                        if prev_alive_iso else "")
-                lines.append(
-                    f"- You were NOT running for ~{gap_human}{tail} "
-                    f"(process dark — this is the gap since Sir last had you "
-                    f"on; you just came back)."
-                )
-            # 跨 session 连续性 (count + span) — 次要, 表明同一 Jarvis 身份
+            if uptime_s < relevant_uptime:  # 仅刚回来时谈离线
+                if dark_gap is not None and int(dark_gap) >= min_surface:
+                    # 真 dark_gap (心跳算出) → 可确信陈述
+                    gap_human = self._format_duration_human(int(dark_gap))
+                    tail = (f", last alive {prev_alive_iso}"
+                            if prev_alive_iso else "")
+                    lines.append(
+                        f"- You were NOT running for ~{gap_human}{tail} "
+                        f"(process dark — true offline gap since Sir last had "
+                        f"you on; you just came back)."
+                    )
+                elif dark_gap is None:
+                    # 无前序心跳 → 真离线时长**未知** → HEDGE (诚信红线, 别编)
+                    _pa = (f"~{self._format_duration_human(int(prev_age))} ago"
+                           if prev_age is not None else "unknown")
+                    lines.append(
+                        f"- You just restarted, but your TRUE offline duration "
+                        f"is UNKNOWN this session (no prior heartbeat recorded). "
+                        f"Your previous LAUNCH was {_pa} — that is time-since-"
+                        f"launch (includes its run time), NOT the offline gap. "
+                        f"If Sir asks how long you were away/offline, do NOT "
+                        f"invent a precise figure — say you cannot be certain. "
+                        f"(For 'how long since we last spoke', use the "
+                        f"conversation history, not this process metric.)"
+                    )
+            # 跨 session 连续性 (count + span) — 同一 Jarvis 身份
             if recs and len(recs) >= 2:
                 hist = recs[1:]
                 if hist:
@@ -8440,6 +8449,20 @@ class InnerThoughtDaemon:
                     )
         except Exception:
             pass
+
+        # (2b) 🆕 [言出必行 I3 / Sir 2026-05-30] OPEN THREADS — 主脑开口前的接地.
+        # 放早 (紧跟 cross-session, 在 verbose recent-thoughts 之前): block 超 max_chars
+        # 截断时切的是尾部, 早放保证 I3 grounding 不被切掉 (真机发现尾部 (8) 被截).
+        # prevention > interception. full only (主聊), mini 省 token 不注.
+        if mode == 'full':
+            try:
+                _ot = self._build_open_threads_block(
+                    int(vocab.get('open_threads_prompt_n', 3)))
+                if _ot:
+                    lines.append(_ot)
+                    lines.append("")
+            except Exception:
+                pass
 
         # (3) Today counters
         try:
@@ -8565,19 +8588,6 @@ class InnerThoughtDaemon:
                     )
         except Exception:
             pass
-
-        # (8) 🆕 [言出必行 I3 / Sir 2026-05-30] OPEN THREADS — 主脑开口前的接地
-        # prevention > interception: full mode (主聊) 把 Jarvis 活跃 open 线程注入,
-        # 主脑据此 grounded → 少凭空编造 → 减少 post-hoc 撤回. mini 省 token 不注.
-        # 经 Layer 1.6 inner-voice 既有管道到主脑, 不需改 central_nerve.
-        if mode == 'full':
-            try:
-                _ot = self._build_open_threads_block(
-                    int(vocab.get('open_threads_prompt_n', 3)))
-                if _ot:
-                    lines.append(_ot)
-            except Exception:
-                pass
 
         # Closing self-awareness directive
         lines.append(
