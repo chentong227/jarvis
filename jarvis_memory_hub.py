@@ -210,7 +210,8 @@ class MemoryMutationGateway:
                           confidence: float = 0.7,
                           turn_id: str = '',
                           nerve=None,
-                          model: str = '') -> WriteReceipt:
+                          model: str = '',
+                          current_utterance: str = '') -> WriteReceipt:
         """统一 mutation 入口. 路由到正确 layer + receipt + SWM publish.
 
         Args:
@@ -260,6 +261,9 @@ class MemoryMutationGateway:
                 source=source,
                 nerve=nerve,
                 layer=layer,
+                # 🆕 [fix#A / 2026-05-31] 当前轮 Sir utterance (STM 尚未 append 它) —
+                # 让 guard 检"Sir 真说过吗"的正确来源 (镜像挖出: 合法偏好写入被误拦).
+                current_utterance=current_utterance,
             )
             _meg_pub(guard_ok, guard_reason, new_value, field_path, source)
             if not guard_ok:

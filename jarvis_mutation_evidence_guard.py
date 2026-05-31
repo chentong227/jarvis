@@ -177,6 +177,7 @@ def check_mutation_evidence(
     source: str = '',
     nerve=None,
     layer: str = '',
+    current_text: str = '',
 ) -> Tuple[bool, str]:
     """Sir 治本入口 — 任何 mutation 前 check.
 
@@ -205,6 +206,18 @@ def check_mutation_evidence(
     # 取 Sir STM text
     window = int(vocab.get('stm_window_turns', 6))
     stm_text = _extract_stm_sir_text(nerve, window_turns=window)
+    # 🆕 [thinking-dehardcode fix#A / 2026-05-31 镜像挖出] 纳入"当前轮" Sir utterance.
+    # =====================================================================
+    # 根因 (镜像真测): _append_stm 在 turn 结束才把 user+jarvis 一起写 STM, 所以
+    # mutation/guard 跑在 turn 中途时, Sir **当前刚说的话不在 STM** → guard 拿上一轮
+    # STM 比对 → Sir 明确请求的合法写入 (e.g. "别老提醒我"→profile preference) 被
+    # substring/jaccard=0 误拦 → 工具熔断 + 故障感回复. 治本: caller 传当前 utterance,
+    # guard 把它并入证据 (检"Sir 真说过吗"的正确来源就是当前话). 不削弱反幻觉 — 编造
+    # 的值 (e.g. "Stay safe" vs Sir 说 "d home") 仍不匹配. 准则 5/6 接地.
+    # =====================================================================
+    current_text_str = str(current_text or '').strip()
+    if current_text_str:
+        stm_text = (current_text_str + ' ' + stm_text).strip()
     if not stm_text:
         # STM 无 — 太早阶段或 nerve 没初始化, 不阻 (fail-open)
         return True, 'no_stm_available_fail_open'

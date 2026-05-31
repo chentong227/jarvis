@@ -1249,6 +1249,9 @@ Spoken English:"""
         全量注入云端 prompt，仅替换工具/搜索指令为标记系统。
         返回 (full_text, need_cloud, need_tool)
         """
+        # 🆕 [fix#A / 2026-05-31 镜像挖出] 存当前轮 Sir utterance, 供 mutation guard
+        # 检证据 (_append_stm 要 turn 结束才写, guard 跑在中途须拿当前话). 见 _execute_fast_call.
+        self._current_turn_user_text = user_input or ''
         import re
         fallback = get_local_fallback()
         if not fallback.is_available:
@@ -2120,6 +2123,9 @@ Spoken English:"""
                     nerve=getattr(self, 'jarvis', None),
                     # 🆕 [P5-fix34] 标记当前主脑 model — A/B audit 按 model 分组
                     model=getattr(self, 'main_brain_model', '') or '',
+                    # 🆕 [fix#A / 2026-05-31] 当前轮 Sir utterance → guard 检证据正确来源
+                    # (镜像挖出: Sir 明确请求的偏好写入被 stale-STM 误拦 → 工具熔断).
+                    current_utterance=getattr(self, '_current_turn_user_text', '') or '',
                 )
             except Exception as _ue:
                 return f"❌ mutation.{command} fail: {_ue}"
@@ -3063,6 +3069,9 @@ Spoken English:"""
                     gate_future=None, prompt_tier: str = None):
         self.last_stm_context = stm_context
         self.last_ltm_context = ltm_context
+        # 🆕 [fix#A / 2026-05-31 镜像挖出] 存当前轮 Sir utterance, 供 mutation guard
+        # 检证据 (_append_stm 要 turn 结束才写, guard 跑在中途须拿当前话). 见 _execute_fast_call.
+        self._current_turn_user_text = user_input or ''
 
         # 🩹 [β.2.9.10 / 2026-05-18] 异步工具结果注入: 上轮 FAST_CALL 后台完成的
         # result 在此 prepend 到 prompt, 主脑能看到真实工具反馈, 不再凭空说话.
