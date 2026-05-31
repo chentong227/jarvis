@@ -5833,7 +5833,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         # =====================================================================
         try:
             _wb_txt = ((clean_user_input or '') + ' \n ' + (final_reply or '')).strip()
-            if _wb_txt and _turn_id_now:
+            if _wb_txt:  # turn_id 可空 (observe_turn 退回时间戳 ref, 仍接地)
                 import threading as _th_wb
 
                 def _run_body_writeback(_t=_wb_txt, _tid=_turn_id_now):

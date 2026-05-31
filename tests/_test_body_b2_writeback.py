@@ -62,6 +62,18 @@ class TestWriteback(unittest.TestCase):
         self.assertIn("熬夜", terms)        # 滑窗 gram 从长 run 抽出
         self.assertIn("deep", terms)
 
+    def test_t5_empty_turn_id_fallback(self):
+        # turn_id 缺失 (mirror 文本注入) → 退回时间戳 ref, 仍写边 (仍接地到 time T)
+        with tempfile.TemporaryDirectory() as d:
+            m = RelationalManifold(os.path.join(d, "m.json"))
+            n = observe_turn_cooccurrence(
+                "熬夜 又 overbearing", "", text_map=TMAP, manifold=m, save=False)
+            self.assertGreaterEqual(n, 1, "turn_id 空也应写 (退回时间戳 ref)")
+            e = m.get_edge(SLEEP, JOKE)
+            self.assertIsNotNone(e)
+            ref = e["provenance"][0]["ref"]
+            self.assertTrue(ref.startswith("turn@"), f"应退回时间戳 ref, 实际 {ref}")
+
     def test_t4_turn_id_grounded(self):
         with tempfile.TemporaryDirectory() as d:
             m = RelationalManifold(os.path.join(d, "m.json"))

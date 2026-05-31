@@ -116,8 +116,12 @@ def observe_turn_cooccurrence(
     体节点的 turn 才回写共现边 (turn_id 接地)。词消化进体走现有 STM→thread 管线, 这里只补边。
     返回新增/强化边数。失败非致命。
     """
-    if not turn_text or not turn_id:
+    if not turn_text:
         return 0
+    # turn_id 缺失 (mirror 文本注入 / 某些路径 turn_id 未及设) → 退回时间戳 ref:
+    # 共现仍是真实事件 (接地到 time T), 精度降到"何时"而非"哪轮", 不丢接地 (准则 5)。
+    if not turn_id:
+        turn_id = f"turn@{int(time.time())}"
     try:
         m = manifold if manifold is not None else get_manifold()
         tmap = text_map if text_map is not None else _cached_node_texts()
