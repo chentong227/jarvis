@@ -122,6 +122,18 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "tension_severity_min": 0.40,  # concern severity >= 此且无 stance 覆盖 = 张力
         "drift_min": 0.05,             # 边权变化超此才算 drift
         "max_deltas_per_weave": 12,    # 单次 weave 最多派几个 delta (防洪泛)
+        # 口识体-C: nudge/care 警报 → 体张力 (感知环穿体). wellness/proactive 警报
+        # 退化为体能量, 不直推 __NUDGE__ → 识经 body_delta attend (而非 nudge 抢话筒).
+        "nudge_tension_enabled": 1,
+        "nudge_window_s": 600.0,           # 读 SWM 多久内的 nudge 警报
+        "nudge_tension_per_event": 0.5,    # 每条警报张力 (× event salience, 接地)
+        "nudge_tension_cap": 1.5,          # 单 concern nudge 张力上限 (防 storm 膨胀)
+        "nudge_tension_etypes": [          # 带 concern_id / missed_concern_ids 的警报类型
+            "proactive_care_advice",       # ProactiveCare 想 nudge 某 concern
+            "care_signal_derived",         # sensor 派生的 concern signal
+            "soul_alignment_advice",       # missed_concern_ids = Jarvis 漏掉 = 张力
+            "proactive_nudge_fired",       # daemon fire (extra_metadata 带 concern_id 才计)
+        ],
     },
 }
 

@@ -48,6 +48,15 @@ def _log(msg: str) -> None:
         pass
 
 
+def _default_event_bus():
+    """口识体-C: 默认读全局 SWM (生产). 注入便于 test 隔离。失败返 None。"""
+    try:
+        from jarvis_utils import get_event_bus
+        return get_event_bus()
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Default embedder — 复用 hippocampus 向量器 (Gemini embedding + key 轮换)
 # ---------------------------------------------------------------------------
@@ -213,8 +222,11 @@ class RelationalWeaver:
         stance_path: Optional[str] = None,
         energy_path: Optional[str] = None,
         delta_publisher: Optional[Callable[[Dict[str, Any]], None]] = None,
+        event_bus: Optional[Any] = None,
     ):
         self.manifold = manifold if manifold is not None else get_manifold()
+        # 口识体-C: 读 SWM nudge/care 警报算体张力 (感知环). None → 生产 lazy 全局 bus。
+        self._event_bus = event_bus
         self.embed_fn = embed_fn if embed_fn is not None else default_embed_fn
         mp = os.path.join(root or ".", "memory_pool")
         self.threads_path = threads_path or os.path.join(mp, "self_threads.json")
@@ -428,6 +440,55 @@ class RelationalWeaver:
                 out[make_node_id(KIND_CONCERN, c.get("id", cid))] = sev
         return out
 
+    def _nudge_tension_map(self, valid_concerns: set,
+                           now: Optional[float] = None) -> Dict[str, float]:
+        """口识体-C: 读 SWM 近期 nudge/care 警报 → concern node 张力 (感知环穿体)。
+
+        "一个 wellness/proactive 警报 = 体的张力" (grounded by event salience): nudge 不
+        再直推 __NUDGE__, 退化为体能量, 识经 body_delta attend。**只计真实存在的 active
+        concern node (valid_concerns), 不造幻影能量** (准则 5 全接地)。
+        soul_alignment_advice 取 missed_concern_ids (Jarvis 漏掉的 = 张力)。失败返 {}。
+        """
+        cfg = self._ecfg()
+        try:
+            if not int(cfg.get("nudge_tension_enabled", 1)):
+                return {}
+        except (TypeError, ValueError):
+            pass
+        bus = self._event_bus if self._event_bus is not None else _default_event_bus()
+        if bus is None:
+            return {}
+        etypes = set(cfg.get("nudge_tension_etypes", []) or [])
+        if not etypes:
+            return {}
+        window = float(cfg.get("nudge_window_s", 600.0))
+        per_w = float(cfg.get("nudge_tension_per_event", 0.5))
+        cap = float(cfg.get("nudge_tension_cap", 1.5))
+        try:
+            events = bus.recent_events(within_seconds=window, types=etypes)
+        except Exception as exc:
+            _log(f"[Weaver/口识体-C] nudge tension read failed ({exc!r})")
+            return {}
+        out: Dict[str, float] = collections.defaultdict(float)
+        for e in events or []:
+            meta = e.get("metadata") or {}
+            try:
+                sal = float(e.get("salience", 0.5) or 0.5)
+            except (TypeError, ValueError):
+                sal = 0.5
+            cids: List[str] = []
+            cid = meta.get("concern_id")
+            if cid:
+                cids.append(str(cid))
+            missed = meta.get("missed_concern_ids")
+            if isinstance(missed, (list, tuple)):
+                cids.extend(str(m) for m in missed if m)
+            for c in cids:
+                nid = make_node_id(KIND_CONCERN, c)
+                if nid in valid_concerns:
+                    out[nid] += per_w * max(0.0, min(1.0, sal))
+        return {nid: min(v, cap) for nid, v in out.items()}
+
     def _stance_covered_concerns(self) -> set:
         """有 active stance 覆盖的 concern node_id 集合 (张力已化解 = 不计能量)。"""
         covered: set = set()
@@ -466,13 +527,18 @@ class RelationalWeaver:
             if d >= drift_min:
                 energy[e["a"]]["drift"] += d
                 energy[e["b"]]["drift"] += d
-        # 张力: 高 severity concern 且无 active stance 覆盖
+        # 张力源 1: 高 severity concern 且无 active stance 覆盖
         sev_min = float(cfg.get("tension_severity_min", 0.40))
         sev = self._concern_severity_map()
         covered = self._stance_covered_concerns()
         for nid, s in sev.items():
             if s >= sev_min and nid not in covered:
                 energy[nid]["tension"] += s
+        # 张力源 2 (口识体-C): 近期 nudge/care 警报 → 体张力 (感知环穿体).
+        # 新外部警报是新扰动 → 不受 stance 覆盖压制 (放电靠 event 老化出窗 + 识 attend);
+        # delta-on-rise 机制保证 tension 平台期不重复派 delta (杜绝 churn)。
+        for nid, t in self._nudge_tension_map(set(sev.keys()), now=now).items():
+            energy[nid]["tension"] += t
         # total
         wn, wd, wt = (float(cfg.get("w_novelty", 1.0)),
                       float(cfg.get("w_drift", 0.6)), float(cfg.get("w_tension", 1.2)))
