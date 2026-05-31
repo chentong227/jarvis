@@ -555,6 +555,35 @@ def _kind_from_effect(actionable: str, has_rest: bool = False) -> str:
     return cfg.get('kind_for_unknown', 'act')
 
 
+# 🆕 [thinking-dehardcode-P1 / Sir 2026-05-31] emergent CATEGORY optional 的 compat 反推
+# ==========================================================================
+# emergent 模式下 LLM 不再被强制选 A-E 槽 (思考由体焦点区 summon, 见 _build_prompt).
+# 但 legacy 下游 (类冷却 _last_category_ts / _CATEGORY_TO_INTENT / mediocre
+# `category in ('A','D','E')`) 暂仍按 category 工作 (设计 Phase 3 才迁 effect 驱动).
+# 为不破下游 + 不让 category-less thought 全挤 '' 槽撞冷却, emergent 下 CATEGORY 缺失
+# 时从 actionable 反推一个代表 category. 这是**过渡 compat shim**, 非新硬编码选择槽 —
+# derived_kind (vocab 驱动) 才是真 label; Phase 3-5 退役 category 后本函数随之删.
+# ==========================================================================
+def _compat_category_from_actionable(actionable: str) -> str:
+    """actionable → 代表 legacy category (A-E). emergent CATEGORY 缺失时的过渡 shim。"""
+    a = (actionable or '').strip().lower()
+    if not a or a == 'none':
+        return 'A'   # 观察 (无 effect)
+    prefix = a.split(':', 1)[0].strip()
+    if prefix in ('propose_protocol', 'propose_stance',
+                  'propose_vocab_adjustment', 'request_capability',
+                  'adjust_sensor_threshold'):
+        return 'B'   # 自反思 / 自调架构
+    if prefix in ('update_concern_severity', 'adjust_concern_notes'):
+        return 'C'   # concern 演化
+    if prefix in ('fire_nudge', 'propose_watch_task', 'call_tool',
+                  'compose_main_brain_directive'):
+        return 'D'   # 主动
+    if prefix == 'suggest_inside_joke':
+        return 'E'   # 关系
+    return 'A'
+
+
 _RELATIONSHIP_REFLECTOR_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'memory_pool',
@@ -4019,6 +4048,37 @@ class InnerThoughtDaemon:
     # ----------------------------------------------------------
     # Prompt
     # ----------------------------------------------------------
+    @staticmethod
+    def _build_category_framing(
+        mode: str, free_categories: Optional[List[str]]
+    ) -> Tuple[str, str]:
+        """🆕 [thinking-dehardcode-P1] 算 CATEGORY format 行 + summon note (按 mode).
+
+        emergent: CATEGORY optional, 思考由体焦点区 (BODY SIGNALS) summon — 不填槽.
+        legacy:   CATEGORY 必选 (free_categories 框冷却) + 无 summon note (老行为 0 变).
+        返 (cat_line, summon_note)。
+        """
+        if mode == 'emergent':
+            cat_line = (
+                "<CATEGORY>OPTIONAL (legacy A-E slot). OMIT this tag entirely if no "
+                "slot cleanly fits — your thought is SUMMONED by the body's most "
+                "unsettled region (see BODY SIGNALS below), not by picking a slot. "
+                "Discharge that region into a real ACTIONABLE effect, or REST.</CATEGORY>\n"
+            )
+            summon_note = (
+                "=== SUMMON (emergent): let the BODY SIGNALS region pull the thought ===\n"
+                "Your thinking is driven by where the body holds the most potential right "
+                "now (tension / novelty / drift — see BODY SIGNALS below). Attend THAT "
+                "region and discharge it into an effect; do not free-associate or fill a "
+                "slot. If nothing there is genuinely unsettled, REST.\n\n"
+            )
+            return cat_line, summon_note
+        cat_line = (
+            f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
+            "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
+        )
+        return cat_line, ""
+
     def _build_prompt(self, sir_state: str, evidence: dict,
                         free_categories: Optional[List[str]] = None,
                         channel_view: Optional[dict] = None) -> Tuple[str, str]:
@@ -4041,6 +4101,14 @@ class InnerThoughtDaemon:
         except Exception:
             _JCP = ""
         _persona_block = (f"{_JCP}\n\n" if _JCP else "")
+        # 🆕 [thinking-dehardcode-P1 / Sir 2026-05-31] emergent: 思考由体焦点区 summon,
+        # CATEGORY 退化为 optional (不强制选 A-E 槽). legacy: CATEGORY 必选 + 冷却框架 (0 变).
+        # 框架决策抽成 _build_category_framing (可单测). 设计 §5.2: current_focus 已渲染
+        # 进下方 BODY SIGNALS 块 (grounded)。
+        _tk_mode = _thinking_kind_mode()
+        _cat_line, _summon_note = self._build_category_framing(
+            _tk_mode, free_categories
+        )
         system = (
             f"{_persona_block}"
             "=== INNER MONOLOGUE MODE (private mental note, NOT addressed to Sir) ===\n"
@@ -4064,9 +4132,9 @@ class InnerThoughtDaemon:
             "Resting is a VALID, valued outcome (you will simply wake less often until "
             "something real stirs, or Sir addresses you). Only produce the thought below "
             "when there is genuinely something worth thinking through to an effect.\n\n"
+            f"{_summon_note}"
             "Output FORMAT (strict, 6 required + 4 optional β.6 tags):\n"
-            f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
-            "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
+            f"{_cat_line}"
             "<THOUGHT>1-2 sentences, first-person but JARVIS-voice (composed, dry, "
             "factually grounded). Examples: 'I appear to have over-attended to...', "
             "'My last reply leaned too formal — drop the apologies.', 'Sir's hour is "
@@ -5362,7 +5430,14 @@ class InnerThoughtDaemon:
         let_go_m = re.search(
             r'<LET_GO>(.*?)</LET_GO>', raw, re.DOTALL | re.IGNORECASE
         )
-        if not (cat_m and thought_m and sal_m):
+        # 🆕 [thinking-dehardcode-P1 / Sir 2026-05-31] emergent: CATEGORY optional.
+        # emergent 模式思考由体焦点区 summon (见 _build_prompt), 不强制选 A-E 槽 —
+        # CATEGORY 缺失时 _compat_category_from_actionable 反推 (下游 cooldown/intent
+        # 暂仍用 category, Phase 3 迁 effect). legacy: CATEGORY 仍必需 (老行为 0 变).
+        _tk_mode = _thinking_kind_mode()
+        if not (thought_m and sal_m):
+            return None
+        if cat_m is None and _tk_mode != 'emergent':
             return None
         thought_text = (thought_m.group(1) or '').strip()
         if not thought_text or thought_text.lower() in ('(quiet)', '(none)', '...'):
@@ -5518,7 +5593,9 @@ class InnerThoughtDaemon:
             id=new_id,
             ts=now,
             ts_iso=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
-            category=cat_m.group(1).upper(),
+            # 🆕 [thinking-dehardcode-P1] emergent CATEGORY 缺失 → 从 actionable 反推 compat
+            category=(cat_m.group(1).upper() if cat_m
+                      else _compat_category_from_actionable(actionable)),
             thought=thought_text[:300],
             salience=sal,
             actionable=actionable,
