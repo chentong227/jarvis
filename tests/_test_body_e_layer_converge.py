@@ -29,9 +29,15 @@ from jarvis_relational_lens import lens_replaces_layer2, lens_replaces_layer3
 
 class TestLayerConverge(unittest.TestCase):
     def test_e1_default_off(self):
-        # 默认 seed 0 → 零生产影响 (未真机验前不动热路径)
-        self.assertFalse(lens_replaces_layer2())
-        self.assertFalse(lens_replaces_layer3())
+        # seed 默认 0 → 零生产影响 (代码级安全默认; 测 seed fallback, 不读 prod 实配,
+        # 因 prod vocab 可被 Sir/真机验后调开 — 那是数据不是代码默认).
+        _orig = L.get_manifold_config
+        try:
+            L.get_manifold_config = lambda: {}   # 空配 → 走 seed fallback 默认
+            self.assertFalse(lens_replaces_layer2())
+            self.assertFalse(lens_replaces_layer3())
+        finally:
+            L.get_manifold_config = _orig
 
     def test_e2_flag_on(self):
         _orig = L.get_manifold_config
