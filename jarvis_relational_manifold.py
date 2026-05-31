@@ -139,6 +139,14 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
             "soul_alignment_advice",       # missed_concern_ids = Jarvis 漏掉 = 张力
             "proactive_nudge_fired",       # daemon fire (extra_metadata 带 concern_id 才计)
         ],
+        # 口识体-F: 张力 dyad — 立场↔Sir关心 的边 (阻力/老师载体, §6). 高置信 active
+        # stance about 某 concern → stance 节点与 concern 节点连 dyad 边 (grounded by
+        # stance_id), 且贡献一份"立场张力" (Jarvis 在此持有坚定 view = 可能推开 Sir 的
+        # 阻力源). 数据驱动: 立场越多/越坚定 → dyad 越多 → 体在那些区有阻力势能。
+        # 真冲突 valence (立场逆 Sir 当下意愿) 待 Sir-wish 信号成熟再精算 (现保守计基线)。
+        "stance_dyad_enabled": 1,
+        "stance_dyad_min_confidence": 0.6,   # 立场置信 >= 此才织 dyad (够坚定才算阻力)
+        "stance_dyad_tension": 0.4,          # 每条 dyad 贡献的立场张力基线
     },
 }
 

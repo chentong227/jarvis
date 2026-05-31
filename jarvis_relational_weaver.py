@@ -34,7 +34,7 @@ import numpy as np
 from jarvis_relational_manifold import (
     RelationalManifold, get_manifold, get_manifold_config,
     make_node_id, KIND_THREAD, KIND_CONCERN, KIND_JOKE, KIND_PROTOCOL,
-    KIND_STANCE,
+    KIND_STANCE, PROV_SHARED,
 )
 
 EmbedFn = Callable[[List[str]], List[Optional[List[float]]]]
@@ -503,6 +503,77 @@ class RelationalWeaver:
                         covered.add(make_node_id(KIND_CONCERN, about))
         return covered
 
+    # ---- 口识体-F: 张力 dyad (立场↔Sir关心 边, 阻力/老师载体) ----
+    def _active_stance_dyads(self) -> List[tuple]:
+        """返回 [(stance_node, concern_node, stance_id, confidence)] for 高置信 active
+        stance whose about 指向一个 concern。grounded by stance_id (准则 5)。
+
+        这是阻力的结构载体 (§6): 立场 = Jarvis 对某 concern 的坚定 view。当置信够高,
+        体在那个区有"立场张力"(可能推开 Sir). 真冲突 valence (逆 Sir 当下意愿) 待
+        Sir-wish 信号成熟再精算, 现保守: 高置信 active stance about concern = 基线阻力。
+        """
+        cfg = self._ecfg()
+        try:
+            if not int(cfg.get("stance_dyad_enabled", 1)):
+                return []
+        except (TypeError, ValueError):
+            pass
+        min_conf = float(cfg.get("stance_dyad_min_confidence", 0.6))
+        out: List[tuple] = []
+        sdata = self._read_json(self.stance_path)
+        if not isinstance(sdata, dict):
+            return out
+        for sid, s in (sdata.get("stances") or {}).items():
+            if not isinstance(s, dict) or s.get("state") != "active":
+                continue
+            try:
+                conf = float(s.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if conf < min_conf:
+                continue
+            about = (s.get("about") or "").strip()
+            if not about:
+                continue
+            stance_node = make_node_id(KIND_STANCE, s.get("stance_id", sid))
+            concern_node = make_node_id(KIND_CONCERN, about)
+            out.append((stance_node, concern_node, str(s.get("stance_id", sid)), conf))
+        return out
+
+    def weave_stance_dyads(self, now: Optional[float] = None) -> int:
+        """织 立场↔concern dyad 边 (grounded by stance_id). 返新增/强化边数。
+
+        准则 5: ref=stance_id (接地, 非幻觉)。inferred=False (这是真实结构关系, 非 LLM
+        猜的因果)。stance node 必须真存在于体 (harvest_nodes 含 active stance) 才连。
+        """
+        now = time.time() if now is None else now
+        dyads = self._active_stance_dyads()
+        if not dyads:
+            return 0
+        added = 0
+        for stance_node, concern_node, sid, conf in dyads:
+            # PROV_SHARED: 立场与 concern 共享同一关注对象 (结构边, 非几何). 接地 stance_id。
+            if self.manifold.add_edge(
+                    stance_node, concern_node, PROV_SHARED, ref=sid,
+                    detail=f"stance-dyad conf={conf:.2f}", weight_scale=conf,
+                    accumulate=False, now=now):
+                added += 1
+        return added
+
+    def _stance_dyad_tension_map(self) -> Dict[str, float]:
+        """{stance_node: 立场张力} — 高置信 active stance about concern 的基线阻力势能。"""
+        cfg = self._ecfg()
+        try:
+            if not int(cfg.get("stance_dyad_enabled", 1)):
+                return {}
+        except (TypeError, ValueError):
+            return {}
+        per = float(cfg.get("stance_dyad_tension", 0.4))
+        out: Dict[str, float] = {}
+        for stance_node, _concern_node, _sid, conf in self._active_stance_dyads():
+            out[stance_node] = per * conf   # 越坚定 → 阻力势能越高
+        return out
+
     def compute_energy(
         self, new_edge_keys: set, pre_snapshot: Dict[str, Dict[str, Any]],
         post_snapshot: Dict[str, Dict[str, Any]], now: Optional[float] = None,
@@ -538,6 +609,11 @@ class RelationalWeaver:
         # 新外部警报是新扰动 → 不受 stance 覆盖压制 (放电靠 event 老化出窗 + 识 attend);
         # delta-on-rise 机制保证 tension 平台期不重复派 delta (杜绝 churn)。
         for nid, t in self._nudge_tension_map(set(sev.keys()), now=now).items():
+            energy[nid]["tension"] += t
+        # 张力源 3 (口识体-F): 立场 dyad — 高置信 active stance 在 stance 节点上的阻力
+        # 势能 (Jarvis 持有坚定 view = 老师/阻力载体). 计在 stance 节点, 让识 attend 自己
+        # 的立场区 (反思/巩固/或被 Sir outcome 削弱后放电)。grounded by stance_id。
+        for nid, t in self._stance_dyad_tension_map().items():
             energy[nid]["tension"] += t
         # total
         wn, wd, wt = (float(cfg.get("w_novelty", 1.0)),
@@ -611,6 +687,11 @@ class RelationalWeaver:
             pre_snapshot = self.manifold.edge_snapshot(now=now)
             nodes = self.harvest_nodes()
             added = self.weave_geometric(nodes, now=now)
+            # 口识体-F: 织立场 dyad 边 (立场↔concern, grounded by stance_id, 阻力载体)
+            dyad_added = self.weave_stance_dyads(now=now)
+            if dyad_added:
+                added += dyad_added
+                _log(f"[Weaver/F] 织 {dyad_added} 条立场 dyad 边 (阻力/老师载体)")
             self._weave_count += 1
             pruned = 0
             dev = int(self._wcfg().get("decay_every_n_weaves", 6))
