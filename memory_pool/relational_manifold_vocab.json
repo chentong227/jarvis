@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "schema": "relational_manifold_config",
+    "schema_version": 1,
+    "purpose": "体(Body)边层 config — 准则 6 持久化, Sir 可改不需动源码",
+    "source_origin": "jarvis_relational_manifold.py:_SEED_MANIFOLD_CONFIG",
+    "edit_via": "scripts/manifold_dump.py --config (查看), 直接改本文件 (调参)",
+    "consumer": "jarvis_relational_manifold.py:get_manifold_config()",
+    "fields": {
+      "weight_increment": "每种 provenance 一次 observe 给边加多少 weight (Hebbian 增量)",
+      "weight_cap": "单边 weight 上限 (防无限增长)",
+      "half_life_days": "关系边半衰期天数 (慢衰, 关系比事实持久)",
+      "prune_floor": "衰减后低于此 → prune 删除",
+      "max_provenance_per_edge": "每边最多留几条溯源记录",
+      "neighbor_default_limit": "neighbors() 默认返回上限",
+      "embed_threshold": "几何边: cosine >= 此值才连 (体-P2)",
+      "embed_top_k_per_node": "每节点最多保留 K 条最强 embed 边 (防稠密图)",
+      "weaver": "织网者 Weaver (体-P5) 后台节奏: weave 间隔 / 首轮延迟 / decay 频率 / 文本长度"
+    }
+  },
+  "config": {
+    "weight_increment": {
+      "cooccur": 0.30,
+      "said": 1.00,
+      "shared": 0.50,
+      "embed": 0.60,
+      "inferred": 0.40
+    },
+    "weight_cap": 6.0,
+    "half_life_days": 14.0,
+    "prune_floor": 0.05,
+    "max_provenance_per_edge": 12,
+    "neighbor_default_limit": 24,
+    "embed_threshold": 0.72,
+    "embed_top_k_per_node": 8,
+    "surface_min_weight": 0.45,
+    "surface_min_size": 3,
+    "lens_inject_enabled": 0,
+    "weaver": {
+      "weave_interval_s": 600,
+      "initial_delay_s": 90,
+      "decay_every_n_weaves": 6,
+      "max_text_chars": 400,
+      "min_node_text_chars": 4,
+      "embed_batch_size": 32
+    }
+  }
+}

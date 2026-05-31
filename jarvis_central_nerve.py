@@ -385,6 +385,10 @@ class CentralNerve:
         # 详 jarvis_inner_thought_daemon.py 顶部 docstring.
         self._init_inner_thought_daemon()
 
+        # 🕸️ [体-P5 / 2026-05-31] 织网者 Weaver — 体(Body)维护器官 (和思考脑同级 peer).
+        # 后台慢工织关系流形几何边 + decay/prune. 详 docs/JARVIS_TRINITY_ARCHITECTURE.md.
+        self._init_relational_weaver()
+
         # 🆕 [AA / Sir 2026-05-25 22:58 自决] AutoArbiter Daemon —
         # 灵魂工程 Layer 2.5 (sit between Relational + Reflectors).
         # tick 30min, 拉 review queue (inside_joke + thread) 自决.
@@ -1795,6 +1799,44 @@ User: {user_input}
             try:
                 from jarvis_utils import bg_log as _bg
                 _bg(f"⚠️ [InnerThought] init fail (非致命): {_it_e}")
+            except Exception:
+                pass
+
+    def _init_relational_weaver(self) -> None:
+        """🕸️ [体-P5 / 2026-05-31] 织网者 Weaver — 体(Body)的维护器官 (和思考脑同级 peer).
+
+        后台慢工 (默认首轮延迟 90s, 之后每 600s 一轮): harvest 节点 (threads/concerns/
+        jokes/protocols) → 几何 embed 边 (cosine 相似度, 带向量缓存) → 周期 decay + prune.
+        详 docs/JARVIS_TRINITY_ARCHITECTURE.md §4. 失败非致命 (后台慢工, 下轮再试).
+
+        复用 nerve 现有 hippocampus 向量器 (避免第二个 DB 连接); 不可用则 Weaver
+        内部 lazy 自建 (default_embed_fn).
+        """
+        self.relational_weaver = None
+        try:
+            from jarvis_relational_weaver import RelationalWeaver
+            hipp = getattr(self, 'hippocampus', None)
+            embed_fn = None
+            if hipp is not None and hasattr(hipp, '_embed_with_rotation'):
+                def embed_fn(texts, _h=hipp):
+                    try:
+                        resp, _ = _h._embed_with_rotation(contents=list(texts))
+                        embs = list(getattr(resp, 'embeddings', []) or [])
+                        return [list(embs[i].values) if i < len(embs) else None
+                                for i in range(len(texts))]
+                    except Exception:
+                        return [None] * len(texts)
+            self.relational_weaver = RelationalWeaver(embed_fn=embed_fn)
+            self.relational_weaver.start()
+            try:
+                from jarvis_utils import bg_log as _w_bg
+                _w_bg("🕸️ [Weaver] 织网者启动 (体/Body 维护器官 — 后台几何织网 + decay/prune)")
+            except Exception:
+                pass
+        except Exception as _w_e:
+            try:
+                from jarvis_utils import bg_log as _bg
+                _bg(f"⚠️ [Weaver] init fail (非致命): {_w_e}")
             except Exception:
                 pass
 
@@ -3565,7 +3607,17 @@ User: {user_input}
             prompt_tier=str(prompt_tier or '')
         )
         attention_block = self._build_layer_3_attention_block(user_input)
-        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → 1.7 → Layer 2 → Layer 3
+        # 🕸️ [体-P6 / 2026-05-31] Layer 体 — 透镜投影 (关系流形 体 → 主脑 口).
+        # flag-gated (memory_pool/relational_manifold_vocab.json: lens_inject_enabled,
+        # 默认 0), Sir 真机验投影质量后开. gate 关 / 故障 → 返 "" (零影响热路径).
+        # 详 docs/JARVIS_TRINITY_ARCHITECTURE.md §5/§6.
+        lens_block = ""
+        try:
+            from jarvis_relational_lens import build_lens_block
+            lens_block = build_lens_block()
+        except Exception:
+            lens_block = ""
+        # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → 1.7 → Layer 2 → 体 → Layer 3
         _parts = [_base_persona]
         if self_anchor_block:
             _parts.append(self_anchor_block)
@@ -3579,6 +3631,8 @@ User: {user_input}
             _parts.append(thinking_directive_block)
         if relational_block:
             _parts.append(relational_block)
+        if lens_block:
+            _parts.append(lens_block)
         if attention_block:
             _parts.append(attention_block)
 

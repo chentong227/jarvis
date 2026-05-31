@@ -46,6 +46,13 @@ memory_pool/*.jsonl
 # (self_notes.jsonl 已被上面 *.jsonl 覆盖; 这两个 .json 含 ts / 线程摘要 / 可能私密内容)
 memory_pool/jarvis_last_alive.json
 memory_pool/self_threads.json
+# [体-P1 / 2026-05-31] 体(Body)关系流形边层: runtime 图数据 (含 turn_id/概念交叉引用)
+# (config 文件 relational_manifold_vocab.json 是可提交配置, 不在此忽略)
+memory_pool/relational_manifold.json
+# [体-P2 / 2026-05-31] 织网者 Weaver 的节点向量缓存 (embedding, runtime)
+memory_pool/manifold_vectors.json
+# [体-P4 / 2026-05-31] 立场 store: Jarvis 自己对 Sir/关系的学习 view (runtime, 可能私密)
+memory_pool/stance.json
 # [P0+20-β.0.1 / 2026-05-16] directive 计数器（fired/rejected/helped）：runtime 状态
 memory_pool/directive_registry.json
 memory_pool/directive_review.json
