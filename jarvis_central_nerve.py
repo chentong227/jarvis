@@ -3612,9 +3612,18 @@ User: {user_input}
         # 默认 0), Sir 真机验投影质量后开. gate 关 / 故障 → 返 "" (零影响热路径).
         # 详 docs/JARVIS_TRINITY_ARCHITECTURE.md §5/§6.
         lens_block = ""
+        _lens_replaces_l2 = False
+        _lens_replaces_l3 = False
         try:
-            from jarvis_relational_lens import build_lens_block
+            from jarvis_relational_lens import (
+                build_lens_block, lens_replaces_layer2, lens_replaces_layer3,
+            )
             lens_block = build_lens_block()
+            # 🆕 [口识体-E / 2026-05-31] 透镜活时, flag-gated 替 Layer2/3 平行表示
+            # (默认关, Sir 真机 A/B 满意后退旧块). 透镜空 → 不替 (零影响).
+            if lens_block:
+                _lens_replaces_l2 = lens_replaces_layer2()
+                _lens_replaces_l3 = lens_replaces_layer3()
         except Exception:
             lens_block = ""
         # 拼接：base PERSONA → Layer 0 → Layer 1 → Layer 1.5 → Layer 1.6 → 1.7 → Layer 2 → 体 → Layer 3
@@ -3629,11 +3638,13 @@ User: {user_input}
             _parts.append(inner_voice_block)
         if thinking_directive_block:
             _parts.append(thinking_directive_block)
-        if relational_block:
+        # 🆕 [口识体-E] lens_replaces_layer2 开 + 透镜活 → Layer2 relational 由体/lens 供, 退平行
+        if relational_block and not _lens_replaces_l2:
             _parts.append(relational_block)
         if lens_block:
             _parts.append(lens_block)
-        if attention_block:
+        # 🆕 [口识体-E] lens_replaces_layer3 开 + 透镜活 → Layer3 attention 由体/lens 供, 退平行
+        if attention_block and not _lens_replaces_l3:
             _parts.append(attention_block)
 
         # 🆕 [Phase 4b.2 / 2026-05-23 21:25] light tier 跳重型上下文 block.

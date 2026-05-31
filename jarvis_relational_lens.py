@@ -322,6 +322,30 @@ def lens_inject_enabled() -> bool:
         return False
 
 
+def lens_replaces_layer2() -> bool:
+    """口识体-E flag-gated (默认 0): 透镜活时是否替 SOUL Layer2 relational 块 (退平行)。
+
+    relational_state 是体的胚胎 — 两者并存 = 平行表示 (准则 6 #4 反例)。Sir 真机 A/B
+    验投影质量满意后改 vocab 开 → Layer2 由体/lens 供。逐块退, 不一次全换。
+    """
+    try:
+        return bool(int(get_manifold_config().get("lens_replaces_layer2", 0)))
+    except Exception:
+        return False
+
+
+def lens_replaces_layer3() -> bool:
+    """口识体-E flag-gated (默认 0): 透镜活时是否替 SOUL Layer3 attention 块 (退平行)。
+
+    Layer3 attention 已被识/体势能驱动, 透镜投影体高势能区即是口的注意力。Sir 真机 A/B
+    满意后改 vocab 开 → Layer3 由体/lens 供。
+    """
+    try:
+        return bool(int(get_manifold_config().get("lens_replaces_layer3", 0)))
+    except Exception:
+        return False
+
+
 def body_claim_evidence(query: str, *, max_items: int = 8,
                         stance_min_conf: float = 0.4) -> List[Dict[str, str]]:
     """口识体-B: 体作 evidence 源 — 返回可能支持 query(claim) 的体证据 (验证环穿体)。

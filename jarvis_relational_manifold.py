@@ -103,6 +103,11 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
     "surface_min_size": 3,             # 面最小节点数 (< 此不算一个面)
     # 透镜 (体-P6) — 投影主脑. 默认 0 (Sir 真机验投影质量后再开, 动主脑热路径)
     "lens_inject_enabled": 0,
+    # 口识体-E (内敛): 透镜活时替 SOUL Layer2/3 平行表示 (默认 0, 渐进退旧块).
+    # Sir 真机 A/B 验投影质量满意后改 vocab 开 → Layer2/3 由体/lens 供, 删平行 (准则6#4)。
+    # 逐块退: 先 lens_inject_enabled=1 加投影看质量, 满意再 replaces_layer2/3=1 退旧。
+    "lens_replaces_layer2": 0,
+    "lens_replaces_layer3": 0,
     # 织网者 Weaver (体-P5) — 后台慢工节奏
     "weaver": {
         "weave_interval_s": 600,       # daemon 两次全量 weave 间隔 (慢工, 不抢 TTFT)
