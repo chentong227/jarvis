@@ -173,6 +173,9 @@ def default_embed_fn(texts: List[str]) -> List[Optional[List[float]]]:
                     )
                 except Exception as ke:
                     _log(f"[Weaver] key_router 构建失败 ({ke!r}) — embed 将无 key")
+                # 海马体永不动红线 (口识体-G0): 体唯一碰 Hippocampus 的地方, 且**只读** —
+                # 仅调 _embed_with_rotation (embed 向量), 绝不写/改 hippocampus 永久记忆。
+                # tests/_test_body_g0_hippo_immutable.py 静态守护此红线。
                 _EMBED_HIPP = Hippocampus(
                     db_path=os.path.join("memory_pool", "jarvis_memory.db"),
                     key_router=kr)

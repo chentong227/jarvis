@@ -33,7 +33,7 @@
 | # | closure | 闭哪环 | 触哪文件 | 上下文风险 | 状态 |
 |---|---|---|---|---|---|
 | **D1** | 复杂度度量 (metric 替计数告警) | 维护环 | manifold/weaver (熟) | 低 (纯计算) | ✅ (真机验: blob score 0.222 largest_frac 0.778) |
-| **G0** | hippo 永不动 guard + doc | 锚 | 新 test + doc | 低 (小) | ⬜ |
+| **G0** | hippo 永不动 guard + doc | 锚 | 新 test + doc | 低 (小) | ✅ (静态守护 2 test) |
 | **D2** | 主动合并决余簇 (super-surface, 不动源) | 维护环 | manifold/weaver | 中 | ⬜ |
 | **A** | outcome→stance (Sir 反应 reinforce/weaken) | 学习环后半 | meta_feedback(查) + stance | 中 (需查 meta_feedback) | ⬜ |
 | **C** | nudge 群退化 publish→体能量 | 感知环 | nudge 模块群(查) + 体 | 中-高 | ⬜ |
@@ -48,6 +48,7 @@
 ## 逐步日志 (做一步记一步)
 
 - **[起]** 2026-05-31 ~11:00: 建本进度文档。开始 D1 复杂度度量。
+- **[G0 ✅]** ~11:10: hippo 永不动 guard — 静态扫体 5 模块断言无 hippo 写(INSERT/store_memory/...)+ weaver embed 只读注释。2 test 绿。下一步: D2 主动合并 (针对 blob)。
 - **[D1 ✅]** ~11:05: manifold.complexity_report (health/score/largest_surface_frac/grounded_frac) + CLI `--complexity` + Weaver 每 weave log + blob/over_dense 告警。真机验: prod manifold = blob (score 0.222, largest_frac 0.778) — 正确抓出 54 节点 blob。3 test 绿。下一步: G0 hippo guard。
 
 ---
