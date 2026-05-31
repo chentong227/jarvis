@@ -3912,7 +3912,12 @@ class InnerThoughtDaemon:
             "propose_vocab_adjustment:<vocab_file>:<key_path>:<value> "
             "(SELF-DEBUG: if [MY ARCHITECTURE] above shows a system issue "
             "e.g. bloat/repeated-nudge, propose fixing the governing vocab "
-            "— goes to Sir review, NOT auto-applied)"
+            "— goes to Sir review, NOT auto-applied) | "
+            # 🆕 [Sir 2026-05-31 放下能力] request_capability — 识发现自己缺某能力,
+            # 想要它 (这也是"识主动影响贾维斯本身"的一种: 标注能力缺口给 Sir/未来开发).
+            "request_capability:<one line: a capability/tool you lack that would "
+            "let you serve Sir better — e.g. 'a way to read Sir's calendar for "
+            "deadline-aware reminders'> (logs a capability wish for Sir to see)"
             "</ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
@@ -5507,6 +5512,9 @@ class InnerThoughtDaemon:
             # (不改 INTEGRITY/commitment/safety vocab) + F5 review pattern.
             if a.startswith('propose_vocab_adjustment:'):
                 return self._do_propose_vocab_adjustment(thought, a)
+            # 🆕 [Sir 2026-05-31 放下能力] request_capability — 识想要某能力 (影响自身/未来开发)
+            if a.startswith('request_capability:'):
+                return self._do_request_capability(thought, a)
             # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] surface_to_sir 全退化
             # =================================================================
             # 历史: 方案 C (Sir 2026-05-26 20:55) thought 主动 surface 通道
@@ -5946,6 +5954,54 @@ class InnerThoughtDaemon:
             return False, 'stance_rejected:no_evidence_or_empty'
         except Exception as e:
             return False, f'stance_error:{type(e).__name__}'
+
+    CAPABILITY_REQUESTS_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'capability_requests.jsonl')
+
+    def _do_request_capability(self, thought: 'InnerThought',
+                               a: str) -> Tuple[bool, str]:
+        """🆕 [Sir 2026-05-31 放下能力] 识想要某能力 — "识主动影响贾维斯本身" 的一种.
+
+        actionable=request_capability:<one-line capability/tool wish>
+        识发现自己缺某能力 (e.g. 读日历做 deadline-aware 提醒) → 写 capability_requests.jsonl
+        让 Sir 看见 (Jarvis 想长出什么能力). 接地: evidence_ref=thought.id (已过 link gate)。
+        去重: 同 desc 近期已记 → 不重复 (防 churn, 复用 P3 denied-actionable 思路)。
+        """
+        desc = a.split(':', 1)[1].strip() if ':' in a else ''
+        if len(desc) < 8:
+            return False, f'capability_desc_too_short:{len(desc)}'
+        now = time.time()
+        try:
+            # 去重: 近期(7d) 已记同 desc(前缀) → skip (不重复堆同一愿望)
+            seen = set()
+            if os.path.exists(self.CAPABILITY_REQUESTS_PATH):
+                with open(self.CAPABILITY_REQUESTS_PATH, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            row = json.loads(line)
+                            if now - float(row.get('ts', 0)) < 7 * 86400:
+                                seen.add((row.get('desc') or '')[:60].lower())
+                        except Exception:
+                            continue
+            if desc[:60].lower() in seen:
+                return False, 'capability_already_requested_recently'
+            os.makedirs(os.path.dirname(self.CAPABILITY_REQUESTS_PATH), exist_ok=True)
+            with open(self.CAPABILITY_REQUESTS_PATH, 'a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    'ts': now,
+                    'iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+                    'desc': desc[:300],
+                    'thought_id': getattr(thought, 'id', ''),
+                    'evidence': (getattr(thought, 'thought', '') or '')[:150],
+                    'state': 'open',
+                }, ensure_ascii=False) + '\n')
+            self._bg_log(
+                f"🧩 [InnerThought/capability] 识想要能力: {desc[:80]} "
+                f"(写 capability_requests.jsonl 给 Sir 看)")
+            return True, f'capability_requested:{desc[:40]}'
+        except Exception as e:
+            return False, f'capability_request_error:{type(e).__name__}'
 
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
