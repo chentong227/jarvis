@@ -379,6 +379,15 @@ _COST_DEFAULT_CONFIG: dict = {
         # (Sir 实测整晚 skip=0, 支柱A 省 token 完全失效).
         'fingerprint_exclude_sources': ['inner_thought', 'PhysicalEnvProbe'],
         'fingerprint_exclude_etype_suffixes': ['_advice'],
+        # 🆕 [P2 势能驱动 / Sir 2026-05-31] 体势能进指纹 — 势能自转 (无 governor).
+        # 体有"刚升起的 delta"(真张力/新颖/漂移, grounded by Weaver) → 指纹含其
+        # node+magnitude bucket → 指纹变 → daemon 醒去想那个势能区 (= "看她想真问题").
+        # 体 settled (无 fresh delta) → 指纹稳 → daemon idle (杀 45s 空转). 即:
+        # 体不安定→识转, 体平息→识静. 这是势能自转的"醒不醒"门, 复用 evidence-gate
+        # idle 机制, 不加新 governor (准则8 溶解元驱动). 详 VOICE_AND_MIND §1/§2.
+        'body_potential_in_fingerprint': True,
+        'body_delta_min_magnitude': 0.30,    # delta 幅度 >= 此才算"够醒" (噪声门)
+        'body_magnitude_bucket': 0.5,        # 幅度分桶 (同区持续高势能不每 tick 重醒)
     },
 }
 
@@ -2009,6 +2018,23 @@ class InnerThoughtDaemon:
             parts.append(
                 f"u:{last.get('when', '')}:{(last.get('user') or '')[:40]}"
             )
+        # 🆕 [P2 势能驱动 / 2026-05-31] 体势能进指纹 (势能自转的"醒不醒"门).
+        # 体有 fresh delta (够幅度) → 指纹含 node+幅度桶 → 指纹变 → daemon 醒去想那块;
+        # 体 settled → 无此项 → 指纹稳 → idle (不空转). grounded (Weaver 算), 无 LLM。
+        try:
+            if _gate_cfg.get('body_potential_in_fingerprint', True):
+                from jarvis_body_focus import get_body_focus as _gbf_fp
+                _min_mag = float(_gate_cfg.get('body_delta_min_magnitude', 0.30))
+                _bucket = float(_gate_cfg.get('body_magnitude_bucket', 0.5)) or 0.5
+                for _it in _gbf_fp().current_focus(limit=4):
+                    if not _it.get('fresh'):
+                        continue  # 只 fresh delta 算"新势能"(standing 高势能不反复醒)
+                    _mag = float(_it.get('score', 0.0)) - 1.0  # focus 给 delta +1.0 偏置
+                    if _mag >= _min_mag:
+                        _mbkt = int(_mag / _bucket)
+                        parts.append(f"b:{_it.get('node', '')}:{_mbkt}")
+        except Exception:
+            pass
         return '|'.join(parts)
 
     def _maybe_evidence_gate_skip(self, sir_state: str,
