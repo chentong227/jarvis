@@ -134,6 +134,29 @@ class RelationalLens:
                 break
         return seeds
 
+    def seeds_from_text(self, text: str, *, limit: int = 5) -> List[str]:
+        """口识体-E prereq1: 从当前对话文本词法匹配体节点 → 当前话题 seed。
+
+        让透镜投影"此刻 Sir 说的"相关区 (替 Layer3 current-focus 角色), 而非只投体
+        standing 势能焦点。复用 Weaver `_distinctive_terms` 词法匹配 (无 LLM, 准则1)。
+        """
+        if not text:
+            return []
+        try:
+            from jarvis_relational_weaver import _distinctive_terms
+        except Exception:
+            return []
+        text_map = self._node_text_map()
+        tl = text.lower()
+        scored: List[tuple] = []
+        for nid, ntext in text_map.items():
+            terms = _distinctive_terms(ntext)
+            hits = sum(1 for t in terms if (t in tl if t.isascii() else t in text))
+            if hits >= 1:
+                scored.append((hits, nid))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [nid for _, nid in scored[:limit]]
+
     # ---- 核心: 投影 ----
     def project(
         self, seeds: Optional[Iterable[str]] = None, *,
@@ -393,15 +416,23 @@ def body_claim_evidence(query: str, *, max_items: int = 8,
 
 
 def build_lens_block(seeds: Optional[Iterable[str]] = None, *,
-                     turn_id: Optional[str] = None, **kw) -> str:
+                     turn_id: Optional[str] = None,
+                     user_input: str = "", **kw) -> str:
     """main-brain `_assemble_prompt` 调: 返回投影 block (gate 关 → "")。故障静默。
 
     turn_id 透传给 project → 记录本轮投影 stance (口识体-A 闭学习环后半接线点)。
+    user_input (口识体-E prereq1): 给定则把当前话题节点并入 seed (替 Layer3 current-focus
+    角色) — 当前话题 seed 优先 + 体 standing 势能焦点补充。
     """
     if not lens_inject_enabled():
         return ""
     try:
-        return get_lens().project(seeds, turn_id=turn_id, **kw)
+        lens = get_lens()
+        if seeds is None:
+            topic = lens.seeds_from_text(user_input) if user_input else []
+            focus = lens.default_seeds()
+            seeds = topic + [s for s in focus if s not in topic]
+        return lens.project(seeds, turn_id=turn_id, **kw)
     except Exception as exc:
         _log(f"[Lens] project failed ({exc!r})")
         return ""

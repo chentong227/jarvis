@@ -3618,7 +3618,8 @@ User: {user_input}
             from jarvis_relational_lens import (
                 build_lens_block, lens_replaces_layer2, lens_replaces_layer3,
             )
-            lens_block = build_lens_block()
+            # 🆕 [口识体-E prereq1] 传 user_input → 透镜并入当前话题 seed (替 Layer3 focus)
+            lens_block = build_lens_block(user_input=user_input or '')
             # 🆕 [口识体-E / 2026-05-31] 透镜活时, flag-gated 替 Layer2/3 平行表示
             # (默认关, Sir 真机 A/B 满意后退旧块). 透镜空 → 不替 (零影响).
             if lens_block:
@@ -3641,6 +3642,20 @@ User: {user_input}
         # 🆕 [口识体-E] lens_replaces_layer2 开 + 透镜活 → Layer2 relational 由体/lens 供, 退平行
         if relational_block and not _lens_replaces_l2:
             _parts.append(relational_block)
+        elif _lens_replaces_l2 and self.relational_state is not None:
+            # 🆕 [口识体-E prereq2] 透镜替 Layer2 的 relevance/jokes, 但 always-on
+            # STRICT-RULE protocol 必须常驻 (镜像 phase B 实测: 全退 → 违反人设硬规
+            # "Understood, Sir."). 注入 protocols-only relational block (复用 to_prompt_block,
+            # 砍 jokes/baggage/review, 仅留 STRICT RULES)。
+            try:
+                _proto_only = self.relational_state.to_prompt_block(
+                    top_jokes=0, top_unfinished=0, top_threads=0,
+                    top_pending_review=0, top_edges=0,
+                    current_tier=str(prompt_tier or ''))
+                if _proto_only:
+                    _parts.append(_proto_only)
+            except Exception:
+                pass
         if lens_block:
             _parts.append(lens_block)
         # 🆕 [口识体-E] lens_replaces_layer3 开 + 透镜活 → Layer3 attention 由体/lens 供, 退平行

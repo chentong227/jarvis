@@ -97,6 +97,33 @@ class TestLayerConverge(unittest.TestCase):
         self.assertGreater(idx_guard, -1,
                            "replace flag 必须在透镜活 guard 内读 (透镜空→不替, 零影响)")
 
+    def test_e7_seeds_from_text_topic(self):
+        # prereq1: 透镜从当前对话文本词法匹配体节点 (替 Layer3 current-focus 角色)
+        import tempfile
+        from jarvis_relational_manifold import (
+            RelationalManifold, make_node_id, KIND_CONCERN, KIND_THREAD)
+        with tempfile.TemporaryDirectory() as d:
+            m = RelationalManifold(os.path.join(d, "m.json"))
+            hyd = make_node_id(KIND_CONCERN, "hydration")
+            sleep = make_node_id(KIND_THREAD, "sleep")
+            tmap = {hyd: "Sir hydration water intake reminders",
+                    sleep: "totally different gardening topic here"}
+            lens = L.RelationalLens(manifold=m, stance_store=False,
+                                    text_provider=lambda: tmap)
+            seeds = lens.seeds_from_text("how is my hydration and water today", limit=3)
+            self.assertIn(hyd, seeds)        # 命中当前话题节点
+            self.assertNotIn(sleep, seeds)   # 不相关不命中
+
+    def test_e8_replace_keeps_strict_protocols(self):
+        # prereq2: 替 Layer2 时仍注入 protocols-only block (STRICT RULES 常驻, 不丢人设硬规)
+        with open(os.path.join(ROOT, "jarvis_central_nerve.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("_proto_only", src)
+        self.assertIn("top_jokes=0", src)            # 砍 jokes, 仅留 protocol
+        self.assertIn("elif _lens_replaces_l2", src)  # 替 L2 分支
+        # prereq1 接线: 透镜吃 user_input
+        self.assertIn("build_lens_block(user_input=", src)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
