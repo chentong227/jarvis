@@ -1688,6 +1688,9 @@ class InnerThoughtDaemon:
 
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] LLM 决定的下次 interval (0 = 用 baseline)
         self._next_tick_interval_s = 0
+        # 🆕 [Sir 2026-05-31 21:04 唤醒需理由] 上次 wait 退出原因 (startup/timeout/
+        # emergency/body_stir) — tick log 显 woke=<reason>, 让"醒"有可见的理由。
+        self._last_wake_reason = 'startup'
         # tick origin 统计 (dashboard 看 LLM 真在 self-pacing 还是默认)
         # 🆕 [Sir 2026-05-28 19:20 真意 — Jarvis 学会休息] 加 saturation_force origin
         # (≥ N 连续 saturated tick → 物理 force 600s, 优先级 > gate + LLM choice).
@@ -1881,7 +1884,9 @@ class InnerThoughtDaemon:
             # 🆕 [governor Phase 4 E1 / Sir 2026-05-29 拍板] emergency wait interrupt
             # SWM 高 salience event publish 时 中断 wait → 立次个 tick.
             # 不再是 purely 静态 _stop.wait, 是事件可响应 wait.
-            self._wait_with_emergency_check(timeout=interval)
+            # 🆕 [Sir 2026-05-31 21:04 唤醒需理由] 存 wait 退出原因 (timeout/emergency/
+            # body_stir) → 下个 tick log 显 woke=<reason>, Sir 一眼看"为何醒"非冰冷 45s。
+            self._last_wake_reason = self._wait_with_emergency_check(timeout=interval)
 
     def _check_emergency_pending(self) -> bool:
         """🆕 [governor Phase 4 E1] Check SWM 有 emergency event published
@@ -2099,6 +2104,33 @@ class InnerThoughtDaemon:
             'afk_deep': self.INTERVAL_AFK_DEEP_S,
             'sleep': self.INTERVAL_SLEEP_S,
         }.get(state, self.INTERVAL_ACTIVE_S)
+
+    # 🆕 [Sir 2026-05-31 21:04 — 唤醒需理由 / emergent 去 45s 盲钟] =================
+    # Sir 真痛: emergent 已开但思考"还在 45s tick 重复想", 因 45s 仍是**默认醒钟** —
+    # 醒不需要理由就空转出 filler. 真意: 思考是势能放电 (solve/reflect/propose/want-
+    # capability), 醒该有**理由** (体真升起 fresh delta / Sir 紧急 / floor 心跳)。
+    #
+    # 本 helper = emergent 醒频的"理由门": 体有 fresh delta (Weaver 算的真张力/新颖,
+    # grounded) → 保持 attend 节奏 (45s 此刻是"有理由的快"); 体 settled (无理由) →
+    # 至少歇到 ambient floor (存在心跳, 单常数). 即 "45s 不是钟, 是体动时的节奏"。
+    # 复用 rest vocab (ambient_floor_s / body_stir_min_magnitude), 不加新硬编码。
+    # legacy 模式不调此函 (老行为 0 变)。
+    # =========================================================================
+    def _emergent_rest_floor(self, proposed: int) -> int:
+        """emergent: 体无 fresh delta (无理由 attend) → 下次至少歇 ambient floor;
+        体有 delta → 不动 (保持 attend). 势能自转 §3 "扰动唤醒 + 地板心跳"。"""
+        try:
+            cfg = (_load_saturation_config().get('rest') or {})
+            if not cfg.get('wake_on_body_delta', True):
+                return proposed
+            floor = int(cfg.get('ambient_floor_s', 600))
+            mag = float(cfg.get('body_stir_min_magnitude', 0.3))
+            from jarvis_body_focus import get_body_focus
+            if get_body_focus().has_fresh_delta(min_magnitude=mag):
+                return proposed              # 有理由 (体动) → 保持 attend 节奏
+            return max(int(proposed), floor)  # 无理由 → 至少歇 floor (不 45s 盲钟)
+        except Exception:
+            return proposed
 
     # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] resolve next interval (LLM hint + gate + smoothing)
     def _resolve_next_interval(self, thought: 'InnerThought',
@@ -2502,6 +2534,12 @@ class InnerThoughtDaemon:
         # =====================================================================
         try:
             if self._maybe_evidence_gate_skip(sir_state, evidence):
+                # 🆕 [Sir 2026-05-31 21:04 唤醒需理由] emergent: skip = 无新外部输入 +
+                # 体 settled (指纹含体势能, P2) = 无理由醒 → 歇到 floor + 标 resting
+                # (wait 期间体动静/Sir 可提前醒), 不 45s 盲钟空转回来再 skip。
+                if _thinking_kind_mode() == 'emergent':
+                    self._next_tick_interval_s = self._emergent_rest_floor(0)
+                    self._resting = True
                 return
         except Exception:
             pass
@@ -2719,6 +2757,17 @@ class InnerThoughtDaemon:
             pass
         thought.tick_origin = tick_origin
         self._next_tick_interval_s = resolved_interval
+        # 🆕 [Sir 2026-05-31 21:04 唤醒需理由] emergent: 这轮想完了, 体若无 fresh delta
+        # (没有继续 attend 的理由) → 下次歇到 floor, 不回 45s 盲钟. 体有 delta → 不动
+        # (保持 attend). 在 log 前钳 → meta_str 显真 next (rest_floor 而非误导的 45s)。
+        if _thinking_kind_mode() == 'emergent':
+            _rf = self._emergent_rest_floor(resolved_interval)
+            if _rf > resolved_interval:
+                resolved_interval = _rf
+                tick_origin = 'rest_floor'
+                thought.tick_origin = tick_origin
+                self._next_tick_interval_s = resolved_interval
+                self._resting = True
         self._tick_origin_stats[tick_origin] = \
             self._tick_origin_stats.get(tick_origin, 0) + 1
 
@@ -2790,7 +2839,8 @@ class InnerThoughtDaemon:
             _tt = _truncate_at_word_boundary(thought.thought, 300)
             self._bg_log(
                 f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
-                f"/state={sir_state}/tick={tick_interval}s] {_tt}"
+                f"/state={sir_state}/woke={getattr(self, '_last_wake_reason', '?')}]"
+                f" {_tt}"
                 f"{action_str}{ev_str}{meta_str}{kind_str}"
             )
 

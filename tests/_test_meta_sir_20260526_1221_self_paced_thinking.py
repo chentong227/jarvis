@@ -31,7 +31,7 @@ Sir 原话:
   L2 prompt 含 NEXT_INTERVAL tag + 教学
   L3 parse 'default' → next_interval_s=0
   L4 parse '30' → next_interval_s=30 (合法 enum)
-  L5 parse '45' → next_interval_s=0 (非法 enum 拒)
+  L5 parse '90' → next_interval_s=0 (非法 enum 拒; 45 现合法 active baseline)
   L6 parse 缺 NEXT_INTERVAL → next_interval_s=0 (向后兼容)
   L7 resolve LLM 没选 (=0) → return baseline + origin='default'
   L8 resolve LLM 选 30 + active → return 30 + origin='llm_chosen'
@@ -170,7 +170,10 @@ class TestL4ParseLegalEnum(unittest.TestCase):
 
 
 class TestL5ParseIllegalEnum(unittest.TestCase):
-    def test_parse_45_rejected(self):
+    def test_parse_illegal_enum_rejected(self):
+        # 🆕 [Sir 2026-05-31 21:04] 45 已是合法 active baseline (_NEXT_INTERVAL_ENUM
+        # 含 45, INTERVAL_ACTIVE_S=45) — 旧测 "45 被拒" stale. 改测真非法值 90
+        # (不在 {30,45,60,180,600,1800}) → 仍验"非法 numeric enum 拒"逻辑。
         d = _build_daemon()
         raw = (
             "<CATEGORY>A</CATEGORY>"
@@ -178,11 +181,11 @@ class TestL5ParseIllegalEnum(unittest.TestCase):
             "<SALIENCE>0.5</SALIENCE>"
             "<ACTIONABLE>none</ACTIONABLE>"
             "<EVIDENCE_LINK>none</EVIDENCE_LINK>"
-            "<NEXT_INTERVAL>45</NEXT_INTERVAL>"
+            "<NEXT_INTERVAL>90</NEXT_INTERVAL>"
         )
         t = d._parse_thought(raw, 'active', 60)
         self.assertEqual(t.next_interval_s, 0,
-            '非法 enum 值 45 应被 parse 拒 (返回 0 = default)')
+            '非法 enum 值 90 应被 parse 拒 (返回 0 = default)')
 
     def test_parse_garbage_rejected(self):
         d = _build_daemon()
@@ -305,10 +308,12 @@ class TestL13GetStats(unittest.TestCase):
             'get_stats 必须返 next_tick_interval_s (LLM self-paced interval)')
         self.assertIn('tick_origin_stats', stats,
             'get_stats 必须返 tick_origin_stats (Sir 看 LLM 真在 pace)')
-        # 初始 stats 4 个 origin 都是 0
+        # 初始 stats 5 个 origin 都是 0
+        # (saturation_force 加于 Sir 2026-05-28 19:20 真意 — Jarvis 学会休息)
         self.assertEqual(stats['tick_origin_stats'], {
             'default': 0, 'llm_chosen': 0,
             'llm_gated': 0, 'llm_smoothed': 0,
+            'saturation_force': 0,
         })
 
 
