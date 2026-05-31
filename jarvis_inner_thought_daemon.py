@@ -1326,6 +1326,11 @@ class InnerThoughtDaemon:
     # 同 category 仍隔 5min, 保 diversity 不连发重复.
     SAME_CATEGORY_COOLDOWN_S = 300   # 5min 同 category 不重复 (Sir 12:13 真痛 fix)
     STARTUP_DELAY_S = 30              # 启动 30s 后才开始 (系统稳定)
+    # 🆕 [P3 / Sir 2026-05-31 真痛] 同一 actionable (kind:target) 刚被拒 → 短期不重试.
+    # Sir 真测: D/E thought 反复试 call_tool:concerns.progress_update → tool_not_in_allowlist
+    # → "misread twice" churn. 拒后记 (kind,target)→ts, 此窗口内同 key 直接降级 none.
+    # 系统级 anti-churn 时间常数 (同 SAME_CATEGORY_COOLDOWN_S 性质, 准则6 递归边界豁免).
+    DENIED_ACTIONABLE_COOLDOWN_S = 900   # 15min: 被拒的 actionable 不反复试
 
     # 🆕 [Sir 2026-05-26 23:24 真痛 BUG-5 / 准则 8 优雅] mediocre thought 兜底
     # =========================================================================
@@ -5243,10 +5248,61 @@ class InnerThoughtDaemon:
     # ----------------------------------------------------------
     # Actionable executor (4 档, 全可逆/低风险)
     # ----------------------------------------------------------
+    @staticmethod
+    def _actionable_key(a: str) -> str:
+        """actionable 去 payload, 取 (kind:target) 作 dedup key。
+
+        call_tool:concerns.progress_update:{...} → 'call_tool:concerns.progress_update'
+        adjust_concern_notes:sir_x:note... → 'adjust_concern_notes:sir_x'
+        其余无 target 的 → 取 kind。让"反复试同一被拒动作"可识别, 不锁正常多样性。
+        """
+        parts = (a or '').split(':')
+        if not parts:
+            return a or ''
+        # kind + 第一个 target 段 (若有), 丢 payload (note/args/draft 文本)
+        return ':'.join(parts[:2]) if len(parts) >= 2 else parts[0]
+
+    def _is_actionable_denied_recently(self, a: str, now: float) -> Tuple[bool, str]:
+        """P3: 此 (kind:target) 是否在 DENIED cooldown 窗口内被拒过 → 跳过重试。"""
+        hist = getattr(self, '_denied_actionables', None)
+        if not hist:
+            return False, ''
+        key = self._actionable_key(a)
+        ts = hist.get(key, 0.0)
+        if ts and (now - ts) < self.DENIED_ACTIONABLE_COOLDOWN_S:
+            return True, f'{int(now - ts)}s_ago'
+        return False, ''
+
+    def _record_actionable_denied(self, a: str, now: float) -> None:
+        """P3: 记 (kind:target) 被拒时刻 (有界 dict, 防内存膨胀)。"""
+        if not hasattr(self, '_denied_actionables'):
+            self._denied_actionables: Dict[str, float] = {}
+        hist = self._denied_actionables
+        hist[self._actionable_key(a)] = now
+        if len(hist) > 64:  # 有界: 先清过期, 仍超则丢最旧
+            cutoff = now - self.DENIED_ACTIONABLE_COOLDOWN_S
+            hist = {k: v for k, v in hist.items() if v >= cutoff}
+            if len(hist) > 64:
+                for k, _ in sorted(hist.items(), key=lambda x: x[1])[:len(hist) - 64]:
+                    hist.pop(k, None)
+            self._denied_actionables = hist
+
     def _execute_actionable(self, thought: InnerThought) -> Tuple[bool, str]:
         a = (thought.actionable or '').strip()
         if not a or a.lower() == 'none':
             return True, 'none'
+
+        # 🆕 [P3 / 2026-05-31] 同一 actionable 刚被拒 → 短期不重试 (杀 churn).
+        # Sir 真测: 思考脑反复试 call_tool:concerns.progress_update (not in allowlist)
+        # → "misread twice". 治本: 拒后记 key, 窗口内直接降级 none (准则8 治本不复发).
+        _now_act = time.time()
+        _denied, _denied_ago = self._is_actionable_denied_recently(a, _now_act)
+        if _denied:
+            thought.actionable = 'none'
+            return False, (
+                f'skipped_recently_denied:{self._actionable_key(a)} '
+                f'(denied {_denied_ago}, cooldown {self.DENIED_ACTIONABLE_COOLDOWN_S}s)'
+            )
 
         # 🆕 [Sir 2026-05-26 00:25 真痛"地基没打牢"] EVIDENCE LINK 校验 (HARD GATE)
         # actionable != none 时, LLM 必须 cite THOUGHT 中真实出现的字串证明 trace.
@@ -5267,6 +5323,18 @@ class InnerThoughtDaemon:
             thought.actionable = 'none'
             return False, f'rejected_propose_quality:{gate_propose_reason}'
 
+        ok, result = self._dispatch_actionable(thought, a)
+        # 🆕 [P3] 结构性拒绝 (allowlist/unknown/deprecated/retired) → 记 key, 防反复试.
+        # 区别于"暂时 gated"(cooldown/sal/cap 会自然恢复) — 那些不记, 让它后续可重试.
+        if not ok and any(tok in result for tok in (
+                'tool_not_in_allowlist', 'unknown_actionable', 'deprecated',
+                'retired', 'not_in_allowlist', 'path_not_allowed')):
+            self._record_actionable_denied(a, _now_act)
+        return ok, result
+
+    def _dispatch_actionable(self, thought: InnerThought,
+                             a: str) -> Tuple[bool, str]:
+        """actionable 分发 (从 _execute_actionable 抽出, 便于 P3 统一记拒绝)。"""
         try:
             if a.startswith('update_concern_severity:'):
                 ok, result = self._do_update_concern_severity(thought, a)
