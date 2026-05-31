@@ -119,6 +119,8 @@ class RelationalWeaver:
         relational_path: Optional[str] = None,
         vectors_path: Optional[str] = None,
         stance_path: Optional[str] = None,
+        energy_path: Optional[str] = None,
+        delta_publisher: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self.manifold = manifold if manifold is not None else get_manifold()
         self.embed_fn = embed_fn if embed_fn is not None else default_embed_fn
@@ -128,6 +130,11 @@ class RelationalWeaver:
         self.relational_path = relational_path or os.path.join(mp, "relational_state.json")
         self.vectors_path = vectors_path or os.path.join(mp, "manifold_vectors.json")
         self.stance_path = stance_path or os.path.join(mp, "stance.json")
+        self.energy_path = energy_path or os.path.join(mp, "body_energy.json")
+        # 体势能 (口识体-B3): delta 发布 (默认进 SWM, 注入便于 test) + 跨 weave 状态
+        self.delta_publisher = delta_publisher
+        self._prev_energy: Dict[str, Dict[str, float]] = {}
+        self._recent_deltas: List[Dict[str, Any]] = []
         self._vec_cache: Dict[str, Dict[str, Any]] = {}
         self._weave_count = 0
         self._lock = threading.RLock()
@@ -137,6 +144,9 @@ class RelationalWeaver:
 
     def _wcfg(self) -> Dict[str, Any]:
         return get_manifold_config().get("weaver", {}) or {}
+
+    def _ecfg(self) -> Dict[str, Any]:
+        return get_manifold_config().get("energy", {}) or {}
 
     # ---- json read helpers (robust) ----
     @staticmethod
@@ -290,10 +300,139 @@ class RelationalWeaver:
         self.manifold.apply_decay(now=now)
         return self.manifold.prune(now=now)
 
+    # ---- 体势能 E (口识体-B3): 自转的坡度 ----
+    def _concern_severity_map(self) -> Dict[str, float]:
+        """{concern node_id: severity} for active concerns (张力源料)。"""
+        out: Dict[str, float] = {}
+        cdata = self._read_json(self.concerns_path)
+        if isinstance(cdata, dict):
+            for cid, c in cdata.items():
+                if not isinstance(c, dict) or cid.startswith("_"):
+                    continue
+                if c.get("state") == "archived":
+                    continue
+                try:
+                    sev = float(c.get("severity", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    sev = 0.0
+                out[make_node_id(KIND_CONCERN, c.get("id", cid))] = sev
+        return out
+
+    def _stance_covered_concerns(self) -> set:
+        """有 active stance 覆盖的 concern node_id 集合 (张力已化解 = 不计能量)。"""
+        covered: set = set()
+        sdata = self._read_json(self.stance_path)
+        if isinstance(sdata, dict):
+            for s in (sdata.get("stances") or {}).values():
+                if isinstance(s, dict) and s.get("state") == "active":
+                    about = (s.get("about") or "").strip()
+                    if about:
+                        # about 可能是 concern id 原值 或 已命名空间化
+                        covered.add(about)
+                        covered.add(make_node_id(KIND_CONCERN, about))
+        return covered
+
+    def compute_energy(
+        self, new_edge_keys: set, pre_snapshot: Dict[str, Dict[str, Any]],
+        post_snapshot: Dict[str, Dict[str, Any]], now: Optional[float] = None,
+    ) -> Dict[str, Dict[str, float]]:
+        """算每节点的势能 E = w_nov·新颖 + w_drift·漂移 + w_tension·张力 (接地, 无 LLM)。"""
+        now = time.time() if now is None else now
+        cfg = self._ecfg()
+        drift_min = float(cfg.get("drift_min", 0.05))
+        energy: Dict[str, Dict[str, float]] = collections.defaultdict(
+            lambda: {"novelty": 0.0, "drift": 0.0, "tension": 0.0, "total": 0.0})
+        # 新颖: 本轮新边的权重计给两端
+        for key in new_edge_keys:
+            e = post_snapshot.get(key)
+            if e:
+                energy[e["a"]]["novelty"] += e["w"]
+                energy[e["b"]]["novelty"] += e["w"]
+        # 漂移: 非新边里权重变动超 drift_min 的
+        for key, e in post_snapshot.items():
+            if key in new_edge_keys or key not in pre_snapshot:
+                continue
+            d = abs(e["w"] - pre_snapshot[key]["w"])
+            if d >= drift_min:
+                energy[e["a"]]["drift"] += d
+                energy[e["b"]]["drift"] += d
+        # 张力: 高 severity concern 且无 active stance 覆盖
+        sev_min = float(cfg.get("tension_severity_min", 0.40))
+        sev = self._concern_severity_map()
+        covered = self._stance_covered_concerns()
+        for nid, s in sev.items():
+            if s >= sev_min and nid not in covered:
+                energy[nid]["tension"] += s
+        # total
+        wn, wd, wt = (float(cfg.get("w_novelty", 1.0)),
+                      float(cfg.get("w_drift", 0.6)), float(cfg.get("w_tension", 1.2)))
+        out: Dict[str, Dict[str, float]] = {}
+        for nid, comp in energy.items():
+            comp["total"] = wn * comp["novelty"] + wd * comp["drift"] + wt * comp["tension"]
+            out[nid] = dict(comp)
+        return out
+
+    def _diff_and_emit_deltas(
+        self, curr_energy: Dict[str, Dict[str, float]], now: float,
+    ) -> List[Dict[str, Any]]:
+        """对比上轮势能 → 能量上升超阈的节点 → 派 body_delta (唤醒识)。"""
+        cfg = self._ecfg()
+        thr = float(cfg.get("delta_threshold", 0.30))
+        wn, wd, wt = (float(cfg.get("w_novelty", 1.0)),
+                      float(cfg.get("w_drift", 0.6)), float(cfg.get("w_tension", 1.2)))
+        deltas: List[Dict[str, Any]] = []
+        for nid, comp in curr_energy.items():
+            prev_total = self._prev_energy.get(nid, {}).get("total", 0.0)
+            rise = comp["total"] - prev_total
+            if rise >= thr:
+                kind = max((("novelty", comp["novelty"] * wn),
+                            ("drift", comp["drift"] * wd),
+                            ("tension", comp["tension"] * wt)), key=lambda x: x[1])[0]
+                deltas.append({
+                    "node": nid, "kind": kind, "magnitude": round(rise, 3),
+                    "energy": round(comp["total"], 3),
+                    "ts": now, "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+                })
+        deltas.sort(key=lambda d: d["magnitude"], reverse=True)
+        deltas = deltas[: int(cfg.get("max_deltas_per_weave", 12))]
+        for d in deltas:
+            if self.delta_publisher:
+                try:
+                    self.delta_publisher(d)
+                except Exception:
+                    pass
+        self._recent_deltas = deltas
+        self._prev_energy = curr_energy
+        return deltas
+
+    def _save_energy(self, curr_energy: Dict[str, Dict[str, float]],
+                     deltas: List[Dict[str, Any]]) -> None:
+        top = sorted(curr_energy.items(), key=lambda x: x[1]["total"], reverse=True)[:30]
+        payload = {
+            "_meta": {"schema": "body_energy",
+                      "updated_iso": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                      "node_count": len(curr_energy)},
+            "top_energy": [{"node": n, **c} for n, c in top],
+            "recent_deltas": deltas,
+        }
+        tmp = self.energy_path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(self.energy_path) or ".", exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.energy_path)
+        except Exception as exc:
+            _log(f"[Weaver] save energy failed ({exc!r})")
+
+    def recent_deltas(self) -> List[Dict[str, Any]]:
+        return list(self._recent_deltas)
+
     # ---- 全量一轮 ----
     def weave_once(self, now: Optional[float] = None) -> Dict[str, Any]:
         now = time.time() if now is None else now
         with self._lock:
+            # 体势能: weave 前快照边权 (算 novelty/drift)
+            pre_snapshot = self.manifold.edge_snapshot(now=now)
             nodes = self.harvest_nodes()
             added = self.weave_geometric(nodes, now=now)
             self._weave_count += 1
@@ -305,13 +444,20 @@ class RelationalWeaver:
             surfaces = self.manifold.compute_surfaces(now=now)
             self.manifold.set_surfaces(surfaces)
             self.manifold.save()
+            # 体势能 E (口识体-B3): 算势能 + diff → 派 body_delta 唤醒识
+            post_snapshot = self.manifold.edge_snapshot(now=now)
+            new_keys = set(post_snapshot.keys()) - set(pre_snapshot.keys())
+            curr_energy = self.compute_energy(new_keys, pre_snapshot, post_snapshot, now=now)
+            deltas = self._diff_and_emit_deltas(curr_energy, now)
+            self._save_energy(curr_energy, deltas)
         stats = self.manifold.stats(now=now)
         stats.update({"weave_count": self._weave_count, "nodes": len(nodes),
                       "embed_edges_added": added, "pruned": pruned,
-                      "surface_count": len(surfaces)})
+                      "surface_count": len(surfaces), "deltas": len(deltas),
+                      "energy_nodes": len(curr_energy)})
         _log(f"[Weaver] weave#{self._weave_count} nodes={len(nodes)} "
              f"embed+={added} pruned={pruned} edges={stats['edge_count']} "
-             f"surfaces={len(surfaces)}")
+             f"surfaces={len(surfaces)} Δ={len(deltas)}")
         return stats
 
     # ---- daemon ----

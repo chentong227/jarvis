@@ -43,6 +43,15 @@
       "max_text_chars": 400,
       "min_node_text_chars": 4,
       "embed_batch_size": 32
+    },
+    "energy": {
+      "w_novelty": 1.0,
+      "w_drift": 0.6,
+      "w_tension": 1.2,
+      "delta_threshold": 0.30,
+      "tension_severity_min": 0.40,
+      "drift_min": 0.05,
+      "max_deltas_per_weave": 12
     }
   }
 }

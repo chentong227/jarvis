@@ -53,6 +53,8 @@ memory_pool/relational_manifold.json
 memory_pool/manifold_vectors.json
 # [体-P4 / 2026-05-31] 立场 store: Jarvis 自己对 Sir/关系的学习 view (runtime, 可能私密)
 memory_pool/stance.json
+# [口识体-B3 / 2026-05-31] 体势能快照 (runtime: 节点能量 + body_delta)
+memory_pool/body_energy.json
 # [P0+20-β.0.1 / 2026-05-16] directive 计数器（fired/rejected/helped）：runtime 状态
 memory_pool/directive_registry.json
 memory_pool/directive_review.json

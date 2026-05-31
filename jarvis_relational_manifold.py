@@ -111,6 +111,17 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "min_node_text_chars": 4,      # 太短文本不 embed
         "embed_batch_size": 32,        # 批量 embed 上限
     },
+    # 体势能 E (口识体-B3) — 自转的坡度. 详 docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §2.
+    # 接地无 LLM: novelty(新边) + drift(边权变) + tension(高severity concern 无 stance 覆盖)
+    "energy": {
+        "w_novelty": 1.0,              # 新颖权重 (新形成的强边)
+        "w_drift": 0.6,                # 漂移权重 (边权在变)
+        "w_tension": 1.2,              # 张力权重 (未化解 = 最该想)
+        "delta_threshold": 0.30,       # 节点能量上升超此 → 派 body_delta (唤醒识)
+        "tension_severity_min": 0.40,  # concern severity >= 此且无 stance 覆盖 = 张力
+        "drift_min": 0.05,             # 边权变化超此才算 drift
+        "max_deltas_per_weave": 12,    # 单次 weave 最多派几个 delta (防洪泛)
+    },
 }
 
 _MANIFOLD_CONFIG_PATH = os.path.join("memory_pool", "relational_manifold_vocab.json")
@@ -592,6 +603,13 @@ class RelationalManifold:
     def all_edges(self) -> List[Dict[str, Any]]:
         with self._lock:
             return [dict(e, _key=k) for k, e in self._edges.items()]
+
+    def edge_snapshot(self, now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+        """{edge_key: {a, b, w(effective)}} 快照 (体势能 diff 用, 不暴露内部)。"""
+        now = time.time() if now is None else now
+        with self._lock:
+            return {k: {"a": e["a"], "b": e["b"], "w": self.effective_weight(e, now)}
+                    for k, e in self._edges.items()}
 
 
 # ---------------------------------------------------------------------------
