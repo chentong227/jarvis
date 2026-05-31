@@ -98,12 +98,23 @@ class RelationalLens:
             self._text_cache_ts = now
             return self._text_cache
 
-    # ---- 默认 seeds: 没给语境时用 concern 节点 + 高度数 hub ----
+    # ---- 默认 seeds: 体此刻势能焦点 (③ 体→口) → 退回 concern + 高度数 hub ----
     def default_seeds(self, *, limit: int = 6) -> List[str]:
+        # 优先: 体势能焦点 (口投影体此刻被激活的区, 非固定 dump)。
+        # 仅 prod 模式 (无注入 text_provider) 用全局体焦点; 注入模式(测试)走下方 fallback 保隔离。
+        if self._text_provider is None:
+            try:
+                from jarvis_body_focus import get_body_focus
+                seeds = get_body_focus().focus_seeds(limit=limit)
+                if seeds:
+                    return seeds
+            except Exception:
+                pass
+        # 退回: concern + 高度数 hub
         text_map = self._node_text_map()
         concerns = [n for n in text_map if split_node_id(n)[0] == KIND_CONCERN]
         ranked = sorted(text_map.keys(), key=lambda n: self.manifold.degree(n), reverse=True)
-        seeds: List[str] = []
+        seeds = []
         for n in concerns + ranked:
             if n not in seeds:
                 seeds.append(n)

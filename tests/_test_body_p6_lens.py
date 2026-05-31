@@ -72,13 +72,18 @@ class TestLens(unittest.TestCase):
             self.assertIn("My read", block)
             self.assertIn("温和坚持", block)       # 立场被保留 (形状/阻力)
 
-    def test_t3_gate_default_off(self):
+    def test_t3_gate_controls_injection(self):
+        # 测 gate 机制 (非 prod 策略值, 那是 Sir 拍的): gate off → build_lens_block 返空
         with tempfile.TemporaryDirectory() as d:
             m, text, sleep, pomo, thread = _seed_manifold(d)
             import jarvis_relational_lens as L
-            # 默认 gate off → build_lens_block 返空
-            self.assertFalse(L.lens_inject_enabled())
-            # 直接 project 不受 gate 影响 (gate 只在 build_lens_block)
+            _orig = L.lens_inject_enabled
+            try:
+                L.lens_inject_enabled = lambda: False
+                self.assertEqual(L.build_lens_block(), "")   # gate 关 → 不注入
+            finally:
+                L.lens_inject_enabled = _orig
+            # project 本身不受 gate 影响 (gate 只在 build_lens_block 入口)
             lens = RelationalLens(manifold=m, stance_store=False,
                                   text_provider=lambda: text)
             self.assertTrue(lens.project([sleep], now=T0))
