@@ -985,6 +985,19 @@ class ConcernsLedger:
                             f"      today progress: 「{_cur}/{_tgt} {_unit}」{_rem_str}"
                             [:200]
                         )
+                    elif dp.get('target') is not None:
+                        # 🆕 [P1 date-guard / 2026-05-31] 有跟踪目标但今天还没记录 →
+                        # 显式 "not logged today" evidence (防主脑捞 stale LTM 旧记录当
+                        # 今天报, 准则5 接地). 通用于任何 daily_progress concern, 非硬编码:
+                        # 只陈述事实 (今日未记录 + 上次记录日期), 不教主脑怎么措辞。
+                        _tgt = dp.get('target', '?')
+                        _unit = dp.get('unit', '')
+                        _last_iso = dp.get('iso_date', '?')
+                        lines.append(
+                            f"      today progress: NOT logged yet today "
+                            f"(target 「{_tgt} {_unit}」; last record was {_last_iso}, "
+                            f"not today)"[:200]
+                        )
             except Exception:
                 pass
             if c.recent_signals:

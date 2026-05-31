@@ -4636,11 +4636,21 @@ class InnerThoughtDaemon:
                 if dp.get('current') is not None and dp.get('target') is not None:
                     _unit = dp.get('unit') or ''
                     _date = dp.get('iso_date') or ''
-                    lines.append(
-                        f"      📊 ledger truth: {dp['current']}/{dp['target']}"
-                        f"{(' ' + _unit) if _unit else ''}"
-                        f"{(' (date=' + _date + ')') if _date else ''}"
-                    )
+                    _today = time.strftime('%Y-%m-%d', time.localtime())
+                    _unit_s = (' ' + _unit) if _unit else ''
+                    # 🆕 [P1 date-guard / 2026-05-31] 区分今日 vs stale — 旧 BUG: stale
+                    # ledger 值当今天注 → 思考脑报 "8/10 today" 实为 3 天前. 通用日期守门.
+                    if _date == _today:
+                        lines.append(
+                            f"      📊 ledger truth (today): "
+                            f"{dp['current']}/{dp['target']}{_unit_s}"
+                        )
+                    else:
+                        lines.append(
+                            f"      📊 ledger truth: NO entry logged today; last was "
+                            f"{dp['current']}/{dp['target']}{_unit_s} on {_date or '?'} "
+                            f"(STALE — not today's progress)"
+                        )
                 fb_raw = c.get('last_user_feedback') or ''
                 if fb_raw:
                     lines.append(

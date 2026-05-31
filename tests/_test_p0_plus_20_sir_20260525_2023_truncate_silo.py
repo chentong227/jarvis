@@ -93,8 +93,11 @@ class TestT0DailyProgressInjectedInPromptBlock(unittest.TestCase):
             }
             ledger.concerns[c.id] = c
             block = ledger.to_prompt_block(top_n=3, max_chars=800)
-            self.assertNotIn('today progress', block,
-                              'stale (跨天) daily_progress 不该注入')
+            # [P1 / 2026-05-31] 跨天 stale: 不把旧 current(500) 当今天值报, 但改为显式
+            # "NOT logged yet today" evidence (防主脑 fallback 捞旧 LTM 当今天, 准则5 接地).
+            self.assertNotIn('500', block, 'stale current(500) 不该当今天值报')
+            self.assertIn('NOT logged yet today', block,
+                          'stale → 显式今天未记录 (而非静默, 防 LTM fallback)')
         finally:
             for p in (persist, review):
                 try:
