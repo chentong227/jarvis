@@ -2401,6 +2401,7 @@ class InnerThoughtDaemon:
         resolved_interval, tick_origin = self._resolve_next_interval(
             thought, sir_state
         )
+        _base_interval = resolved_interval  # 自定节奏基线 (value-backoff 前)
         # 🆕 [useful-or-quiet P1 / Sir 2026-05-31] 跨 category 价值门控退避 clamp —
         # 补 saturation same-category 漏洞 (脑 category-hop 逃过). 连续低值 tick →
         # 指数退避; 只拉长不缩短 (safe). reset on 高值/should_speak.
@@ -2414,6 +2415,25 @@ class InnerThoughtDaemon:
                     f"{self._low_value_streak} tick (跨 category) → 降频至 "
                     f"{_vb_interval}s (放得下, 不 churn)"
                 )
+        except Exception:
+            pass
+        # 🆕 [口识体-C-wake / 2026-05-31] 体势能驱动唤醒频次 (② 体→识 tempo) —
+        # =====================================================================
+        # 势能自转的频率侧: 体有刚升起的 delta (真张力/新颖, grounded) → 撤销 value-backoff
+        # 的"放得下", 回自定节奏基线去 attend 那个势能区。无 delta → 维持 backoff (settled
+        # 就怠速)。即"体不安定→识转快, 体 settled→识慢"。不超过 Sir-态基线 (尊重 self-pace)。
+        # grounded 无 LLM, 失败非致命。详 VOICE_AND_MIND_REFACTOR §2/§5.5。
+        # =====================================================================
+        try:
+            if tick_origin == 'value_backoff' and resolved_interval > _base_interval:
+                from jarvis_body_focus import get_body_focus as _gbf_wake
+                if _gbf_wake().has_fresh_delta():
+                    resolved_interval = _base_interval
+                    tick_origin = 'body_delta_wake'
+                    self._bg_log(
+                        f"⚡ [InnerThought/body-delta] 体有新势能 → 撤退避回 "
+                        f"{_base_interval}s (该醒去 attend)"
+                    )
         except Exception:
             pass
         thought.tick_origin = tick_origin
