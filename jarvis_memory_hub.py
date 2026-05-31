@@ -287,8 +287,22 @@ class MemoryMutationGateway:
                         confidence=confidence,
                         layer_targeted=layer,
                         ok=False,
-                        error=(f'evidence_guard_blocked: '
-                                  f'{guard_reason[:200]}'),
+                        # 🆕 [thinking-dehardcode fix#1 / 2026-05-31 镜像挖出] block 消息
+                        # 改成 LLM 可懂的明确指令 (准则 5 言出必行). 镜像真测: guard 拦
+                        # protocol.proactive_reminders 写入, 但 LLM continuation 看 raw
+                        # "evidence_guard_blocked: no_evidence..." (开发者 jargon) 没懂 =
+                        # 没写入, 仍抢答 "已为您更新个人偏好配置" → 假称完成 (违准则 5).
+                        # 治本: 显式自然语言指令 NOT saved + Do NOT claim done. 保留
+                        # 'evidence_guard_blocked' 子串 (console friendly format + circuit
+                        # /SWM detector 仍匹配). detail 留给主脑下轮 audit.
+                        error=(
+                            f'evidence_guard_blocked: This change was NOT saved '
+                            f'(no evidence in Sir\'s recent words for the new '
+                            f'value). Do NOT tell Sir it is done/updated/applied; '
+                            f'instead acknowledge you noted the preference and '
+                            f'will apply it once confirmed. '
+                            f'[detail: {guard_reason[:160]}]'
+                        ),
                         turn_id=turn_id,
                         physical_write=False,
                     )
