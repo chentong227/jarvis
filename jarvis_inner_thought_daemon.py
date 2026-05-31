@@ -2452,26 +2452,40 @@ class InnerThoughtDaemon:
         # 老 BUG: tick 调 LLM → LLM 选 cooldown 中 category → skip → 浪费 LLM call.
         # 治本: tick 开头算 free categories, 全 cooldown 则 skip 不调 LLM.
         # 否则把 free list 给 LLM prompt, 让 LLM 只能选 free 中的.
-        free_categories = self._compute_free_categories()
-        if not free_categories:
-            # 所有 5 类都 cooldown — skip 不调 LLM (节省 + 准则 1 高效)
-            self._cooldown_skip_count += 1
-            # 🆕 [Sir 2026-05-25 23:52 真问"为什么不反思了"] 每 5 tick log 1 次
-            # 让 Sir 看见 daemon 真 alive 不是 dead. 算"下次 free" 时间帮诊断.
-            if self._cooldown_skip_count % 5 == 1:
-                now = time.time()
-                next_free_s = min(
-                    (self.SAME_CATEGORY_COOLDOWN_S - (now - ts))
-                    for ts in self._last_category_ts.values()
-                    if ts > 0
-                )
-                self._bg_log(
-                    f"💭 [InnerThought] all 5 categories in cooldown "
-                    f"(skip count {self._cooldown_skip_count}), "
-                    f"next free in {int(next_free_s / 60)}min — daemon alive, "
-                    f"awaiting free slot."
-                )
-            return
+        # 🆕 [thinking-dehardcode-P2 / Sir 2026-05-31 真机] emergent: 退类冷却 → 区放电.
+        # =====================================================================
+        # Sir 真机真痛: 思考还在 tick + A-E 槽 + cooldown skip (legacy 默认). emergent
+        # 模式拔 category 冷却 — diversity 不靠"类计数 300s", 靠: (1) evidence-gate 体势能
+        # 指纹 (同焦点区+同幅度桶 → 指纹稳 → idle skip, 见 _maybe_evidence_gate_skip)
+        # (2) value-backoff (连续低值降频) (3) REST (无真势能放下). 即"体不安定→识转,
+        # 体平息→识静", 想清一个区 → Weaver E 降 → body_focus 不再列 → 自然不复发.
+        # 设计 §3/§5.3. legacy 保留老 cooldown (0 变).
+        # =====================================================================
+        _tk_mode = _thinking_kind_mode()
+        if _tk_mode == 'emergent':
+            # CATEGORY optional, 不按类冷却 gate; evidence-gate + REST 接管"该不该想"
+            free_categories = list('ABCDE')
+        else:
+            free_categories = self._compute_free_categories()
+            if not free_categories:
+                # legacy: 所有 5 类都 cooldown — skip 不调 LLM (节省 + 准则 1 高效)
+                self._cooldown_skip_count += 1
+                # 🆕 [Sir 2026-05-25 23:52 真问"为什么不反思了"] 每 5 tick log 1 次
+                # 让 Sir 看见 daemon 真 alive 不是 dead. 算"下次 free" 时间帮诊断.
+                if self._cooldown_skip_count % 5 == 1:
+                    now = time.time()
+                    next_free_s = min(
+                        (self.SAME_CATEGORY_COOLDOWN_S - (now - ts))
+                        for ts in self._last_category_ts.values()
+                        if ts > 0
+                    )
+                    self._bg_log(
+                        f"💭 [InnerThought] all 5 categories in cooldown "
+                        f"(skip count {self._cooldown_skip_count}), "
+                        f"next free in {int(next_free_s / 60)}min — daemon alive, "
+                        f"awaiting free slot."
+                    )
+                return
 
         # collect evidence
         evidence = self._collect_evidence(
@@ -2587,16 +2601,19 @@ class InnerThoughtDaemon:
             self._next_attention_focus = ''
 
         # cooldown 二道防御 (LLM 没听 prompt 选了 cooldown 中 → 再 skip)
-        last_ts = self._last_category_ts.get(thought.category, 0.0)
-        if time.time() - last_ts < self.SAME_CATEGORY_COOLDOWN_S:
-            self._cooldown_skip_count += 1
-            self._bg_log(
-                f"💭 [InnerThought] LLM ignored free_categories prompt, "
-                f"chose cooldown category {thought.category} "
-                f"({int(time.time() - last_ts)}s < {self.SAME_CATEGORY_COOLDOWN_S}s), "
-                f"skip"
-            )
-            return
+        # 🆕 [thinking-dehardcode-P2 / Sir 2026-05-31] emergent 退此 gate — diversity
+        # 靠区放电 + evidence-gate 体势能指纹, 不靠 category 计数. legacy 保留 (0 变).
+        if _tk_mode != 'emergent':
+            last_ts = self._last_category_ts.get(thought.category, 0.0)
+            if time.time() - last_ts < self.SAME_CATEGORY_COOLDOWN_S:
+                self._cooldown_skip_count += 1
+                self._bg_log(
+                    f"💭 [InnerThought] LLM ignored free_categories prompt, "
+                    f"chose cooldown category {thought.category} "
+                    f"({int(time.time() - last_ts)}s < {self.SAME_CATEGORY_COOLDOWN_S}s), "
+                    f"skip"
+                )
+                return
 
         # store
         with self._lock:
