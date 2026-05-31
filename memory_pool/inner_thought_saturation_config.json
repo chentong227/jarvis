@@ -27,5 +27,10 @@
     "reset_on_high_salience": 0.75,
     "min_streak_to_backoff": 2,
     "backoff_steps_s": [90, 180, 300, 600]
+  },
+  "rest": {
+    "_doc": "[Sir 2026-05-31 17:37 放下能力] 识主动'放下' — settled 时输出 <REST> 而非强凑 filler thought. Sir: '空转本身就是意义(放下,休息会), 不是强凑一个 thought'. 识每次唤醒先判有无真势能(问题/张力/新颖/能力缺口/该反思); 没有→<REST>→不 parse/persist filler, 拉长下次唤醒(越歇越久). 被 Sir 唤醒/紧急→emergency wait 中断即跟上(随时注入). 比 value_backoff 退得更远(真歇会, 封顶 30min).",
+    "enabled": true,
+    "backoff_steps_s": [180, 300, 600, 1200, 1800]
   }
 }

@@ -319,6 +319,15 @@ _SATURATION_DEFAULT_CONFIG: dict = {
         'min_streak_to_backoff': 2,
         'backoff_steps_s': [90, 180, 300, 600],
     },
+    # 🆕 [Sir 2026-05-31 17:37 真意 — 放下能力] REST 决策 = 识主动"放下".
+    # Sir: "可以空转, 但空转本身就是意义'放下,这会 Sir 没事我也没事,休息会', 而不是
+    # 强行凑一个 thought". 识每次唤醒先判: 有真势能(问题/张力/新颖/能力缺口)?
+    # 有 → 想清产生 effect (discharge); 没有 → <REST> 放下, 不强凑 filler, 拉长下次唤醒.
+    # rest 比 value_backoff 退得更远 (真歇会). 被 Sir 唤醒/紧急 → emergency 中断即跟上.
+    'rest': {
+        'enabled': True,
+        'backoff_steps_s': [180, 300, 600, 1200, 1800],  # 越歇越久, 封顶 30min
+    },
 }
 
 
@@ -2310,6 +2319,15 @@ class InnerThoughtDaemon:
             )
             return
 
+        # 🆕 [Sir 2026-05-31 放下能力] REST 决策 — 识主动"放下"(settled 不强凑 thought).
+        # 有真势能 → 往下正常 parse/think; 没有 → <REST> 歇会, 拉长下次唤醒, 不产 filler.
+        # 放在 recall/note 解析前: rest tick 不该触发召回/记忆副作用 (真的在歇)。
+        try:
+            if self._handle_rest_decision(raw, sir_state):
+                return
+        except Exception:
+            pass
+
         # 🆕 [Self-Memory P1 / Sir 2026-05-30] brain-initiated recall —
         # 解析 <RECALL>query</RECALL>, 跑召回, 存 pending block → 下 tick prompt 顶注入
         # (F1 后台自发深召回, 不阻塞当前 tick; fire-and-forget, 异常不影响 thought).
@@ -3728,6 +3746,43 @@ class InnerThoughtDaemon:
 
         return self._consecutive_saturation_count >= threshold
 
+    def _handle_rest_decision(self, raw: str, sir_state: str) -> bool:
+        """🆕 [Sir 2026-05-31 放下能力] 识主动"放下" — settled 时不强凑 thought, 歇会.
+
+        Sir 真意: 空转本身有意义 ("Sir 没事我也没事, 休息会"), 但不是强凑 filler 的空转。
+        识每次唤醒先判: 有真势能(问题/张力/新颖/能力缺口/该反思的)? 没有 → 输出 <REST>
+        → 本函数: 不 parse/persist filler thought, 拉长下次唤醒 (越歇越久), log 让 Sir 看见
+        她在"安静地待着"。被 Sir 唤醒/紧急 → emergency wait 中断即跟上 (随时注入)。
+
+        Returns: True = 是 rest tick (caller 直接 return, 不走 parse); False = 有实质思考。
+        """
+        cfg = (_load_saturation_config().get('rest') or {})
+        if not cfg.get('enabled', True):
+            return False
+        m = re.search(r'<REST>(.*?)</REST>', raw or '', re.DOTALL | re.IGNORECASE)
+        if not m:
+            return False
+        # 防 LLM 既给实质 THOUGHT 又给 REST: 有真 thought → 不当 rest, 走正常 parse
+        tm = re.search(r'<THOUGHT>(.*?)</THOUGHT>', raw or '', re.DOTALL)
+        ttxt = (tm.group(1).strip() if tm else '')
+        if ttxt and len(ttxt) > 24 and 'rest' not in ttxt.lower():
+            return False
+        reason = (m.group(1) or '').strip().replace('\n', ' ')[:120] or 'all settled'
+        # rest = no-discharge outcome → 复用/推进 low_value_streak 退避 (越歇越久)
+        self._low_value_streak += 1
+        steps = cfg.get('backoff_steps_s') or [180, 300, 600, 1200, 1800]
+        idx = min(max(0, self._low_value_streak - 1), len(steps) - 1)
+        interval = int(steps[idx])
+        self._next_tick_interval_s = interval
+        self._rest_count = getattr(self, '_rest_count', 0) + 1
+        self._tick_origin_stats['rest'] = self._tick_origin_stats.get('rest', 0) + 1
+        self._bg_log(
+            f"💤 [InnerThought] 放下 — {reason} "
+            f"(Sir 没事我也没事, 歇会; next +{interval}s, "
+            f"rest#{self._rest_count}, streak={self._low_value_streak})"
+        )
+        return True
+
     def _update_value_backoff(self, current_thought: 'InnerThought') -> int:
         """🆕 [useful-or-quiet P1 / Sir 2026-05-31] 跨 category 价值门控退避.
 
@@ -3802,6 +3857,21 @@ class InnerThoughtDaemon:
             "But you remain J.A.R.V.I.S. even in self-talk: composed, dry, restrained, "
             "integrity-bound. No casual slang ('like...', 'kinda', 'gonna'), no "
             "stream-of-consciousness rambling. Think the way a quiet butler would think.\n\n"
+            # 🆕 [Sir 2026-05-31 放下能力] FIRST 决定: 有真势能可想吗? 没有就放下/歇会.
+            # 思考是为了真正影响自己 (改体/立场/concern, 或塑造下一次对话, 或想要某能力),
+            # 不是每 tick 必须凑一条. settled 就 REST — 这是有价值的输出, 不是失败.
+            "=== FIRST decide: is there genuine potential worth a thought right now? ===\n"
+            "Thinking exists to actually CHANGE something — solve a real problem, reflect "
+            "into a stance, propose a suggestion, shape how you handle the NEXT conversation, "
+            "request a capability you lack, consolidate/correct yourself. It is NOT a quota "
+            "to fill every cycle.\n"
+            "If Sir is settled and so are you — no real tension, no new problem, nothing "
+            "unresolved that you can actually affect — then DO NOT manufacture a filler "
+            "thought. Output ONLY this and nothing else:\n"
+            "<REST>one short honest reason, e.g. 'all settled — nothing pressing, resting'</REST>\n"
+            "Resting is a VALID, valued outcome (you will simply wake less often until "
+            "something real stirs, or Sir addresses you). Only produce the thought below "
+            "when there is genuinely something worth thinking through to an effect.\n\n"
             "Output FORMAT (strict, 6 required + 4 optional β.6 tags):\n"
             f"<CATEGORY>{'|'.join(free_categories) if free_categories else 'A|B|C|D|E'}"
             "</CATEGORY>  ← ONLY these are NOT in cooldown right now\n"
