@@ -114,11 +114,12 @@ class TestP0KindDerive(unittest.TestCase):
             _kind_from_effect('UPDATE_CONCERN_SEVERITY:sir_x:+0.1'), 'solve')
         self.assertEqual(_kind_from_effect('Propose_Stance:Sir:view'), 'reflect')
 
-    # ----- T7: flag 默认 legacy -----
-    def test_t7_mode_default_legacy(self):
-        self.assertEqual(_thinking_kind_mode(), 'legacy')
-        self.assertEqual(
-            _load_thinking_kind_config().get('thinking_kind_mode'), 'legacy')
+    # ----- T7: seed fallback 恒 legacy (mode 是部署开关) -----
+    def test_t7_seed_default_is_legacy(self):
+        # 种子 fallback 恒 legacy (vocab 缺失/损坏 → 安全回退 A-E+冷却).
+        # prod 实际 mode 是部署开关 (Sir 2026-05-31 真机迭代翻 emergent), 不硬断言.
+        self.assertEqual(_THINKING_KIND_DEFAULT['thinking_kind_mode'], 'legacy')
+        self.assertIn(_thinking_kind_mode(), ('legacy', 'emergent'))
 
     def test_t7b_illegal_mode_falls_to_legacy(self):
         # cache 注入非法值 → _thinking_kind_mode 守门回 legacy
@@ -159,8 +160,8 @@ class TestP0KindDerive(unittest.TestCase):
         self.assertTrue(os.path.exists(path), 'vocab 文件须存在 (准则6 持久化)')
         with open(path, 'r', encoding='utf-8') as f:
             vocab = json.load(f)
-        self.assertEqual(vocab.get('thinking_kind_mode'),
-                         _THINKING_KIND_DEFAULT['thinking_kind_mode'])
+        # mode 是部署开关 (legacy|emergent), 不比对; 派生表 + 特例 label 不漂移才比对
+        self.assertIn(vocab.get('thinking_kind_mode'), ('legacy', 'emergent'))
         self.assertEqual(vocab.get('effect_to_kind'),
                          _THINKING_KIND_DEFAULT['effect_to_kind'])
         for k in ('kind_for_rest', 'kind_for_none', 'kind_for_unknown'):
