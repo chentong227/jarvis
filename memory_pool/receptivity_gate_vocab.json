@@ -1,0 +1,12 @@
+{
+  "_doc": "输出闸 (口识体-D, Sir 2026-05-31 真痛 '突然说话吓我一跳'). 口主动 voice nudge deliver 前过此单一 Sir 接收度门. 不接收 → voice 降 silent_text (体/识 想说的留痕飘字幕, 不出声打断) 或 suppress. '内部转'(识/体/口预装)不受此门 (P2 势能驱动); 只'往外说'受门 (VOICE_AND_MIND §4 两件事分开). 被问 (Sir 主动说话) 永远响应不走此门. 准则5 receptivity 从已有信号算无新 sensor; 准则6 全 vocab CLI 可改; 准则1 无 LLM. CLI: scripts/receptivity_gate_dump.py.",
+  "enabled": true,
+  "just_interacted_window_s": 8.0,
+  "always_allow_types": ["return_greeting", "sleep_due", "reminder_fired"],
+  "state_decision": {
+    "active": "allow",
+    "afk_short": "allow",
+    "afk_deep": "downgrade",
+    "sleep": "suppress"
+  }
+}

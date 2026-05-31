@@ -1820,6 +1820,60 @@ class JarvisWorkerThread(QThread):
                                     pass
                             continue
 
+                        # 🆕 [口识体-D / 2026-05-31] 输出闸: Sir 接收度单一门
+                        # =====================================================
+                        # Sir 真痛 "突然说话吓我一跳". voice 真出声前过单一接收度门:
+                        # 不接收 (deep/刚互动完/sleep) → 降 silent_text (体/识 想说的
+                        # 留痕飘字幕, 不出声打断) 或 suppress. '内部转'不受此门 (P2),
+                        # 只'往外说 voice'受门. 被问 (主路径) 不走此门 (永远响应).
+                        # 准则5 用已有信号; 准则6 vocab; 准则8 降级不 hard 砍.
+                        # =====================================================
+                        try:
+                            from jarvis_receptivity_gate import (
+                                gate_nudge_channel as _gate_recept,
+                                DOWNGRADE as _RG_DOWN, SUPPRESS as _RG_SUP,
+                            )
+                            _final_ch, _rg_dec, _rg_reason = _gate_recept(
+                                nudge_context, jarvis=self.jarvis)
+                            if _rg_dec in (_RG_DOWN, _RG_SUP):
+                                # 降级/抑制: 不出声. 留痕 STM + publish (体/识 不丢).
+                                try:
+                                    from jarvis_utils import (
+                                        render_silent_nudge_text as _rsnt,
+                                        bg_log as _rg_bg)
+                                    _q_text = _rsnt(nudge_type, nudge_context)
+                                    if _rg_dec == _RG_DOWN and hasattr(
+                                            self.chat_bypass, 'subtitle_queue'):
+                                        # downgrade: 飘静默字幕 (Sir 抬眼能看, 不被出声打断)
+                                        self.chat_bypass.subtitle_queue.put(
+                                            ("silent_nudge", _q_text))
+                                    self.jarvis.short_term_memory.append({
+                                        "time": time.strftime("%H:%M:%S"),
+                                        "user": f"[接收度门/{_rg_dec}] {nudge_type}",
+                                        "jarvis": _q_text + f" [D 门 {_rg_dec}: {_rg_reason}, 未出声]",
+                                        "source": "jarvis_self",
+                                    })
+                                    if len(self.jarvis.short_term_memory) > 10:
+                                        self.jarvis.short_term_memory.pop(0)
+                                    bus = getattr(self.jarvis, 'event_bus', None)
+                                    if bus is not None:
+                                        bus.publish(
+                                            etype='proactive_nudge',
+                                            description=f"receptivity_{_rg_dec}:{nudge_type}: {_q_text[:60]}",
+                                            source='receptivity_gate',
+                                            metadata={'nudge_type': nudge_type,
+                                                      'decision': _rg_dec,
+                                                      'reason': _rg_reason,
+                                                      'channel': 'silent_text'},
+                                        )
+                                    _rg_bg(f"🔇 [Receptivity/D] {nudge_type} voice→{_rg_dec} "
+                                           f"({_rg_reason}) — 不吓 Sir, 留痕")
+                                except Exception:
+                                    pass
+                                continue  # 不进 voice 分支
+                        except Exception:
+                            pass  # 闸异常 → 退回老行为 (出声), 不阻断 nudge
+
                         # [R7-α/NudgeChannel] VOICE 档：保持原行为
                         # [P0+18-c.6 / 2026-05-15] 修 Sir 17:53 实测 BUG：return_greeting LLM 路径
                         # 破坏对话框 — set_browser_ducking 是 daemon 异步 bg_log，会在
