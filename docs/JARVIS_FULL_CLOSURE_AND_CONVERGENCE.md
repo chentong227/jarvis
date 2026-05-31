@@ -64,23 +64,23 @@
 
 | # | 环 | 路径 | 状态 |
 |---|---|---|---|
-| 1 感知 | sensor/nudge→体能量→识→口→world→Sir→sensor | 🔶 nudge 还直推, 没全进体能量 |
+| 1 感知 | sensor/nudge→体能量→识→口→world→Sir→sensor | ✅ 闭 (closure C: nudge→体张力, 不直推) |
 | 2 势能(内) | 体能量→识/口→口写回体→能量 | ✅ 闭 (MVL) |
-| 3 学习(强闭环) | 识学→stance→Sir仲裁→透镜→口→outcome→体 | 🔶 前半闭, **后半开**(outcome) |
-| 4 验证(言出必行) | 口claim→审 vs 体/hippo/Sir→纠正→识/口+体记 | 🔶 闭, **没用体当证据** |
-| 5 维护(复杂度) | 体→织网者 merge/decay/prune→体 | 🔶 decay/prune 闭, **merge 开** |
+| 3 学习(强闭环) | 识学→stance→Sir仲裁→透镜→口→outcome→体 | ✅ 闭 (closure A: outcome→stance; live 待透镜上热路径) |
+| 4 验证(言出必行) | 口claim→审 vs 体/hippo/Sir→纠正→识/口+体记 | ✅ 闭 (closure B: 体作 evidence 源) |
+| 5 维护(复杂度) | 体→织网者 merge/decay/prune→体 | ✅ 闭 (closure D: merge alias + 复杂度度量) |
 
 ---
 
 ## 4. 开口端 → 闭合 (5 个 closure, 这是工作清单的核心)
 
-| closure | 做什么 | 闭哪个环 | ROI |
-|---|---|---|---|
-| **A outcome→stance** | Sir 采纳/反驳 → reinforce/weaken stance + 标 outcome | 学习环后半 | ★最高 (学到的经实践沉淀) |
-| **B 言出必行→体** | 说的关系类 claim 对**体**审一致 (体作 evidence 源) | 验证环穿体 | 高 |
-| **C nudge→体能量** | nudge 信号退化为体张力/能量 (publish-only) | 感知环穿体 | 高 |
-| **D 复杂度 merge** | 织网者主动合并决余簇 + 复杂度度量 | 维护环 | 高 (防膨胀) |
-| **E SOUL L2/3 收敛** | relational/attention 平行表示折进体/识, 删冗余 | 内敛 | 中 (真优雅) |
+| closure | 做什么 | 闭哪个环 | ROI | 状态 |
+|---|---|---|---|---|
+| **A outcome→stance** | Sir 采纳/反驳 → reinforce/weaken stance + 标 outcome | 学习环后半 | ★最高 (学到的经实践沉淀) | ✅ (bf08078, live 待透镜) |
+| **B 言出必行→体** | 说的关系类 claim 对**体**审一致 (体作 evidence 源) | 验证环穿体 | 高 | ✅ (fd6caad, 立即 live) |
+| **C nudge→体能量** | nudge 信号退化为体张力/能量 (publish-only) | 感知环穿体 | 高 | ✅ (69073e0) |
+| **D 复杂度 merge** | 织网者主动合并决余簇 + 复杂度度量 | 维护环 | 高 (防膨胀) | ✅ (a338b4e) |
+| **E SOUL L2/3 收敛** | relational/attention 平行表示折进体/识, 删冗余 | 内敛 | 中 (真优雅) | 🔶 机制就绪 (c3d1852), 待 Sir 真机 A/B |
 
 ---
 
@@ -94,7 +94,9 @@ Jarvis 是全流程闭环 ⟺ 同时满足:
 4. **每条 claim 对锚审**: 言出必行 vs 体 + hippocampus + Sir。
 5. **锚在不可变**: hippocampus 永不动 + Sir 否决 → 自指环不漂移。
 
-当前缺 #1(nudge 半孤儿) / #2(nudge 没全入体) / #3(outcome 没回体) / #4(没用体审)。补完 closure A-E + hippo guard → 全闭。
+~~当前缺 #1(nudge 半孤儿) / #2(nudge 没全入体) / #3(outcome 没回体) / #4(没用体审)。~~
+**2026-05-31 更新**: closure C(#1/#2 nudge→体张力) + A(#3 outcome→stance) + B(#4 体作 evidence) + D(merge) + G0(#5 hippo guard) 全落地 → **5 环全闭, 5 判据全满足**。
+残余: closure E(L2/3 收敛) 机制就绪默认关, 待 Sir 真机 A/B 验后开 + 退旧块; A 的 outcome→stance live 待透镜上热路径 (= E 真机验同一前提)。
 
 ---
 
