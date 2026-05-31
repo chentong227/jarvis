@@ -97,6 +97,7 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
     # 故 weaver 用 accumulate=False (set-to-floor, 不 Hebbian 累加, 防重复 weave 膨胀)
     "embed_threshold": 0.72,           # cosine >= 阈值才连 embed 边
     "embed_top_k_per_node": 8,         # 每节点最多保留 K 条最强 embed 边 (防稠密图)
+    "merge_threshold": 0.90,           # cosine >= 此 = 近重复 → 合并 alias (口识体-D2 防 bloat)
     # 面 (体-P3) — 语义曲面 = 图里强连通的节点社区
     "surface_min_weight": 0.45,        # 边有效权重 >= 此值才算"紧"连接 (聚面用)
     "surface_min_size": 3,             # 面最小节点数 (< 此不算一个面)
@@ -193,6 +194,7 @@ class RelationalManifold:
         self._edges: Dict[str, Dict[str, Any]] = {}
         self._adj: Dict[str, set] = collections.defaultdict(set)  # node -> {edge_key}
         self._surfaces: List[Dict[str, Any]] = []  # 体-P3 语义曲面 (Weaver 算)
+        self._aliases: Dict[str, str] = {}  # 口识体-D2: 近重复节点 → 代表 (合并, 不动源)
         self._load()
 
     # ---- persistence ----
@@ -215,6 +217,8 @@ class RelationalManifold:
                     self._adj[e["b"]].add(key)
                 sf = data.get("surfaces", []) if isinstance(data, dict) else []
                 self._surfaces = sf if isinstance(sf, list) else []
+                al = data.get("aliases", {}) if isinstance(data, dict) else {}
+                self._aliases = al if isinstance(al, dict) else {}
             except Exception as exc:
                 _log(f"[Manifold] load failed ({exc!r}) — starting empty")
                 self._edges = {}
@@ -234,6 +238,7 @@ class RelationalManifold:
                 },
                 "edges": self._edges,
                 "surfaces": self._surfaces,
+                "aliases": self._aliases,
             }
             tmp = self.path + ".tmp"
             try:
@@ -574,6 +579,31 @@ class RelationalManifold:
                     return s
         return None
 
+    # ---- 合并 / alias (口识体-D2): 近重复节点 → 代表 (不动源 store) ----
+    def add_alias(self, dup: str, rep: str) -> bool:
+        """记 dup 是 rep 的近重复 (合并)。**不删源**, 只在体层把 dup 指向 rep。
+        防环 + 防自指。投影/复杂度据此把它们当一个。
+        """
+        if dup == rep or not dup or not rep:
+            return False
+        with self._lock:
+            rep_r = self.resolve(rep)        # rep 自己可能已是别人的 alias
+            if rep_r == dup:                 # 防环
+                return False
+            self._aliases[dup] = rep_r
+        return True
+
+    def resolve(self, node_id: str, _depth: int = 0) -> str:
+        """跟随 alias 链到代表节点 (深度封顶防坏数据死循环)。"""
+        if _depth > 8:
+            return node_id
+        rep = self._aliases.get(node_id)
+        return self.resolve(rep, _depth + 1) if rep else node_id
+
+    def get_aliases(self) -> Dict[str, str]:
+        with self._lock:
+            return dict(self._aliases)
+
     # ---- introspection ----
     def stats(self, now: Optional[float] = None) -> Dict[str, Any]:
         now = time.time() if now is None else now
@@ -634,6 +664,7 @@ class RelationalManifold:
             "density": density, "largest_surface_frac": largest_frac,
             "grounded_frac": grounded_frac, "compression": compression,
             "health": health, "complexity_score": score,
+            "merged_dups": len(self._aliases),  # 口识体-D2: 已合并的近重复数
         }
 
     def all_edges(self) -> List[Dict[str, Any]]:

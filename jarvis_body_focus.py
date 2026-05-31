@@ -93,7 +93,7 @@ class BodyFocus:
 
         # 1) 刚升起的 delta (最该立刻 attend)
         for d in (data.get("recent_deltas") or []):
-            nid = d.get("node")
+            nid = self.manifold.resolve(d.get("node") or "")  # D2: alias→代表, 合并去重
             if not nid or nid in seen:
                 continue
             seen.add(nid)
@@ -106,7 +106,7 @@ class BodyFocus:
 
         # 2) standing 高能量 (持续值得关注但没新 delta)
         for e in (data.get("top_energy") or []):
-            nid = e.get("node")
+            nid = self.manifold.resolve(e.get("node") or "")  # D2: alias→代表, 合并去重
             if not nid or nid in seen:
                 continue
             seen.add(nid)

@@ -367,8 +367,10 @@ class RelationalWeaver:
         norms[norms == 0] = 1.0
         Mn = M / norms
         sim = Mn @ Mn.T
+        merge_thr = float(cfg.get("merge_threshold", 0.90))
         seen = set()
         added = 0
+        dup_pairs: List[tuple] = []
         for i in range(len(ids)):
             row = sim[i].copy()
             row[i] = -1.0
@@ -384,6 +386,22 @@ class RelationalWeaver:
                 seen.add(key)
                 if self.manifold.add_geometric_edge(a, b, c, now=now):
                     added += 1
+                if c >= merge_thr:           # 近重复 → 候选合并
+                    dup_pairs.append((a, b))
+        # 口识体-D2: 近重复 → 合并 alias (代表=度数高/更 established; 不删源)
+        merged = 0
+        for a, b in dup_pairs:
+            ra, rb = self.manifold.resolve(a), self.manifold.resolve(b)
+            if ra == rb:
+                continue
+            if self.manifold.degree(ra) >= self.manifold.degree(rb):
+                rep, dup = ra, rb
+            else:
+                rep, dup = rb, ra
+            if self.manifold.add_alias(dup, rep):
+                merged += 1
+        if merged:
+            _log(f"[Weaver/D2] 合并近重复 {merged} 对 (cosine>={merge_thr}) — 防 bloat, 不动源")
         return added
 
     # ---- 维护 ----

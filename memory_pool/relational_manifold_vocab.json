@@ -33,6 +33,7 @@
     "neighbor_default_limit": 24,
     "embed_threshold": 0.72,
     "embed_top_k_per_node": 8,
+    "merge_threshold": 0.90,
     "surface_min_weight": 0.45,
     "surface_min_size": 3,
     "lens_inject_enabled": 1,

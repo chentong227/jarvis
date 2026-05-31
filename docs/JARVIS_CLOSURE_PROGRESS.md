@@ -34,7 +34,7 @@
 |---|---|---|---|---|---|
 | **D1** | 复杂度度量 (metric 替计数告警) | 维护环 | manifold/weaver (熟) | 低 (纯计算) | ✅ (真机验: blob score 0.222 largest_frac 0.778) |
 | **G0** | hippo 永不动 guard + doc | 锚 | 新 test + doc | 低 (小) | ✅ (静态守护 2 test) |
-| **D2** | 主动合并决余簇 (super-surface, 不动源) | 维护环 | manifold/weaver | 中 | ⬜ |
+| **D2** | 主动合并决余簇 (alias, 不动源) | 维护环 | manifold/weaver/focus | 中 | ✅ (alias+resolve+Weaver检测+focus去重, 4 test) |
 | **A** | outcome→stance (Sir 反应 reinforce/weaken) | 学习环后半 | meta_feedback(查) + stance | 中 (需查 meta_feedback) | ⬜ |
 | **C** | nudge 群退化 publish→体能量 | 感知环 | nudge 模块群(查) + 体 | 中-高 | ⬜ |
 | **B** | 言出必行用体作 evidence 源 | 验证环 | ClaimTracer(查) + 体 | 中 | ⬜ |
@@ -48,6 +48,7 @@
 ## 逐步日志 (做一步记一步)
 
 - **[起]** 2026-05-31 ~11:00: 建本进度文档。开始 D1 复杂度度量。
+- **[D2 ✅]** ~11:20: manifold alias(add_alias/resolve链+防环/persist) + Weaver weave_geometric 检测 cosine>=merge_threshold(0.90) 近重复→add_alias(代表=度数高) + BodyFocus.current_focus 按 resolve 去重 + complexity merged_dups. **不删源(hippo永不动)**, 体层把 dup 当代表。4 test 绿 + 回归绿。维护环闭合(decay/prune/merge 齐)。下一步: A outcome→stance (需查 meta_feedback, 留给新窗口)。
 - **[G0 ✅]** ~11:10: hippo 永不动 guard — 静态扫体 5 模块断言无 hippo 写(INSERT/store_memory/...)+ weaver embed 只读注释。2 test 绿。下一步: D2 主动合并 (针对 blob)。
 - **[D1 ✅]** ~11:05: manifold.complexity_report (health/score/largest_surface_frac/grounded_frac) + CLI `--complexity` + Weaver 每 weave log + blob/over_dense 告警。真机验: prod manifold = blob (score 0.222, largest_frac 0.778) — 正确抓出 54 节点 blob。3 test 绿。下一步: G0 hippo guard。
 
