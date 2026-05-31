@@ -29,6 +29,13 @@ import os
 import sys
 import time
 
+# Windows PowerShell stdout 默 GBK, 本 CLI 用 emoji (✅⚠️) 会 UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -190,6 +197,53 @@ def cmd_config() -> None:
     print(json.dumps(get_manifold_config(), ensure_ascii=False, indent=2))
 
 
+def cmd_merge_dups(m: RelationalManifold, threshold: float) -> None:
+    """口识体 数据卫生: 一次性合并近重复节点 (alias, 不删源, 可逆). 准则 6 CLI.
+
+    用缓存向量算两两 cosine, >= threshold → add_alias(dup→rep, rep=度数高). 收 blob/去重
+    识自生成的近重复 self-talk (如 8 个 'Sir 装睡' joke 变体). 不删 relational_state 源。
+    """
+    import numpy as np
+    vpath = os.path.join(ROOT, "memory_pool", "manifold_vectors.json")
+    try:
+        vec = (json.load(open(vpath, encoding="utf-8")) or {}).get("vectors") or {}
+    except Exception:
+        print("(无 manifold_vectors.json — 先 python scripts/manifold_dump.py --weave)")
+        return
+    ids = [k for k in vec if vec[k].get("vec")]
+    if len(ids) < 2:
+        print("(缓存向量 < 2, 无法算近重复)")
+        return
+    M = np.array([vec[i]["vec"] for i in ids], dtype=np.float32)
+    nrm = np.linalg.norm(M, axis=1, keepdims=True)
+    nrm[nrm == 0] = 1.0
+    Mn = M / nrm
+    sim = Mn @ Mn.T
+    pairs = []
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            c = float(sim[i, j])
+            if c >= threshold:
+                pairs.append((c, ids[i], ids[j]))
+    pairs.sort(reverse=True)
+    print(f"近重复对 (cosine>={threshold}): {len(pairs)}")
+    merged = 0
+    for c, a, b in pairs:
+        ra, rb = m.resolve(a), m.resolve(b)
+        if ra == rb:
+            continue
+        rep, dup = (ra, rb) if m.degree(ra) >= m.degree(rb) else (rb, ra)
+        if m.add_alias(dup, rep):
+            merged += 1
+            print(f"  merge cos={c:.3f}  keep {_short(rep, 42)}  ←alias {_short(dup, 42)}")
+    if merged:
+        m.save()
+    cx = m.complexity_report()
+    print(f"\n✅ 合并 {merged} 对 (source 不删, 可逆). "
+          f"complexity: {cx['health']}/{cx['complexity_score']} "
+          f"largest_surface_frac={cx['largest_surface_frac']}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Jarvis 体(Body) 关系流形 CLI")
     ap.add_argument("--top", type=int, metavar="N", help="看权重最高 N 条边")
@@ -207,6 +261,10 @@ def main(argv=None) -> int:
     ap.add_argument("--prune", action="store_true", help="删低于 floor 的边")
     ap.add_argument("--weave", action="store_true",
                     help="织网者跑一轮 (harvest + 几何 embed 边, 真调 embedding API)")
+    ap.add_argument("--merge-dups", action="store_true",
+                    help="一次性合并近重复节点 (alias 去重 blob, 不删源, 可逆)")
+    ap.add_argument("--threshold", type=float, default=None,
+                    help="--merge-dups 的 cosine 阈值 (默认取 config merge_threshold)")
     ap.add_argument("--json", action="store_true", help="raw dump")
     args = ap.parse_args(argv)
 
@@ -222,6 +280,12 @@ def main(argv=None) -> int:
         print("织网中 (harvest + embed + 几何边)... 真调 embedding API, 稍候")
         stats = w.weave_once()
         print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.merge_dups:
+        thr = (args.threshold if args.threshold is not None
+               else float(get_manifold_config().get("merge_threshold", 0.90)))
+        cmd_merge_dups(m, thr)
         return 0
 
     if args.json:

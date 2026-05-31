@@ -118,6 +118,25 @@ class TestLens(unittest.TestCase):
             self.assertIn(sleep, seeds)   # concern 优先进 seeds
             self.assertIn(pomo, seeds)
 
+    def test_t7_project_resolves_aliases(self):
+        # 数据卫生: 近重复 alias 投影时折叠到代表, 不重复占预算 (识自生成的 dup self-talk)
+        with tempfile.TemporaryDirectory() as d:
+            m = RelationalManifold(os.path.join(d, "m.json"))
+            seed = make_node_id(KIND_CONCERN, "topic")
+            from jarvis_relational_manifold import KIND_JOKE
+            rep = make_node_id(KIND_JOKE, "rep")
+            dup = make_node_id(KIND_JOKE, "dup")
+            m.observe_explicit_link(seed, rep, "t1", now=T0)
+            m.observe_explicit_link(seed, dup, "t1", now=T0)
+            m.add_alias(dup, rep)  # dup 近重复 → alias 到 rep
+            tmap = {seed: "the topic", rep: "canonical joke phrasing here",
+                    dup: "near duplicate joke phrasing"}
+            lens = RelationalLens(manifold=m, stance_store=False,
+                                  text_provider=lambda: tmap)
+            block = lens.project([seed], now=T0)
+            self.assertIn("canonical joke", block)        # 代表保留
+            self.assertNotIn("near duplicate", block)     # dup 折叠, 不重复投影
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

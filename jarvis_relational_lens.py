@@ -178,17 +178,22 @@ class RelationalLens:
         text_map = self._node_text_map()
 
         # 相关性: 激活扩散 (排除 seed 本身, 主脑已有当前语境)
+        # 口识体 数据卫生: resolve 近重复 alias → 折叠到代表去重 (识自生成的近重复
+        # self-talk 如多个 'Sir 装睡' joke 变体不重复投影占预算)。
         relevant: List[tuple] = []
         if seeds:
             activation = self.manifold.spread(
                 seeds, hops=hops, min_activation=min_activation, now=now)
+            best: Dict[str, float] = {}
             for nid, score in activation.items():
-                if nid in seed_set or nid not in text_map:
+                rep = self.manifold.resolve(nid)
+                if rep in seed_set or rep not in text_map:
                     continue
-                if split_node_id(nid)[0] == KIND_STANCE:
+                if split_node_id(rep)[0] == KIND_STANCE:
                     continue  # 立场走形状段, 不混进相关段
-                relevant.append((nid, score))
-            relevant.sort(key=lambda x: x[1], reverse=True)
+                if score > best.get(rep, -1.0):
+                    best[rep] = score
+            relevant = sorted(best.items(), key=lambda x: x[1], reverse=True)
 
         # 形状 (阻力): 高置信 active 立场, 永远尝试保留
         stances = []
