@@ -110,16 +110,20 @@ class RelationalLens:
     def default_seeds(self, *, limit: int = 6) -> List[str]:
         # 优先: 体势能焦点 (口投影体此刻被激活的区, 非固定 dump)。
         # 仅 prod 模式 (无注入 text_provider) 用全局体焦点; 注入模式(测试)走下方 fallback 保隔离。
+        text_map = self._node_text_map()
         if self._text_provider is None:
             try:
                 from jarvis_body_focus import get_body_focus
                 seeds = get_body_focus().focus_seeds(limit=limit)
+                # 口识体-E 健壮性: 只留体里真实存在的 seed。stale/被污染的 body_energy
+                # (指向已不存在节点) 会让投影空 (真机发现: th1/th2 残留 → 透镜空). 无有效
+                # seed → 落到下方 concern/hub fallback, 保证透镜永不因脏 energy 而空。
+                seeds = [s for s in seeds if s in text_map]
                 if seeds:
                     return seeds
             except Exception:
                 pass
         # 退回: concern + 高度数 hub
-        text_map = self._node_text_map()
         concerns = [n for n in text_map if split_node_id(n)[0] == KIND_CONCERN]
         ranked = sorted(text_map.keys(), key=lambda n: self.manifold.degree(n), reverse=True)
         seeds = []

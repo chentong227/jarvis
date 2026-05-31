@@ -63,6 +63,32 @@ class TestLayerConverge(unittest.TestCase):
         self.assertIn("not _lens_replaces_l3", src)  # Layer3 退平行条件
         self.assertIn("lens_replaces_layer2", src)   # import flag helper
 
+    def test_e6_default_seeds_robust_to_stale_focus(self):
+        # 真机发现根因: body_energy 被 stale/test 数据污染 (th1/th2 不存在) → focus_seeds
+        # 指向不存在节点 → 透镜投影空. 修: default_seeds 过滤不存在 seed → fallback concern。
+        import tempfile
+        import jarvis_body_focus as BF
+        from jarvis_relational_manifold import (
+            RelationalManifold, make_node_id, KIND_CONCERN)
+        with tempfile.TemporaryDirectory() as d:
+            m = RelationalManifold(os.path.join(d, "m.json"))
+            c1 = make_node_id(KIND_CONCERN, "c1")
+            lens = L.RelationalLens(manifold=m, stance_store=False, text_provider=None)
+            lens._node_text_map = lambda: {c1: "Sir concern one watch"}
+
+            class _FakeFocus:
+                def focus_seeds(self, *, limit=6):
+                    return ["thread:th1", "thread:th2"]  # stale, 体里不存在
+
+            _orig = BF.get_body_focus
+            try:
+                BF.get_body_focus = lambda: _FakeFocus()
+                seeds = lens.default_seeds(limit=6)
+            finally:
+                BF.get_body_focus = _orig
+            self.assertNotIn("thread:th1", seeds)  # stale seed 被过滤
+            self.assertIn(c1, seeds)               # fallback 到真实 concern (透镜不空)
+
     def test_e5_replace_only_when_lens_active(self):
         # 安全: 必须在 'if lens_block:' guard 内才读 replace flag — 透镜空不替旧块
         with open(os.path.join(ROOT, "jarvis_central_nerve.py"), encoding="utf-8") as f:

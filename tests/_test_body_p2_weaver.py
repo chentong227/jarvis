@@ -75,6 +75,10 @@ def _mk_weaver(d, embed_fn, **store_kwargs):
         manifold=man, embed_fn=embed_fn,
         threads_path=tp, concerns_path=cp, relational_path=rp,
         vectors_path=os.path.join(d, "vectors.json"),
+        # 测试隔离: 必须 tmp energy_path/stance_path, 否则 weave_once._save_energy 写真
+        # memory_pool/body_energy.json (真机发现: th1/th2 残留污染 prod 透镜 default_seeds)。
+        stance_path=os.path.join(d, "stance.json"),
+        energy_path=os.path.join(d, "energy.json"),
     )
 
 
