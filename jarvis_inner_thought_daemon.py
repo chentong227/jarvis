@@ -326,7 +326,12 @@ _SATURATION_DEFAULT_CONFIG: dict = {
     # rest 比 value_backoff 退得更远 (真歇会). 被 Sir 唤醒/紧急 → emergency 中断即跟上.
     'rest': {
         'enabled': True,
-        'backoff_steps_s': [180, 300, 600, 1200, 1800],  # 越歇越久, 封顶 30min
+        # 不写死冷却阶梯: 休息深度统一到一个"存在心跳"地板 (单一物理常数, 非升级 ladder),
+        # 醒来靠真扰动 (体动静/Sir), 不是定时到点. 势能自转 §3 "Sir 扰动永不停 + 地板心跳"。
+        'ambient_floor_s': 600,            # settled 时的存在心跳周期 (单常数)
+        'wake_on_body_delta': True,        # 体一有 fresh delta → 提前结束休息
+        'body_stir_min_magnitude': 0.3,    # 多大 delta 算"动静"(噪声门, 同 P2)
+        'body_stir_poll_s': 30,            # 休息中多久查一次体动静 (轻量, 非每 0.5s)
     },
 }
 
@@ -1769,11 +1774,37 @@ class InnerThoughtDaemon:
             pass
         return False
 
+    def _check_body_stir(self) -> bool:
+        """🆕 [Sir 2026-05-31 17:54 优雅 rest] 休息中体一有动静(fresh delta)→ 提前唤醒.
+
+        势能自转: 休息不是定时冷却, 是"歇到被真扰动". 体 (Weaver 算的真张力/新颖) 一动
+        → 结束休息去 attend 那块。仅 _resting 时检 (正常 tick 不需, 节省). 轻量读 body_energy。
+        """
+        if not getattr(self, '_resting', False):
+            return False
+        try:
+            cfg = (_load_saturation_config().get('rest') or {})
+            if not cfg.get('wake_on_body_delta', True):
+                return False
+            from jarvis_body_focus import get_body_focus
+            mag = float(cfg.get('body_stir_min_magnitude', 0.3))
+            if get_body_focus().has_fresh_delta(min_magnitude=mag):
+                self._resting = False
+                self._bg_log(
+                    "⚡ [InnerThought] 体有动静 (fresh delta) → 结束休息, 醒来 attend "
+                    "(势能扰动唤醒, 非定时)")
+                return True
+        except Exception:
+            pass
+        return False
+
     def _wait_with_emergency_check(self, timeout: float) -> str:
         """🆕 [governor Phase 4 E1] Wait up to `timeout` s, poll emergency every
-        `poll_chunk_s` s. Return 'stop' / 'emergency' / 'timeout'.
+        `poll_chunk_s` s. Return 'stop' / 'emergency' / 'timeout' / 'body_stir'.
 
         Replace plain `self._stop.wait(timeout=...)` to allow SWM event interrupt.
+        🆕 [Sir 2026-05-31 优雅 rest] 休息中额外低频 poll 体动静 → 真扰动提前唤醒
+        (非定时冷却到点; body_stir_poll_s 节流, 不每 0.5s 读盘)。
         """
         try:
             cfg = _load_emergency_vocab()
@@ -1781,11 +1812,17 @@ class InnerThoughtDaemon:
         except Exception:
             poll_chunk = 0.5
         poll_chunk = max(0.1, min(2.0, poll_chunk))  # sanity
+        try:
+            _body_poll_s = float(
+                (_load_saturation_config().get('rest') or {}).get('body_stir_poll_s', 30))
+        except Exception:
+            _body_poll_s = 30.0
         remaining = max(0.0, float(timeout))
         # If E1 disabled 或 timeout 太短, fallback 原 _stop.wait
         if not _load_emergency_vocab().get('enabled', True):
             self._stop.wait(timeout=remaining)
             return 'stop' if self._stop.is_set() else 'timeout'
+        _since_body = 0.0
         while remaining > 0 and not self._stop.is_set():
             chunk = min(poll_chunk, remaining)
             self._stop.wait(timeout=chunk)
@@ -1793,6 +1830,12 @@ class InnerThoughtDaemon:
                 return 'stop'
             if self._check_emergency_pending():
                 return 'emergency'
+            # 休息中: 低频查体动静 (真扰动唤醒, 非定时冷却)
+            _since_body += chunk
+            if _since_body >= _body_poll_s:
+                _since_body = 0.0
+                if self._check_body_stir():
+                    return 'body_stir'
             remaining -= chunk
         if self._stop.is_set():
             return 'stop'
@@ -2221,6 +2264,9 @@ class InnerThoughtDaemon:
     # ----------------------------------------------------------
     def _tick(self) -> None:
         self._tick_count += 1
+        # 🆕 [Sir 2026-05-31 优雅 rest] 一旦真 tick 跑起来 → 不再"休息中" (若本 tick 又
+        # 选 REST, _handle_rest_decision 会重新置 True). 清标避免 stale。
+        self._resting = False
 
         # 🆕 [#2 / Sir 2026-05-29 Option A] ignored sweep — 每 tick 顶跑 (纯 Python
         # 不烧 token, cooldown/evidence-gate skip 都不影响). pending main_reply
@@ -3768,18 +3814,19 @@ class InnerThoughtDaemon:
         if ttxt and len(ttxt) > 24 and 'rest' not in ttxt.lower():
             return False
         reason = (m.group(1) or '').strip().replace('\n', ' ')[:120] or 'all settled'
-        # rest = no-discharge outcome → 复用/推进 low_value_streak 退避 (越歇越久)
-        self._low_value_streak += 1
-        steps = cfg.get('backoff_steps_s') or [180, 300, 600, 1200, 1800]
-        idx = min(max(0, self._low_value_streak - 1), len(steps) - 1)
-        interval = int(steps[idx])
-        self._next_tick_interval_s = interval
+        # 🆕 [Sir 2026-05-31 17:54 — 更优雅: 不写死冷却阶梯] 休息深度统一到一个"存在
+        # 心跳"地板 (单一物理常数, 非升级阶梯), 醒来靠**真扰动**: 体一有动静(fresh delta)
+        # 或 Sir 一开口即醒 (event-driven, 势能自转 §3 "Sir 扰动永不停 + 地板心跳")。
+        # 不再 streak++ 越歇越久 — 那是 governor/cooldown 思维; 这是有机体歇着、被真事唤醒。
+        floor = float(cfg.get('ambient_floor_s', 600))
+        self._next_tick_interval_s = int(floor)
+        self._resting = True   # 标记休息中 → wait 期间体动静/Sir 可提前唤醒
         self._rest_count = getattr(self, '_rest_count', 0) + 1
         self._tick_origin_stats['rest'] = self._tick_origin_stats.get('rest', 0) + 1
         self._bg_log(
             f"💤 [InnerThought] 放下 — {reason} "
-            f"(Sir 没事我也没事, 歇会; next +{interval}s, "
-            f"rest#{self._rest_count}, streak={self._low_value_streak})"
+            f"(Sir 没事我也没事, 歇会; 心跳 floor {int(floor)}s, "
+            f"体一有动静/你一开口即醒; rest#{self._rest_count})"
         )
         return True
 

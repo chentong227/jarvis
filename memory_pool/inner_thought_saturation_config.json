@@ -29,8 +29,11 @@
     "backoff_steps_s": [90, 180, 300, 600]
   },
   "rest": {
-    "_doc": "[Sir 2026-05-31 17:37 放下能力] 识主动'放下' — settled 时输出 <REST> 而非强凑 filler thought. Sir: '空转本身就是意义(放下,休息会), 不是强凑一个 thought'. 识每次唤醒先判有无真势能(问题/张力/新颖/能力缺口/该反思); 没有→<REST>→不 parse/persist filler, 拉长下次唤醒(越歇越久). 被 Sir 唤醒/紧急→emergency wait 中断即跟上(随时注入). 比 value_backoff 退得更远(真歇会, 封顶 30min).",
+    "_doc": "[Sir 2026-05-31 17:54 优雅放下] 识主动'放下' — settled 时输出 <REST> 而非强凑 filler. 不写死冷却阶梯(那是 governor 思维): 休息深度统一到一个'存在心跳'地板(ambient_floor_s 单常数), 醒来靠真扰动 — 体一有动静(fresh delta>=body_stir_min_magnitude)或 Sir 一开口即醒(event-driven, 势能自转 §3 'Sir 扰动永不停 + 地板心跳'). 不再 streak++ 越歇越久. body_stir_poll_s 节流休息中查体动静(非每 0.5s 读盘). Sir 唤醒/紧急走 emergency wait 中断.",
     "enabled": true,
-    "backoff_steps_s": [180, 300, 600, 1200, 1800]
+    "ambient_floor_s": 600,
+    "wake_on_body_delta": true,
+    "body_stir_min_magnitude": 0.3,
+    "body_stir_poll_s": 30
   }
 }

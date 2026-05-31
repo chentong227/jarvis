@@ -42,23 +42,45 @@ class TestRestDecision(unittest.TestCase):
         raw = "<REST>all settled — nothing pressing, resting</REST>"
         self.assertTrue(d._handle_rest_decision(raw, 'active'))
 
-    def test_l2_rest_relaxes_interval(self):
+    def test_l2_rest_uses_ambient_floor_not_ladder(self):
+        # 优雅: 休息=单一存在心跳 floor (非升级阶梯). 多次 rest 间隔不变 (不 escalate).
         d = _daemon()
         d._handle_rest_decision("<REST>settled</REST>", 'active')
-        # streak=1 → steps[0]=180
-        self.assertEqual(d._next_tick_interval_s, 180)
-        self.assertEqual(d._low_value_streak, 1)
+        first = d._next_tick_interval_s
+        self.assertEqual(first, 600)        # ambient_floor, 单常数
+        self.assertTrue(d._resting)         # 标记休息中 (体动静可唤醒)
+        # 再 rest → 还是同一 floor (不像 ladder 越来越久)
+        d._resting = False
+        d._handle_rest_decision("<REST>still settled</REST>", 'active')
+        self.assertEqual(d._next_tick_interval_s, first)   # 不 escalate
 
-    def test_l3_consecutive_rest_grows_to_cap(self):
+    def test_l3_body_stir_wakes_from_rest(self):
+        # 势能扰动唤醒: 休息中体有 fresh delta → 提前结束休息 (非定时到点)
         d = _daemon()
-        intervals = []
-        for _ in range(7):
-            d._handle_rest_decision("<REST>still settled</REST>", 'active')
-            intervals.append(d._next_tick_interval_s)
-        # 越歇越久, 封顶 1800
-        self.assertEqual(intervals[0], 180)
-        self.assertEqual(intervals[-1], 1800)   # capped
-        self.assertTrue(intervals[1] >= intervals[0])  # 单调不降
+        d._resting = True
+
+        class _FakeFocus:
+            def has_fresh_delta(self, min_magnitude=0.0):
+                return True
+        with patch('jarvis_body_focus.get_body_focus', return_value=_FakeFocus()):
+            self.assertTrue(d._check_body_stir())
+        self.assertFalse(d._resting)   # 唤醒后清休息标
+
+    def test_l3b_no_stir_no_wake(self):
+        d = _daemon()
+        d._resting = True
+
+        class _FakeFocus:
+            def has_fresh_delta(self, min_magnitude=0.0):
+                return False
+        with patch('jarvis_body_focus.get_body_focus', return_value=_FakeFocus()):
+            self.assertFalse(d._check_body_stir())
+        self.assertTrue(d._resting)    # 没动静 → 继续休息
+
+    def test_l3c_not_resting_no_check(self):
+        d = _daemon()
+        d._resting = False  # 没在休息 → 不检 (正常 tick 不需)
+        self.assertFalse(d._check_body_stir())
 
     def test_l4_substantive_thought_not_rest(self):
         d = _daemon()
