@@ -93,6 +93,17 @@ _UNCERTAINTY_MARKERS = (
     '我记得', '我猜', '左右',
 )
 
+# 🆕 [fix-churn / 2026-05-31] 模糊近似量词 = hedge, NOT specific claim (准则 5).
+# Sir 真测 BUG: 主脑说 "a few minutes" → ClaimTracer 当 [count] specific claim 标
+# unverified → INTEGRITY alert 逼主脑下轮纠正 → "five minutes not a few" 又被 PreFlight
+# 判 unsolicited callback → 循环 4 轮强迫纠正一个 Sir 不在乎、本就是约数的时间。
+# 治本: count claim 自身文本含模糊量词 (few/couple/several/几/一会) → 标 uncertainty,
+# 不当 specific claim 审计。区别于 "five minutes"(具体, 仍审) —— 约数本就不是言出必行对象。
+_VAGUE_QUANTITY_MARKERS = (
+    'few', 'couple', 'several', 'some', 'handful',
+    '几', '些', '一会', '片刻', '一阵', '半天', '好一', '一两',
+)
+
 # 🩹 [β.3.0 BUG#4 / 2026-05-18] past-action claim 提取
 # Sir 14:00 痛点: 主脑说"已打开看板"但实际工具失败 → 言行不一.
 # 此 regex 抓 reply 里"已 X / I've X / opened X / muted X"动作.
@@ -199,6 +210,12 @@ def extract_claims(text: str) -> List[Claim]:
     # 标 uncertainty: 每个 claim 看附近 ±40 字符是否含 uncertainty marker
     text_l = text.lower()
     for c in claims:
+        # 🆕 [fix-churn / 2026-05-31] count claim 自身是模糊约数 (few/couple/几) → hedge
+        if c.kind == 'count':
+            ctext = (c.text or '').lower()
+            if any(v in ctext for v in _VAGUE_QUANTITY_MARKERS):
+                c.has_uncertainty = True
+                continue
         start = max(0, c.span[0] - 40)
         end = min(len(text), c.span[1] + 40)
         window = text_l[start:end]

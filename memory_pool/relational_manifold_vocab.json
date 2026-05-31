@@ -35,7 +35,7 @@
     "embed_top_k_per_node": 8,
     "surface_min_weight": 0.45,
     "surface_min_size": 3,
-    "lens_inject_enabled": 0,
+    "lens_inject_enabled": 1,
     "weaver": {
       "weave_interval_s": 600,
       "initial_delay_s": 90,
