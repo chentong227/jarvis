@@ -24,6 +24,7 @@ import re  # noqa: F401
 import time
 import json  # noqa: F401
 import threading
+import collections
 from typing import Dict, List, Optional, Callable, Any, Iterable
 
 from jarvis_relational_manifold import (
@@ -70,6 +71,13 @@ class RelationalLens:
         self._text_cache_ts = 0.0
         self._text_ttl = float(text_ttl_s)
         self._lock = threading.RLock()
+        # 口识体-A: 本轮投影过哪些 stance (turn_id → {ts, stance_ids}). 闭学习环后半
+        # 的接线点 — Sir 反应回来时据 turn_id 取回投影过的 stance reinforce/weaken。
+        # 有界 + TTL 对齐 meta_feedback reaction 窗口 (30 min), 纯 in-memory (准则 1)。
+        self._projected: "collections.OrderedDict[str, Dict[str, Any]]" = (
+            collections.OrderedDict())
+        self._projected_cap = 128
+        self._projected_ttl = 1800.0
 
     @property
     def stance(self):
@@ -125,6 +133,7 @@ class RelationalLens:
     # ---- 核心: 投影 ----
     def project(
         self, seeds: Optional[Iterable[str]] = None, *,
+        turn_id: Optional[str] = None,
         max_nodes: int = 10, max_chars: int = 900, hops: int = 2,
         min_activation: float = 0.08, stance_min_conf: float = 0.5,
         now: Optional[float] = None,
@@ -132,6 +141,9 @@ class RelationalLens:
         """投影成 prompt block (无内容则返 "")。
 
         relevance: spreading-activation 选相关子图; shape: 显式保留高置信立场。
+
+        turn_id (口识体-A): 给定则记录本轮投影过的 stance_id → Sir 反应回来时
+        apply_reaction_outcome(turn_id, ...) 据此 reinforce/weaken (闭学习环后半)。
         """
         now = time.time() if now is None else now
         seeds = list(seeds) if seeds else self.default_seeds()
@@ -179,6 +191,7 @@ class RelationalLens:
                 lines.append(row)
                 budget -= len(row)
 
+        projected_sids: List[str] = []
         if stances:
             lines.append("My read (stance — hold unless Sir overrides):")
             for s in stances:
@@ -188,11 +201,94 @@ class RelationalLens:
                     break
                 lines.append(row)
                 budget -= len(row)
+                sid = s.get("stance_id")
+                if sid:
+                    projected_sids.append(sid)
 
         lines.append("=== END RELATIONAL CONTEXT ===")
         if len(lines) <= 2:  # 只有头尾, 没实质内容
             return ""
+        # 口识体-A: 记录本轮真正投影进 prompt 的 stance (只记进了的, 没进的不算
+        # "被投影" → 不归因 outcome)。无 turn_id 不记 (mirror/某些路径 turn 缺失)。
+        if turn_id and projected_sids:
+            self.record_projected_stances(turn_id, projected_sids, now=now)
         return "\n".join(lines)
+
+    # ---- 口识体-A: outcome→stance (闭学习环后半) ----
+    def record_projected_stances(
+        self, turn_id: str, stance_ids: Iterable[str], *,
+        now: Optional[float] = None,
+    ) -> None:
+        """记本轮投影过的 stance_id (turn_id → ids), 有界 + LRU 淘汰。"""
+        ids = [s for s in dict.fromkeys(stance_ids) if s]
+        if not turn_id or not ids:
+            return
+        now = time.time() if now is None else now
+        with self._lock:
+            self._projected[turn_id] = {"ts": now, "stance_ids": ids}
+            self._projected.move_to_end(turn_id)
+            while len(self._projected) > self._projected_cap:
+                self._projected.popitem(last=False)
+
+    def projected_stances_for(
+        self, turn_id: str, *, now: Optional[float] = None,
+    ) -> List[str]:
+        """取回某 turn 投影过的 stance_id (超 TTL 视为过期返 [])。"""
+        if not turn_id:
+            return []
+        now = time.time() if now is None else now
+        with self._lock:
+            rec = self._projected.get(turn_id)
+            if not rec or (now - rec["ts"]) > self._projected_ttl:
+                return []
+            return list(rec["stance_ids"])
+
+    def apply_reaction_outcome(
+        self, turn_id: str, reaction: str, *, stance_store=None,
+        engaged_delta: float = 0.1, rejected_delta: float = 0.15,
+        now: Optional[float] = None,
+    ) -> int:
+        """Sir 对回复的反应 → reinforce/weaken 当轮投影过的 stance (闭学习环后半)。
+
+        engaged → reinforce(+engaged_delta, evidence_kind='outcome', ref=turn_id);
+        rejected → weaken(rejected_delta, 跌破 0.15 自动转 review);
+        其它 (ignored/未知) → no-op (太弱/歧义不动 stance, 同 inner_voice ignored 语义)。
+
+        幂等: apply 后 consume 该 turn 记录, 同 turn 被 mark 两次不二次改。
+        返回更新的 stance 数。失败非致命。
+        """
+        reaction = (reaction or "").strip().lower()
+        if reaction not in ("engaged", "rejected"):
+            return 0
+        sids = self.projected_stances_for(turn_id, now=now)
+        if not sids:
+            return 0
+        store = stance_store if stance_store is not None else self.stance
+        if store is None:
+            return 0
+        updated = 0
+        for sid in sids:
+            try:
+                if reaction == "engaged":
+                    ok = store.reinforce(
+                        sid, evidence_kind="outcome", evidence_ref=turn_id,
+                        detail="sir engaged with reply", delta=engaged_delta,
+                        now=now)
+                else:
+                    ok = store.weaken(
+                        sid, delta=rejected_delta,
+                        reason=f"sir rejected (turn={turn_id})", now=now)
+                if ok:
+                    updated += 1
+            except Exception as exc:
+                _log(f"[Lens] apply_reaction_outcome failed sid={sid} ({exc!r})")
+        with self._lock:  # consume → 幂等
+            self._projected.pop(turn_id, None)
+        if updated:
+            verb = "reinforced" if reaction == "engaged" else "weakened"
+            _log(f"[Lens/口识体-A] outcome={reaction} → {updated} stance {verb} "
+                 f"(turn={turn_id})")
+        return updated
 
 
 # ---------------------------------------------------------------------------
@@ -220,12 +316,16 @@ def lens_inject_enabled() -> bool:
         return False
 
 
-def build_lens_block(seeds: Optional[Iterable[str]] = None, **kw) -> str:
-    """main-brain `_assemble_prompt` 调: 返回投影 block (gate 关 → "")。故障静默。"""
+def build_lens_block(seeds: Optional[Iterable[str]] = None, *,
+                     turn_id: Optional[str] = None, **kw) -> str:
+    """main-brain `_assemble_prompt` 调: 返回投影 block (gate 关 → "")。故障静默。
+
+    turn_id 透传给 project → 记录本轮投影 stance (口识体-A 闭学习环后半接线点)。
+    """
     if not lens_inject_enabled():
         return ""
     try:
-        return get_lens().project(seeds, **kw)
+        return get_lens().project(seeds, turn_id=turn_id, **kw)
     except Exception as exc:
         _log(f"[Lens] project failed ({exc!r})")
         return ""

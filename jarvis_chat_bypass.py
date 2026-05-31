@@ -3196,6 +3196,9 @@ Spoken English:"""
                     # _l2_last_fired_ids 仍是产出 Sir 正反应那条 reply 的上一轮 fired ids.
                     _prev_fired_l2 = []
                     _prev_reply_excerpt = ''
+                    # 口识体-A: 本轮被反应的 reply 的 turn_id (→ outcome→stance).
+                    # 收在 mark 前 (mark 后 sir_reaction 不再是 'pending').
+                    _pending_turn_ids: list = []
                     try:
                         if hasattr(self, 'jarvis') and self.jarvis:
                             _prev_fired_l2 = list(getattr(
@@ -3206,6 +3209,9 @@ Spoken English:"""
                             if _m_pr.get('sir_reaction') == 'pending':
                                 _prev_reply_excerpt = str(
                                     _m_pr.get('reply_excerpt') or '')
+                                _tid_pr = str(_m_pr.get('turn_id') or '')
+                                if _tid_pr:
+                                    _pending_turn_ids.append(_tid_pr)
                     except Exception:
                         pass
                     try:
@@ -3222,6 +3228,28 @@ Spoken English:"""
                                 )
                             except Exception:
                                 pass
+                    except Exception:
+                        pass
+                    # 🆕 [口识体-A / 2026-05-31] outcome→stance (闭学习环后半):
+                    # Sir 反应 → reinforce/weaken 当轮透镜投影过的 stance.
+                    # engaged → +0.1 (置信↑); rejected → -0.15 (跌破 0.15 转 review).
+                    # 透镜上热路径前无投影记录 → no-op; 上线后自动闭环 (强闭环后半).
+                    try:
+                        if _pending_turn_ids and _reaction_label in (
+                                'engaged', 'rejected'):
+                            from jarvis_relational_lens import get_lens as _glens_a
+                            _lens_a = _glens_a()
+                            _stance_upd = 0
+                            for _tid_a in _pending_turn_ids:
+                                _stance_upd += _lens_a.apply_reaction_outcome(
+                                    _tid_a, _reaction_label)
+                            if _stance_upd:
+                                from jarvis_utils import bg_log as _bgl_a
+                                _bgl_a(
+                                    f"🧭 [口识体-A/outcome→stance] "
+                                    f"{_reaction_label} → {_stance_upd} "
+                                    f"stance(s) updated"
+                                )
                     except Exception:
                         pass
                     # 🆕 [#1 精准归因] behavioral_reject=yes → record_rejection(上一轮
