@@ -1,7 +1,7 @@
 {
   "_doc": "思考脑去硬编码 (识的最后一条硬编码: A-E 5 类 category 槽 → 势能驱动涌现的 kind). 详 docs/JARVIS_THINKING_DEHARDCODE_CATEGORIES_DESIGN.md + docs/AGENT_KICKOFF_THINKING_DEHARDCODE.md. CLI: scripts/thinking_kind_dump.py.",
   "_doc_mode": "thinking_kind_mode: legacy (默认 — A-E 槽 + 类冷却 SAME_CATEGORY_COOLDOWN, 老行为不变) | emergent (体势能区 summon + kind=effect 派生, diversity 靠区放电). 逐 phase flag-gated 开, 任一步回退 = 改回 legacy. Phase 0 脚手架阶段恒 legacy (双写 derived_kind 不改行为).",
-  "thinking_kind_mode": "legacy",
+  "thinking_kind_mode": "emergent",
   "_doc_effect_to_kind": "actionable 前缀 → 涌现的 kind label (设计 §5.1). 注: 这是 effect 的事后分类映射, 不是预声明的选择槽 — LLM 不'选 kind', 它放电产生 effect, kind 是 label. 无冷却 (diversity 靠区放电). call_tool/adjust_sensor_threshold 是 dispatch 里有但设计 §5.1 表未列的 — 按语义归入 solve/self_debug.",
   "effect_to_kind": {
     "update_concern_severity": "solve",
