@@ -4057,6 +4057,23 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+        # 🆕 [口识体-C / 2026-05-31] BODY SIGNALS — 体势能焦点 (势能自转: 体→识 ①)
+        # =====================================================================
+        # 让识 attend 体此刻高势能区 (张力/新颖/漂移) 而非凭空联想 —— 治"编故事"根:
+        # 思考由体的真实不安定度驱动, 不是每 tick 自己找点说的。grounded, 无 LLM。
+        # body_delta 由 Weaver (口识体-B3) publish, BodyFocus (B) 合并 delta+standing。
+        # 详 docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §2/§5.2。失败非致命。
+        # =====================================================================
+        try:
+            from jarvis_body_focus import get_body_focus as _gbf
+            _body_sig = _gbf().render_attention_block(limit=5)
+            if _body_sig:
+                for ln in _body_sig.splitlines():
+                    lines.append(ln)
+                lines.append("")
+        except Exception:
+            pass
+
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] 7 CHANNEL VIEW header
         # =====================================================================
         # Sir 真意 R3 "注意力精选不稀释": 把 evidence 重组成 7 channel structure,
