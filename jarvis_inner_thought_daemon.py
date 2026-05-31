@@ -2979,12 +2979,19 @@ class InnerThoughtDaemon:
                     f"skipped (jaccard>={_jacc_thr} dedup 窗{_win_min}min)"
                 )
                 return
+            # 🆕 [Sir 2026-05-31 22:17 真机 — 字幕泄漏空想] wants_voice 不能只看 sal:
+            # kind=empty (actionable=none) 的高 sal 自省 ("我刚回复太啰嗦, 该简洁") 是
+            # 无效果 filler — 标 ★ spotlight → 主脑被告知"surface to Sir"→ 真开口 → Sir
+            # 字幕看到空想。与 _append_to_voice_track (Path 2) 对齐: 必须 has_effect
+            # (真产生 actionable, 非 empty) 才 ★。准则 6/8: 无法影响自身的思考不该 surface。
+            _has_effect = (getattr(thought, 'actionable', '') or 'none').lower() \
+                not in ('', 'none')
             _track.append(
                 source='self_reflection',
                 intent='reflection',
                 content=f'(self-reflected) {_new_text[:140]}',
                 urgency=min(0.7, float(thought.salience)),
-                wants_voice=(thought.salience >= 0.8),  # 高 sal 标 ★ spotlight
+                wants_voice=(thought.salience >= 0.8 and _has_effect),  # ★ 需高 sal+真效果
                 meta={
                     'thought_id': thought.id,
                     'category': 'B',

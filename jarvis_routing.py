@@ -481,10 +481,25 @@ class ProfileCard:
             out = out[:max_chars - 12].rstrip() + '\n…[truncated]'
         return out
     
+    @staticmethod
+    def _safe_clip(val, limit: int) -> str:
+        """🆕 [Sir 2026-05-31 22:17 真机崩] profile 字段可能因 schema 漂移被写成
+        dict/list/None — 直接 [:N] 对 dict 做 dict[slice] → TypeError:
+        'unhashable type: slice' 崩主脑 _assemble_prompt (每轮调 → 整机哑火, 不出回复)。
+        统一: 非 str 转 JSON 串再截断, 永不崩 (准则 8 治本, 不让同 bug 换字段复发)。"""
+        if val is None:
+            return ''
+        if not isinstance(val, str):
+            try:
+                val = json.dumps(val, ensure_ascii=False)
+            except Exception:
+                val = str(val)
+        return val[:limit]
+
     def _build_identity(self) -> dict:
         profile = self._load_profile()
-        core_traits = profile.get('core_philosophy', '')[:150]
-        work_rhythm = profile.get('work_rhythms', '')
+        core_traits = self._safe_clip(profile.get('core_philosophy', ''), 150)
+        work_rhythm = self._safe_clip(profile.get('work_rhythms', ''), 200)
         
         hc = self.nerve.habit_clock
         if hc:
@@ -497,7 +512,7 @@ class ProfileCard:
         return {
             'core_traits': core_traits,
             'work_rhythm': work_rhythm[:200],
-            'idiosyncrasies': profile.get('idiosyncrasies', '')[:150],
+            'idiosyncrasies': self._safe_clip(profile.get('idiosyncrasies', ''), 150),
         }
     
     def _build_current_state(self) -> dict:
@@ -578,7 +593,7 @@ class ProfileCard:
         # 不再读 our_inside_jokes。仍保留 boundaries（Sir 画像范畴）。
         profile = self._load_profile()
         return {
-            'boundaries': profile.get('conversational_boundaries', '')[:200],
+            'boundaries': self._safe_clip(profile.get('conversational_boundaries', ''), 200),
         }
     
     def _build_active_projects(self) -> list:

@@ -195,9 +195,12 @@ class TestF6c2AppendVoice(unittest.TestCase):
         self.assertEqual(kw['source'], 'self_reflection')
         self.assertEqual(kw['intent'], 'reflection')
         self.assertIn('I noticed Sir went to bed late', kw['content'])
-        # sal=0.85 → wants_voice=True (★ spotlight)
-        self.assertTrue(kw['wants_voice'],
-                        "F6c2_5 sal=0.85 应标 wants_voice=True spotlight")
+        # 🆕 [Sir 2026-05-31 22:17 真机修 — 字幕泄漏空想] _mk 的 actionable='none'
+        # (kind=empty = 无效果 filler) → wants_voice=False (不 ★ spotlight, 否则主脑
+        # 被告知 surface to Sir → 真开口 → Sir 字幕看到空想). 旧断言 True 正是泄漏 bug。
+        # append 仍发生 (主脑下轮看心声 context), 只是不 spotlight。
+        self.assertFalse(kw['wants_voice'],
+                         "kind=empty (actionable=none) 自省不该 ★ spotlight (防字幕泄漏)")
 
     def test_F6c2_6_a_thought_skips_voice(self):
         """F6c2_6: A 类 → skip (非 B 类不 append)."""
