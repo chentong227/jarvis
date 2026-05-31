@@ -5824,6 +5824,29 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🆕 [口识体-B2 / 2026-05-31] 口写体: 这轮激活的体节点 → 共现边 (④ 口→体, 闭环写侧)
+        # =====================================================================
+        # 势能自转闭环: 口的每轮对话回流成体。显著提到 >=2 个已知体节点 → 两两连共现边
+        # (turn_id 接地)。**selective (准则8 防 bloat)**: 平凡闲聊不写; 词消化进体走现有
+        # STM→hippocampus→thread 管线, 这里只补结构共现边。fire-and-forget 不阻塞主路径。
+        # 详 docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §4.1 / §1.1 铁律1。
+        # =====================================================================
+        try:
+            _wb_txt = ((clean_user_input or '') + ' \n ' + (final_reply or '')).strip()
+            if _wb_txt and _turn_id_now:
+                import threading as _th_wb
+
+                def _run_body_writeback(_t=_wb_txt, _tid=_turn_id_now):
+                    try:
+                        from jarvis_relational_weaver import observe_turn_cooccurrence
+                        observe_turn_cooccurrence(_t, _tid)
+                    except Exception:
+                        pass
+                _th_wb.Thread(target=_run_body_writeback, daemon=True,
+                              name='BodyWriteback').start()
+        except Exception:
+            pass
+
         # 🆕 [β.5.46-fix18 / 2026-05-22] Sir 11:39 真测 BUG: 驾照"放一放" 持久化失效.
         # ProjectHoldDetector: 检测 Sir cmd 含 hold phrase ("放一放/hold off/...") +
         # project keyword (hippo 模糊匹) → publish SWM candidate. IntentResolver

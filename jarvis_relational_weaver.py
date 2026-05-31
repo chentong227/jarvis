@@ -55,6 +55,91 @@ def _log(msg: str) -> None:
 _EMBED_HIPP = None
 _EMBED_LOCK = threading.Lock()
 
+# ---- 口写体 (口识体-B2): 对话 turn → 显著共现边 ----
+# node 文本 TTL 缓存 (per-turn 调, 不每次 harvest 4 文件)
+_TURN_TEXT_CACHE: Dict[str, str] = {}
+_TURN_TEXT_TS = 0.0
+_TURN_TEXT_TTL = 120.0
+_TERM_CJK = re.compile(r"[\u4e00-\u9fff]{2,6}")
+_TERM_EN = re.compile(r"[A-Za-z]{4,}")
+# 太常见 → 不算 distinctive (每个节点都含, 匹配无意义)
+_TERM_STOP = frozenset({
+    "sir", "jarvis", "your", "this", "that", "with", "have", "will", "would",
+    "should", "could", "贾维斯", "先生", "应该", "可能", "需要", "我们", "他的", "自己",
+})
+
+
+def _cached_node_texts() -> Dict[str, str]:
+    global _TURN_TEXT_CACHE, _TURN_TEXT_TS
+    now = time.time()
+    if _TURN_TEXT_CACHE and (now - _TURN_TEXT_TS) < _TURN_TEXT_TTL:
+        return _TURN_TEXT_CACHE
+    try:
+        _TURN_TEXT_CACHE = RelationalWeaver(manifold=get_manifold()).harvest_nodes()
+    except Exception:
+        _TURN_TEXT_CACHE = _TURN_TEXT_CACHE or {}
+    _TURN_TEXT_TS = now
+    return _TURN_TEXT_CACHE
+
+
+def _distinctive_terms(text: str, k: int = 12) -> List[str]:
+    """抽节点文本里的 distinctive 词: CJK run 滑窗 2/3-gram + 英文 ≥4 字母, 去停用词。
+
+    (滑窗 gram 是为了让长 CJK run 如 '连续熬夜风险' 产出 '熬夜' 以匹配对话, 牺牲少量精度换召回。)
+    """
+    english = [w.lower() for w in _TERM_EN.findall(text or "")
+               if w.lower() not in _TERM_STOP]
+    grams3, grams2 = [], []
+    for run in _TERM_CJK.findall(text or ""):
+        for i in range(len(run) - 2):
+            g = run[i:i + 3]
+            if g not in _TERM_STOP:
+                grams3.append(g)
+        for i in range(len(run) - 1):
+            g = run[i:i + 2]
+            if g not in _TERM_STOP:
+                grams2.append(g)
+    # 优先序: 英文词(最 distinctive) + CJK 2-gram(中文词多为双字) + 3-gram
+    seen: set = set()
+    uniq = [t for t in (english + grams2 + grams3) if not (t in seen or seen.add(t))]
+    return uniq[:k]
+
+
+def observe_turn_cooccurrence(
+    turn_text: str, turn_id: str, *,
+    text_map: Optional[Dict[str, str]] = None, manifold=None,
+    max_nodes: int = 6, min_match_nodes: int = 2, save: bool = True,
+) -> int:
+    """口写体 (B2): 一轮对话提到的体节点 (lexical 匹配) → 两两共现边。
+
+    **选择性 (准则 8 防 bloat)**: 平凡闲聊 → 0-1 节点匹配 → 不写。只有真激活 >=2 个已知
+    体节点的 turn 才回写共现边 (turn_id 接地)。词消化进体走现有 STM→thread 管线, 这里只补边。
+    返回新增/强化边数。失败非致命。
+    """
+    if not turn_text or not turn_id:
+        return 0
+    try:
+        m = manifold if manifold is not None else get_manifold()
+        tmap = text_map if text_map is not None else _cached_node_texts()
+        tl = turn_text.lower()
+        scored: List[tuple] = []
+        for nid, ntext in tmap.items():
+            terms = _distinctive_terms(ntext)
+            hits = sum(1 for t in terms if (t in tl if t.isascii() else t in turn_text))
+            if hits >= 1:
+                scored.append((nid, hits))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        nodes = [n for n, _ in scored[:max_nodes]]
+        if len(nodes) < min_match_nodes:
+            return 0  # 平凡闲聊 / 没激活已知结构 → 不写
+        n = m.observe_cooccurrence(nodes, turn_id)
+        if save and n:
+            m.save()
+        return n
+    except Exception as exc:
+        _log(f"[Weaver] observe_turn_cooccurrence failed ({exc!r})")
+        return 0
+
 
 def default_embed_fn(texts: List[str]) -> List[Optional[List[float]]]:
     """批量 embed (复用 Hippocampus._embed_with_rotation)。
