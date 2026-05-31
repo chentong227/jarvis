@@ -314,10 +314,18 @@ _SATURATION_DEFAULT_CONFIG: dict = {
     # reset on 高值/should_speak (真值得想/说). 只拉长不缩短 (clamp 安全).
     'value_backoff': {
         'enabled': True,
-        'low_value_salience_floor': 0.55,
-        'reset_on_high_salience': 0.75,
+        # 🆕 [Sir 2026-06-01 真意 — 价值=放电效果, 非自评 salience] ================
+        # 三元: 思考要么真**放电** (discharge: solve/shape_next/adjust_self/want/
+        # relate, kind != empty), 要么真**休息** (rest, 头等公民); 要杀的只有中间那坨
+        # **filler = 亢奋却空** (kind=empty 不放电 + 不休息 + 自评高分)。反刍最爱给自己
+        # 打高分 → 价值**不能**用 salience 判, 只看放电效果。连续不放电到阈 → 转真休息。
+        'value_by_effect_not_salience': True,
+        'empty_streak_to_rest': 3,        # 连续空想 N 次 → 转真休息 (歇, 被理由唤醒)
         'min_streak_to_backoff': 2,
         'backoff_steps_s': [90, 180, 300, 600],
+        # legacy 回退 (value_by_effect_not_salience=False 时用旧 salience 判)
+        'low_value_salience_floor': 0.55,
+        'reset_on_high_salience': 0.75,
     },
     # 🆕 [Sir 2026-05-31 17:37 真意 — 放下能力] REST 决策 = 识主动"放下".
     # Sir: "可以空转, 但空转本身就是意义'放下,这会 Sir 没事我也没事,休息会', 而不是
@@ -2729,10 +2737,18 @@ class InnerThoughtDaemon:
             if _vb_interval > resolved_interval:
                 resolved_interval = _vb_interval
                 tick_origin = 'value_backoff'
+                # 🆕 [Sir 2026-06-01] 连续空想(无放电)到阈 → 转**真休息** (标 _resting:
+                # wait 期间体动静/Sir 提前醒), 不再当 filler 慢磨. "解不动就搁, 都没有就 REST"。
+                _empty_to_rest = int(
+                    (_load_saturation_config().get('value_backoff') or {})
+                    .get('empty_streak_to_rest', 3))
+                _rested = self._low_value_streak >= _empty_to_rest
+                if _rested:
+                    self._resting = True
                 self._bg_log(
-                    f"😌 [InnerThought/value-backoff] 连续低值 "
-                    f"{self._low_value_streak} tick (跨 category) → 降频至 "
-                    f"{_vb_interval}s (放得下, 不 churn)"
+                    f"😌 [InnerThought/value-backoff] 连续空想(无放电) "
+                    f"{self._low_value_streak} tick → 降频至 {_vb_interval}s "
+                    f"({'歇/REST 被理由唤醒' if _rested else '放得下'}, 不 churn)"
                 )
         except Exception:
             pass
@@ -2744,13 +2760,23 @@ class InnerThoughtDaemon:
         # grounded 无 LLM, 失败非致命。详 VOICE_AND_MIND_REFACTOR §2/§5.5。
         # =====================================================================
         try:
-            if tick_origin == 'value_backoff' and resolved_interval > _base_interval:
+            # 🆕 [Sir 2026-06-01 — 失败放电不撤退避] 体有 delta 但我已连续空想达 rest 阈
+            # (这块我啃不动, 再 attend 也是反刍) → **不**撤 backoff, 让它歇。只有"还没反复
+            # 失败"(streak < 阈) 时, fresh delta 才撤退避去 attend (真新势能值得醒)。
+            # 这堵住了真机痛点: active 对话时 Weaver 把同一话题反复织进体 → 永远 has_fresh_
+            # delta → 老逻辑永远撤退避 → 60s 反刍不止。现在"啃不动的 delta"不再拉我回快。
+            _empty_to_rest = int(
+                (_load_saturation_config().get('value_backoff') or {})
+                .get('empty_streak_to_rest', 3))
+            if (tick_origin == 'value_backoff'
+                    and resolved_interval > _base_interval
+                    and self._low_value_streak < _empty_to_rest):
                 from jarvis_body_focus import get_body_focus as _gbf_wake
                 if _gbf_wake().has_fresh_delta():
                     resolved_interval = _base_interval
                     tick_origin = 'body_delta_wake'
                     self._bg_log(
-                        f"⚡ [InnerThought/body-delta] 体有新势能 → 撤退避回 "
+                        f"⚡ [InnerThought/body-delta] 体有新势能 (未反复失败) → 撤退避回 "
                         f"{_base_interval}s (该醒去 attend)"
                     )
         except Exception:
@@ -4095,20 +4121,29 @@ class InnerThoughtDaemon:
             if not cfg.get('enabled', True):
                 self._low_value_streak = 0
                 return 0
-            sal = float(getattr(current_thought, 'salience', 0) or 0)
             should_speak = bool(getattr(current_thought, 'should_speak', False))
-            reset_high = float(cfg.get('reset_on_high_salience', 0.75))
-            # reset: 真值得 (高 sal / 想说) → 回 baseline 快思考
-            if should_speak or sal >= reset_high:
-                self._low_value_streak = 0
-                return 0
-            floor = float(cfg.get('low_value_salience_floor', 0.55))
             state = self._infer_actionable_state(current_thought)
             no_effect = state in ('none', 'rejected', 'gated', 'failed')
-            is_low_value = (sal < floor) and no_effect
-            if not is_low_value:
-                self._low_value_streak = 0
-                return 0
+
+            if cfg.get('value_by_effect_not_salience', True):
+                # 🆕 [Sir 2026-06-01] 价值 = 放电效果. 真放电 (kind != empty) 或
+                # should_speak (放电进语音) → 高值 reset 回 baseline. 不放电 = filler
+                # (亢奋却空), streak++ — **无视自评 salience** (反刍爱自评高分, 不能信)。
+                if (not no_effect) or should_speak:
+                    self._low_value_streak = 0
+                    return 0
+            else:
+                # legacy 回退: salience 驱动 (旧行为, value_by_effect_not_salience=False)
+                sal = float(getattr(current_thought, 'salience', 0) or 0)
+                reset_high = float(cfg.get('reset_on_high_salience', 0.75))
+                if should_speak or sal >= reset_high:
+                    self._low_value_streak = 0
+                    return 0
+                floor = float(cfg.get('low_value_salience_floor', 0.55))
+                if not ((sal < floor) and no_effect):
+                    self._low_value_streak = 0
+                    return 0
+
             self._low_value_streak += 1
             min_streak = int(cfg.get('min_streak_to_backoff', 2))
             if self._low_value_streak < min_streak:
