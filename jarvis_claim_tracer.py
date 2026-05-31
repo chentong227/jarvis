@@ -474,13 +474,23 @@ def _try_recall_match(claim: 'Claim', recall_provider) -> bool:
     (或 str). claim 词 >= 2 个出现在召回记忆 (或短 claim 全覆盖) → verified, 记
     trace_to='recall' + trace_what=记忆片段 (provenance, I4-lite). 准则 5 接地.
     """
-    if recall_provider is None:
+    return _match_claim_against_provider(claim, recall_provider, 'recall')
+
+
+def _match_claim_against_provider(claim: 'Claim', provider,
+                                  trace_label: str) -> bool:
+    """通用: claim 词 vs provider 召回内容词重叠 (>=2 或短 claim 全覆盖) → verified。
+
+    recall (自我记忆) / body (体 stance/节点) 共用此匹配核 (DRY)。命中记 trace_to=label
+    + trace_what=证据片段 (provenance, 准则 5 接地)。provider 异常/None → False (故障开放)。
+    """
+    if provider is None:
         return False
     text = (getattr(claim, 'text', '') or '').strip()
     if not text or len(text) < 3:
         return False
     try:
-        results = recall_provider(text) or []
+        results = provider(text) or []
     except Exception:
         return False
     claim_words = {w for w in re.findall(r'\w+', text.lower()) if len(w) >= 2}
@@ -495,10 +505,20 @@ def _try_recall_match(claim: 'Claim', recall_provider) -> bool:
         cwords = set(re.findall(r'\w+', str(content).lower()))
         overlap = len(claim_words & cwords)
         if overlap >= 2 or (claim_words and claim_words <= cwords):
-            claim.trace_to = 'recall'
+            claim.trace_to = trace_label
             claim.trace_what = str(content)[:100]
             return True
     return False
+
+
+def _try_body_match(claim: 'Claim', body_evidence_provider) -> bool:
+    """🆕 [口识体-B / 2026-05-31] 体作 evidence 源 — 关系类 claim 对体审一致 (验证环穿体).
+
+    体(stance/节点)是 Jarvis 接地的关系结构: 一个被体 active stance 或体节点(concern/
+    thread/joke/protocol)支持的关系 claim **不该判 unverified**. body_evidence_provider(q)
+    → list[{source,content}] (lens.body_claim_evidence). 准则 5: 体证据本身全接地。
+    """
+    return _match_claim_against_provider(claim, body_evidence_provider, 'body')
 
 
 def trace_to_evidence(claim: 'Claim', tool_results: List,
@@ -509,7 +529,8 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
                        use_vocab: bool = True,
                        classify_vocab_path: Optional[str] = None,
                        evidence_vocab_path: Optional[str] = None,
-                       recall_provider=None) -> bool:
+                       recall_provider=None,
+                       body_evidence_provider=None) -> bool:
     """看 claim 是否能 trace 到 evidence. 返 True = 找到 trace.
 
     [β.4.3.3 / 2026-05-18] L1 + L2 表驱 默认 (use_vocab=True). Legacy 保留.
@@ -543,6 +564,10 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
     # 🆕 [言出必行 I1] 正常 evidence 路径未命中 → 对自我记忆召回 verify (兜底).
     # recall_provider=None (老 caller) → no-op, 零行为改变. 准则 5 接地.
     if recall_provider is not None and _try_recall_match(claim, recall_provider):
+        return True
+    # 🆕 [口识体-B] 仍未命中 → 对体(stance/节点)审一致 (验证环穿体).
+    # body_evidence_provider=None (老 caller) → no-op, 零行为改变. 准则 5 接地.
+    if body_evidence_provider is not None and _try_body_match(claim, body_evidence_provider):
         return True
     return ok
 
@@ -678,7 +703,8 @@ def trace_reply(jarvis_reply: str,
                   evidence_vocab_path: Optional[str] = None,
                   include_swm_tool_called: bool = True,
                   swm_lookback_s: float = 180.0,
-                  recall_provider=None) -> dict:
+                  recall_provider=None,
+                  body_evidence_provider=None) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -738,6 +764,7 @@ def trace_reply(jarvis_reply: str,
             classify_vocab_path=classify_vocab_path,
             evidence_vocab_path=evidence_vocab_path,
             recall_provider=recall_provider,
+            body_evidence_provider=body_evidence_provider,
         )
         if ok:
             n_verified += 1

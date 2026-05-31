@@ -308,12 +308,60 @@ def get_lens() -> RelationalLens:
     return _SINGLETON
 
 
+def reset_lens_for_test(lens: Optional[RelationalLens] = None) -> None:
+    """test 隔离: 替换/清空 lens 单例 (同 reset_stance_store_for_test 风格)。"""
+    global _SINGLETON
+    _SINGLETON = lens
+
+
 def lens_inject_enabled() -> bool:
     """flag-gated: 默认 0 (Sir 真机验投影质量后, 改 vocab 开)。"""
     try:
         return bool(int(get_manifold_config().get("lens_inject_enabled", 0)))
     except Exception:
         return False
+
+
+def body_claim_evidence(query: str, *, max_items: int = 8,
+                        stance_min_conf: float = 0.4) -> List[Dict[str, str]]:
+    """口识体-B: 体作 evidence 源 — 返回可能支持 query(claim) 的体证据 (验证环穿体)。
+
+    给 ClaimTracer `body_evidence_provider` 用: 关系类 claim 对体审一致。证据来自:
+      - active stance (Jarvis 接地的关系判断, conf>=阈值)
+      - 体节点文本 (concern/thread/joke/protocol — 关系结构里的接地事实, 词重叠预筛)
+    返回 list[{source, content}]; 失败返 [] (故障开放, 老行为零变化)。准则 5: 每条全接地。
+
+    注: 不受 lens_inject_enabled gate (那只管投影进 prompt; 本函数是只读验证, 仅
+    unverified claim 罕触发, 不碰 TTFT)。
+    """
+    out: List[Dict[str, str]] = []
+    try:
+        from jarvis_stance import get_stance_store, STATE_ACTIVE
+        for s in get_stance_store().list(STATE_ACTIVE):
+            try:
+                if float(s.get("confidence", 0.0)) >= stance_min_conf:
+                    out.append({"source": f"stance:{s.get('stance_id', '')}",
+                                "content": str(s.get("claim", ""))})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    try:
+        qwords = {w for w in re.findall(r"\w+", (query or "").lower()) if len(w) >= 2}
+        if qwords:
+            texts = get_lens()._node_text_map()
+            scored: List[tuple] = []
+            for nid, txt in texts.items():
+                tw = set(re.findall(r"\w+", (txt or "").lower()))
+                ov = len(qwords & tw)
+                if ov >= 1:
+                    scored.append((ov, nid, txt))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for _, nid, txt in scored[:max_items]:
+                out.append({"source": nid, "content": str(txt)})
+    except Exception:
+        pass
+    return out[: max_items * 2]
 
 
 def build_lens_block(seeds: Optional[Iterable[str]] = None, *,

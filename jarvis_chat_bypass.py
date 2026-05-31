@@ -5809,6 +5809,16 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                         lambda _q: _itd_ct.recall(_q, top_k=4))
             except Exception:
                 _recall_provider = None
+            # 🆕 [口识体-B / 2026-05-31] 体作 evidence 源: 关系类 claim 对体(stance/
+            # 节点)审一致 (验证环穿体). 仅 unverified claim 罕触发, post-stream 不碰
+            # TTFT. 防御: 异常 → None → 老行为零变化 (准则 1 + 5).
+            _body_provider = None
+            try:
+                from jarvis_relational_lens import (
+                    body_claim_evidence as _bce_ct)
+                _body_provider = lambda _q: _bce_ct(_q)
+            except Exception:
+                _body_provider = None
             _claim_result = trace_reply(
                 jarvis_reply=final_reply,
                 tool_results=list(_tool_results) if '_tool_results' in dir() else [],
@@ -5817,6 +5827,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 system_clock=_now_clock,
                 ltm_context=_ltm_ctx_str,
                 recall_provider=_recall_provider,
+                body_evidence_provider=_body_provider,
             )
             update_stats(_claim_result)
         except Exception:

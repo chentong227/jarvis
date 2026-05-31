@@ -37,7 +37,7 @@
 | **D2** | 主动合并决余簇 (alias, 不动源) | 维护环 | manifold/weaver/focus | 中 | ✅ (alias+resolve+Weaver检测+focus去重, 4 test) |
 | **A** | outcome→stance (Sir 反应 reinforce/weaken) | 学习环后半 | meta_feedback(查) + stance | 中 (需查 meta_feedback) | ✅ (lens 记投影 stance + apply_reaction_outcome + chat_bypass 接线, 7 test) |
 | **C** | nudge 群退化 publish→体能量 | 感知环 | nudge 模块群(查) + 体 | 中-高 | ✅ (compute_energy 加 nudge 张力源 + SWM 读 4 etype, 6 test) |
-| **B** | 言出必行用体作 evidence 源 | 验证环 | ClaimTracer(查) + 体 | 中 | ⬜ |
+| **B** | 言出必行用体作 evidence 源 | 验证环 | ClaimTracer(查) + 体 | 中 | ✅ (body_evidence_provider + lens.body_claim_evidence + chat_bypass 接线, 11 test) |
 | **E** | SOUL L2/3→体/识 收敛, 删 relational 平行 | 内敛 | SOUL/central_nerve(查) | 高 (敏感, 真机验) | ⬜ |
 | **收尾** | D输出闸 / G口吸收Layer1/2 / 硬编码清 / F dyad | — | 热路径 | 高 | ⬜ 最后 |
 
@@ -47,6 +47,7 @@
 
 ## 逐步日志 (做一步记一步)
 
+- **[B ✅]** ~13:11: 言出必行用体作 evidence 源 (闭验证环)。ClaimTracer 仿 recall_provider 加 `body_evidence_provider` (并行兜底, recall 未命中后试体): 抽 `_match_claim_against_provider(claim, provider, label)` 通用核 (DRY, recall/body 共用词重叠匹配), `_try_body_match` trace_to='body'。`trace_to_evidence`/`trace_reply` 加 body_evidence_provider 参 (None=老 caller 零变化)。默认 provider `lens.body_claim_evidence(q)`: active stance(conf>=0.4) + 词重叠的体节点文本(concern/thread/joke/protocol) → list[{source,content}]。chat_bypass post-stream trace 处接线 (仅 unverified 罕触发, 不碰 TTFT)。**不受 lens_inject gate (只读验证非投影); 体已有 stance/节点 → closure B 立即 live (不等透镜上热路径)。** 加 reset_lens_for_test。11 test 绿 + claim_tracer 回归(157)绿。下一步: closure E (SOUL L2/3 收敛, 敏感真机最后做)。
 - **[C ✅]** ~13:05: nudge 群退化 publish→体能量 (闭感知环)。compute_energy 加张力源2: Weaver `_nudge_tension_map` 读 SWM 近期 4 类 nudge/care 警报(`proactive_care_advice`/`care_signal_derived`/`soul_alignment_advice`(取 missed_concern_ids)/`proactive_nudge_fired`) → 映射到对应 active concern node 张力 (per_event 0.5 × salience, 单 concern 封顶 1.5)。**只计真实存在 concern node (不造幻影, 准则5); 新外部警报不受 stance 覆盖压制(放电靠 event 老化+识 attend); delta-on-rise 杜绝平台期 churn。** config 进 manifold seed energy (nudge_tension_* 5 键) + JSON override + manifold_dump CLI。Weaver 加 event_bus 注入(生产 lazy 全局 bus)。"一个 wellness 警报 = 体张力" → 识经 body_delta attend 而非 nudge 抢话筒。6 test 绿 + 回归(79 body)绿。下一步: closure B 言出必行用体作 evidence 源。
 - **[A ✅]** ~12:47: outcome→stance 闭学习环后半。lens.project(turn_id=) 记录本轮真正投影进 prompt 的 stance_id (有界 OrderedDict + 1800s TTL 对齐 meta_feedback 30min 反应窗口, 纯 in-memory 准则1) + `apply_reaction_outcome(turn_id, reaction)`: engaged→reinforce(+0.1, evidence_kind='outcome'/ref=turn_id), rejected→weaken(0.15, 跌破0.15转review), 幂等consume。chat_bypass F6c3/meta_feedback 处: mark 前收 pending reply 的 turn_id → mark 后调 apply。**透镜上热路径前 (gate 默认关) 无投影记录 → no-op; closure E/G 开 lens 后自动闭环。** 7 test 绿 + 回归(lens/stance/e/p4 共25)绿。下一步: closure C nudge→体能量。
 - **[D2 ✅]** ~11:20: manifold alias(add_alias/resolve链+防环/persist) + Weaver weave_geometric 检测 cosine>=merge_threshold(0.90) 近重复→add_alias(代表=度数高) + BodyFocus.current_focus 按 resolve 去重 + complexity merged_dups. **不删源(hippo永不动)**, 体层把 dup 当代表。4 test 绿 + 回归绿。维护环闭合(decay/prune/merge 齐)。下一步: A outcome→stance (需查 meta_feedback, 留给新窗口)。
