@@ -3785,6 +3785,9 @@ class InnerThoughtDaemon:
             "suggest_inside_joke:<phrase> | "
             "propose_protocol:<one-sentence imperative rule> | "
             "adjust_concern_notes:<concern_id>:<note text> | "
+            "propose_stance:<about>:<your own grounded view of Sir/the relationship "
+            "you'd hold unless Sir overrides — e.g. 'sir_wellbeing:gentle persistence "
+            "near deadlines helps more than one-off reminders'> | "
             "fire_nudge:<kind>:<1-2 sentence draft> | "
             "propose_watch_task:<trigger_kind:value>:<long-term goal desc> | "
             # 🆕 [Sir 2026-05-28 12:30] 删 surface_to_sir 选项. Layer 1.5
@@ -5288,6 +5291,15 @@ class InnerThoughtDaemon:
                 if not ok and 'evidence_link_wrong_concern' in result:
                     thought.actionable = 'none'
                 return ok, result
+            # 🆕 [口识体-E / 2026-05-31] propose_stance — 识把学到的关系 view 写成 stance
+            # =====================================================================
+            # 强闭环写侧: 识反思出"我对 Sir/关系的判断" → 写 stance(review) → Sir 仲裁
+            # confirm → 透镜投影给口("My read, hold unless Sir overrides") → 口行为变(阻力)
+            # → outcome reinforce/weaken → 放电消解。stance = 阻力/老师感的载体。
+            # 接地: evidence_ref=thought.id (已过 evidence_link gate)。详 VOICE_AND_MIND §6/§7。
+            # =====================================================================
+            if a.startswith('propose_stance:'):
+                return self._do_propose_stance(thought, a)
             # 🆕 [Sir 2026-05-26 19:48 Phase 1A] fire_nudge — thought 自决出声
             # sal>=0.85 + 接 nudge_coordination yield + 主脑 directive 可 [SILENCE].
             # 详 docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §2 Phase 1A.
@@ -5724,6 +5736,42 @@ class InnerThoughtDaemon:
                 pass
             return (True, active_text, jacc)
         return (False, '', 0.0)
+
+    def _do_propose_stance(self, thought: 'InnerThought', a: str) -> Tuple[bool, str]:
+        """🆕 [口识体-E / 2026-05-31] 识 propose 一条关系立场 (强闭环写侧).
+
+        actionable=propose_stance:<about>:<claim>
+          about = 锚 (concern_id / 话题, 可省); claim = Jarvis 对 Sir/关系的判断 (一句)。
+        sal>=0.7 (立场要够分量) → 写 stance store (review 态, propose-not-trust) →
+        Sir CLI scripts/stance_dump.py confirm → active → 透镜投影给口。
+        接地 evidence_ref=thought.id (已过 _validate_evidence_link gate)。
+        """
+        if thought.salience < 0.7:
+            return False, f'gated:stance_requires_sal>=0.7 (got {thought.salience:.2f})'
+        body = a.split(':', 1)[1].strip() if ':' in a else ''
+        if ':' in body:
+            about, claim = body.split(':', 1)
+            about, claim = about.strip(), claim.strip()
+        else:
+            about, claim = '', body.strip()
+        if len(claim) < 10:
+            return False, f'claim_too_short:{len(claim)}<10'
+        try:
+            from jarvis_stance import get_stance_store
+            sid = get_stance_store().add_stance(
+                claim, about or 'sir_relationship',
+                evidence_kind='thought', evidence_ref=thought.id,
+                detail=(thought.text or '')[:150],
+                confidence=min(0.7, float(thought.salience)),
+                source='inner_thought', state='review')
+            if sid:
+                self._bg_log(
+                    f"🧭 [口识体-E/stance] propose stance(review) id={sid} "
+                    f"about={about or 'sir_relationship'!r} sal={thought.salience:.2f}")
+                return True, f'stance_proposed:{sid}'
+            return False, 'stance_rejected:no_evidence_or_empty'
+        except Exception as e:
+            return False, f'stance_error:{type(e).__name__}'
 
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
