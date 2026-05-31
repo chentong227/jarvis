@@ -600,6 +600,42 @@ class RelationalManifold:
             "edges_by_kind": dict(kind_counts),
         }
 
+    def complexity_report(self, now: Optional[float] = None) -> Dict[str, Any]:
+        """复杂度 vs 体积度量 (口识体 closure D1) — "保证复杂度而非单纯提高体积"。
+
+        不只数节点/边, 测**结构质量**: 大簇占比(blob 检测) / 密度 / 接地率 / 压缩比。
+        详 docs/JARVIS_FULL_CLOSURE_AND_CONVERGENCE.md §6。纯计算无 LLM。
+        """
+        now = time.time() if now is None else now
+        s = self.stats(now=now)
+        surfaces = self.get_surfaces()
+        nc, ec = s["node_count"], s["edge_count"]
+        review = s["review_count"]
+        largest = max((sf.get("size", 0) for sf in surfaces), default=0)
+        largest_frac = round(largest / nc, 3) if nc else 0.0
+        density = round(ec / nc, 2) if nc else 0.0
+        grounded_frac = round(1.0 - (review / ec), 3) if ec else 1.0
+        surf_count = len(surfaces)
+        compression = round(nc / surf_count, 2) if surf_count else float(nc)
+        # health 判定 (体积大但低复杂度 = 病)
+        if largest_frac >= 0.5:
+            health = "blob"            # 一个大簇吃掉过半节点 = 冗余体积, 低复杂度
+        elif density >= 6.0:
+            health = "over_dense"      # 边/节点过高 = 过连接, 信息稀释
+        elif nc >= 3 and density < 0.4:
+            health = "sparse"          # 太稀 = 还没织出结构
+        else:
+            health = "healthy"
+        # 复杂度分 (0-1): 奖均衡面+接地, 罚 blob+过密
+        score = round(grounded_frac * (1.0 - min(1.0, largest_frac))
+                      * (1.0 if density <= 5 else 5.0 / density), 3)
+        return {
+            "node_count": nc, "edge_count": ec, "surface_count": surf_count,
+            "density": density, "largest_surface_frac": largest_frac,
+            "grounded_frac": grounded_frac, "compression": compression,
+            "health": health, "complexity_score": score,
+        }
+
     def all_edges(self) -> List[Dict[str, Any]]:
         with self._lock:
             return [dict(e, _key=k) for k, e in self._edges.items()]

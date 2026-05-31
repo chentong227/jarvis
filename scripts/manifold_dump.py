@@ -173,6 +173,19 @@ def cmd_lens(m: RelationalManifold, seed_prefix: str) -> None:
     print(block if block else "(投影为空 — 体还没织边 / 无相关节点 / 无高置信立场)")
 
 
+def cmd_complexity(m: RelationalManifold) -> None:
+    r = m.complexity_report()
+    print("=== 体复杂度 vs 体积 (closure D1) ===")
+    print(f"health: {r['health']}   complexity_score: {r['complexity_score']}")
+    print(f"nodes={r['node_count']} edges={r['edge_count']} surfaces={r['surface_count']}")
+    print(f"density(边/节点)={r['density']}  largest_surface_frac(blob 检测)={r['largest_surface_frac']}")
+    print(f"grounded_frac={r['grounded_frac']}  compression(节点/面)={r['compression']}")
+    if r["health"] == "blob":
+        print("⚠️ blob: 一个大簇吃掉过半节点 = 冗余体积, 低复杂度 → 该 merge (closure D2)")
+    elif r["health"] == "over_dense":
+        print("⚠️ over_dense: 过连接, 信息稀释 → 提阈值 / prune")
+
+
 def cmd_config() -> None:
     print(json.dumps(get_manifold_config(), ensure_ascii=False, indent=2))
 
@@ -186,6 +199,7 @@ def main(argv=None) -> int:
     ap.add_argument("--review", action="store_true", help="看 LLM 推断待审边")
     ap.add_argument("--spread", metavar="ID", help="spreading-activation 预览 (透镜原型)")
     ap.add_argument("--surfaces", action="store_true", help="看语义曲面 (体-P3 面)")
+    ap.add_argument("--complexity", action="store_true", help="复杂度 vs 体积度量 (closure D1)")
     ap.add_argument("--lens", nargs="?", const="", metavar="SEED",
                     help="预览透镜投影 block (体-P6; 可选 seed 节点前缀)")
     ap.add_argument("--config", action="store_true", help="看 config")
@@ -221,6 +235,8 @@ def main(argv=None) -> int:
         cmd_spread(m, args.spread)
     elif args.surfaces:
         cmd_surfaces(m)
+    elif args.complexity:
+        cmd_complexity(m)
     elif args.lens is not None:
         cmd_lens(m, args.lens)
     elif args.decay:

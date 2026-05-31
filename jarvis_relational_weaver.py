@@ -540,13 +540,20 @@ class RelationalWeaver:
             deltas = self._diff_and_emit_deltas(curr_energy, now)
             self._save_energy(curr_energy, deltas)
         stats = self.manifold.stats(now=now)
+        # 复杂度度量 (closure D1): 测结构质量, 不只数体积
+        cx = self.manifold.complexity_report(now=now)
         stats.update({"weave_count": self._weave_count, "nodes": len(nodes),
                       "embed_edges_added": added, "pruned": pruned,
                       "surface_count": len(surfaces), "deltas": len(deltas),
-                      "energy_nodes": len(curr_energy)})
+                      "energy_nodes": len(curr_energy), "complexity": cx})
         _log(f"[Weaver] weave#{self._weave_count} nodes={len(nodes)} "
              f"embed+={added} pruned={pruned} edges={stats['edge_count']} "
-             f"surfaces={len(surfaces)} Δ={len(deltas)}")
+             f"surfaces={len(surfaces)} Δ={len(deltas)} "
+             f"cx={cx['health']}/{cx['complexity_score']}")
+        if cx["health"] in ("blob", "over_dense"):
+            _log(f"⚠️ [Weaver/complexity] {cx['health']}: largest_surface_frac="
+                 f"{cx['largest_surface_frac']} density={cx['density']} "
+                 f"→ 体积大复杂度低, 待 merge (closure D2)")
         return stats
 
     # ---- daemon ----

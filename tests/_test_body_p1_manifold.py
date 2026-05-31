@@ -248,6 +248,45 @@ class TestSurfaces(unittest.TestCase):
             self.assertIsNone(m.surface_of(x))
 
 
+class TestComplexity(unittest.TestCase):
+    def _cluster(self, m, nodes, now):
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                m.observe_explicit_link(nodes[i], nodes[j], "t1", now=now)
+
+    def test_blob_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = _mk(d)
+            big = [_node(KIND_JOKE, f"b{i}") for i in range(6)]
+            small = [_node(KIND_CONCERN, f"s{i}") for i in range(3)]
+            self._cluster(m, big, T0)
+            self._cluster(m, small, T0)
+            m.set_surfaces(m.compute_surfaces(now=T0))
+            r = m.complexity_report(now=T0)
+            self.assertEqual(r["health"], "blob")          # 大簇吃过半 = 低复杂度
+            self.assertGreater(r["largest_surface_frac"], 0.5)
+
+    def test_healthy_balanced(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = _mk(d)
+            for c in range(3):
+                self._cluster(m, [_node(KIND_THREAD, f"c{c}_{i}") for i in range(3)], T0)
+            m.set_surfaces(m.compute_surfaces(now=T0))
+            r = m.complexity_report(now=T0)
+            self.assertEqual(r["health"], "healthy")
+            self.assertLess(r["largest_surface_frac"], 0.5)
+
+    def test_grounded_frac_drops_with_inferred(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = _mk(d)
+            a, b, c = (_node(KIND_THREAD, "a"), _node(KIND_THREAD, "b"),
+                       _node(KIND_THREAD, "c"))
+            self._cluster(m, [a, b, c], T0)
+            m.add_inferred_edge(a, _node(KIND_THREAD, "x"), "t1", 0.5, "guess", now=T0)
+            r = m.complexity_report(now=T0)
+            self.assertLess(r["grounded_frac"], 1.0)
+
+
 class TestPersistence(unittest.TestCase):
     def test_t13_save_reload_roundtrip(self):
         with tempfile.TemporaryDirectory() as d:
