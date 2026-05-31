@@ -436,6 +436,125 @@ def _load_cost_config() -> dict:
         return _COST_DEFAULT_CONFIG
 
 
+# ==========================================================================
+# 🆕 [thinking-dehardcode-P0 / Sir 2026-05-31] thinking_kind_vocab — 识去硬编码
+# ==========================================================================
+# 识的最后一条硬编码 = A-E 5 类 category 槽 (prompt 写死 5 类 + 类冷却). 本工程
+# 拔它: kind 由体势能涌现 (focus 区招来 thought → 放电产 effect = kind), diversity
+# 靠"区放电"替"类冷却". 详 docs/JARVIS_THINKING_DEHARDCODE_CATEGORIES_DESIGN.md.
+#
+# Phase 0 (脚手架, 本 commit): 加 flag (thinking_kind_mode, 默 legacy) + effect→kind
+# 派生表 (_kind_from_effect, 仅 label/统计, 无冷却) + 双写 derived_kind (不改行为).
+# 派生表是 effect 的"事后分类映射" — LLM 不选 kind, 它放电产 effect, kind 是 label.
+# 准则 6: 持久化 memory_pool/thinking_kind_vocab.json + CLI scripts/thinking_kind_dump.py.
+# 路径: memory_pool/thinking_kind_vocab.json
+# ==========================================================================
+_THINKING_KIND_VOCAB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'memory_pool', 'thinking_kind_vocab.json',
+)
+_THINKING_KIND_CACHE: dict = {'data': None, 'mtime': 0.0, 'checked_at': 0.0}
+_THINKING_KIND_CHECK_INTERVAL_S = 30.0
+# py seed fallback (JARVIS_PYTHON_STYLE §6 三件套之一); 与 vocab json 保持一致.
+_THINKING_KIND_DEFAULT: dict = {
+    'thinking_kind_mode': 'legacy',
+    # actionable 前缀 → kind label (设计 §5.1). call_tool/adjust_sensor_threshold
+    # 是 dispatch 有但 §5.1 表未列 — 按语义归 solve/self_debug.
+    'effect_to_kind': {
+        'update_concern_severity': 'solve',
+        'adjust_concern_notes': 'shape_next',
+        'propose_stance': 'reflect',
+        'propose_protocol': 'reflect',
+        'suggest_inside_joke': 'relate',
+        'fire_nudge': 'reach_out',
+        'propose_watch_task': 'commit',
+        'compose_main_brain_directive': 'shape_next',
+        'propose_vocab_adjustment': 'self_debug',
+        'adjust_sensor_threshold': 'self_debug',
+        'call_tool': 'solve',
+        'request_capability': 'want_capability',
+    },
+    'kind_for_rest': 'rest',      # <REST> 放下 (有价值的输出, 非 filler)
+    'kind_for_none': 'empty',     # none 无 REST = empty filler (设计: 引导 REST)
+    'kind_for_unknown': 'act',    # 非 none 但前缀不在表 (deprecated/future) 兜底
+}
+# emergent 模式开后才被决策消费; Phase 0 恒 legacy.
+_THINKING_KIND_MODES = ('legacy', 'emergent')
+
+
+def _load_thinking_kind_config() -> dict:
+    """thinking_kind vocab lazy load (mtime 30s throttle). Fallback default legacy.
+
+    准则 6 热重载: Sir 改 thinking_kind_vocab.json → 30s 内生效, 不重启.
+    任何读失败 → 返 _THINKING_KIND_DEFAULT (默认 legacy, 安全回退).
+    """
+    now = time.time()
+    if (_THINKING_KIND_CACHE['data'] is not None and
+            now - _THINKING_KIND_CACHE['checked_at']
+            < _THINKING_KIND_CHECK_INTERVAL_S):
+        return _THINKING_KIND_CACHE['data']
+    _THINKING_KIND_CACHE['checked_at'] = now
+    try:
+        if not os.path.exists(_THINKING_KIND_VOCAB_PATH):
+            _THINKING_KIND_CACHE['data'] = _THINKING_KIND_DEFAULT
+            return _THINKING_KIND_DEFAULT
+        mtime = os.path.getmtime(_THINKING_KIND_VOCAB_PATH)
+        if (mtime == _THINKING_KIND_CACHE['mtime']
+                and _THINKING_KIND_CACHE['data']):
+            return _THINKING_KIND_CACHE['data']
+        with open(_THINKING_KIND_VOCAB_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # 合并 default 防 partial config (Sir 改 1 字段不丢其他)
+        merged = dict(_THINKING_KIND_DEFAULT)
+        merged['effect_to_kind'] = dict(_THINKING_KIND_DEFAULT['effect_to_kind'])
+        if isinstance(data.get('effect_to_kind'), dict):
+            merged['effect_to_kind'].update(data['effect_to_kind'])
+        for k in ('thinking_kind_mode', 'kind_for_rest',
+                  'kind_for_none', 'kind_for_unknown'):
+            if isinstance(data.get(k), str) and data[k].strip():
+                merged[k] = data[k].strip()
+        _THINKING_KIND_CACHE['data'] = merged
+        _THINKING_KIND_CACHE['mtime'] = mtime
+        return merged
+    except Exception:
+        return _THINKING_KIND_DEFAULT
+
+
+def _thinking_kind_mode() -> str:
+    """返当前 thinking_kind_mode ('legacy' | 'emergent'). 非法值 → legacy.
+
+    Phase 0 恒返 legacy (vocab 默 legacy). Phase 1+ Sir/镜像验后切 emergent.
+    """
+    mode = _load_thinking_kind_config().get('thinking_kind_mode', 'legacy')
+    return mode if mode in _THINKING_KIND_MODES else 'legacy'
+
+
+def _kind_from_effect(actionable: str, has_rest: bool = False) -> str:
+    """effect → kind label 派生 (设计 §5.1). 纯函数, 无副作用, 无冷却.
+
+    kind 是 effect 的"事后分类标签" (统计/看板/未来 emergent 模式用), 不是预声明
+    的选择槽 — LLM 放电产生 actionable (effect), 这函数把它 label 成 kind.
+
+    参数:
+      actionable: thought.actionable (e.g. 'update_concern_severity:sir_sleep:+0.1')
+      has_rest:   该 thought 是否 <REST> 放下决策 (REST 不走 actionable)
+    返:
+      kind label: solve / shape_next / reflect / relate / reach_out / commit /
+                  self_debug / want_capability / rest / empty / act
+    """
+    cfg = _load_thinking_kind_config()
+    if has_rest:
+        return cfg.get('kind_for_rest', 'rest')
+    a = (actionable or '').strip().lower()
+    if not a or a == 'none':
+        return cfg.get('kind_for_none', 'empty')
+    prefix = a.split(':', 1)[0].strip()
+    table = cfg.get('effect_to_kind', {})
+    if prefix in table:
+        return table[prefix]
+    return cfg.get('kind_for_unknown', 'act')
+
+
 _RELATIONSHIP_REFLECTOR_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     'memory_pool',
@@ -1222,6 +1341,15 @@ class InnerThought:
     # 逗号分隔的 channel name list. Python view builder 下次 deep-load 这些 channel,
     # 其他 channel 只 summary. 空 = 没 hint, 全 channel 平等 load.
     next_attention_focus: str = ''
+    # 🆕 [thinking-dehardcode-P0 / Sir 2026-05-31] derived_kind — effect→kind 派生 label.
+    # =====================================================================
+    # 识去硬编码: kind 由 actionable (effect) 派生, 不是预声明的 A-E 槽. Phase 0
+    # 双写 (与 category 并存, 不影响任何决策) — 为 Phase 1+ emergent 模式铺路 +
+    # 让 Sir 现在就能在 jsonl/log 看 kind 分布. 由 _kind_from_effect() 算.
+    # 值: solve / shape_next / reflect / relate / reach_out / commit / self_debug /
+    #     want_capability / rest / empty / act. '' = 未派生 (老 thought 兼容).
+    # =====================================================================
+    derived_kind: str = ''
 
 
 # ==========================================================================
@@ -2461,6 +2589,18 @@ class InnerThoughtDaemon:
         thought.actionable_done = ok
         thought.actionable_result = result
 
+        # 🆕 [thinking-dehardcode-P0 / Sir 2026-05-31] 双写 derived_kind (不改行为).
+        # =====================================================================
+        # kind = 该 thought 放电产生的 effect 的 label (从 final actionable 派生 —
+        # 含被 evidence/quality gate 降级为 none 的情况 → 'empty', 语义即 filler).
+        # 纯 metadata: persist 进 jsonl + log 显示, Phase 0 不被任何决策读 (恒 legacy).
+        # 失败非致命 (保持 '' 老兼容). 非 REST 路径 (REST 早返于 _handle_rest_decision).
+        # =====================================================================
+        try:
+            thought.derived_kind = _kind_from_effect(thought.actionable)
+        except Exception:
+            pass
+
         # 🆕 [Sir 2026-05-25 23:18 真痛-3] actionable fail → publish SWM
         # 让主脑下轮 prompt 看到自己上轮失败, 改进选 concern_id.
         if not ok and thought.actionable and \
@@ -2587,11 +2727,16 @@ class InnerThoughtDaemon:
         # 🆕 [Sir 2026-05-26 12:21 Meta-thinking] 显示下次 tick 由谁决定 +
         # interval 真值 (Sir 看 daemon 真在 self-pacing 还是默认)
         meta_str = f" | next={resolved_interval}s({tick_origin})"
+        # 🆕 [thinking-dehardcode-P0 / Sir 2026-05-31] log 显示派生 kind (双写, 不改行为).
+        # Sir 现在就能在 runtime log 看 kind 分布 (solve/reflect/empty/...), 评估
+        # emergent 切换时机. 追加在末尾, 不破坏 [{cat}/sal=...] 前缀匹配.
+        kind_str = (f" | kind={thought.derived_kind}"
+                    if getattr(thought, 'derived_kind', '') else '')
         # 🆕 [Sir 23:24 BUG-5] mediocre log compact (前 50 ch + [skip:mediocre] 标)
         if is_mediocre:
             self._bg_log(
                 f"💭 [InnerThought/skip:mediocre] [{thought.category}/sal={thought.salience:.2f}"
-                f"] {thought.thought[:60]}…{meta_str}"
+                f"] {thought.thought[:60]}…{meta_str}{kind_str}"
             )
         else:
             # 🆕 [Sir 2026-05-27 00:43 真痛] log truncate 100→300 让 Sir 看完整 thought
@@ -2600,7 +2745,7 @@ class InnerThoughtDaemon:
             self._bg_log(
                 f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
                 f"/state={sir_state}/tick={tick_interval}s] {_tt}"
-                f"{action_str}{ev_str}{meta_str}"
+                f"{action_str}{ev_str}{meta_str}{kind_str}"
             )
 
     def _compute_free_categories(self) -> List[str]:
@@ -5474,9 +5619,14 @@ class InnerThoughtDaemon:
         ok, result = self._dispatch_actionable(thought, a)
         # 🆕 [P3] 结构性拒绝 (allowlist/unknown/deprecated/retired) → 记 key, 防反复试.
         # 区别于"暂时 gated"(cooldown/sal/cap 会自然恢复) — 那些不记, 让它后续可重试.
+        # 🆕 [thinking-dehardcode fix#2 / 2026-05-31] evidence_link_wrong_concern 也记 key:
+        # 镜像真测同一 thought 反复试同一被拒 (action:wrong_cid) → churn. wrong_concern 是
+        # 结构性 (concern 选错, 同 key 重试还会拒) → 记 key 防 churn; LLM 换对 concern → 不同
+        # key 不受锁 (fix#2 词面闸放宽后 false-reject 已大减, 此处只 catch 真 wrong concern).
         if not ok and any(tok in result for tok in (
                 'tool_not_in_allowlist', 'unknown_actionable', 'deprecated',
-                'retired', 'not_in_allowlist', 'path_not_allowed')):
+                'retired', 'not_in_allowlist', 'path_not_allowed',
+                'evidence_link_wrong_concern')):
             self._record_actionable_denied(a, _now_act)
         return ok, result
 
@@ -5644,13 +5794,22 @@ class InnerThoughtDaemon:
         }
 
     def _evidence_links_to_concern(self, evidence_link: str,
-                                       concern) -> Tuple[bool, str]:
-        """🆕 [Sir 真痛 anchor 治本] cite 是否真 link 到 concern.
+                                       concern, thought_text: str = ''
+                                       ) -> Tuple[bool, str]:
+        """🆕 [Sir 真痛 anchor 治本; thinking-dehardcode fix#2 / 2026-05-31 升级]
+        cite / thought 是否真 link 到 concern.
 
-        cite 词跟 concern (id 拆 underscore + what_i_watch) 至少 1 个
-        meaningful token 重合. 防"cite 真在 thought 但是 wrong concern"
-        (Sir 真测 evidence: thought 提 toggling general/coding → cite=toggling →
-         target=sir_interview_pr → 应 reject, toggling 跟 interview 无关).
+        防"cite 真在 thought 但是 wrong concern" (Sir 真测: thought 提 toggling
+        general/coding → cite=toggling → target=sir_interview_pr → 应 reject).
+
+        🆕 fix#2 (镜像挖出, 准则 6 去硬编码 + 准则 8 不丢高价值思考): 旧实现只看**窄
+        cite** 词跟 concern 词面重叠 — 太脆. 镜像真测: thought "...pomodoro compliance
+        is failing..." cite="coding without rest" → cite 词 [coding,rest,without] 跟
+        concern[pomodoro,compliance,break] 零词面重叠 → 高价值 C 思考被拒成 filler.
+        但 thought 整体明明提了 "pomodoro compliance". 治本: cite 无重叠 → fallback 看
+        **full thought** 是否跟 concern 重叠 (信任 LLM 完整推理), 只在 thought 整体都跟
+        concern 无关时才拒 (真 wrong concern 防护不破). 第一层 gate (cite ∈ thought)
+        仍管反幻觉; 本层只判"是否对的 concern".
 
         Returns: (ok, overlap_word_or_reason).
         """
@@ -5662,16 +5821,23 @@ class InnerThoughtDaemon:
             getattr(concern, 'what_i_watch', '') or ''
         )
         concern_tokens = concern_id_tokens | concern_what_tokens
-        if not cite_tokens:
-            # cite 全 stopword 或空 — 不严判, LLM 不严就让过 (准则 6 信任 LLM)
-            return True, '(no meaningful cite tokens — trust LLM)'
         if not concern_tokens:
             return True, '(concern has no meaningful tokens — trust LLM)'
-        overlap = cite_tokens & concern_tokens
-        if overlap:
-            return True, f'overlap:{next(iter(overlap))}'
+        # 窄 cite 命中 → pass (老路径)
+        cite_overlap = cite_tokens & concern_tokens
+        if cite_overlap:
+            return True, f'overlap:{next(iter(cite_overlap))}'
+        # 🆕 fix#2: cite 没命中 → 看 full thought (宽, 信任 LLM 推理上下文)
+        thought_tokens = self._meaningful_tokens(thought_text or '')
+        thought_overlap = thought_tokens & concern_tokens
+        if thought_overlap:
+            return True, f'thought_overlap:{next(iter(thought_overlap))}'
+        if not cite_tokens and not thought_tokens:
+            # cite + thought 都无 meaningful token — 不严判 (准则 6 信任 LLM)
+            return True, '(no meaningful cite/thought tokens — trust LLM)'
         return False, (
-            f'no_token_overlap (cite:{sorted(cite_tokens)[:3]} vs '
+            f'no_token_overlap (cite:{sorted(cite_tokens)[:3]} '
+            f'thought:{sorted(thought_tokens)[:3]} vs '
             f'concern:{sorted(concern_tokens)[:3]})'
         )
 
@@ -5697,11 +5863,11 @@ class InnerThoughtDaemon:
         ) else self.concerns_ledger.concerns.get(cid)
         if c is None:
             return False, f'concern_not_found:{cid}'
-        # 🆕 [Sir 2026-05-26 00:25 真痛 anchor 治本] 二层校验: cite ↔ concern overlap
+        # 🆕 [Sir 2026-05-26 00:25 真痛 anchor 治本] 二层校验: cite/thought ↔ concern overlap
         # 真痛: cite 真在 thought 但 wrong concern (toggling → interview_pr).
-        # 此处校验 cite 词跟 concern 至少 1 个 meaningful token 重合.
+        # 🆕 fix#2: 传 thought.thought, cite 无重叠时 fallback 看 full thought (不丢高价值思考).
         link_ok, link_msg = self._evidence_links_to_concern(
-            thought.evidence_link, c
+            thought.evidence_link, c, getattr(thought, 'thought', '')
         )
         if not link_ok:
             return False, f'evidence_link_wrong_concern:{cid}:{link_msg}'
@@ -6380,9 +6546,10 @@ class InnerThoughtDaemon:
         if c is None:
             return False, f'concern_not_found:{cid}'
 
-        # 二层 gate: cite ↔ concern overlap (复用 fix4 evidence_link 机制 — 防 wrong concern)
+        # 二层 gate: cite/thought ↔ concern overlap (复用 fix4 evidence_link 机制 — 防 wrong concern)
+        # 🆕 fix#2: 传 thought.thought, cite 无重叠时 fallback 看 full thought (不丢高价值思考).
         link_ok, link_msg = self._evidence_links_to_concern(
-            thought.evidence_link, c
+            thought.evidence_link, c, getattr(thought, 'thought', '')
         )
         if not link_ok:
             return False, f'evidence_link_wrong_concern:{cid}:{link_msg}'
