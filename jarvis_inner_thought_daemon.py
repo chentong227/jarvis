@@ -308,6 +308,17 @@ _SATURATION_DEFAULT_CONFIG: dict = {
         'force_next_interval_s': 600,
         'force_max_short_choice_s': 60,
     },
+    # 🆕 [useful-or-quiet P1 / Sir 2026-05-31 00:46] 跨 category 价值门控退避.
+    # 真痛: saturation 要求"同 category"才计, 但脑 category-hop (B/A/C/D/E) 逃过 →
+    # 永不降频, 跨类低值 churn. 治本: 连续低值 tick (任意 category) → 指数退避;
+    # reset on 高值/should_speak (真值得想/说). 只拉长不缩短 (clamp 安全).
+    'value_backoff': {
+        'enabled': True,
+        'low_value_salience_floor': 0.55,
+        'reset_on_high_salience': 0.75,
+        'min_streak_to_backoff': 2,
+        'backoff_steps_s': [90, 180, 300, 600],
+    },
 }
 
 
@@ -1523,6 +1534,8 @@ class InnerThoughtDaemon:
         # =====================================================================
         self._consecutive_saturation_count: int = 0
         self._saturation_force_due: bool = False
+        # 🆕 [useful-or-quiet P1 / Sir 2026-05-31] 跨 category 低值连续计数 (价值退避)
+        self._low_value_streak: int = 0
 
         # 🆕 [第五阶段支柱 A / Sir 2026-05-29 02:29] evidence-gated tick 省 token
         # =====================================================================
@@ -2388,6 +2401,21 @@ class InnerThoughtDaemon:
         resolved_interval, tick_origin = self._resolve_next_interval(
             thought, sir_state
         )
+        # 🆕 [useful-or-quiet P1 / Sir 2026-05-31] 跨 category 价值门控退避 clamp —
+        # 补 saturation same-category 漏洞 (脑 category-hop 逃过). 连续低值 tick →
+        # 指数退避; 只拉长不缩短 (safe). reset on 高值/should_speak.
+        try:
+            _vb_interval = self._update_value_backoff(thought)
+            if _vb_interval > resolved_interval:
+                resolved_interval = _vb_interval
+                tick_origin = 'value_backoff'
+                self._bg_log(
+                    f"😌 [InnerThought/value-backoff] 连续低值 "
+                    f"{self._low_value_streak} tick (跨 category) → 降频至 "
+                    f"{_vb_interval}s (放得下, 不 churn)"
+                )
+        except Exception:
+            pass
         thought.tick_origin = tick_origin
         self._next_tick_interval_s = resolved_interval
         self._tick_origin_stats[tick_origin] = \
@@ -3648,6 +3676,47 @@ class InnerThoughtDaemon:
             pass
 
         return self._consecutive_saturation_count >= threshold
+
+    def _update_value_backoff(self, current_thought: 'InnerThought') -> int:
+        """🆕 [useful-or-quiet P1 / Sir 2026-05-31] 跨 category 价值门控退避.
+
+        补 saturation 的 same-category 漏洞: 脑 category-hop (B/A/C/D/E) 逃过
+        saturation 的"同 category"计数 → 永不降频, 跨类低值 churn. 本法不看 category,
+        只看**价值**: 连续低值 tick → low_value_streak++; 指数退避 backoff_steps_s.
+        reset = should_speak 或 salience>=reset_on_high_salience (真值得想/说).
+
+        低值判定: salience < floor AND not should_speak AND actionable 无 effect.
+        返: backoff interval s (0 = 不退避). 只供 _tick clamp (只能拉长 interval).
+        Sir 真意: "高频唤醒不是重复无用功; 没事就放下/降频, 有事才想."
+        """
+        try:
+            cfg = (_load_saturation_config().get('value_backoff') or {})
+            if not cfg.get('enabled', True):
+                self._low_value_streak = 0
+                return 0
+            sal = float(getattr(current_thought, 'salience', 0) or 0)
+            should_speak = bool(getattr(current_thought, 'should_speak', False))
+            reset_high = float(cfg.get('reset_on_high_salience', 0.75))
+            # reset: 真值得 (高 sal / 想说) → 回 baseline 快思考
+            if should_speak or sal >= reset_high:
+                self._low_value_streak = 0
+                return 0
+            floor = float(cfg.get('low_value_salience_floor', 0.55))
+            state = self._infer_actionable_state(current_thought)
+            no_effect = state in ('none', 'rejected', 'gated', 'failed')
+            is_low_value = (sal < floor) and no_effect
+            if not is_low_value:
+                self._low_value_streak = 0
+                return 0
+            self._low_value_streak += 1
+            min_streak = int(cfg.get('min_streak_to_backoff', 2))
+            if self._low_value_streak < min_streak:
+                return 0
+            steps = cfg.get('backoff_steps_s') or [90, 180, 300, 600]
+            idx = min(self._low_value_streak - min_streak, len(steps) - 1)
+            return int(steps[idx])
+        except Exception:
+            return 0
 
     # ----------------------------------------------------------
     # Prompt

@@ -19,5 +19,13 @@
     "min_consecutive_saturated_for_force": 5,
     "force_next_interval_s": 600,
     "force_max_short_choice_s": 60
+  },
+  "value_backoff": {
+    "_doc": "[useful-or-quiet P1 / Sir 2026-05-31] 跨 category 价值门控退避 — 补 saturation 的 same-category 漏洞 (脑 category-hop 逃过). 连续低值 tick (任意 category, salience<floor + not should_speak + actionable 无 effect) → 指数退避 backoff_steps_s; should_speak 或 salience>=reset_on_high_salience → reset 回 baseline. 只拉长不缩短.",
+    "enabled": true,
+    "low_value_salience_floor": 0.55,
+    "reset_on_high_salience": 0.75,
+    "min_streak_to_backoff": 2,
+    "backoff_steps_s": [90, 180, 300, 600]
   }
 }
