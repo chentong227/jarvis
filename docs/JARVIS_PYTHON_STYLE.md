@@ -181,6 +181,83 @@ def get_<x>_patterns() -> tuple:
 
 **判别**: 这些是底层系统常量, 不是"Sir 自然语言会触发的语义 vocab"。Sir 永远不会通过 CLI 加新 HTTP 错误码。
 
+### 6.5 Stateful runtime vocab 范式 (mutator + history + usage_stats)
+
+`§6.1-6.3` 的"keywords list"模式适用 vocab 内容**只读 / Sir 增删 keyword**的场景。
+但部分 vocab 是**带运行时状态 + mutation history + usage 累计**的, 需要扩展模式 (Sir CLI 改, daemon 写 stats, history 记 Sir 每次决策的 rationale)。
+
+**参考实现**: `memory_pool/llm_routing_vocab.json` + `scripts/llm_routing_dump.py` + `jarvis_utils.py:set_deepseek_routing_gate / add_deepseek_replace_model / _record_deepseek_usage / reset_deepseek_usage_stats` (Sir 2026-05-28 fix45 DeepSeek routing layer).
+
+**5 件套硬规** (在 §6.1 三件套基础上加 2 件):
+
+| 件 | 路径 | 作用 |
+|---|---|---|
+| 1. 持久化 | `memory_pool/<x>_vocab.json` | schema_version + enabled + 业务 config + `usage_stats{}` + `history[]` + `last_modified_*` |
+| 2. CLI | `scripts/<x>_dump.py` | list (默认) / 业务 mutator / `--usage` / `--reset-usage` / `--history [N]` / `--rationale TEXT` / `--json` |
+| 3. py mutator API | `jarvis_<file>.py` | 一组 `set_x_<field>(value, source, rationale) -> Tuple[bool, msg]` 公共函数 (atomic write + cache invalidate + history append) |
+| 4. **usage recorder** | `_record_<x>_usage(...)` | 业务调用每次成功 / 失败 / fallback 后调 (atomic write + per_caller breakdown + est_cost / budget 累计) — **故障静默, 绝不阻塞业务主流** |
+| 5. **history append** | 每次 mutator 写一条 | `{action, old_value, new_value, source, rationale[:200], applied_at, applied_iso}` |
+
+**schema** (扩展 §6.3):
+
+```json
+{
+  "_doc": ["<purpose 一句话>", "<typical use case>", "<故障开放说明>"],
+  "schema_version": 1,
+  "enabled": 1,
+  "<business_config>": { "...": "..." },
+  "cost": {
+    "input_per_1m_usd": 0.435,
+    "budget_total_usd": 17.0
+  },
+  "usage_stats": {
+    "call_count": 0, "success_count": 0, "fallback_count": 0,
+    "input_tokens_total": 0, "est_cost_usd": 0.0,
+    "first_call_ts": 0.0, "first_call_iso": "",
+    "last_call_ts": 0.0, "last_error": "",
+    "per_caller": {}
+  },
+  "history": [
+    {
+      "action": "gate_toggle",
+      "old_value": 0, "new_value": 1,
+      "source": "sir_cli",
+      "rationale": "<= 200 chars>",
+      "applied_at": 1779970935.76, "applied_iso": "2026-05-28T20:22:15"
+    }
+  ],
+  "last_modified_at": 0.0,
+  "last_modified_iso": ""
+}
+```
+
+**故障开放 3 层** (mutator + usage recorder 都必须遵守):
+
+1. **vocab 加载异常** → 返 `_DEFAULT` (enabled=0, 业务降级)
+2. **业务调用失败** + `fallback_on_fail=1` → fall through 老 path + `_record_usage(fallback=True)`
+3. **usage record 写盘失败** → 静默 swallow (绝不阻塞业务主流, 接受 stats 偶发漏记)
+
+**CLI 命令骨架** (`scripts/<x>_dump.py` 必备):
+
+```
+默认 list:                显示 enabled / business config / budget 进度条 / usage 概要 / 操作 menu
+--gate on|off             toggling 总开关 (准则 7 元否决一键关)
+--<add/remove>-<thing>    业务 config mutator
+--usage                   per_caller breakdown 表 + budget 详情
+--reset-usage             清零 usage_stats (Sir 充值/新一轮后)
+--history [N]             最近 N 条 mutation history (default 10), 含 action + rationale
+--rationale TEXT          给 mutation 加注释, 写进 history
+--json                    机读 vocab + computed stats
+```
+
+**何时用这套**:
+- vocab 不只是 keywords list, 还含 enabled gate / 业务 config / usage 累计
+- Sir 需要随时改 (gate on/off / config 调整) + 看花费 / 排查问题
+- 业务调用频率高 (per_call usage record, 不能阻塞主流)
+- 准则 7 一键关需求 (e.g. 钱用完 / 服务挂了 Sir 立刻关闭 routing)
+
+**反例 (违规)**: 把 enabled / budget / per_caller stats 直接写在 py source const 里 → Sir 改不动, 历史记录丢, 故障无法降级.
+
 ---
 
 ## 7. Sensitive Data Access (从 security 协议提取)

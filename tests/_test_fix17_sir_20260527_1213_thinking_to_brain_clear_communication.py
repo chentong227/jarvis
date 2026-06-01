@@ -36,18 +36,23 @@ if ROOT not in sys.path:
 class TestPhaseAPromptTeachThinking(unittest.TestCase):
     """思考脑 prompt 教导分类 + 反抽象 (Phase A)."""
 
-    def test_t1_prompt_has_surface_to_sir_b_class_example(self):
-        """_build_prompt B 类示例区必有 surface_to_sir:next_turn_inject 案例."""
+    def test_t1_prompt_has_layer15_b_class_example(self):
+        """🆕 [Sir 2026-05-28 12:30 β.5.45] surface_to_sir 退化后, B 类短期 contextual
+        case 走 Layer 1.5 [MY RECENT INNER THOUGHTS] by freshness × sal. prompt 必
+        含 Layer 1.5 教学示例 (B-class + sal=0.85 + thought.thought 自身含具体行为指令).
+        """
         import jarvis_inner_thought_daemon
         with open(jarvis_inner_thought_daemon.__file__, 'r',
                   encoding='utf-8') as f:
             src = f.read()
-        self.assertIn("B-class surface_to_sir example", src,
-            'prompt 必有 B-class surface_to_sir example 标签')
-        self.assertIn("surface_to_sir:next_turn_inject:Sir", src,
-            'prompt 必有 surface_to_sir:next_turn_inject 具体示范')
-        self.assertIn("SHORT-TERM CONTEXTUAL", src,
-            'prompt 必有 SHORT-TERM CONTEXTUAL 标签明示语义')
+        self.assertIn("退化 surface_to_sir", src,
+            'prompt 必有 β.5.45 surface_to_sir 退化 anchor')
+        self.assertIn("Layer 1.5", src,
+            'prompt 必显式提 Layer 1.5 path')
+        self.assertIn("MY RECENT INNER THOUGHTS", src,
+            'prompt 必明示 [MY RECENT INNER THOUGHTS] 通道')
+        self.assertIn("freshness", src.lower(),
+            'prompt 必示 freshness × sal ranking 机制')
 
     def test_t2_prompt_has_channel_decision_tree(self):
         """prompt 必有通路选择决策树 (跨午夜后是否仍适用)."""

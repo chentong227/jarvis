@@ -297,19 +297,59 @@ class TestL4ActionableExecutor(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn('not_found', result)
 
-    def test_actionable_publish_swm(self):
+    def test_actionable_publish_swm_rejected_deprecated(self):
+        """🆕 [Sir 2026-05-28 12:30 真痛 anchor] publish_swm: 已 deprecate.
+
+        原测守 publish_swm: 路径 publish SWM event. Sir audit 后真痛拍板:
+        184 thought 12% 用此 actionable, top etype 全孤儿 (sir_activity / ...
+        0 consumer), 少数撞名 sensor signal (ghost_activity_observed) → LLM
+        伪冒物理 sensor 违 INTEGRITY. 整路径删除, 退化 actionable='none'.
+
+        新行为: actionable='publish_swm:...' → 降级 actionable='none' + 返
+        (False, 'rejected:publish_swm_deprecated_...'). thought 仍 persist.
+        bus.publish 不被调用 (无 SWM publish).
+        """
         from jarvis_inner_thought_daemon import InnerThoughtDaemon
         d = InnerThoughtDaemon(key_router=MagicMock())
-        # mock event bus
         mock_bus = MagicMock()
         with patch('jarvis_utils.get_event_bus', return_value=mock_bus):
             t = self._make_thought('publish_swm:sir_seems_tired:Sir 22:30 still up')
             ok, result = d._execute_actionable(t)
-            self.assertTrue(ok)
-            self.assertIn('published', result)
-            mock_bus.publish.assert_called_once()
-            kwargs = mock_bus.publish.call_args.kwargs
-            self.assertEqual(kwargs['etype'], 'sir_seems_tired')
+            self.assertFalse(ok, "publish_swm 已 deprecate, 应 return False")
+            self.assertIn('rejected', result)
+            self.assertIn('publish_swm_deprecated', result)
+            # thought.actionable 降级 none, 防 SOUL inject 误导主脑
+            self.assertEqual(t.actionable, 'none')
+            # bus.publish 不被调用 (无孤儿 SWM publish)
+            mock_bus.publish.assert_not_called()
+
+    def test_do_publish_swm_actionable_method_removed(self):
+        """🆕 [Sir 2026-05-28 12:30] _do_publish_swm_actionable method 应已删."""
+        from jarvis_inner_thought_daemon import InnerThoughtDaemon
+        self.assertFalse(
+            hasattr(InnerThoughtDaemon, '_do_publish_swm_actionable'),
+            "_do_publish_swm_actionable 应已删除 (Sir 2026-05-28 12:30 anchor). "
+            "如方法回来, 说明有人误恢复 — 删它. 思考脑 → 主脑通过 Layer "
+            "1.5/1.6/1.7 直接 API, 不走 SWM."
+        )
+
+    def test_prompt_no_longer_offers_publish_swm(self):
+        """🆕 [Sir 2026-05-28 12:30] 源码 anchor: prompt 字符串不应再含 publish_swm:<etype> 选项.
+
+        准则 8 源码 anchor 守 prompt 不回滚 (不依赖 _build_prompt 接口可能演变).
+        """
+        path = os.path.join(ROOT, 'jarvis_inner_thought_daemon.py')
+        with open(path, 'r', encoding='utf-8') as f:
+            src = f.read()
+        # 旧 prompt 字符串 "publish_swm:<etype>:<short_desc> | " 不应存在
+        self.assertNotIn(
+            'publish_swm:<etype>:<short_desc>', src,
+            "prompt 仍提示 publish_swm 选项 — 应已删 (Sir 2026-05-28 12:30 anchor)"
+        )
+        self.assertNotIn(
+            '"publish_swm:<etype>:<desc>"', src,
+            "docstring 仍写 publish_swm — 应已删"
+        )
 
     def test_actionable_unknown_returns_fail(self):
         from jarvis_inner_thought_daemon import InnerThoughtDaemon

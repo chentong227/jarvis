@@ -14,6 +14,7 @@ Root: meta_self_check_directive (priority=10, P5-Layer1-fix19) 因为 not_helped
 """
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,10 +39,31 @@ def _make_directive(did, priority, helped=0, not_helped=0, fired=0,
 
 
 class TestCriticalPriorityProtect(unittest.TestCase):
-    """P5-fix23-meta-protect: priority>=10 不参与 decay."""
+    """P5-fix23-meta-protect: priority>=10 不参与 decay.
+
+    🆕 [Sir 2026-05-28 14:00 test pollution root cause fix] setUp 用 tmpdir
+    隔离 prod path. 之前 `DirectiveRegistry()` 无 args → review_path hardcode
+    prod, test 触发 apply_decay 写 prod queue → 15+ 'regular_directive' 污染.
+    """
 
     def setUp(self):
-        self.reg = DirectiveRegistry()
+        self._tmp_persist = tempfile.NamedTemporaryFile(
+            mode='w', delete=False, suffix='.json')
+        self._tmp_persist.close()
+        self._tmp_review = tempfile.NamedTemporaryFile(
+            mode='w', delete=False, suffix='.review.json')
+        self._tmp_review.close()
+        self.reg = DirectiveRegistry(
+            persist_path=self._tmp_persist.name,
+            review_path=self._tmp_review.name,
+        )
+
+    def tearDown(self):
+        for p in (self._tmp_persist.name, self._tmp_review.name):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
     def test_priority_10_with_high_not_helped_stays_active(self):
         """priority=10 + not_helped=11 / helped=0 → 不被降级 (Sir 真痛点)."""

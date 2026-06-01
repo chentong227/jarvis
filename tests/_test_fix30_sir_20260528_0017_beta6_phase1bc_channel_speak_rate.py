@@ -301,23 +301,28 @@ class TestL20PromptHeaderFocusHintListsDeepAndSummary(unittest.TestCase):
 
 
 # ==========================================================
-# L21 _publish_swm 4 new β.6 fields 进 metadata
+# L21 (改写) — Sir 2026-05-28 12:30 真痛 anchor: 退化 _publish_swm
 # ==========================================================
+# 原 L21 守 _publish_swm metadata 含 4 β.6 字段 (期主脑 SOUL 端 read SWM).
+# 真相: 主脑无任何 production code consume jarvis_inner_thought SWM event,
+# 全走 daemon 直接 API (build_should_speak_directive 直接 read self._thoughts).
+# _publish_swm 是 100% 孤儿 publish, 历史债, 已删 (准则 8 干净退化).
+# 改测 build_should_speak_directive 真路径 — 4 β.6 字段从 thought.field 直 render
+# 进 directive str, 主脑 SOUL build 时 inject 此 directive.
+class TestL21ShouldSpeakDirectiveReadsFourFields(unittest.TestCase):
+    """build_should_speak_directive 必须 render 4 个 β.6 字段 (Layer 1.7 主脑端 read)."""
 
-class TestL21PublishSwmIncludesFourNewFields(unittest.TestCase):
-    """_publish_swm metadata 必须含 4 个 β.6 字段 (主脑 SOUL 端要 read)."""
-
-    def test_publish_swm_metadata_contains_four_new_fields(self):
+    def test_directive_speak_path_renders_three_fields(self):
+        """SPEAK 路径: speak_content + speak_style + next_attention_focus 进 directive."""
         from jarvis_inner_thought_daemon import (
             InnerThoughtDaemon, InnerThought,
         )
+        import threading
         daemon = InnerThoughtDaemon.__new__(InnerThoughtDaemon)
-        daemon._thoughts = []
-        daemon._lock = MagicMock()
+        daemon._lock = threading.Lock()
         daemon._bg_log = lambda *a, **kw: None
-
         thought = InnerThought(
-            id='t_swm_1', ts=time.time(), ts_iso='', category='A',
+            id='t_dir_1', ts=time.time(), ts_iso='', category='A',
             thought='Sir seems weary; perhaps a check-in.', salience=0.85,
             actionable='none', actionable_done=True, actionable_result='',
             sir_state='active',
@@ -326,30 +331,57 @@ class TestL21PublishSwmIncludesFourNewFields(unittest.TestCase):
             speak_style='silent_text',
             next_attention_focus='concern_status,sir_activity_snapshot',
         )
+        daemon._thoughts = [thought]
 
-        # mock event_bus.publish capture metadata
-        captured = {}
+        directive = daemon.build_should_speak_directive()
+        self.assertTrue(directive, "SPEAK 路径应 render 非空 directive")
+        # speak path 标
+        self.assertIn('SPEAK', directive)
+        # speak_style 注入
+        self.assertIn('silent_text', directive)
+        # speak_content draft 注入
+        self.assertIn('brief pause', directive)
+        # next_attention_focus 注入
+        self.assertIn('concern_status', directive)
+        # should_speak 路径 (not SILENT)
+        self.assertNotIn('SILENCE this moment', directive)
 
-        class _FakeBus:
-            def publish(self_, etype, description, source, salience,
-                        metadata=None, ttl=0.0):
-                captured['etype'] = etype
-                captured['metadata'] = metadata
+    def test_directive_silent_path_renders_focus(self):
+        """SILENT 路径: should_speak=False → directive 标 SILENCE + next_attention_focus."""
+        from jarvis_inner_thought_daemon import (
+            InnerThoughtDaemon, InnerThought,
+        )
+        import threading
+        daemon = InnerThoughtDaemon.__new__(InnerThoughtDaemon)
+        daemon._lock = threading.Lock()
+        daemon._bg_log = lambda *a, **kw: None
+        thought = InnerThought(
+            id='t_dir_2', ts=time.time(), ts_iso='', category='B',
+            thought='Quiet moment; no need to volunteer.', salience=0.40,
+            actionable='none', actionable_done=True, actionable_result='',
+            sir_state='active',
+            should_speak=False,
+            speak_content='',
+            speak_style='',
+            next_attention_focus='nudge_history',
+        )
+        daemon._thoughts = [thought]
 
-        with patch('jarvis_utils.get_event_bus', return_value=_FakeBus()):
-            daemon._publish_swm(thought)
+        directive = daemon.build_should_speak_directive()
+        self.assertTrue(directive, "SILENT 路径应 render 非空 directive")
+        self.assertIn('SILENCE this moment', directive)
+        self.assertIn('nudge_history', directive)
 
-        self.assertEqual(captured.get('etype'), 'jarvis_inner_thought')
-        md = captured.get('metadata') or {}
-        # 4 new β.6 fields 必须都在 metadata 里
-        self.assertIn('should_speak', md)
-        self.assertTrue(md['should_speak'])
-        self.assertIn('speak_content', md)
-        self.assertIn('brief pause', md['speak_content'])
-        self.assertIn('speak_style', md)
-        self.assertEqual(md['speak_style'], 'silent_text')
-        self.assertIn('next_attention_focus', md)
-        self.assertIn('concern_status', md['next_attention_focus'])
+    def test_publish_swm_method_removed(self):
+        """Sir 2026-05-28 12:30: _publish_swm method 真已删除 — 防回滚."""
+        from jarvis_inner_thought_daemon import InnerThoughtDaemon
+        self.assertFalse(
+            hasattr(InnerThoughtDaemon, '_publish_swm'),
+            "_publish_swm method 应已被删除 (Sir 2026-05-28 12:30 真痛 anchor: "
+            "jarvis_inner_thought SWM event 0 consumer, 孤儿 publish 历史债). "
+            "如该方法回来, 说明有人误恢复 — 删它. 主脑 Layer 1.7 走 "
+            "build_should_speak_directive 直接 read self._thoughts, 非 SWM."
+        )
 
 
 # ==========================================================

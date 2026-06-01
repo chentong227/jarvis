@@ -242,6 +242,302 @@
       "source": "integrity_reflector",
       "created_at": 1779970890.2620504,
       "note": "New keyword for claims expressing durations or quantities of time."
+    },
+    {
+      "id": "future_expression_claims",
+      "claim_type": "Future",
+      "kinds_hard_map": [],
+      "keywords": [
+        "will be",
+        "going to"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779972263.286062,
+      "note": "Future expressions are not being classified."
+    },
+    {
+      "id": "count_duration_claims_minutes",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "minutes"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779973425.57026,
+      "note": "Specific time units like 'minutes' are frequently unverified and could be better classified."
+    },
+    {
+      "id": "count_duration_claims_minutes_hours",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "minutes",
+        "hour",
+        "hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779974794.0568237,
+      "note": "Specific time units are frequently unverified and could benefit from dedicated classification."
+    },
+    {
+      "id": "past_action_i_have_phrases",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i have set",
+        "i have noted",
+        "i've updated",
+        "i have updated"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779986242.066591,
+      "note": "Specific past action phrases are repeatedly unverified, suggesting a need for a dedicated claim type."
+    },
+    {
+      "id": "past_action_chinese_verbs",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "打开了"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779989321.5333474,
+      "note": "Recognize Chinese past action verbs that are not currently classified."
+    },
+    {
+      "id": "count_duration_claims_minutes_hours_specific",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "minutes",
+        "hour",
+        "hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1779994546.190041,
+      "note": "Specific time units like minutes and hours are frequently unverified and could benefit from a dedicated claim type."
+    },
+    {
+      "id": "past_action_ive_updated",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i've updated"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780008892.8036702,
+      "note": "The phrase 'I've updated' is frequently unverified and should be explicitly classified as a Past claim."
+    },
+    {
+      "id": "count_duration_claims_specific_durations",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "fifteen minutes",
+        "eighteen minutes",
+        "four hours",
+        "five hours",
+        "a second",
+        "three minutes",
+        "six minutes",
+        "one minutes",
+        "nine minutes",
+        "ten minutes",
+        "two hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780008979.8450086,
+      "note": "Specific duration phrases are repeatedly unverified and could be a new claim type."
+    },
+    {
+      "id": "past_action_i_set",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i set"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780009058.7372324,
+      "note": "The phrase 'i set' is frequently unverified and should be classified as a Past claim."
+    },
+    {
+      "id": "past_action_i_have_noted_new",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i have noted"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780009138.8972242,
+      "note": "The phrase 'I have noted' is repeatedly unverified and should be explicitly categorized as a Past claim."
+    },
+    {
+      "id": "past_action_i_have_updated_new",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i have updated"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780009299.9175882,
+      "note": "The phrase 'I have updated' is repeatedly unverified and warrants a specific classification."
+    },
+    {
+      "id": "count_duration_claims_specific_durations_new",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "fifteen minutes",
+        "eighteen minutes",
+        "four hours",
+        "five hours",
+        "a second",
+        "three minutes",
+        "six minutes",
+        "one minutes",
+        "nine minutes",
+        "ten minutes",
+        "two hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780009383.5780132,
+      "note": "Specific duration phrases are repeatedly unverified and could benefit from a dedicated claim type."
+    },
+    {
+      "id": "past_action_i_have_phrases_new",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i have set",
+        "i have noted",
+        "i've updated",
+        "i have updated"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780017226.4347682,
+      "note": "The phrases 'I have set', 'I have noted', 'I've updated', and 'I have updated' are repeatedly unverified and should be classified as Past claims."
+    },
+    {
+      "id": "past_action_ive_updated_new",
+      "claim_type": "Past",
+      "kinds_hard_map": [],
+      "keywords": [
+        "i've updated"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780026107.1937277,
+      "note": "The phrase 'I've updated' is repeatedly unverified and should be explicitly classified as a Past claim."
+    },
+    {
+      "id": "count_duration_claims_minutes_specific",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "minutes",
+        "hour",
+        "hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780143910.9896238,
+      "note": "A significant number of count claims are specific durations in minutes and hours that are not adequately captured by existing keywords."
+    },
+    {
+      "id": "count_duration_claims_minutes_specific_new",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "minute",
+        "minutes",
+        "hour",
+        "hours"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780144228.4353087,
+      "note": "A significant number of unverified claims are related to specific durations in minutes and hours, suggesting a need for a more granular classification."
+    },
+    {
+      "id": "quote_mention_claims",
+      "claim_type": "Recall",
+      "kinds_hard_map": [],
+      "keywords": [
+        "you mentioned"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780154915.8544147,
+      "note": "quote kind claims repeating 'you mentioned' pattern are unclassified and should map to Recall type"
+    },
+    {
+      "id": "quote_you_noted_claims",
+      "claim_type": "Recall",
+      "kinds_hard_map": [],
+      "keywords": [
+        "you noted"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780216229.8744366,
+      "note": "'you noted' appears 5x in top unverified quotes but only 'you mentioned' is classified as Recall"
+    },
+    {
+      "id": "count_numeric_claims",
+      "claim_type": "State",
+      "kinds_hard_map": [],
+      "keywords": [
+        "twelve minutes",
+        "eighteen minutes",
+        "few minutes",
+        "five minutes"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780216229.881587,
+      "note": "Numeric count claims like 'twelve minutes' repeat 4x in samples but existing count keywords only cover spelled-out numbers"
+    },
+    {
+      "id": "quote_you_noted_claims_new",
+      "claim_type": "Recall",
+      "kinds_hard_map": [],
+      "keywords": [
+        "you noted"
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780219411.2650106,
+      "note": "8 instances of 'you noted' quotes in top unverified, already in review but keyword list appears redundant."
+    },
+    {
+      "id": "quote_specific_phrases",
+      "claim_type": "Recall",
+      "kinds_hard_map": [],
+      "keywords": [
+        "you noted \"the database migration plan\"",
+        "you mentioned \"the vet appointment on friday\""
+      ],
+      "state": "review",
+      "source": "integrity_reflector",
+      "created_at": 1780237130.6512308,
+      "note": "Specific quoted phrases are repeatedly unverified, suggesting a need for a dedicated claim type to handle them."
     }
   ]
 }

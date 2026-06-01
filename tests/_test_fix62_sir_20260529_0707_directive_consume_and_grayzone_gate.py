@@ -103,13 +103,14 @@ class TestGrayzoneGateDecision(unittest.TestCase):
         self.assertEqual(reason, '旁路语')
         self.assertFalse(acked)
 
-    def test_GZ2_grayzone_gated_when_pending(self):
+    def test_GZ2_grayzone_now_triggers_to_main_brain(self):
+        # [Sir 2026-05-31 00:24 "过分严格了" 治本] 灰区不再 ASR 硬静默 → 触发交主脑自决
         vt = _make_voice_thread(pending_ack=True)
         trigger, is_gray, reason, acked = vt._evaluate_focus_directness(0.5)
-        self.assertFalse(trigger)  # 灰区静默 (nudge focus 未 ack)
+        self.assertTrue(trigger)  # 灰区交主脑判 (不再 ASR 层静默 — Sir '洗了个澡'被吞)
         self.assertTrue(is_gray)
-        self.assertIn('nudge-focus', reason)
-        self.assertFalse(acked)
+        self.assertEqual(reason, '')
+        self.assertFalse(acked)  # 灰区不算明确 ack (>=0.6 才 clear pending)
 
     def test_GZ3_grayzone_triggers_when_not_pending(self):
         vt = _make_voice_thread(pending_ack=False)
@@ -137,10 +138,11 @@ class TestGrayzoneGateDecision(unittest.TestCase):
         # side-effect: pending_ack 被清 (Sir 明确回应 → 转正常对话)
         self.assertFalse(vt._nudge_focus_pending_ack)
 
-    def test_GZ7_boundary_03_grayzone_gated(self):
+    def test_GZ7_boundary_03_now_triggers(self):
+        # [Sir 2026-05-31 00:24] 0.3 灰区下界 → 触发 (交主脑判, 不再静默)
         vt = _make_voice_thread(pending_ack=True)
         trigger, is_gray, _, _ = vt._evaluate_focus_directness(0.3)
-        self.assertFalse(trigger)  # 0.3 是灰区下界 → 静默
+        self.assertTrue(trigger)
         self.assertTrue(is_gray)
 
     def test_GZ8_boundary_06_explicit_acks(self):
@@ -154,24 +156,23 @@ class TestGrayzoneGateDecision(unittest.TestCase):
 class TestGrayzoneStateMachine(unittest.TestCase):
     """方案A 完整状态机流程 (Sir 真实场景)."""
 
-    def test_SM1_nudge_focus_family_then_sir(self):
-        # 场景: Jarvis greeting 开 nudge focus → Sir 跟妈妈说话 (灰区) 静默
-        #       → Sir 终于明确回 Jarvis (>=0.6) ack → 后续灰区恢复触发
+    def test_SM1_grayzone_routes_to_main_brain_not_asr_silenced(self):
+        # [Sir 2026-05-31 00:24 "过分严格了" 治本] return_greeting 后 Sir 灰区回应
+        # ("洗了个澡，精神了一点" 真机 0.5) 不再被 ASR 静默 → 触发交主脑自决
+        # (主脑看上下文 + multi_person/ambient directive 判 engage vs silent).
         vt = _make_voice_thread(pending_ack=True)  # nudge 开 focus
-        # Sir 跟妈妈: "睡觉关灯吗" (灰区 0.5) → 静默
-        t1, _, _, _ = vt._evaluate_focus_directness(0.5)
-        self.assertFalse(t1)
-        # 又一句家常 (灰区) → 仍静默
-        t2, _, _, _ = vt._evaluate_focus_directness(0.45)
-        self.assertFalse(t2)
-        # Sir 终于明确: "Jarvis, 关灯" (0.8) → 触发 + ack
-        t3, _, _, acked3 = vt._evaluate_focus_directness(0.8)
+        t1, is_gray1, reason1, _ = vt._evaluate_focus_directness(0.5)
+        self.assertTrue(t1, "Sir 对招呼的灰区回应不该被 ASR 静默")
+        self.assertTrue(is_gray1)
+        self.assertEqual(reason1, '')
+        # Sir 明确对 Jarvis (>=0.6) → 触发 + ack (转正常对话)
+        t2, _, _, acked2 = vt._evaluate_focus_directness(0.8)
+        self.assertTrue(t2)
+        self.assertTrue(acked2)
+        # 后续灰区仍触发
+        t3, is_gray3, _, _ = vt._evaluate_focus_directness(0.5)
         self.assertTrue(t3)
-        self.assertTrue(acked3)
-        # 现在 Sir 在对话, 后续灰区恢复触发 (不小心翼翼)
-        t4, is_gray4, _, _ = vt._evaluate_focus_directness(0.5)
-        self.assertTrue(t4)
-        self.assertTrue(is_gray4)
+        self.assertTrue(is_gray3)
 
     def test_SM2_wake_path_grayzone_triggers(self):
         # 场景: Sir 主动喊 Jarvis 唤醒 (pending_ack=False) → 灰区直接触发
@@ -179,6 +180,21 @@ class TestGrayzoneStateMachine(unittest.TestCase):
         t1, is_gray, _, _ = vt._evaluate_focus_directness(0.5)
         self.assertTrue(t1)  # 灰区也触发 (Sir 旧诉求"不小心翼翼")
         self.assertTrue(is_gray)
+
+    def test_SM3_sir_real_case_shower_reply_not_silenced(self):
+        # [Sir 2026-05-31 00:24 真机] greeting 后 Sir '嗯，是的，洗了个澡，精神了一点'
+        # 真机 score=0.5 空 breakdown 被灰区静默吞掉 (Sir 直接回应招呼却被无视).
+        # 验证: classify → 灰区, evaluate → 触发 (交主脑, 不再 ASR 误杀).
+        from jarvis_voice_listen_thread import VoiceListenThread
+        vt = VoiceListenThread.__new__(VoiceListenThread)
+        vt._nudge_focus_pending_ack = True
+        score, breakdown = vt.classify_jarvis_directness(
+            '嗯，是的，洗了个澡，精神了一点')
+        self.assertTrue(0.3 <= score < 0.6,
+            f"应落灰区 (真机 0.5, 无 directness 关键字), got {score}")
+        trigger, is_gray, reason, _ = vt._evaluate_focus_directness(score)
+        self.assertTrue(trigger, "Sir 对招呼的灰区回应不该被 ASR 静默 (真痛回归)")
+        self.assertEqual(reason, '')
 
 
 if __name__ == '__main__':

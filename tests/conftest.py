@@ -224,3 +224,95 @@ def _autouse_isolate_prod_persistence(tmp_path, monkeypatch):
         _jln.reset_default_tracer_for_test(None)
     except Exception:
         pass
+
+
+# ============================================================
+# 🆕 [Sir 2026-05-28 14:55 Track 1] Generic memory_pool diff detector
+# ============================================================
+# 历史 BUG (β.5.45 调查): tests/_test_p0_plus_20_p5_fix23_meta_protect.py
+# 跑 `DirectiveRegistry()` 无 args → write prod `memory_pool/directive_review.json`
+# 累计 16 条 'regular_directive' 测试残留, Sir 12:59 review queue 全是垃圾.
+#
+# Root cause: 单点隔离 (上面 promise_log + lineage 各 1 fixture) 不能 cover
+# 所有 prod module 写盘行为. 加 generic checksum diff detector — test 跑前
+# hash memory_pool 全部 .json + .jsonl, 跑后再 hash, diff = log warning.
+#
+# 默认 warning mode (不 fail test, 让 Sir 自决修哪个 module). Env
+# `JARVIS_TEST_STRICT_ISOLATION=1` → 升级 fail mode (CI 用).
+#
+# 准则 6: 检测目标 (memory_pool/*.json + *.jsonl) 不 vocab 化 — 这是 system
+# 内部测试基建常量 (准则 6 递归边界).
+# ============================================================
+import hashlib as _hashlib  # noqa: E402
+
+_MEMORY_POOL = _REPO_ROOT / "memory_pool"
+# 这些 file Sir 显式接受 test 改 (e.g. tmp test 文件, 或测试 fixture 文件).
+# 用 prefix 而不是 vocab 是因为这是 system-internal 测试基建常量 (准则 6 递归边界).
+_ALLOW_TEST_MUTATE_PREFIX = (
+    "_test_",  # test fixture 文件 (test 显式写)
+    "_tmp_",   # 临时调试 (Sir 知情)
+)
+
+
+def _scan_memory_pool_checksum() -> dict:
+    """返 {filename: sha256_hex} for memory_pool/*.json + *.jsonl.
+
+    跳过 _test_* / _tmp_* prefix (test 显式 mutate 文件).
+    """
+    out = {}
+    if not _MEMORY_POOL.exists():
+        return out
+    for p in _MEMORY_POOL.glob("*.json"):
+        if p.name.startswith(_ALLOW_TEST_MUTATE_PREFIX):
+            continue
+        try:
+            data = p.read_bytes()
+            out[p.name] = _hashlib.sha256(data).hexdigest()
+        except OSError:
+            pass
+    for p in _MEMORY_POOL.glob("*.jsonl"):
+        if p.name.startswith(_ALLOW_TEST_MUTATE_PREFIX):
+            continue
+        try:
+            data = p.read_bytes()
+            out[p.name] = _hashlib.sha256(data).hexdigest()
+        except OSError:
+            pass
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _autouse_detect_memory_pool_mutation(request):
+    """Test 跑前/后 hash memory_pool/*.json[l]. Diff = warning (or fail in
+    strict env). 防止 test 污染 prod queue / vocab.
+
+    历史 case: tests/_test_p0_plus_20_p5_fix23_meta_protect.py::
+               test_priority_9_still_decays_normally 跑 DirectiveRegistry()
+               无 args → 写 prod `memory_pool/directive_review.json` 16 条
+               `regular_directive` 污染.
+    """
+    before = _scan_memory_pool_checksum()
+    yield
+    after = _scan_memory_pool_checksum()
+    mutated = []
+    for fn, h_after in after.items():
+        h_before = before.get(fn)
+        if h_before is None:
+            mutated.append((fn, 'created'))
+        elif h_before != h_after:
+            mutated.append((fn, 'modified'))
+    for fn in before:
+        if fn not in after:
+            mutated.append((fn, 'deleted'))
+    if not mutated:
+        return
+    test_id = getattr(request.node, 'nodeid', '?')
+    msg = (
+        f"\n⚠️ [conftest/MemoryPool-mutation] test={test_id} 改了 prod\n"
+        f"   memory_pool 文件 (应隔离 tmp_path 或 inject path):\n"
+    )
+    for fn, kind in mutated:
+        msg += f"     - {kind}: {fn}\n"
+    sys.stderr.write(msg)
+    if os.environ.get('JARVIS_TEST_STRICT_ISOLATION') == '1':
+        pytest.fail(msg)

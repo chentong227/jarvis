@@ -108,12 +108,17 @@ class TestP11CollectEvidence(unittest.TestCase):
         }
 
     def test_t02_collect_includes_daily_progress(self):
-        """T2 concern with daily_progress → ev['concerns'][0] 含 progress dict."""
+        """T2 concern with daily_progress → ev['concerns'][0] 含 progress dict.
+
+        [P1 fix / 2026-05-31] iso_date 必须用 today — collect 路径有 fix31 date-guard
+        (iso_date==today 才注), 原硬编码 '2026-05-27' 跨天后恒被过滤 → 该测旧编码必 fail.
+        """
+        _today = time.strftime('%Y-%m-%d', time.localtime())
         c = _make_fake_concern(
             cid='c_h', what='hydration',
             daily_progress={
                 'current': 8, 'target': 10, 'unit': 'cups',
-                'iso_date': '2026-05-27',
+                'iso_date': _today,
             },
         )
         self.daemon.concerns_ledger = _FakeLedger([c])
@@ -126,7 +131,7 @@ class TestP11CollectEvidence(unittest.TestCase):
         self.assertEqual(dp['current'], 8)
         self.assertEqual(dp['target'], 10)
         self.assertEqual(dp['unit'], 'cups')
-        self.assertEqual(dp['iso_date'], '2026-05-27')
+        self.assertEqual(dp['iso_date'], _today)
 
     def test_t03_collect_includes_last_user_feedback_truncated(self):
         """T3 last_user_feedback.raw_text 注入并按 vocab max_chars 截."""
@@ -290,14 +295,20 @@ class TestP11BuildPrompt(unittest.TestCase):
         self.assertNotIn('⏰ optimal_timing', user_prompt)
 
     def test_t11_prompt_contains_factual_self_correction_example(self):
-        """T9 prompt system 段含 P11 FACTUAL SELF-CORRECTION example."""
+        """T9 prompt system 段含 P11 FACTUAL SELF-CORRECTION example.
+
+        🆕 [Sir 2026-05-28 12:30 β.5.45] surface_to_sir 退化, P11 example 改走
+        Layer 1.5 + sal=0.90 + thought.thought 自身含真值 + RECTIFY 指令 path.
+        主脑下轮 prompt [MY RECENT INNER THOUGHTS] 自动看 thought 本身 → 自决纠正.
+        """
         concerns_ev = []
         prompt = self._build(concerns_ev)
         self.assertIn('FACTUAL SELF-CORRECTION', prompt,
             "prompt 必含 P11 教学 example anchor")
-        # 关键 anchor: 教 LLM 用 surface_to_sir RECTIFY (不是 update_severity)
+        # 关键 anchor: 教 LLM thought.thought 本身含真值 RECTIFY (走 Layer 1.5)
         self.assertIn('CORRECTION', prompt)
-        self.assertIn('surface_to_sir:next_turn_inject', prompt)
+        self.assertIn('Layer 1.5', prompt,
+            "prompt 必示 Layer 1.5 path 替代 surface_to_sir")
         self.assertIn('ledger truth', prompt.lower(),
             "示例必引 'ledger truth' 教 LLM concept")
 

@@ -282,8 +282,18 @@ class TestPhase2BWRCThoughtOutcome(unittest.TestCase):
         self.assertFalse(os.path.exists(self.insights_path))
 
     def test_13_consolidation_full_path_writes_insight(self):
-        """充足数据 + 高 conf LLM → 真写 insight, type=inner_thought_vocab_tune."""
-        # 30 个 thought, 60% resolved
+        """🆕 [Sir 2026-05-28 12:30 β.5.45 退化] reflector path no-op 不写 insight.
+
+        历史: 此 test 原 assert "充足数据 + 高 conf LLM → 真写 insight,
+              type=inner_thought_vocab_tune".
+        退化: surface_to_sir 机制全 retired (见 jarvis_inner_thought_daemon.py:271-300
+              顶部 anchor). 该 reflector path 提的是 vocab 阈值
+              (salience_threshold / cooldown / max_per_hour), 阈值现已 dead.
+              入口 method 早退 no-op, 即便满足条件也不写 insight.
+        准则 4 testing discipline: assert 反着 (强化 spec, 不弱化 — 这是
+              regression guard 防 reflector 被无意重启).
+        """
+        # 30 个 thought, 60% resolved — 仍同样数据, 但 reflector retired
         thoughts = []
         thoughts += [self._make_thought('A', 'sir_engaged', 0.8)
                      for _ in range(12)]
@@ -307,16 +317,12 @@ class TestPhase2BWRCThoughtOutcome(unittest.TestCase):
         )
         with self._mock_llm_reflector(raw):
             c._do_inner_thought_outcome_consolidation('2026-W21')
-        # insight 写入
-        self.assertTrue(os.path.exists(self.insights_path))
-        with open(self.insights_path, 'r', encoding='utf-8') as f:
-            lines = [json.loads(l) for l in f if l.strip()]
-        self.assertEqual(len(lines), 1)
-        rec = lines[0]
-        self.assertEqual(rec['insight_type'], 'inner_thought_vocab_tune')
-        self.assertEqual(rec['target_field'], 'salience_threshold')
-        self.assertEqual(rec['proposed_new_value'], 0.6)
-        self.assertTrue(rec['id'].startswith('wi_voc_'))
+        # 退化后 insight 不写
+        self.assertFalse(
+            os.path.exists(self.insights_path),
+            'β.5.45 retired: reflector path 应 no-op 不写 insight, '
+            '但 insights_path 真存在 → reflector 被无意重启?'
+        )
 
     # ==========================================================
     # 10. _maybe_fire — 两条 path 并行

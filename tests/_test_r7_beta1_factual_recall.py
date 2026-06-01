@@ -37,45 +37,27 @@ class _MockWorker:
 
 
 def _bind_real_classifier():
-    """从 jarvis_nerve.py 抽出真实的 _classify_prompt_tier，绑到 mock 上。"""
-    import re as _re
-    import sys as _sys
-    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from _source_corpus import read_nerve_corpus
-    src = read_nerve_corpus()
-    # 拷贝三个关键词列表 + _classify_prompt_tier 方法定义
-    m_critical = _re.search(r"_TIER_CRITICAL_KEYWORDS\s*=\s*\[(.+?)\]\s*\n", src, _re.DOTALL)
-    m_factual = _re.search(r"_TIER_FACTUAL_RECALL_KEYWORDS\s*=\s*\[(.+?)\]\s*\n", src, _re.DOTALL)
-    m_tool = _re.search(r"_TIER_TOOL_KEYWORDS\s*=\s*\[(.+?)\]\s*\n", src, _re.DOTALL)
-    m_deep = _re.search(r"_TIER_DEEP_KEYWORDS\s*=\s*\[(.+?)\]\s*\n", src, _re.DOTALL)
-    m_method = _re.search(
-        r"def _classify_prompt_tier\(self, cmd: str, cmd_clean: str, cmd_words: list\) -> str:(.+?)"
-        r"(?=^    def\s+\w+|\Z)",
-        src, _re.DOTALL | _re.MULTILINE
-    )
-    assert all([m_critical, m_factual, m_tool, m_deep, m_method]), \
-        "未在源码中定位到 classifier 部件"
-    # 把这些组合成一个 class，让测试用
-    code = (
-        "import re\n"
-        "class RealClassifier:\n"
-        "    PROMPT_TIER_WAKE_ONLY = 'WAKE_ONLY'\n"
-        "    PROMPT_TIER_SHORT_CHAT = 'SHORT_CHAT'\n"
-        "    PROMPT_TIER_FACTUAL_RECALL = 'FACTUAL_RECALL'\n"
-        "    PROMPT_TIER_TOOL_REQUEST = 'TOOL_REQUEST'\n"
-        "    PROMPT_TIER_DEEP_QUERY = 'DEEP_QUERY'\n"
-        "    PROMPT_TIER_CRITICAL = 'CRITICAL'\n"
-        f"    _TIER_CRITICAL_KEYWORDS = [{m_critical.group(1)}]\n"
-        f"    _TIER_FACTUAL_RECALL_KEYWORDS = [{m_factual.group(1)}]\n"
-        f"    _TIER_TOOL_KEYWORDS = [{m_tool.group(1)}]\n"
-        f"    _TIER_DEEP_KEYWORDS = [{m_deep.group(1)}]\n"
-        f"    def _compute_wake_weight(self, cmd_clean, cmd_words):\n"
-        f"        return 0.0\n"
-        f"    def _classify_prompt_tier(self, cmd, cmd_clean, cmd_words):{m_method.group(1)}\n"
-    )
-    ns = {}
-    exec(code, ns)
-    return ns['RealClassifier']
+    """绑定当前 JarvisWorkerThread 上的真实 tier classifier。"""
+    from jarvis_worker import JarvisWorkerThread
+
+    class RealClassifier:
+        PROMPT_TIER_WAKE_ONLY = JarvisWorkerThread.PROMPT_TIER_WAKE_ONLY
+        PROMPT_TIER_SHORT_CHAT = JarvisWorkerThread.PROMPT_TIER_SHORT_CHAT
+        PROMPT_TIER_FACTUAL_RECALL = JarvisWorkerThread.PROMPT_TIER_FACTUAL_RECALL
+        PROMPT_TIER_TOOL_REQUEST = JarvisWorkerThread.PROMPT_TIER_TOOL_REQUEST
+        PROMPT_TIER_DEEP_QUERY = JarvisWorkerThread.PROMPT_TIER_DEEP_QUERY
+        PROMPT_TIER_CRITICAL = JarvisWorkerThread.PROMPT_TIER_CRITICAL
+        _TIER_CRITICAL_KEYWORDS = JarvisWorkerThread._TIER_CRITICAL_KEYWORDS
+        _TIER_FACTUAL_RECALL_KEYWORDS = (
+            JarvisWorkerThread._TIER_FACTUAL_RECALL_KEYWORDS)
+        _TIER_TOOL_KEYWORDS = JarvisWorkerThread._TIER_TOOL_KEYWORDS
+        _TIER_DEEP_KEYWORDS = JarvisWorkerThread._TIER_DEEP_KEYWORDS
+        _classify_prompt_tier = JarvisWorkerThread._classify_prompt_tier
+
+        def _compute_wake_weight(self, cmd_clean, cmd_words):
+            return 0.0
+
+    return RealClassifier
 
 
 RealClassifier = _bind_real_classifier()
@@ -191,11 +173,12 @@ class TestSourceContractFactualRecallPromptBranch(unittest.TestCase):
 
     def test_factual_recall_branch_includes_working_feed(self):
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_FACTUAL_RECALL:(.+?)return ",
+            r"def _assemble_factual_recall_prompt\(.+?"
+            r"(?=^    def\s+\w+|\Z)",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m)
-        body = m.group(1)
+        body = m.group(0)
         self.assertIn('working_feed', body, "FACTUAL_RECALL 分支必须含 working_feed")
         self.assertIn('event_bus', body, "FACTUAL_RECALL 分支必须含 event_bus")
 
@@ -203,12 +186,12 @@ class TestSourceContractFactualRecallPromptBranch(unittest.TestCase):
         # FACTUAL_RECALL 必须明确禁止 FAST_CALL —— "DO NOT call any tool" 是给 LLM 的指令
         # 必须出现在 FACTUAL_RECALL 分支 return 出的 f-string 里
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_FACTUAL_RECALL:(.+?)"
-            r"(?=\n        # \[R6/Tier\] WAKE_ONLY|\n        if prompt_tier == self\.PROMPT_TIER_WAKE_ONLY)",
+            r"def _assemble_factual_recall_prompt\(.+?"
+            r"(?=^    def\s+\w+|\Z)",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m, "未定位到完整的 FACTUAL_RECALL 分支（含 return f-string）")
-        body = m.group(1)
+        body = m.group(0)
         self.assertIn('DO NOT call', body)
         self.assertIn('tool', body.lower())
 

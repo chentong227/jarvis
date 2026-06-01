@@ -37,6 +37,9 @@
     "surface_min_weight": 0.45,
     "surface_min_size": 3,
     "lens_inject_enabled": 1,
+    "lens_replaces_layer3": 1,
+    "lens_replaces_layer2": 0,
+    "_doc_lens_replace": "口识体-E (Sir 2026-05-31 镜像 A/B 验过): lens_replaces_layer3=1 透镜替 Layer3 attention (透镜 relevance 排序优于旧 severity-blind, concern 信息仍经透镜流; 镜像验回复相关且无人设违反). lens_replaces_layer2=0 暂留 (Layer2 含 inside jokes/persona, 逐块退: Sir 真机用一轮 layer3 满意后, CLI 改本字段=1 退 Layer2). 退回: 任一字段=0 即恢复旧块.",
     "weaver": {
       "weave_interval_s": 600,
       "initial_delay_s": 90,
@@ -52,7 +55,15 @@
       "delta_threshold": 0.30,
       "tension_severity_min": 0.40,
       "drift_min": 0.05,
-      "max_deltas_per_weave": 12
+      "max_deltas_per_weave": 12,
+      "nudge_tension_enabled": 1,
+      "nudge_window_s": 600.0,
+      "nudge_tension_per_event": 0.5,
+      "nudge_tension_cap": 1.5,
+      "nudge_tension_etypes": ["proactive_care_advice", "care_signal_derived", "soul_alignment_advice", "proactive_nudge_fired"],
+      "stance_dyad_enabled": 1,
+      "stance_dyad_min_confidence": 0.6,
+      "stance_dyad_tension": 0.4
     }
   }
 }

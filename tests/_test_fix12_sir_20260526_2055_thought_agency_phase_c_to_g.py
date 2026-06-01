@@ -80,7 +80,15 @@ def _make_event_bus_capture():
 
 # ==========================================================================
 # Phase C — surface_to_sir actionable (7 testcase)
+# 🆕 [Sir 2026-05-28 12:30 β.5.45] Sir 拍板退化 surface_to_sir 全通道, 走 Layer 1.5
+# ([MY RECENT INNER THOUGHTS] by freshness × sal) 主脑自决 reference path. 思考脑
+# 不再 publish 'inner_thought_surface', 删 _do_surface_to_sir_actionable + _is_surface_supported
+# + ACTIONABLE menu 选项 + B-class prompt example. fix12 Phase C 7 testcase 失效, skip
+# 保留 anchor; 新 path 由 fix11 chain pull + sal 排序覆盖.
 # ==========================================================================
+@unittest.skip("β.5.45 [Sir 2026-05-28 12:30] surface_to_sir retired; "
+                "Layer 1.5 [MY RECENT INNER THOUGHTS] chain pull replaces. "
+                "fix11 testcase covers new path.")
 class TestPhaseCSurfaceToSir(unittest.TestCase):
     def test_sc1_low_sal_gated(self):
         """sal < threshold (0.7) → gated."""
