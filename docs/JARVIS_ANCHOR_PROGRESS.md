@@ -21,7 +21,7 @@
 | **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
 | **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | ✅ | b2777f0 | ✅ 完成 |
 | **H3** | 衡 | 口/识现场权衡指引(诚实vs善意逐案,无固定等级) | 16/16 | ✅ | c66de29 | ✅ 完成 |
-| **P4** | 锚化 | 体算法健康(blob 时自动去重 sweep;模块度压力 flag follow-up) | 7/7 | 待 | (本次) | 🔨 进行中 |
+| **P4** | 锚化 | 体算法健康(blob 时自动去重 sweep;模块度压力 flag follow-up) | 7/7 | ✅ | 381469b | ✅ 完成 |
 
 ---
 
@@ -227,7 +227,11 @@
 **验收:**
 - 单测 `_test_body_p4_auto_merge_sir_20260601.py` 3(近重复合/cap/高阈不误合)+ D2 回归 = 7/7。
 - body 套件 36/36 回归绿。
-- 镜像实机:**待**(boot 无回归 + 测 blob 时 auto_merge 跑 + 量 frac 前后,诚实报是否动)。
+- 镜像实机:✅ **通过 + 诚实发现被证实**。boot 干净。weave#1 检测 blob(`frac=0.832`),
+  auto_merge 钩子触发但**未 log `🧹 Weaver/P4`** = 找到 **0 个额外近重复**(weave_geometric
+  已边形成时 local-merge 完)+ **无误合**。**证实文档判断**:blob 根在过连接(distinct 节点)
+  非重复 → 去重正确地不动它;模块度压力才是真解(已 flag follow-up)。保守 sweep 行为完全正确
+  (跑了、没乱合)。镜像已 kill+清。
 
 **溯源:** charter P4 / 理念源 §6 体内容中性 + 0601 体不锚化决议。
 
