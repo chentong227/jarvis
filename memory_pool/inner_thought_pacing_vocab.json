@@ -70,7 +70,7 @@
   },
   "topic_distribution": {
     "lookback_min": 60,
-    "warning_threshold": 10,
+    "warning_threshold": 6,
     "max_topics_shown": 10,
     "_note": "🆕 [governor Phase 1 F3 / Sir 2026-05-29 拍板] 思考脑 evidence 加 [TOPIC DISTRIBUTION] block — count thoughts by thread_id in window. 当 occurrence ≥ warning_threshold (default 10) 标 ⚠️ 提示 LLM 考虑 let_go. lookback_min 1-360, warning_threshold 1-100, max_topics_shown 1-30 (sanity cap). E4 evidence 维度化: LLM 视觉看'我 22 次想同事' → 自然激活 let_go. 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F3."
   },
