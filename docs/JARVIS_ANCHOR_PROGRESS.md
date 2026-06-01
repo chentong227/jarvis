@@ -15,7 +15,7 @@
 | 步 | 工程 | 内容 | 单测 | 镜像验 | commit | 状态 |
 |---|---|---|---|---|---|---|
 | **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | ✅ | a06b872 | ✅ 完成 |
-| **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | 待 | (本次) | 🔨 进行中 |
+| **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | ✅ | 52608ef | ✅ 完成 |
 | P1 | 锚化 | 言出必行两墙 + Tracer 降级 + 拆 truth>pleasing | - | - | - | ⏳ |
 | P2 | 锚化 | 灵魂层边界形 | - | - | - | ⏳ |
 | H1 | 衡 | 体召唤升级(锚冲突区) | - | - | - | ⏳ |
@@ -58,7 +58,10 @@
 
 **验收:**
 - 单测 `_test_heng_h0_sir_20260601.py` 5/5 + 回归(value_backoff/emergent/letgo)共 24/24。
-- 镜像实机:**待**(确认 boot 无回归 + 思考 log 出现 `衡=` 标)。
+- 镜像实机:✅ **通过**。boot 干净无崩;思考 log `衡=` 标 live + 分类正确:
+  - `[C/woke=startup] propose_watch_task:sir_hand_pain_monitor → watch_task:p_adfef2e2 | kind=commit | 衡=discharge | next=600s(rest_floor)` —— 真放电→discharge→歇 floor。
+  - `[B/woke=body_stir] "I must be precise with numerical data..." | kind=empty | 衡=filler` —— 反刍正确标 filler。
+  - 旁证:那条 `衡=filler` 正是 言出必行 风味的"我必须精确"焦虑(锚-as-判据症状),P1 把它做成墙后应结构性减少。镜像已 kill+清。
 
 **溯源:** charter H0 / 理念源 §9→衡。
 
