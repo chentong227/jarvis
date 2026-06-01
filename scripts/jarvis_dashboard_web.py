@@ -5960,7 +5960,11 @@ def main():
             webbrowser.open(url)
         threading.Thread(target=_open, daemon=True).start()
     # disable Flask 默认 reloader (会 spawn 子进程)
-    app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=False)
+    # 🆕 [Sir 2026-06-02 fix] load_dotenv=False — Flask app.run 默认 load_dotenv
+    # 会读 .env (含真实 key 非 UTF8 字节) → UnicodeDecodeError 崩溃 → Sir 真测
+    # "web 启动失败 fallback tkinter" 根因. 关掉它 (key 由 jarvis_config.keys 单独读).
+    app.run(host=args.host, port=args.port, debug=args.debug,
+            use_reloader=False, load_dotenv=False)
 
 
 if __name__ == '__main__':
