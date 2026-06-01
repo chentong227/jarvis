@@ -731,8 +731,18 @@ class VoiceListenThread(QThread):
         pending_ack = getattr(self, '_nudge_focus_pending_ack', False)
         if score < 0.3:
             return False, False, '旁路语', False
-        if is_grayzone and pending_ack:
-            return False, True, 'nudge-focus 未 ack 灰区静默', False
+        # 🆕 [Sir 2026-05-31 00:24 "过分严格了" 治本] 灰区**不再** ASR 层硬静默.
+        # =====================================================================
+        # 真痛: return_greeting 后 Sir 回 "洗了个澡，精神了一点" (真机 score=0.5 空
+        # breakdown) 被 'nudge-focus 未 ack 灰区静默' 吞掉 — Sir 直接回应招呼却被无视.
+        # 根因: 关键字打分**无法区分** "回应招呼"(洗了个澡) vs "对他人说"(睡觉关灯吗) —
+        # 两者都 ~0.5 空 breakdown, ASR 层硬 gate 必然误杀其一 (准则 6 的墙).
+        # 治本: 灰区交**主脑**自决 (它有对话上下文: 自己刚说的招呼 + Sir 这句, 加
+        # multi_person_aware_judge / ambient_state_judge directive 判 "对我 vs 对他人").
+        # ASR 层只保留廉价预筛 (<0.3 清晰旁路丢弃); 灰区一律放行交主脑 (准则 6 决策集中
+        # 主脑 + Sir 旧诉求 "不小心翼翼" — 宁可主脑收到后自己判静默, 不在 ASR 层误杀).
+        # fix62 的 mom-talk case 改由主脑 ambient/multi-person directive 兜 (已 active).
+        # =====================================================================
         just_acked = False
         if score >= 0.6 and pending_ack:
             self._nudge_focus_pending_ack = False

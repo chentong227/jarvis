@@ -1287,7 +1287,12 @@ class UserStatusLedgerSentinel(threading.Thread):
         self.jarvis = central_nerve
         self._screenshot_sentinel = screenshot_sentinel
 
-        self.ledger_dir = r"D:\Jarvis\jarvis_config"
+        # 🆕 [Sir 2026-05-28 22:00 fix49 mirror P1 audit] 老 absolute path 是 mirror
+        # leak 唯一漏点 (audit 见 docs/JARVIS_AGENT_MIRROR_TESTING.md). 改 __file__-based
+        # → 镜像里自然指 mirror/jarvis_config, 0 leak. 主进程行为不变 (依然指
+        # D:\Jarvis\jarvis_config).
+        _sentinels_root = os.path.dirname(os.path.abspath(__file__))
+        self.ledger_dir = os.path.join(_sentinels_root, "jarvis_config")
         self.ledger_file = os.path.join(self.ledger_dir, "user_status_ledger.json")
         if not os.path.exists(self.ledger_dir):
             os.makedirs(self.ledger_dir)

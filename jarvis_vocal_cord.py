@@ -40,11 +40,23 @@ torchaudio.load = _safe_torchaudio_load
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'CosyVoice'))
 
-try:
-    from cosyvoice.cli.cosyvoice import CosyVoice
-except ImportError as e:
-    print(f"❌[致命错误] 找不到 CosyVoice 模块: {e}")
-    sys.exit(1)
+# 🪞 [Sir 2026-05-28 22:48 fix49 BUG #3 mirror cosyvoice sys.exit gate]
+# 主进程 cosyvoice 缺 = 致命 → sys.exit(1) 让 Sir 立刻看到. Mirror mode 故意不复制
+# CosyVoice/ (500MB 模型权重 mock 不需要), import 必失败. 但 ~30 个文件都有
+# `try: from jarvis_vocal_cord import VocalCord  # noqa: F401  except Exception: pass`
+# 用来兜底, 而 sys.exit(1) 抛 SystemExit (BaseException 子类, 非 Exception 子类),
+# `except Exception` 抓不到 → 整个镜像 subprocess 第一个 import 此 module 就死.
+# 治本: mirror mode 顶把 CosyVoice 设 None stub (VocalCord 类定义可活, 但 __init__
+# 永远不会被调 — jarvis_central_nerve.py:97 + jarvis_worker.py:112 都用 MockVocalCord).
+# 主进程 0 影响 (env JARVIS_MIRROR != '1' 走老 path, 缺 CosyVoice 仍 sys.exit).
+if os.environ.get('JARVIS_MIRROR') == '1':
+    CosyVoice = None  # type: ignore
+else:
+    try:
+        from cosyvoice.cli.cosyvoice import CosyVoice
+    except ImportError as e:
+        print(f"❌[致命错误] 找不到 CosyVoice 模块: {e}")
+        sys.exit(1)
 
 # ----- 下面是你的 class VocalCord: -----
 
@@ -127,6 +139,15 @@ class VocalCord:
         return text
 
     def _split_long_sentence(self, text: str, max_len: int = 200) -> list:
+        # 🩹 [Sir 2026-05-28 21:06 fix47-revert] max_len 80 真测引入 "大喘气声"
+        # ===================================================================
+        # 21:00 fix47 试 max_len 200→80 切短 sentence 治 cosyvoice 末尾衰退. Sir 真测:
+        # "确实改善 (末尾不衰)" + "非常夸张大喘气声" + "失去 butler 感". 真因: cosyvoice
+        # 每 inference 末尾 generate ~50-100ms breathing tail (zero-shot 模型从 prompt
+        # voice 学的呼吸), 多 chunk 拼接 tail 累积 → 大喘气. 回 max_len 200, 不切就不
+        # 产 chunk tail. silence pad code (line 299) 保留 (只对 200+ 超长句生效, 不动 reply).
+        # cosyvoice 末尾衰退 BUG 留 TODO (后续 fine-tune / 换模型 / trim tail).
+        # ===================================================================
         if len(text) <= max_len:
             return [text]
         parts = []
@@ -292,7 +313,19 @@ class VocalCord:
         if not all_audio:
             return None
 
-        audio_data = np.concatenate(all_audio)
+        # 🆕 [Sir 2026-05-28 20:55 fix47] 多 chunk 中间加 80ms silence pad
+        # 防 OS audio driver 拼接优化掉句间 gap (Sir 听感 "越后越急越连")
+        # 80ms ≈ 自然 phoneme 间停顿, 听感不生硬. 只多 chunk 才加, 单 chunk 不动.
+        if len(all_audio) > 1:
+            _inter_sil = np.zeros(int(0.08 * 22050), dtype=all_audio[0].dtype)
+            _padded = []
+            for _i, _chunk in enumerate(all_audio):
+                _padded.append(_chunk)
+                if _i < len(all_audio) - 1:
+                    _padded.append(_inter_sil)
+            audio_data = np.concatenate(_padded)
+        else:
+            audio_data = np.concatenate(all_audio)
         audio_data_int16 = (audio_data * 32767).astype(np.int16)
 
         # [v3 fix] 前后都加静音 padding：

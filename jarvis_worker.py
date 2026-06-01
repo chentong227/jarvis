@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """[P0+19-9 / 2026-05-16] Jarvis Worker — PyQt5 主线程 + 语音监听线程
 
 从 jarvis_nerve.py 拆出 2 个超大 QThread 类：
@@ -104,7 +104,14 @@ from jarvis_chat_bypass import ChatBypass, _C3_ACTION_HAND_COMMANDS  # noqa: F40
 from jarvis_central_nerve import CentralNerve, JARVIS_CORE_PERSONA, set_browser_ducking  # [P0+19-final fix 2]
 import concurrent.futures  # [P0+19-final fix 3] worker.run 用 ThreadPoolExecutor 跑 Gatekeeper  # noqa: F401
 
-from jarvis_vocal_cord import VocalCord  # noqa: F401
+# [Sir 2026-05-28 22:42 fix49 BUG #2 mirror cosyvoice import gate]
+# 同 jarvis_nerve.py:44 修法. Mirror 没复制 CosyVoice/, 真 VocalCord 顶 import 崩.
+# 这里是 backward-compat 转发垫层 (noqa: F401 = unused 但 import 副作用要保留), 用 MockVocalCord 替换不影响调用方.
+import os as _os_mirror_gate
+if _os_mirror_gate.environ.get('JARVIS_MIRROR') == '1':
+    from jarvis_mirror_mode import MockVocalCord as VocalCord  # noqa: F401
+else:
+    from jarvis_vocal_cord import VocalCord  # noqa: F401
 from jarvis_blood import JarvisBlood, ExecutionResult, FeedbackSignal  # noqa: F401
 from jarvis_hippocampus import Hippocampus  # noqa: F401
 from jarvis_enhanced import ProactiveShield, SkillTreeTracker, ProactiveCompanion  # noqa: F401

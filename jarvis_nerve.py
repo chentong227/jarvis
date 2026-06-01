@@ -41,7 +41,15 @@ import math
 import threading
 import queue
 import sqlite3
-from jarvis_vocal_cord import VocalCord
+# [Sir 2026-05-28 22:42 fix49 BUG #2 mirror cosyvoice import gate]
+# Mirror 没复制 CosyVoice/ 目录 (launcher DEFAULT_IGNORE_NAMES 跳了, 500MB 模型权重不需要镜像).
+# 真 VocalCord 顶 import cosyvoice 会 ModuleNotFoundError 杀进程, except 块 print '❌' 又 GBK 二崩.
+# Mirror gate: JARVIS_MIRROR=1 改用 MockVocalCord (API 100% 兼容: speak/say/render_only/play_only/stop_immediately).
+# 主进程链路 0 变化.
+if os.environ.get('JARVIS_MIRROR') == '1':
+    from jarvis_mirror_mode import MockVocalCord as VocalCord
+else:
+    from jarvis_vocal_cord import VocalCord
 import speech_recognition as sr
 import comtypes
 from PyQt5.QtWidgets import QApplication, QWidget
@@ -238,6 +246,17 @@ from jarvis_central_nerve import CentralNerve
 from jarvis_worker import VoiceListenThread, JarvisWorkerThread
 from jarvis_ui import SubtitleOverlay, BreathingLightUI
 
+# 🪞 [Sir 2026-05-28 22:00 fix49 mirror P2 hook-2] Agent Mirror Testing
+# `JARVIS_MIRROR=1` 镜像 subprocess 才生效, 主进程 0 影响.
+# 详 docs/JARVIS_AGENT_MIRROR_TESTING.md + jarvis_mirror_mode.py
+from jarvis_mirror_mode import (
+    is_mirror_mode as _is_mirror_mode,
+    write_mirror_meta as _write_mirror_meta,
+    MirrorBreathingLightUI as _MirrorBreathingLightUI,
+    MirrorSubtitleOverlay as _MirrorSubtitleOverlay,
+    create_mirror_voice_worker as _create_mirror_voice_worker,
+)
+
 # 🔑 [P0+19-deps / 2026-05-16] API key loader —— 只从 .env 读，绝不硬编码
 from jarvis_config.keys import load_keys
 
@@ -265,15 +284,29 @@ if __name__ == "__main__":
     key_router.probe_google_keys_at_startup(async_mode=True)
     
     app = QApplication(sys.argv)
-    
-    ui = BreathingLightUI()
-    ui.show()
-    
+
+    # 🪞 [Sir 2026-05-28 22:00 fix49 mirror P2 hook-2] 镜像 mode 早写 meta
+    # Cascade 看 _mirror_meta.json 知道镜像就绪 (pid / cwd / task / start_ts)
+    _MIRROR = _is_mirror_mode()
+    if _MIRROR:
+        _write_mirror_meta()
+
+    if _MIRROR:
+        ui = _MirrorBreathingLightUI()  # no-op, 不抢 OpenGL / 不显示窗口
+        print("🪞 [mirror_mode] BreathingLightUI replaced by no-op stub")
+    else:
+        ui = BreathingLightUI()
+        ui.show()
+
     jarvis_worker = JarvisWorkerThread(api_key=keys.OPENROUTER_MAIN, gemini_key=keys.GEMINI, key_router=key_router)
     jarvis_worker.state_changed.connect(ui.change_state)
     jarvis_worker.start()
-    
-    subtitle_overlay = SubtitleOverlay(ui)
+
+    if _MIRROR:
+        subtitle_overlay = _MirrorSubtitleOverlay(ui)  # 字幕事件全转 _mirror_output.jsonl
+        print("🪞 [mirror_mode] SubtitleOverlay replaced by no-op stub (events → _mirror_output.jsonl)")
+    else:
+        subtitle_overlay = SubtitleOverlay(ui)
     jarvis_worker.jarvis.chat_bypass.subtitle_queue = subtitle_overlay.subtitle_queue
     jarvis_worker.subtitle_overlay = subtitle_overlay
     
@@ -297,7 +330,12 @@ if __name__ == "__main__":
     humor_memory = jarvis_worker.jarvis.humor_memory
     jarvis_worker.humor_memory = humor_memory
     
-    voice_worker = VoiceListenThread()
+    if _MIRROR:
+        # mirror: 不开麦克风 / funasr / 唤醒检测; poll _mirror_input.jsonl 模拟 Sir 输入
+        voice_worker = _create_mirror_voice_worker(poll_interval=0.5)
+        print("🪞 [mirror_mode] VoiceListenThread replaced by MirrorVoiceWorker (polling _mirror_input.jsonl)")
+    else:
+        voice_worker = VoiceListenThread()
     voice_worker.return_sentinel = jarvis_worker.jarvis.guardian_center.return_sentinel
     voice_worker.interrupt_signal.connect(jarvis_worker.interrupt_all)
     voice_worker.text_ready.connect(jarvis_worker.push_command)
