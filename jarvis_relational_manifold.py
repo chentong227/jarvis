@@ -117,6 +117,14 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "min_node_text_chars": 4,      # 太短文本不 embed
         "embed_batch_size": 32,        # 批量 embed 上限
     },
+    # 🆕 [体 P4 / Sir 2026-06-01] 内容中性算法健康: blob 时自动合并近重复节点 (收体积).
+    # charter §6: 体复杂度走内容中性算法(去重/模块度), **非锚**。纯几何 cosine 去重, 可逆 alias,
+    # 不删源、不做内容/价值判断。保守: 高 threshold(只真近重复)+ 每轮上限 + 仅 blob 时触发。
+    "auto_merge_dups": {
+        "enabled": True,
+        "threshold": 0.93,                 # cosine 阈 (高 = 只合真近重复, 保守)
+        "max_merges_per_weave": 10,        # 每轮上限 (防一次合太多)
+    },
     # 体势能 E (口识体-B3) — 自转的坡度. 详 docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §2.
     # 接地无 LLM: novelty(新边) + drift(边权变) + tension(高severity concern 无 stance 覆盖)
     "energy": {

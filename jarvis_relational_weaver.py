@@ -422,6 +422,54 @@ class RelationalWeaver:
         self.manifold.apply_decay(now=now)
         return self.manifold.prune(now=now)
 
+    # 🆕 [体 P4 / Sir 2026-06-01] 内容中性算法健康: 自动合并近重复节点 (收 blob 体积) ===
+    # charter JARVIS_ANCHOR_DESIGN.md §6 + 理念源 §6/0601 决议: 体复杂度走**内容中性算法
+    # 健康**(模块度/去重), **非锚**(衡碰体仅护定点)。本法复用 D2(manifold_dump cmd_merge_dups)
+    # 纯几何去重: 缓存向量 cosine >= threshold → add_alias(dup→rep, rep=度数高)。
+    # **不删源、可逆、内容中性**(纯 embedding 相似, 不做任何内容/价值/锚判断)。
+    def auto_merge_near_dups(self, threshold: float = 0.93,
+                             max_merges: int = 10) -> int:
+        """blob 时合并近重复节点收体积。返回合并对数。失败非致命 (返 0)。"""
+        try:
+            import numpy as np
+            data = self._read_json(self.vectors_path) or {}
+            vec = (data.get("vectors") or {}) if isinstance(data, dict) else {}
+            ids = [k for k in vec
+                   if isinstance(vec.get(k), dict) and vec[k].get("vec")]
+            if len(ids) < 2:
+                return 0
+            M = np.array([vec[i]["vec"] for i in ids], dtype=np.float32)
+            nrm = np.linalg.norm(M, axis=1, keepdims=True)
+            nrm[nrm == 0] = 1.0
+            Mn = M / nrm
+            sim = Mn @ Mn.T
+            pairs = []
+            for i in range(len(ids)):
+                for j in range(i + 1, len(ids)):
+                    c = float(sim[i, j])
+                    if c >= threshold:
+                        pairs.append((c, ids[i], ids[j]))
+            pairs.sort(reverse=True)
+            merged = 0
+            for c, a, b in pairs:
+                if merged >= max_merges:
+                    break
+                ra, rb = self.manifold.resolve(a), self.manifold.resolve(b)
+                if ra == rb:
+                    continue
+                if self.manifold.degree(ra) >= self.manifold.degree(rb):
+                    rep, dup = ra, rb
+                else:
+                    rep, dup = rb, ra
+                if self.manifold.add_alias(dup, rep):
+                    merged += 1
+            if merged:
+                self.manifold.save()
+            return merged
+        except Exception as exc:
+            _log(f"[Weaver] auto_merge_near_dups 异常: {exc!r}")
+            return 0
+
     # ---- 体势能 E (口识体-B3): 自转的坡度 ----
     def _concern_severity_map(self) -> Dict[str, float]:
         """{concern node_id: severity} for active concerns (张力源料)。"""
@@ -722,6 +770,21 @@ class RelationalWeaver:
             _log(f"⚠️ [Weaver/complexity] {cx['health']}: largest_surface_frac="
                  f"{cx['largest_surface_frac']} density={cx['density']} "
                  f"→ 体积大复杂度低, 待 merge (closure D2)")
+            # 🆕 [体 P4 / Sir 2026-06-01] blob → 自动内容中性去重 (收体积), gated vocab.
+            try:
+                from jarvis_relational_manifold import get_manifold_config as _gmc
+                _am = (_gmc().get("auto_merge_dups") or {})
+                if _am.get("enabled", True):
+                    _n = self.auto_merge_near_dups(
+                        threshold=float(_am.get("threshold", 0.93)),
+                        max_merges=int(_am.get("max_merges_per_weave", 10)))
+                    if _n:
+                        cx = self.manifold.complexity_report(now=now)
+                        stats["complexity"] = cx
+                        _log(f"🧹 [Weaver/P4] blob → 自动合并近重复 {_n} 对 (内容中性去重,"
+                             f" 可逆 alias); 后 frac={cx['largest_surface_frac']}")
+            except Exception as _e:
+                _log(f"[Weaver/P4] auto_merge skip: {_e!r}")
         return stats
 
     # ---- daemon ----

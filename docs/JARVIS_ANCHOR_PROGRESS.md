@@ -21,7 +21,7 @@
 | **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
 | **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | ✅ | b2777f0 | ✅ 完成 |
 | **H3** | 衡 | 口/识现场权衡指引(诚实vs善意逐案,无固定等级) | 16/16 | ✅ | c66de29 | ✅ 完成 |
-| P4 | 锚化 | 体算法健康(D2 merge + 模块度) | - | - | - | ⏳ |
+| **P4** | 锚化 | 体算法健康(blob 时自动去重 sweep;模块度压力 flag follow-up) | 7/7 | 待 | (本次) | 🔨 进行中 |
 
 ---
 
@@ -202,6 +202,34 @@
   confidence"/"ambitious")**同时成立 = 求两全、无固定等级**的逐案导航。镜像已 kill+清。
 
 **溯源:** charter H3 / 理念源 §2 Q-a 无等级 + §5。
+
+---
+
+## P4 — 体算法健康 (内容中性去重 sweep;模块度压力 flag follow-up) [锚化;独立]
+
+**做了什么(charter §6:体复杂度走内容中性算法健康,非锚):**
+- Weaver `auto_merge_near_dups(threshold, max_merges)` —— 复用 D2 几何去重的**全局 cosine
+  sweep**:缓存向量 cosine>=阈 → `add_alias(dup→rep, rep=度数高)`。**纯几何、可逆 alias、
+  不删源、零内容/价值/锚判断 = 内容中性**。
+- 钩入 `weave_once`:complexity health=blob/over_dense 时自动跑(gated vocab
+  `auto_merge_dups.{enabled,threshold:0.93,max_merges_per_weave:10}`,保守:高阈只合真近重复
+  + 每轮上限 + 仅 blob 触发)。
+
+**诚实边界(准则 5 + 8,不鲁莽动体):**
+- **发现**:`weave_geometric` 早已在边形成时 local-merge 近重复(`_test_body_d2_merge` T2 证)。
+  故现 blob(`largest_surface_frac≈0.82`)**根在过连接(distinct 节点挤一个 surface),非重复**。
+- 本 P4 的 auto_merge 是**全局 sweep 补一刀**(catch local-merge 漏的跨 surface 近重复)——
+  安全、内容中性、可逆,但**未必显著降 blob frac**(因 blob 是过连接非重复)。
+- **真正解 blob = 模块度压力**(surface 形成/分裂改),属**风险高的体核心算法改** → 按准则 8
+  + "体要它自己长复杂、别鲁莽雕刻"(理念源 §6),**flag 为 follow-up 不在本轮鲁莽做**。
+  本轮交付安全去重 sweep,模块度压力留作 Sir 拍板后的专门设计。
+
+**验收:**
+- 单测 `_test_body_p4_auto_merge_sir_20260601.py` 3(近重复合/cap/高阈不误合)+ D2 回归 = 7/7。
+- body 套件 36/36 回归绿。
+- 镜像实机:**待**(boot 无回归 + 测 blob 时 auto_merge 跑 + 量 frac 前后,诚实报是否动)。
+
+**溯源:** charter P4 / 理念源 §6 体内容中性 + 0601 体不锚化决议。
 
 ---
 
