@@ -46,10 +46,10 @@
 
 ## 2. 当前位置 (每 session 必更新) **[防忘锚点]**
 
-- **棘轮当前:第 0 格(造仪表 + 焊墙)— T0.2 机械墙 + T0.1 生命体征台 均落地, 待 Sir 真机长跑观察趋势(T0.3)。**
-- 下一步具体:**T0.3 纯观测长跑** — Sir 真机用几天, 看体征台 breach 恒 0 + filler 趋势 + body frac 走向。**第 1 格不得开,直到墙被真机数据证明敢信。**
-- **协作 agent 接手:墙 `jarvis_integrity_wall.py` + CLI `integrity_wall_dump.py`; 体征台 `jarvis_vitals_board.py` + CLI `scripts/vitals_dump.py` + dashboard 观测块卡片 `read_vitals_board`。接手前必读 §0(三条硬线)+ §4(仪表是会退化代理)。**
-- 最近一次观察:(2026-06-01 22:46 镜像实测) 体征台卡片在**运行中镜像** dashboard --text-only 快照里彻底生效 — 读镜像自身数据(衡 13/9/12, body frac=0.878 与主仓不同=真隔离), breach 硬证=0✅, body=blob 正确标 WARN, 全程纯读 err=null 不阻塞镜像进程。
+- **棘轮当前:第 0 格(造仪表 + 焊墙)— T0.2 墙 + T0.1 体征台 + T0.3 趋势视图 三件套代码全落地, 待 Sir 真机长跑采趋势数据。**
+- 下一步具体:**Sir 真机长跑期周期跑 `python scripts/vitals_dump.py --snapshot` 采集 + `--trend` 看走向**。攒够数周数据 + breach 恒 0 + filler/frac 趋势健康 → 第 0 格进格闸达成, 才议第 1 格。**第 1 格不得开,直到墙被真机数据证明敢信。**
+- **协作 agent 接手:墙 `jarvis_integrity_wall.py`+CLI; 体征台 `jarvis_vitals_board.py`(collect/render/snapshot/render_trend)+CLI `scripts/vitals_dump.py --snapshot|--trend`+dashboard `read_vitals_board`。接手前必读 §0+§4。**
+- 最近一次观察:(2026-06-02) T0.3 趋势视图落地 — snapshot 压一行 append vitals_snapshots.jsonl(纯观测), render_trend 跨快照算 breach恒0/filler走向/body frac走向。主仓验证渲染正确。第 0 格三件套(墙/仪表/趋势)代码完备, 转入真机长跑数据采集阶段。
 
 ---
 
