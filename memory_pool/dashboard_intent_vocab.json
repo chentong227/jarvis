@@ -8,6 +8,22 @@
   },
   "patterns": [
     {
+      "id": "explicit_homepage_zh",
+      "keywords": ["主页", "首页", "识说体衡", "四元", "演化主页", "你成为谁", "你是谁的主页"],
+      "state": "active",
+      "source": "sir_2026_06_02",
+      "created_at": 1780356800.0,
+      "note": "🆕 Sir 2026-06-02 真痛: '打开主页'误开旧 dashboard. 主页=四元演化主页(homepage_open), 非 dashboard. directive 区分两者."
+    },
+    {
+      "id": "explicit_homepage_en",
+      "keywords": ["homepage", "home page", "the homepage"],
+      "state": "active",
+      "source": "sir_2026_06_02",
+      "created_at": 1780356800.0,
+      "note": "🆕 Sir 2026-06-02 英文主页 → homepage_open"
+    },
+    {
       "id": "explicit_dashboard_zh",
       "keywords": ["面板", "看板", "仪表盘", "状态板"],
       "state": "active",

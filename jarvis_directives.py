@@ -2945,27 +2945,20 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
             ttl_days=60,
             tier_whitelist=[],
             text=_tw.dedent("""\
-                [DASHBOARD INTENT]:
-                Sir 此刻像在请求看你的内部状态总览 (用了"面板/看板/总览/dashboard
-                / show me status / 看看你的" 等). 你可以打开 jarvis_dashboard
-                给他看 — 这是一个独立的中文可视化窗口, 显示:
-                  - 你长期惦记 Sir 的事 (Concerns)
-                  - 你们之间的默契 (Inside jokes)
-                  - 你的健康 (内存/线程/API)
-                  - Sir 待办 / 提案审阅 / Directive 偏移 / 实时事件流
-                  - 信任审计 (你今天真改了什么记忆)
+                [DASHBOARD / HOMEPAGE INTENT] — 先分清 Sir 要哪个 (两个不同窗口):
 
-                用法 (FAST_CALL):
-                  <FAST_CALL>{"organ":"ui_control","command":"dashboard_open","params":{}}</FAST_CALL>
+                ⭐ 关键区分 (Sir 2026-06-02 真痛: "打开主页"误开了旧面板):
+                  • Sir 说"主页 / 首页 / homepage / 识说体衡 / 四元 / 你成为谁"
+                    → 开**四元演化主页** (识/说/体/衡 + 我是谁 + 内部演变, 看"谁的诞生路径"):
+                    <FAST_CALL>{"organ":"ui_control","command":"homepage_open","params":{}}</FAST_CALL>
+                  • Sir 说"面板 / 看板 / dashboard / 状态总览"
+                    → 开**运维面板** (Concerns / 默契 / 健康 / 待办 / 审阅 / 信任审计):
+                    <FAST_CALL>{"organ":"ui_control","command":"dashboard_open","params":{}}</FAST_CALL>
 
-                🆕 [主页] Sir 若说"打开主页/homepage/看看你成为谁/识说体衡" 类 —
-                那是要看你的**四元架构演化主页** (识/说/体/衡 + 我是谁 + 内部演变),
-                跟运维面板不同 (主页看"谁的诞生路径", 面板看运维数值). 用:
-                  <FAST_CALL>{"organ":"ui_control","command":"homepage_open","params":{}}</FAST_CALL>
+                ❗ "主页" ≠ "面板". 听到"主页/homepage" 必用 homepage_open, 绝不用 dashboard_open.
 
-                语义模糊时 (Sir 只说"看看" 没说面板/主页) — 反问 1 句澄清, 别瞎开.
-                看完 Sir 自然会自己关; 想关面板也可:
-                  <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
+                语义模糊时 (Sir 只说"看看" 没说主页/面板) — 反问 1 句澄清要哪个, 别瞎开.
+                想关面板: <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
             """).rstrip(),
             trigger=_trigger_dashboard_intent,
         ),
