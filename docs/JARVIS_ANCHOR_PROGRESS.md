@@ -16,7 +16,7 @@
 |---|---|---|---|---|---|---|
 | **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | ✅ | a06b872 | ✅ 完成 |
 | **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | ✅ | 52608ef | ✅ 完成 |
-| P1 | 锚化 | 言出必行两墙 + Tracer 降级 + 拆 truth>pleasing | - | - | - | ⏳ |
+| **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | 待 | (本次) | 🔨 进行中 |
 | P2 | 锚化 | 灵魂层边界形 | - | - | - | ⏳ |
 | H1 | 衡 | 体召唤升级(锚冲突区) | - | - | - | ⏳ |
 | H2 | 衡 | 冲突裁决 + 记代价 + 河床回流 | - | - | - | ⏳ |
@@ -64,6 +64,35 @@
   - 旁证:那条 `衡=filler` 正是 言出必行 风味的"我必须精确"焦虑(锚-as-判据症状),P1 把它做成墙后应结构性减少。镜像已 kill+清。
 
 **溯源:** charter H0 / 理念源 §9→衡。
+
+---
+
+## P1 — 言出必行 锚化 (判据→边界:建设性侧 + Tracer 确认 backstop) [锚化]
+
+**做了什么(charter §3,且严守红线):**
+- **消费 anchors.json**(P0→P1 进展):`jarvis_anchors.render_walls_block()` 渲染标了
+  `prompt_inject` 的锚的 **边界 + 撞墙时的可行选项**;`anchors.json`/seed 给 say_do 两墙加
+  `feasible`("问/hedge/沉默"、"明说搁置/重谈")+ `prompt_inject:true`(for_sir=false,P2 开)。
+- **注入主脑 prompt**:central_nerve `skills_section` 加 `anchor_boundary_block`(紧凑、gated、
+  失败非致命)。**判据→边界**:persona 已有禁令(prohibition),P1 补 persona 缺的**建设性侧**——
+  告诉主脑撞墙时"墙内有路"(问/hedge/沉默都不丢人),**直接对治 H0 镜像那条 `衡=filler`
+  "我必须精确"优化焦虑**(理念源 §7 合上点)。
+- **ClaimTracer/CommitmentWatcher 确认已是 backstop**:`trace_reply` 是事后审计(H0 镜像
+  见 `🔎 [SemanticClaim/I2]` 只 log 不 block),**无需改**。墙在 frame 上是 primary,Tracer 是兜底。
+
+**红线守住(关键):**
+- **未碰 `JARVIS_CORE_PERSONA`**(AGENTS §4.8 红线)。persona 的 "INTEGRITY OVER OBEDIENCE" +
+  "NEVER claim 已完成/FORBIDDEN future-tense" 本就是墙(prohibition),保留不动。
+- **未拆 "truth>pleasing" 等级 —— 有意 DEFER**(准则 8 正确次序,非跳过):persona 那条是
+  整合 integrity 墙(immutable);要拆的"固定等级→交衡逐案"依赖 **衡 H2/H3**,而 H2/H3 依赖
+  P1+P2 墙就位(charter 依赖链)。在 H2/H3 落地前拆等级会留 integrity 空档(准则 5 风险)。
+  故 P1 只做**加墙(建设性边界)**这一安全增量(strengthen, 不 weaken);拆等级留 H2/H3。
+
+**验收:**
+- 单测 `_test_anchor_p1_walls_block_sir_20260601.py` 4 + P0 回归 = 10/10。
+- 镜像实机:**待**(boot 无回归 + 边界块进 prompt + 看 `衡=filler` 焦虑是否减)。
+
+**溯源:** charter P1 / 理念源 §2 边界 + §3-公理2 豁免 + §7 合上点 + §8(Q-a 等级处理)。
 
 ---
 

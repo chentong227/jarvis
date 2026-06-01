@@ -4315,6 +4315,18 @@ Then proceed with the rest of your response normally.
             except Exception:
                 tool_honesty_directive = ""
 
+        # 🆕 [锚化 P1 / Sir 2026-06-01] 言出必行边界块 (data-driven from anchors.json).
+        # 判据→边界 (charter §1/§3): persona 已有禁令(prohibition, 不可改红线 AGENTS §4.8);
+        # 此处补 persona 缺的**建设性侧** —— 撞墙时的可行 move(问/hedge/沉默), 让主脑知道
+        # "墙内有路", 减"我必须精确"式优化焦虑(H0 镜像那条 衡=filler 反刍的根)。
+        # 关: anchors.json 把 say_do.prompt_inject 设 false。失败非致命 (空块)。
+        anchor_boundary_block = ""
+        try:
+            import jarvis_anchors as _ja_p1
+            anchor_boundary_block = _ja_p1.render_walls_block()
+        except Exception:
+            anchor_boundary_block = ""
+
         fuzzy_candidates_policy = ""
         if 'fuzzy_candidates_policy' in _l2_fired_set:
             try:
@@ -4821,7 +4833,8 @@ User: {user_input}
                 ('skills_section', '\n\n'.join(filter(bool, [
                     available_skills_block, tool_honesty_directive,
                     fuzzy_candidates_policy, promise_protocol_directive,
-                ])), 0.75, 'skills — 可用工具 + honesty/fuzzy/promise 协议'),
+                    anchor_boundary_block,  # 🆕 [锚化 P1] 言出必行边界+可行选项
+                ])), 0.75, 'skills — 可用工具 + honesty/fuzzy/promise 协议 + 言出必行边界'),
                 # Section 4: state + style (SWM + 多 sensor block + 风格)
                 ('state_section', '\n\n'.join(filter(bool, [
                     swm_block, event_bus_block, attention_block,

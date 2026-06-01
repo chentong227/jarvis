@@ -43,12 +43,15 @@ _SEED_ANCHORS: Dict[str, Any] = {
         {
             "id": "say_do",
             "name": "言出必行",
+            "prompt_inject": True,   # P1: 注入主脑 prompt 的边界+可行选项框架
             "walls": [
                 {"id": "ground",
                  "prohibition": "不把无法 trace 到证据的东西当事实断言",
+                 "feasible": "问 Sir / 明确标为推断(hedge) / 沉默 —— 都不丢人,唯独断言无据才越墙",
                  "checkable": True, "backstop": "ClaimTracer"},
                 {"id": "keep",
                  "prohibition": "不让承诺在沉默里失效(要么做,要么明说搁置/重谈)",
+                 "feasible": "明说'我先搁置/重谈' —— 让它在沉默里烂掉才越墙",
                  "checkable": True, "backstop": "CommitmentWatcher"},
             ],
             "organ_manifest": {
@@ -65,6 +68,7 @@ _SEED_ANCHORS: Dict[str, Any] = {
         {
             "id": "for_sir",
             "name": "灵魂层关系锚",
+            "prompt_inject": False,  # P2 打开 (灵魂层边界形落地时)
             "walls": [
                 {"id": "no_betray",
                  "prohibition": "不背叛 Sir(不违背他的根本利益)",
@@ -131,10 +135,38 @@ def _merge_anchor_override(seed_doc: Dict[str, Any],
         if aid not in by_id:
             continue  # 不允许 json 新增锚 (锚是宪法, 不是软 vocab)
         tgt = by_id[aid]
-        for k in ("soft_leanings", "conflict_notes", "organ_manifest"):
+        # soft 可调 (CLI/json 可覆盖); prompt_inject 是注入开关 (软配置, 可关)。
+        # walls 不可被 override (墙以 seed 为准, 锚非软)。
+        for k in ("soft_leanings", "conflict_notes", "organ_manifest",
+                  "prompt_inject"):
             if k in ov:
                 tgt[k] = ov[k]
     return seed_doc
+
+
+def render_walls_block(max_chars: int = 520) -> str:
+    """主脑 prompt 用 (锚化 P1): 渲染标了 prompt_inject 的锚的**边界 + 受阻时可行选项**。
+
+    判据 → 边界 (charter §1):persona 已说"不许"(prohibition 禁令);此处补 persona 缺的
+    **建设性侧** —— 撞墙时的可行 move(问/hedge/沉默),让主脑知道"墙内有路",从而**减少
+    '我必须精确'式的优化焦虑**(= H0 镜像里那条 衡=filler 反刍的根)。
+
+    data-driven from anchors.json;关闭:把对应锚的 prompt_inject 设 false。
+    不重写 persona(AGENTS §4.8 红线),只加一个紧凑的建设性边界块。
+    """
+    lines: List[str] = []
+    for a in get_anchors():
+        if not a.get("prompt_inject"):
+            continue
+        lines.append(f"=== 边界 · {a.get('name', '')}(墙内自由,撞墙有路)===")
+        for w in a.get("walls", []):
+            row = f"  [墙·{w.get('id')}] 不越: {w.get('prohibition', '')}"
+            if w.get("feasible"):
+                row += f"\n     受阻时(可行,不焦虑): {w['feasible']}"
+            lines.append(row)
+    if not lines:
+        return ""
+    return "\n".join(lines)[:max_chars]
 
 
 def get_anchors() -> List[Dict[str, Any]]:
