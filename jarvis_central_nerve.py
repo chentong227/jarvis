@@ -4324,6 +4324,12 @@ Then proceed with the rest of your response normally.
         try:
             import jarvis_anchors as _ja_p1
             anchor_boundary_block = _ja_p1.render_walls_block()
+            # 🆕 [衡 H3 / Sir 2026-06-01] 附墙冲突时的逐案权衡指引 (无固定等级)
+            _cg = _ja_p1.render_conflict_guidance()
+            if _cg:
+                anchor_boundary_block = (
+                    (anchor_boundary_block + "\n\n" + _cg).strip()
+                )
         except Exception:
             anchor_boundary_block = ""
 

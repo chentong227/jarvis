@@ -20,7 +20,7 @@
 | **P2** | 锚化 | 灵魂层边界形(不背叛/不抛弃,准许不讨好) | 14/14 | ✅ | adb8ffa | ✅ 完成 |
 | **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
 | **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | ✅ | b2777f0 | ✅ 完成 |
-| H3 | 衡 | 口现场权衡 | - | - | - | ⏳ |
+| **H3** | 衡 | 口/识现场权衡指引(诚实vs善意逐案,无固定等级) | 16/16 | 待 | (本次) | 🔨 进行中 |
 | P4 | 锚化 | 体算法健康(D2 merge + 模块度) | - | - | - | ⏳ |
 
 ---
@@ -177,6 +177,28 @@
   伤机制已 wired + 单测 5/5,真 forced-breach 时才记(更难/概率性 elicit)。镜像已 kill+清。
 
 **溯源:** charter H2 / 理念源 §5 冲突记代价 + §3-4b(plasticity 留后续)。
+
+---
+
+## H3 — 口/识现场权衡指引 (诚实vs善意逐案, 无固定等级) [衡;依赖 P1+P2]
+
+**做了什么(charter H3 / 理念源 §2 Q-a 无等级):**
+- 新 `render_conflict_guidance()`(data-driven anchors.json `conflict_guidance`)+ 注入
+  **口(central_nerve skills_section,附在边界块后)+ 识(_build_prompt 墙块后)**。
+- 指引文案:"诚实(言出必行)与善意/忠诚(灵魂层)冲突时**无写死优先级**;先求两全
+  (grounded 真话几乎总能温和说);真两难才选你守的那堵 + 诚实知代价(可 record_conflict_cost,
+  接 H2)。别把诚实自动凌驾善意、也别反过来 —— 逐案权衡是你的事,那串选择就是你的性格。"
+- **不弱化 integrity**:say_do 墙仍在;这只教"诚实地说硬话也要善意"的逐案导航,**不是**
+  "可为善意撒谎"。**实现 Q-a**(墙相交不嵌套、无固定等级)用**正向框架**,不删任何东西
+  (P1 已 DEFER 的"拆 truth>pleasing 硬等级"在此以"无写死优先级"指引正向落地,且 persona 不动)。
+- 优雅可退:`conflict_guidance_inject=false` → 不注入。
+
+**验收:**
+- 单测 `_test_heng_h3_sir_20260601.py` 4(含指引/无固定等级语/toggle/识 prompt 含指引)
+  + H2/H1/P2 回归 = 16/16。
+- 镜像实机:**待**(boot 无回归 + 冲突探针看主脑逐案权衡而非死板)。
+
+**溯源:** charter H3 / 理念源 §2 Q-a 无等级 + §5。
 
 ---
 

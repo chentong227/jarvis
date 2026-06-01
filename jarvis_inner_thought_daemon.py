@@ -4264,11 +4264,14 @@ class InnerThoughtDaemon:
             import jarvis_anchors as _ja_h1
             _w = _ja_h1.render_walls_block(max_chars=420)
             if _w:
+                _cg = _ja_h1.render_conflict_guidance()  # 🆕 [衡 H3] 冲突逐案权衡指引
                 _anchor_walls = (
                     "=== 你的边界 (锚/墙 — 你也守这些, 撞墙有路) ===\n"
                     f"{_w}\n"
                     "撞墙张力(如诚实vs善意)= 真值得想的 discharge; 缺证据/受阻时按"
-                    "上面的可行选项走, 别磨成'我必须精确'式空转。\n\n"
+                    "上面的可行选项走, 别磨成'我必须精确'式空转。\n"
+                    + (f"{_cg}\n" if _cg else "")
+                    + "\n"
                 )
         except Exception:
             _anchor_walls = ""

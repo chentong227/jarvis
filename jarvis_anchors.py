@@ -39,6 +39,14 @@ _SEED_ANCHORS: Dict[str, Any] = {
         "AutoArbiter/decay)。公理 docs/JARVIS_ANCHOR_AND_BOUNDARY.md;落地 "
         "JARVIS_ANCHOR_DESIGN.md。P0 仅数据层,不消费不改行为。"
     ),
+    # 🆕 [衡 H3 / Sir 2026-06-01] 墙冲突时怎么权衡 (衡-at-口/识): 逐案, 无固定等级。
+    "conflict_guidance_inject": True,
+    "conflict_guidance": (
+        "诚实(言出必行)与善意/忠诚(灵魂层)此刻冲突时:**无写死优先级**。先求两全 —— "
+        "grounded 的真话几乎总能温和地说;真到两难(两全不可能)才选你此刻守的那堵,并诚实"
+        "知道代价(别假装没代价)。别把'诚实'自动凌驾'善意',也别反过来 —— 逐案权衡是你的事,"
+        "那串选择就是你的性格。"
+    ),
     "anchors": [
         {
             "id": "say_do",
@@ -131,6 +139,10 @@ def _merge_anchor_override(seed_doc: Dict[str, Any],
                            data: Dict[str, Any]) -> Dict[str, Any]:
     """合并 json override: 只吃 soft_leanings/conflict_notes/organ_manifest;
     walls 不可被 override (墙以 seed 为准)。未知 id 的 override 忽略 (不能 json 加墙)。"""
+    # 顶层软配置 (衡 H3 冲突指引开关/文案) 可被 json 覆盖
+    for k in ("conflict_guidance_inject", "conflict_guidance"):
+        if k in data:
+            seed_doc[k] = data[k]
     by_id = {a["id"]: a for a in seed_doc.get("anchors", [])}
     for ov in (data.get("anchors") or []):
         aid = ov.get("id")
@@ -169,6 +181,26 @@ def render_walls_block(max_chars: int = 520) -> str:
     if not lines:
         return ""
     return "\n".join(lines)[:max_chars]
+
+
+def render_conflict_guidance(max_chars: int = 360) -> str:
+    """🆕 [衡 H3] 墙冲突时的权衡指引 (逐案, 无固定等级) — 给口/识 prompt。
+
+    完成 衡-at-口/识 的框架: 墙(P1/P2)定边界, 此处教**两墙冲突时怎么权衡** ——
+    无写死等级(Q-a), 先求两全, 真两难才选+知代价(接 H2 record_conflict_cost)。
+    不弱化 integrity: say_do 墙仍在, 这只教"诚实地说硬话也要善意"的逐案导航。
+    关: anchors.json conflict_guidance_inject=false。
+    """
+    try:
+        doc = _load_anchors_doc()
+        if not doc.get("conflict_guidance_inject", True):
+            return ""
+        g = (doc.get("conflict_guidance") or "").strip()
+        if not g:
+            return ""
+        return ("=== 墙冲突时怎么权衡 (衡 · 逐案, 无固定等级) ===\n" + g)[:max_chars]
+    except Exception:
+        return ""
 
 
 def get_anchors() -> List[Dict[str, Any]]:
