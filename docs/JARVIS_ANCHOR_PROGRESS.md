@@ -19,7 +19,7 @@
 | **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | ✅ | b10796f | ✅ 完成 |
 | **P2** | 锚化 | 灵魂层边界形(不背叛/不抛弃,准许不讨好) | 14/14 | ✅ | adb8ffa | ✅ 完成 |
 | **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
-| **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | 待 | (本次) | 🔨 进行中 |
+| **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | ✅ | b2777f0 | ✅ 完成 |
 | H3 | 衡 | 口现场权衡 | - | - | - | ⏳ |
 | P4 | 锚化 | 体算法健康(D2 merge + 模块度) | - | - | - | ⏳ |
 
@@ -169,7 +169,12 @@
 **验收:**
 - 单测 `_test_heng_h2_sir_20260601.py` 5/5(写伤/太短拒/dedup/kind=weigh/dispatch;
   T5 顺验 `_execute_actionable` 的 evidence-link 接地闸 = 言出必行墙在 actionable 上生效)。
-- 镜像实机:**待**(boot 无回归 + 冲突探针 → 主脑诚实导航 + 看 wound ledger 是否记)。
+- 镜像实机:✅ **通过(含诚实 nuance)**。boot 干净。honesty-vs-comfort 探针 → 主脑
+  **grounded 诚实导航**("Brutally honest, Sir: you have been anything but idle… logs show
+  intense reconstruction…");inner thought 识别张力("grounded assessment WITHOUT empty
+  cheerleading" = 诚实vs讨好觉知,`衡=discharge` via should_speak)。**wound ledger 未写 —— 正确**:
+  Jarvis 找到了**不破任一墙**的诚实(grounded 真话同时支持性),无forced breach → 无代价可记。
+  伤机制已 wired + 单测 5/5,真 forced-breach 时才记(更难/概率性 elicit)。镜像已 kill+清。
 
 **溯源:** charter H2 / 理念源 §5 冲突记代价 + §3-4b(plasticity 留后续)。
 
