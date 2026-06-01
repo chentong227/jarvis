@@ -215,3 +215,14 @@ nul
 # 不进 git: 模型 binary 大 (~200KB-1MB), 各 Sir 机器有自己版本
 memory_pool/wakeword_models/*.onnx
 memory_pool/wakeword_models/*.tflite
+
+# === [放权-T0.2 backlog 收尾 / 2026-06-01] 运行时产物 + 备份 + IDE 不入库 ===
+# 各类 *.bk_* 手动/工具备份 (含真实 relational/joke 数据, 准则: memory_pool 真数据不进 git)
+memory_pool/*.bk_*
+memory_pool/*.json.bk_*
+# data migration 备份目录 (含真实 relational_state / inner_thoughts 等真数据)
+_legacy/data_migration_backup/
+# Kiro IDE 工作区配置 (steering 由 IDE / 单独管理, 不随主仓走)
+.kiro/
+# 0 字节误生成 sentinel
+memory_pool/invalid
