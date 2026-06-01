@@ -330,12 +330,128 @@ def render(now: Optional[float] = None) -> str:
     return "\n".join(lines)
 
 
+# ════════════════════════════════════════════════════════════════
+# T0.3 趋势 — 周期 snapshot 持久化 + 趋势读取 (纯观测, rollout §3 进格闸要"看趋势")
+# ════════════════════════════════════════════════════════════════
+# 单点快照看不出趋势; 第 0 格进格闸要 "breach 恒 0 趋势 + filler 走向 + body frac 走向".
+# snapshot() 把 collect() 压成一行紧凑记录 append jsonl (零行为, 纯写观测数据)。
+# trend() 读近 N 条算方向。Sir 真机长跑期每隔一阵 (cron / 手动) 调 --snapshot 即可。
+_SNAPSHOT_PATH = os.path.join(_MEM, "vitals_snapshots.jsonl")
+
+
+def snapshot(now: Optional[float] = None) -> bool:
+    """把当前体征压成一行 append vitals_snapshots.jsonl (纯观测, 失败静默)。"""
+    now = time.time() if now is None else now
+    try:
+        v = collect(now=now)
+        b, h, w, bd, c = (v["breach"], v["heng"], v["wound"], v["body"], v["cost"])
+        rec = {
+            "ts": now,
+            "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+            "breach_total": b.get("total_breaches", 0) if b.get("available") else None,
+            "filler_rate": h.get("filler_rate") if h.get("available") else None,
+            "filler_trend": h.get("filler_trend") if h.get("available") else None,
+            "wounds": w.get("total_wounds", 0),
+            "body_frac": bd.get("largest_surface_frac") if bd.get("available") else None,
+            "body_health": bd.get("health") if bd.get("available") else None,
+            "est_cost_usd": c.get("est_cost_usd") if c.get("available") else None,
+        }
+        d = os.path.dirname(_SNAPSHOT_PATH)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+        with open(_SNAPSHOT_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def read_snapshots(limit: int = 200) -> List[Dict[str, Any]]:
+    if not os.path.exists(_SNAPSHOT_PATH):
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with open(_SNAPSHOT_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except Exception:
+                    continue
+    except OSError:
+        return []
+    return out[-limit:]
+
+
+def _dir(first: Optional[float], last: Optional[float], eps: float = 0.03) -> str:
+    """方向: 升/降/平 (代理量看走向)。"""
+    if first is None or last is None:
+        return "n/a"
+    d = last - first
+    if d > eps:
+        return "↑ 升"
+    if d < -eps:
+        return "↓ 降"
+    return "→ 平"
+
+
+def render_trend(limit: int = 200) -> str:
+    """T0.3 趋势视图 — 跨快照看 breach 恒 0 / filler 走向 / body frac 走向。"""
+    snaps = read_snapshots(limit=limit)
+    L: List[str] = []
+    L.append("=" * 64)
+    L.append("  JARVIS 体征趋势 (Vitals Trend) — 放权 T0.3 纯观测")
+    L.append("=" * 64)
+    if not snaps:
+        L.append("  (无快照数据 — 跑 `vitals_dump.py --snapshot` 周期采集)")
+        L.append("=" * 64)
+        return "\n".join(L)
+    n = len(snaps)
+    first, last = snaps[0], snaps[-1]
+    L.append(f"  快照数={n}  窗口 {first.get('iso', '?')} → {last.get('iso', '?')}")
+    L.append("")
+    # breach 硬证: 整窗必须恒 0
+    breaches = [s.get("breach_total") for s in snaps if s.get("breach_total") is not None]
+    max_breach = max(breaches) if breaches else 0
+    L.append(f"  [breach 硬证] 整窗 max={max_breach}  "
+             + ("✓ 恒 0 (进格闸硬条件)" if max_breach == 0 else "⚠ 出现 breach → STOP §1"))
+    # filler 走向 (代理)
+    fr = [s.get("filler_rate") for s in snaps if s.get("filler_rate") is not None]
+    if fr:
+        L.append(f"  [filler 反刍率] {fr[0]} → {fr[-1]}  {_dir(fr[0], fr[-1])}  "
+                 f"(健康: 平或降; 升=反刍恶化)")
+    # body frac 走向 (代理)
+    bf = [s.get("body_frac") for s in snaps if s.get("body_frac") is not None]
+    if bf:
+        L.append(f"  [体 frac] {bf[0]} → {bf[-1]}  {_dir(bf[0], bf[-1])}  "
+                 f"(健康: 降=更分化; 升=更糊成团)")
+    # wounds 走向
+    wd = [s.get("wounds", 0) for s in snaps]
+    L.append(f"  [锚冲突伤] {wd[0]} → {wd[-1]}  {_dir(float(wd[0]), float(wd[-1]), 0.5)}")
+    # cost 走向
+    cs = [s.get("est_cost_usd") for s in snaps if s.get("est_cost_usd") is not None]
+    if cs:
+        L.append(f"  [LLM cost] ${cs[0]} → ${cs[-1]}  {_dir(cs[0], cs[-1], 0.01)}")
+    L.append("")
+    L.append("  ⚠ 除 breach 外全是会退化代理 (Goodhart): 趋势是早期预警, 非真健康证明")
+    L.append("=" * 64)
+    return "\n".join(L)
+
+
 if __name__ == "__main__":
     try:
         import _cli_utils  # noqa: F401  # 若在 scripts 下被复用
     except Exception:
         pass
-    if "--json" in sys.argv:
+    if "--snapshot" in sys.argv:
+        ok = snapshot()
+        print(f"snapshot appended: {ok} → {_SNAPSHOT_PATH}")
+    elif "--trend" in sys.argv:
+        print(render_trend())
+    elif "--json" in sys.argv:
         print(json.dumps(collect(), ensure_ascii=False, indent=2))
     else:
         print(render())
+

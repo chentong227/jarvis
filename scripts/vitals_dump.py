@@ -29,7 +29,12 @@ import jarvis_vitals_board as vb  # noqa: E402
 
 
 def main() -> int:
-    if "--json" in sys.argv:
+    if "--snapshot" in sys.argv:
+        ok = vb.snapshot()
+        print(f"snapshot appended: {ok}")
+    elif "--trend" in sys.argv:
+        print(vb.render_trend())
+    elif "--json" in sys.argv:
         print(json.dumps(vb.collect(), ensure_ascii=False, indent=2))
     else:
         print(vb.render())

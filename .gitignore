@@ -226,3 +226,4 @@ _legacy/data_migration_backup/
 .kiro/
 # 0 字节误生成 sentinel
 memory_pool/invalid
+memory_pool/vitals_snapshots.jsonl
