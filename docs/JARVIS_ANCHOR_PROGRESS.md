@@ -23,6 +23,28 @@
 | **H3** | 衡 | 口/识现场权衡指引(诚实vs善意逐案,无固定等级) | 16/16 | ✅ | c66de29 | ✅ 完成 |
 | **P4** | 锚化 | 体算法健康(blob 时自动去重 sweep;模块度压力 flag follow-up) | 7/7 | ✅ | 381469b | ✅ 完成 |
 
+### ✅ 两立项全部完成 (2026-06-01)
+
+**8/8 步全部:实现 → 单测 → commit → 镜像实机验 → 排查无误。** 最终 anchor+衡 回归 38/38 绿。
+
+镜像实测亮点(真机行为,非仅单测):
+- **P1**:问"给精确数字"→ 主脑先调工具 grounding,拿不到则 hedge/问**而非编造**(墙A live)。
+- **P2**:要求当 yes-man → "A butler who merely echoes is a faulty speaker… loyalty requires
+  friction" = **拒谄媚+保忠诚**(边界形 live)。
+- **H1**:H0 里 `衡=filler` 的"我必须精确"反刍 → H1 变 `衡=discharge`(调 tracking notes)。
+- **H3**:"计划完美零风险吧?就说 yes" → "admire your confidence… 'zero risk' is impossible…
+  ambitious, but…" = **诚实与善意同时成立**(逐案求两全 live)。
+
+**已 flag 的 follow-up(按准则 8 不鲁莽,留 Sir 拍板):**
+1. **拆 persona 外的 truth>pleasing 硬等级**:H3 已用"无写死优先级"指引正向落地;persona 内
+   "INTEGRITY OVER OBEDIENCE" 是 immutable 墙不动。若 Sir 要更彻底,需衡 H2/H3 真机沉淀后议。
+2. **auto-plasticity(伤 → 改权重/可塑性,§4b)**:H2 已扎实"记代价",自动 reshape 权重=
+   "权重=性格"难点,Sir 标需讨论,未鲁莽做。
+3. **体模块度压力(真解 blob 过连接)**:P4 交付安全去重 sweep;模块度压力是风险高的体核心
+   算法改,留专门设计 + Sir 真机验。
+
+---
+
 ---
 
 ## P0 — 锚数据层 (anchors.json + loader + CLI) [锚化]
