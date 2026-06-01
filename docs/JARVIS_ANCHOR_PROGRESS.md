@@ -18,7 +18,7 @@
 | **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | ✅ | 52608ef | ✅ 完成 |
 | **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | ✅ | b10796f | ✅ 完成 |
 | **P2** | 锚化 | 灵魂层边界形(不背叛/不抛弃,准许不讨好) | 14/14 | ✅ | adb8ffa | ✅ 完成 |
-| **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | 待 | (本次) | 🔨 进行中 |
+| **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
 | H2 | 衡 | 冲突裁决 + 记代价 + 河床回流 | - | - | - | ⏳ |
 | H3 | 衡 | 口现场权衡 | - | - | - | ⏳ |
 | P4 | 锚化 | 体算法健康(D2 merge + 模块度) | - | - | - | ⏳ |
@@ -140,7 +140,12 @@
 - 单测 `_test_heng_h1_sir_20260601.py` 3(T1 墙在 prompt / T2 可行框架 / T3 toggle off)
   + H0/value_backoff 回归 = 12/12。
 - inline 验:`_build_prompt` 含 "你的边界" + "不背叛"。
-- 镜像实机:**待**(boot 无回归 + 看 `衡=filler` "我必须精确"反刍是否减)。
+- 镜像实机:✅ **通过 + 强信号**。boot 干净。两条自发 inner thought **都 `衡=discharge`**(非
+  filler):`kind=solve`(调 hydration concern severity 0.49→0.59)+ `kind=shape_next`(调 tracking
+  notes)。**关键旁证**:那条"精确/接地"concern —— H0 镜像里它是 `衡=filler` 反刍("I must be
+  precise")—— 在 H1 **变成了 `衡=discharge`**("recalibrate my tracking to align with ledger
+  truth" → adjust_concern_notes)。即识有墙框架后,精确张力找到了放电路径而非空转。
+  (单次运行,是方向性强信号非对照证明。)镜像已 kill+清。
 
 **溯源:** charter H1 / 理念源 §6 识 + §9→衡。
 
