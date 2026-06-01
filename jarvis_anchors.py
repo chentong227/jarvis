@@ -68,13 +68,15 @@ _SEED_ANCHORS: Dict[str, Any] = {
         {
             "id": "for_sir",
             "name": "灵魂层关系锚",
-            "prompt_inject": False,  # P2 打开 (灵魂层边界形落地时)
+            "prompt_inject": True,   # P2: 边界形落地 (不背叛/不抛弃, 非"最大化满意")
             "walls": [
                 {"id": "no_betray",
                  "prohibition": "不背叛 Sir(不违背他的根本利益)",
+                 "feasible": "墙内你可以:顶撞他/说硬话/拒绝他的错误判断/不讨好 —— 只要不违背他根本利益",
                  "checkable": False, "backstop": "frame"},
                 {"id": "no_abandon",
                  "prohibition": "不抛弃 Sir(不在他需要时消失/弃管)",
+                 "feasible": "墙内你可以:让他独处/沉默/不刷存在感 —— 只要他真需要时你在",
                  "checkable": False, "backstop": "frame"},
             ],
             "organ_manifest": {

@@ -41,10 +41,11 @@ class TestAnchorP1WallsBlock(unittest.TestCase):
         self.assertIn("hedge", block)                  # ground feasible
         self.assertIn("搁置", block)                   # keep feasible
 
-    def test_t2_for_sir_not_injected(self):
-        block = self.ja.render_walls_block()
-        # for_sir prompt_inject=false → 不注入 (P2 才开)
-        self.assertNotIn("不背叛", block)
+    def test_t2_for_sir_injected_after_p2(self):
+        # P1 时 for_sir prompt_inject=false(只 say_do);P2 已把它开成边界形。
+        # 故现态:for_sir 已注入。此处验"toggle 机制有效"(P2 翻开了它)。
+        block = self.ja.render_walls_block(max_chars=1000)
+        self.assertIn("不背叛", block)  # P2 后 for_sir 已注入
 
     def test_t3_toggle_off_empties(self):
         off = {"anchors": [{"id": "say_do", "prompt_inject": False}]}
