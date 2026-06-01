@@ -1387,6 +1387,10 @@ class InnerThought:
     #     want_capability / rest / empty / act. '' = 未派生 (老 thought 兼容).
     # =====================================================================
     derived_kind: str = ''
+    # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛三态: 'discharge'(放电:真effect,解了张力) /
+    # 'rest'(休息:空且已歇下,头等公民) / 'filler'(亢奋却空中项,Layer1退避中)。
+    # "想发散/衡收敛"的收敛侧显式化。详 docs/JARVIS_HENG_DESIGN.md §2。
+    heng_state: str = ''
 
 
 # ==========================================================================
@@ -1706,6 +1710,8 @@ class InnerThoughtDaemon:
             'default': 0, 'llm_chosen': 0, 'llm_gated': 0, 'llm_smoothed': 0,
             'saturation_force': 0,
         }
+        # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛三态计数 (dashboard 看放电/休息/filler 占比)
+        self._heng_stats = {'discharge': 0, 'rest': 0, 'filler': 0}
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus 元决策 (R3)
         # =====================================================================
         # Sir 真意: "这轮为下轮挑". 上轮 LLM 输出 <NEXT_ATTENTION_FOCUS>
@@ -2796,6 +2802,14 @@ class InnerThoughtDaemon:
                 self._resting = True
         self._tick_origin_stats[tick_origin] = \
             self._tick_origin_stats.get(tick_origin, 0) + 1
+        # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛三态显式化 (charter §2)。在 _resting 终值定后算:
+        # discharge(真effect解张力)/ rest(空且已歇)/ filler(空但还没歇,中项)。
+        try:
+            thought.heng_state = self._classify_heng_state(thought)
+            self._heng_stats[thought.heng_state] = \
+                self._heng_stats.get(thought.heng_state, 0) + 1
+        except Exception:
+            thought.heng_state = ''
 
         # persist (主脑通过 Layer 1.5/1.6 直接 read self._thoughts + jsonl)
         self._persist_thought(thought)
@@ -2853,6 +2867,9 @@ class InnerThoughtDaemon:
         # emergent 切换时机. 追加在末尾, 不破坏 [{cat}/sal=...] 前缀匹配.
         kind_str = (f" | kind={thought.derived_kind}"
                     if getattr(thought, 'derived_kind', '') else '')
+        # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛态进 log (Sir 看放电/休息/filler)
+        heng_str = (f" | 衡={thought.heng_state}"
+                    if getattr(thought, 'heng_state', '') else '')
         # 🆕 [Sir 23:24 BUG-5] mediocre log compact (前 50 ch + [skip:mediocre] 标)
         if is_mediocre:
             self._bg_log(
@@ -2867,7 +2884,7 @@ class InnerThoughtDaemon:
                 f"💭 [InnerThought] [{thought.category}/sal={thought.salience:.2f}"
                 f"/state={sir_state}/woke={getattr(self, '_last_wake_reason', '?')}]"
                 f" {_tt}"
-                f"{action_str}{ev_str}{meta_str}{kind_str}"
+                f"{action_str}{ev_str}{meta_str}{kind_str}{heng_str}"
             )
 
     def _compute_free_categories(self) -> List[str]:
@@ -3967,6 +3984,26 @@ class InnerThoughtDaemon:
         if thought.actionable_done:
             return 'done'
         return 'failed'
+
+    # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛三态分类器 (charter §2 / 理念源 §9→衡) =======
+    # "想发散 / 衡收敛" 的收敛侧: 每轮 tick 收敛到三态之一, 单一真理源。
+    #   discharge 放电: 真产生 effect (kind≠empty: solve/shape_next/adjust_self/want/
+    #                   relate) 或 should_speak → 解了一个(近似的)张力。
+    #   rest 休息: 空(无 effect)且已歇下 (_resting: REST 决策 / 连续空想转歇) → settled。
+    #   filler: 空但还没歇 (亢奋却空中项, Layer 1 value_backoff 退避中) → 要杀的中项。
+    # 现 pre-anchor: "张力"用 effect/should_speak 近似; 锚装上后(H1+)精确成"锚冲突区"。
+    def _classify_heng_state(self, thought) -> str:
+        try:
+            should_speak = bool(getattr(thought, 'should_speak', False))
+            state = self._infer_actionable_state(thought)
+            no_effect = state in ('none', 'rejected', 'gated', 'failed')
+            if (not no_effect) or should_speak:
+                return 'discharge'
+            if getattr(self, '_resting', False):
+                return 'rest'
+            return 'filler'
+        except Exception:
+            return ''
 
     def _check_and_update_saturation(
         self, current_thought: 'InnerThought'

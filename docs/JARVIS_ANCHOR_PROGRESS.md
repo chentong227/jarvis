@@ -15,7 +15,7 @@
 | 步 | 工程 | 内容 | 单测 | 镜像验 | commit | 状态 |
 |---|---|---|---|---|---|---|
 | **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | ✅ | a06b872 | ✅ 完成 |
-| H0 | 衡 | 发散/收敛 + 三态精确化 | - | - | - | ⏳ |
+| **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | 待 | (本次) | 🔨 进行中 |
 | P1 | 锚化 | 言出必行两墙 + Tracer 降级 + 拆 truth>pleasing | - | - | - | ⏳ |
 | P2 | 锚化 | 灵魂层边界形 | - | - | - | ⏳ |
 | H1 | 衡 | 体召唤升级(锚冲突区) | - | - | - | ⏳ |
@@ -41,6 +41,26 @@
 - 镜像实机:✅ **通过**。镜像 boot 干净(`mirror_voice_worker_started`,无 TypeError/无 profile 崩 = b50d76e 修生效);注入 "Hey Jarvis, are you there? Give me a one-line status." → 3.6s 正常回复 "At your service, Sir; systems are nominal and I am monitoring your progress in Cursor."。零回归确认。镜像已 kill+清。
 
 **溯源:** charter P0 / 理念源 §2(边界)+ §3-公理2(豁免)。
+
+---
+
+## H0 — 衡收敛三态显式化 (扩 Layer 1) [衡]
+
+**做了什么(charter JARVIS_HENG_DESIGN.md §2 / 理念源 §9→衡):**
+- "想发散 / 衡收敛"的**收敛侧显式化**:新增单一真理源 `_classify_heng_state(thought)` →
+  `discharge`(真 effect kind≠empty / should_speak,解了张力)/ `rest`(空且已歇下 _resting)/
+  `filler`(空但还没歇,亢奋却空中项)。
+- `InnerThought.heng_state` 字段 + `_heng_stats` 计数(dashboard 看放电/休息/filler 占比)。
+- tick log 末尾加 `| 衡={state}` —— Sir 现在能在 runtime log 直接看每轮思考收敛到哪。
+- **接 Layer 1(a650323):** 行为仍由 value_backoff 驱动(effect-driven),H0 是把那套收敛
+  **显式化 + 可观测**,为 H1+(锚冲突区成为放电触发源)留 plug-point。pre-anchor:"张力"
+  用 effect/should_speak 近似;锚装上后精确成"锚冲突区"。
+
+**验收:**
+- 单测 `_test_heng_h0_sir_20260601.py` 5/5 + 回归(value_backoff/emergent/letgo)共 24/24。
+- 镜像实机:**待**(确认 boot 无回归 + 思考 log 出现 `衡=` 标)。
+
+**溯源:** charter H0 / 理念源 §9→衡。
 
 ---
 
