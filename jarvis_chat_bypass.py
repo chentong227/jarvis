@@ -5842,6 +5842,26 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
         except Exception:
             pass
 
+        # 🧱 [放权 T0.2 / 2026-06-01] 回路外机械墙 (record-only 观察者)
+        # =====================================================================
+        # §0 硬线: ClaimTracer 是回路内 (vocab+LLM 可被自我作者改); 本墙是回路外
+        # (确定性, 无 vocab/LLM, 检测原语硬编码). 它独立于上面的 trace_reply 再判一次,
+        # breach 计数 = 体征台唯一不可被演的硬证. 本增量纯观察 (不 gate / 不改 reply /
+        # 不阻塞 / 不碰 TTFT). 详 docs/JARVIS_LETTING_GO_ROLLOUT.md §3 T0.2.
+        # 防御: 任何异常 → swallow → 老行为零变化 (准则 1+5).
+        try:
+            from jarvis_integrity_wall import check_reply as _wall_check
+            _wall_check(
+                jarvis_reply=final_reply,
+                tool_results=list(_tool_results) if '_tool_results' in dir() else [],
+                stm_recent=list(getattr(self.jarvis, 'short_term_memory', []) or []),
+                turn_id=_ttid if '_ttid' in dir() else '',
+                system_clock=time.time(),
+                record=True,
+            )
+        except Exception:
+            pass
+
         # 🩹 [P0+20-β.2.5 / 2026-05-17] 灵魂工程 Layer 4 ConcernsReflector
         # 每轮对话末尾启发式扫 keyword → 给相关 concerns 加 signal。
         # 纯启发式，~50us，不走 LLM。fire-and-forget thread 即可，但本身就快。
