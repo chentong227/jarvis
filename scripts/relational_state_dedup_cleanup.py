@@ -87,8 +87,16 @@ def _winner_loser(a: dict, b: dict) -> tuple:
 def _make_arbiter():
     """构造 minimal AutoArbiterDaemon 用 _semantic_dedup_check + 真 _call_llm."""
     from jarvis_auto_arbiter import AutoArbiterDaemon
-    from jarvis_key_router import get_default_router
-    kr = get_default_router()
+    # 🆕 [Sir 2026-05-31 修 stale import] get_default_router 已从 jarvis_key_router
+    # 移除; 改用 working CLI 的标准方式直接建 KeyRouter (load_keys + 三 key 池).
+    from jarvis_config.keys import load_keys
+    from jarvis_key_router import KeyRouter
+    _keys = load_keys()
+    kr = KeyRouter(
+        main_brain_key=_keys.OPENROUTER_MAIN,
+        google_keys=_keys.GOOGLE_LIST,
+        openrouter_keys=_keys.OPENROUTER_LIST,
+    )
     d = AutoArbiterDaemon.__new__(AutoArbiterDaemon)
     d.key_router = kr
     d._calibration = {}

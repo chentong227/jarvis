@@ -11,6 +11,7 @@ Token 预算: 6 主脑调用 + 2 evaluator = ~8K tokens (上下文友好)。
 from __future__ import annotations
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import json
 import time
 

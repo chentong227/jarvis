@@ -17,6 +17,11 @@ import argparse
 import json
 import os
 import sys
+# 🆕 [Sir 2026-05-28 Track 2] force utf-8 stdout (Windows GBK fix)
+import os as _cu_os, sys as _cu_sys
+_cu_sys.path.insert(0, _cu_os.path.dirname(_cu_os.path.abspath(__file__)))
+import _cli_utils  # noqa: F401  # side-effect: force utf-8 stdout
+
 import time
 
 try:

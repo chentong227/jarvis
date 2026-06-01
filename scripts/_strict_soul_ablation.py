@@ -23,6 +23,7 @@
 from __future__ import annotations
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import json
 import time
 import re

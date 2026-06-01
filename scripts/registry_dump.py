@@ -32,14 +32,14 @@ import io
 import json
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import time
 
 
 # Windows console GBK 不能 emoji / 中文非 GBK, 强制 stdout utf-8 (类 claim_classify_dump.py β.4.3.1 模式)
 if sys.platform == 'win32':
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
-                                        errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
 

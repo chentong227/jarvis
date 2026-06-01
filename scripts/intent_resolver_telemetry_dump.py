@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

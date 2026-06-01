@@ -37,8 +37,7 @@ VOCAB_PATH = os.path.join(ROOT, 'memory_pool', 'sir_struggle_vocab.json')
 
 if sys.platform == 'win32':
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
-                                        errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
 

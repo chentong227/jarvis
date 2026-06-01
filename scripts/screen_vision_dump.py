@@ -23,6 +23,7 @@ import io
 import json
 import os
 import sys
+import _cli_utils  # noqa: F401  # 🆕 [Sir Track 2] force utf-8 stdout
 import time
 from datetime import datetime
 
@@ -30,8 +31,7 @@ from datetime import datetime
 # Windows console UTF-8
 if sys.platform == 'win32':
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
-                                        errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
 
