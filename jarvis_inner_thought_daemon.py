@@ -4255,6 +4255,22 @@ class InnerThoughtDaemon:
         _cat_line, _summon_note = self._build_category_framing(
             _tk_mode, free_categories
         )
+        # 🆕 [衡 H1 / Sir 2026-06-01] 识 anchor-aware: 把锚的墙+可行选项喂思考脑, 让它
+        # 知道自己的边界, 把"撞墙张力"(如诚实vs善意)识别为真值得想的 discharge, 而非
+        # "我必须精确"式反刍(H0 镜像那条 衡=filler 的根)。复用 P1 render(data-driven)。
+        _anchor_walls = ""
+        try:
+            import jarvis_anchors as _ja_h1
+            _w = _ja_h1.render_walls_block(max_chars=420)
+            if _w:
+                _anchor_walls = (
+                    "=== 你的边界 (锚/墙 — 你也守这些, 撞墙有路) ===\n"
+                    f"{_w}\n"
+                    "撞墙张力(如诚实vs善意)= 真值得想的 discharge; 缺证据/受阻时按"
+                    "上面的可行选项走, 别磨成'我必须精确'式空转。\n\n"
+                )
+        except Exception:
+            _anchor_walls = ""
         system = (
             f"{_persona_block}"
             "=== INNER MONOLOGUE MODE (private mental note, NOT addressed to Sir) ===\n"
@@ -4278,6 +4294,7 @@ class InnerThoughtDaemon:
             "Resting is a VALID, valued outcome (you will simply wake less often until "
             "something real stirs, or Sir addresses you). Only produce the thought below "
             "when there is genuinely something worth thinking through to an effect.\n\n"
+            f"{_anchor_walls}"
             f"{_summon_note}"
             "Output FORMAT (strict, 6 required + 4 optional β.6 tags):\n"
             f"{_cat_line}"
