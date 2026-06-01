@@ -14,7 +14,7 @@
 
 | 步 | 工程 | 内容 | 单测 | 镜像验 | commit | 状态 |
 |---|---|---|---|---|---|---|
-| **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | 待 | (本次) | 🔨 进行中 |
+| **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | ✅ | a06b872 | ✅ 完成 |
 | H0 | 衡 | 发散/收敛 + 三态精确化 | - | - | - | ⏳ |
 | P1 | 锚化 | 言出必行两墙 + Tracer 降级 + 拆 truth>pleasing | - | - | - | ⏳ |
 | P2 | 锚化 | 灵魂层边界形 | - | - | - | ⏳ |
@@ -38,7 +38,7 @@
 **验收:**
 - 单测 `_test_anchors_p0_sir_20260601.py` 6/6(含 T5 墙不可被 json 删/改/加)。run_id=test_20260601_110929_ce85。
 - CLI `anchors_dump.py` 渲染正常(2 锚 4 墙)。
-- 镜像实机:**待**(P0 零行为,镜像应正常 boot + 正常回复 = 零回归)。
+- 镜像实机:✅ **通过**。镜像 boot 干净(`mirror_voice_worker_started`,无 TypeError/无 profile 崩 = b50d76e 修生效);注入 "Hey Jarvis, are you there? Give me a one-line status." → 3.6s 正常回复 "At your service, Sir; systems are nominal and I am monitoring your progress in Cursor."。零回归确认。镜像已 kill+清。
 
 **溯源:** charter P0 / 理念源 §2(边界)+ §3-公理2(豁免)。
 
