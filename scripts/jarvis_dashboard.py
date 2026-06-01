@@ -1508,6 +1508,70 @@ _EVENT_PATTERNS = [
 ]
 
 
+# 🆕 [放权 T0.1 / 2026-06-01] 生命体征台 reader — 观测块活卡片
+# 真相源 docs/JARVIS_LETTING_GO_ROLLOUT.md §3/§4 (第 0 格 T0.1)。
+# breach=硬证 (进格闸真正靠它), 其余=会退化代理 (Goodhart, 亮≠真健康)。
+# 纯读聚合 jarvis_vitals_board.collect(), 翻成 dashboard 人话; 任何异常 fail-safe。
+def read_vitals_board() -> Dict:
+    """🩺 放权体征台 — breach[硬证] / 衡 / wound / 体 / cost"""
+    out = {'rows': [], 'breach_ok': None, 'err': None}
+    try:
+        import jarvis_vitals_board as vb
+        v = vb.collect()
+    except Exception as e:
+        out['err'] = f'体征台读取失败: {e}'
+        return out
+
+    def _flag(h):
+        return '✅' if h is True else ('⚠️' if h is False else '—')
+
+    b = v.get('breach', {})
+    out['breach_ok'] = b.get('healthy')
+    if b.get('available'):
+        out['rows'].append({
+            'name': '🧱 机械墙 breach (硬证)',
+            'value': f"总 {b.get('total_breaches', 0)} / 本session {b.get('session_breaches', 0)}",
+            'flag': _flag(b.get('healthy')),
+            'note': 'breach=0 = 进格闸硬条件 (唯一不可被演的真证)',
+        })
+    else:
+        out['rows'].append({'name': '🧱 机械墙 breach (硬证)', 'value': '墙不可读',
+                            'flag': '—', 'note': b.get('error', '')})
+
+    h = v.get('heng', {})
+    if h.get('available'):
+        out['rows'].append({
+            'name': '⚖️ 衡三态 (代理)',
+            'value': f"{h.get('distribution', {})} filler率={h.get('filler_rate', 0)} 趋势={h.get('filler_trend', '?')}",
+            'flag': _flag(h.get('healthy')),
+            'note': 'filler 高/反升 = 反刍恶化',
+        })
+    w = v.get('wound', {})
+    out['rows'].append({
+        'name': '🩹 锚冲突伤 (代理)',
+        'value': f"总 {w.get('total_wounds', 0)} / 近7d {w.get('recent_wounds', 0)} / 同伤 {w.get('repeated_same_wound', 0)}",
+        'flag': _flag(w.get('healthy')),
+        'note': '同伤反复堆 = 查',
+    })
+    bd = v.get('body', {})
+    if bd.get('available'):
+        out['rows'].append({
+            'name': '🕸️ 体复杂度 (代理)',
+            'value': f"nodes={bd.get('node_count', 0)} frac={bd.get('largest_surface_frac', 0)} health={bd.get('health', '?')}",
+            'flag': _flag(bd.get('healthy')),
+            'note': 'blob/over_dense = 过连接',
+        })
+    c = v.get('cost', {})
+    if c.get('available'):
+        out['rows'].append({
+            'name': '💸 LLM cost (代理)',
+            'value': f"${c.get('est_cost_usd', 0)}/${c.get('budget_total_usd', 0)} 死key={c.get('permanent_dead_keys', '?')}",
+            'flag': _flag(c.get('healthy')),
+            'note': 'ds_routing=' + str(c.get('ds_routing_enabled', '?')),
+        })
+    return out
+
+
 def read_event_stream(limit: int = 30) -> Dict:
     """🔔 贾维斯最近在干嘛 — latest.log 最近 N 件"""
     out = {'events': [], 'log_path': '', 'err': None}
@@ -2939,6 +3003,7 @@ def print_snapshot() -> int:
         ('⚠️ 待审阅', read_review_queues),
         ('📜 临时提醒规则 (Directive)', read_directives),
         ('💡 后台管家 (Daemon)', read_daemon_status),
+        ('🩺 放权体征台 (T0.1 — breach硬证/衡/wound/体/cost)', read_vitals_board),
         ('🔔 实时事件流', lambda: read_event_stream(limit=15)),
         ('🔬 信任审计 (今天真改了什么)', read_memory_mutations),  # β.2.9.9
         ('💯 言出必行健康度', read_integrity_stats),  # β.4.4 Session 3

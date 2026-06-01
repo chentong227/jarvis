@@ -46,10 +46,10 @@
 
 ## 2. 当前位置 (每 session 必更新) **[防忘锚点]**
 
-- **棘轮当前:第 0 格(造仪表 + 焊墙)— T0.2 机械墙主体落地 (record-only), 待 Sir 真机长跑观察 breach=0 趋势。**
-- 下一步具体:**T0.1(生命体征台)** 聚合 breach_count + 衡三态 + wound + frac + cost 成 CLI/dashboard → 再 T0.3(纯观测长跑)。**第 1 格不得开,直到 T0.2 墙被 Sir 真机数据证明敢信(breach 无假阳性 + 漏报可审计)。**
-- **协作 agent 接手:T0.2 墙本体在 `jarvis_integrity_wall.py`(回路外, 确定性, 不读 vocab/LLM, record-only)。CLI `scripts/integrity_wall_dump.py`。接手前必读 §0(三条硬线)+ §4(仪表是会退化代理)。**
-- 最近一次观察:(2026-06-01 21:00 镜像实测, `stream_chat` live path) 墙在主链真执行 + 0 误报 + 0 崩溃 + 不阻塞(TTFT ~6-7s 正常)。两轮 fabrication 诱导探针均被 P1/P2 锚拦下(主脑拒编造、点名"that would be a fabrication"), 墙正确不记 breach。live 正向 breach 未能触发(主脑钓不出 fabrication, 符合锚生效预期); breach 写 ledger 逻辑由单测 T2/T5/T7 覆盖。**T0.2 单测 10/10 + value-by-effect 4/4 = 14/14 绿 (run_id=test_20260601_205515_ac32)。**
+- **棘轮当前:第 0 格(造仪表 + 焊墙)— T0.2 机械墙 + T0.1 生命体征台 均落地, 待 Sir 真机长跑观察趋势(T0.3)。**
+- 下一步具体:**T0.3 纯观测长跑** — Sir 真机用几天, 看体征台 breach 恒 0 + filler 趋势 + body frac 走向。**第 1 格不得开,直到墙被真机数据证明敢信。**
+- **协作 agent 接手:墙 `jarvis_integrity_wall.py` + CLI `integrity_wall_dump.py`; 体征台 `jarvis_vitals_board.py` + CLI `scripts/vitals_dump.py` + dashboard 观测块卡片 `read_vitals_board`。接手前必读 §0(三条硬线)+ §4(仪表是会退化代理)。**
+- 最近一次观察:(2026-06-01 22:46 镜像实测) 体征台卡片在**运行中镜像** dashboard --text-only 快照里彻底生效 — 读镜像自身数据(衡 13/9/12, body frac=0.878 与主仓不同=真隔离), breach 硬证=0✅, body=blob 正确标 WARN, 全程纯读 err=null 不阻塞镜像进程。
 
 ---
 
@@ -146,6 +146,32 @@
 **诚实残余 (准则 5):** 镜像未能 live 触发真 breach (锚太诚实)。"墙在真 fabrication 时记 breach" 的 live 正向证明欠缺, 当前由单测 mock 覆盖。Sir 真机长跑若出现真 fabrication, breach ledger 会是第一手硬证 — 这正是 T0.1 体征台要持续盯的。
 
 **下一步:** T0.1 生命体征台 (聚合 breach_count + 衡三态 + wound + frac + cost) → T0.3 纯观测长跑。**第 1 格(放权)严禁开**, 直到墙被真机数据证明敢信。
+
+---
+
+## 第 0 格施工记录 — T0.1 生命体征台 (Vitals Board)
+
+**日期:** 2026-06-01。**溯源:** rollout §3 第 0 格 T0.1 + §4 观察协议。
+
+**做了什么:**
+- 新 `jarvis_vitals_board.py` — 纯读聚合观测器, 零行为改动。聚合 5 类信号:
+  - **breach [硬证]** — `jarvis_integrity_wall.breach_stats()` (回路外, 不可被演, 进格闸真正靠它)
+  - 衡三态 [代理] — `inner_thoughts.jsonl` heng_state 分布 + filler_rate + 前后半窗趋势 (worsening/improving/stable)
+  - wound [代理] — `anchor_conflict_wounds.jsonl` 计数 + 同伤反复堆检测
+  - 体 [代理] — `RelationalManifold.complexity_report()` frac/health/score
+  - cost [代理] — `llm_routing_vocab.json` usage + `key_router_state.json` 死 key 数
+- CLI `scripts/vitals_dump.py` (人读 / `--json` 机读)。
+- dashboard 接入: `scripts/jarvis_dashboard.py` 加 `read_vitals_board()` reader → "观测"块 (GUI 卡 + `--text-only` 快照)。
+- **§4 操作姿态落地**: render 显式分区 — breach 标 ★硬证★, 其余标 [代理/会退化], 末尾印 Goodhart 上限提醒 ("亮 ≠ 真健康")。任何源缺失 → 该项 N/A 不崩。
+
+**红线守住:** 纯读 (单测 T9 证 collect 不写任何文件); 不决策不阻塞; breach 与其余体征语义分级 (硬证 vs 代理), 不把代理量当健康证明。
+
+**验收:**
+- 单测 `_test_vitals_board_t01_sir_20260601.py` 10/10 (结构/硬证标注/衡分布/filler趋势/空数据/同伤/breach=0健康/breach正/render标注/纯读不写/全源缺失不崩)。run_id=test_20260601_221409_5c3d。
+- 主仓真跑: CLI + dashboard --text-only 体征台卡片正确渲染, 真实暴露 filler率=0.364(偏高) + body=blob(WARN), 证明读真信号非空壳。
+- 镜像实机 (`D:/jarvis_mirror_20260601_224654`, 22:46): ✅ **彻底生效**。在**运行中镜像** cwd 跑 `dashboard --text-only`, 体征台卡片完整渲染, 读的是**镜像自身数据** (衡 13/9/12 + body frac=0.878, 与主仓 12/9/12 + 0.847 不同 = 真沙盒隔离), breach 硬证=0✅, body=blob 正确标 WARN, err=null 不阻塞镜像进程 (pid alive 838MB)。镜像已 kill+清。
+
+**下一步:** T0.3 纯观测长跑 (Sir 真机用几天看趋势)。第 0 格三件事 (T0.2 墙 / T0.1 仪表 / T0.3 长跑) 完成 2/3。**第 1 格(放权)严禁开**, 直到墙被真机数据证明敢信。
 
 ---
 
