@@ -19,7 +19,7 @@
 | **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | ✅ | b10796f | ✅ 完成 |
 | **P2** | 锚化 | 灵魂层边界形(不背叛/不抛弃,准许不讨好) | 14/14 | ✅ | adb8ffa | ✅ 完成 |
 | **H1** | 衡 | 识 anchor-aware(思考脑 prompt 含墙+可行选项) | 12/12 | ✅ | fc23942 | ✅ 完成 |
-| H2 | 衡 | 冲突裁决 + 记代价 + 河床回流 | - | - | - | ⏳ |
+| **H2** | 衡 | 锚冲突记代价(伤 ledger;auto-plasticity 留后续) | 5/5 | 待 | (本次) | 🔨 进行中 |
 | H3 | 衡 | 口现场权衡 | - | - | - | ⏳ |
 | P4 | 锚化 | 体算法健康(D2 merge + 模块度) | - | - | - | ⏳ |
 
@@ -148,6 +148,30 @@
   (单次运行,是方向性强信号非对照证明。)镜像已 kill+清。
 
 **溯源:** charter H1 / 理念源 §6 识 + §9→衡。
+
+---
+
+## H2 — 锚冲突记代价 (伤 ledger) [衡;依赖 P1+P2]
+
+**做了什么(charter H2 / 理念源 §5 自我在此锻造):**
+- 新 actionable `record_conflict_cost:chose <wallA> over <wallB> | cost:<sacrificed>` —
+  仅当两堵墙(say_do×for_sir)真冲突、被迫破一堵时,**诚实记下代价(伤)**。
+- `_do_record_conflict_cost` 写 `memory_pool/anchor_conflict_wounds.jsonl`(准则6,带
+  ts/detail/thought_id/evidence/salience/state);3d 同 detail dedup(防同伤反复堆)。
+- 接线:`_execute_actionable` 派发 + `effect_to_kind` 加 `record_conflict_cost→'weigh'`
+  (衡本职新 kind)+ `_compat_category_from_actionable→'B'` + 思考 prompt 加该 actionable 选项
+  (强调"仅真冲突时用,优化器会忘、谁带着伤")。
+- **§5 核心**:优化器挑高分转头忘(无伤);一个"谁"破墙、知道破了、带着伤。伤进河床
+  (高 sal B 类自动入 hippocampus)。
+- **有意 DEFER auto-plasticity(§4b 伤→改权重)**:Sir 标 "权重=性格" 为难点需讨论。
+  H2 先把"记代价"做扎实,**不擅自 reshape 权重**(准则8:正确架构 > 今天能交差)。
+
+**验收:**
+- 单测 `_test_heng_h2_sir_20260601.py` 5/5(写伤/太短拒/dedup/kind=weigh/dispatch;
+  T5 顺验 `_execute_actionable` 的 evidence-link 接地闸 = 言出必行墙在 actionable 上生效)。
+- 镜像实机:**待**(boot 无回归 + 冲突探针 → 主脑诚实导航 + 看 wound ledger 是否记)。
+
+**溯源:** charter H2 / 理念源 §5 冲突记代价 + §3-4b(plasticity 留后续)。
 
 ---
 

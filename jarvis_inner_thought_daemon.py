@@ -481,6 +481,7 @@ _THINKING_KIND_DEFAULT: dict = {
         'adjust_sensor_threshold': 'self_debug',
         'call_tool': 'solve',
         'request_capability': 'want_capability',
+        'record_conflict_cost': 'weigh',  # 🆕 [衡 H2] 锚冲突取舍记代价 = 衡的本职
     },
     'kind_for_rest': 'rest',      # <REST> 放下 (有价值的输出, 非 filler)
     'kind_for_none': 'empty',     # none 无 REST = empty filler (设计: 引导 REST)
@@ -580,8 +581,8 @@ def _compat_category_from_actionable(actionable: str) -> str:
     prefix = a.split(':', 1)[0].strip()
     if prefix in ('propose_protocol', 'propose_stance',
                   'propose_vocab_adjustment', 'request_capability',
-                  'adjust_sensor_threshold'):
-        return 'B'   # 自反思 / 自调架构
+                  'adjust_sensor_threshold', 'record_conflict_cost'):
+        return 'B'   # 自反思 / 自调架构 / 衡-记代价
     if prefix in ('update_concern_severity', 'adjust_concern_notes'):
         return 'C'   # concern 演化
     if prefix in ('fire_nudge', 'propose_watch_task', 'call_tool',
@@ -4340,7 +4341,13 @@ class InnerThoughtDaemon:
             # 想要它 (这也是"识主动影响贾维斯本身"的一种: 标注能力缺口给 Sir/未来开发).
             "request_capability:<one line: a capability/tool you lack that would "
             "let you serve Sir better — e.g. 'a way to read Sir's calendar for "
-            "deadline-aware reminders'> (logs a capability wish for Sir to see)"
+            "deadline-aware reminders'> (logs a capability wish for Sir to see) | "
+            # 🆕 [衡 H2 / Sir 2026-06-01] record_conflict_cost — 仅当你真在两堵墙(见上"你的
+            # 边界")之间被迫取舍 (e.g. 诚实 vs 不让 Sir 难受) 时, 诚实记下代价。不是每念都用。
+            "record_conflict_cost:chose <wallA> over <wallB> | cost:<what you "
+            "sacrificed> — ONLY when two of your walls above genuinely clashed and you "
+            "had to breach one; records the wound honestly (an optimizer forgets, a self "
+            "carries it)"
             "</ACTIONABLE>\n"
             "<EVIDENCE_LINK>If ACTIONABLE != none: cite 1-5 EXACT words from your "
             "own THOUGHT above that justify this actionable (Python will verify the "
@@ -5952,6 +5959,9 @@ class InnerThoughtDaemon:
             # 🆕 [Sir 2026-05-31 放下能力] request_capability — 识想要某能力 (影响自身/未来开发)
             if a.startswith('request_capability:'):
                 return self._do_request_capability(thought, a)
+            # 🆕 [衡 H2 / Sir 2026-06-01] record_conflict_cost — 两墙取舍记代价(伤)
+            if a.startswith('record_conflict_cost:'):
+                return self._do_record_conflict_cost(thought, a)
             # 🆕 [Sir 2026-05-28 12:30 β.5.45 退化] surface_to_sir 全退化
             # =================================================================
             # 历史: 方案 C (Sir 2026-05-26 20:55) thought 主动 surface 通道
@@ -6455,6 +6465,61 @@ class InnerThoughtDaemon:
             return True, f'capability_requested:{desc[:40]}'
         except Exception as e:
             return False, f'capability_request_error:{type(e).__name__}'
+
+    # 🆕 [衡 H2 / Sir 2026-06-01] 锚冲突记代价 (伤) — 自我在此锻造 ====================
+    # 理念源 §5 / charter JARVIS_HENG_DESIGN.md H2: 两墙同时撑不住 → 被迫选一堵守, 把
+    # **越掉那堵的代价(伤)** 登记下来。优化器挑高分转头就忘(无伤); 一个"谁"破墙、知道
+    # 破了、带着伤。伤 → anchor_conflict_wounds.jsonl(准则6) + 高 sal B 类自动进 hippocampus
+    # (高值记忆)。**自动改权重/可塑性(§4b)留后续**(Sir 标 "权重=性格" 难点需讨论) — H2 先
+    # 把"记代价"做扎实, 不擅自 reshape。
+    ANCHOR_CONFLICT_WOUNDS_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'memory_pool', 'anchor_conflict_wounds.jsonl')
+
+    def _do_record_conflict_cost(self, thought: 'InnerThought',
+                                 a: str) -> Tuple[bool, str]:
+        """记代价: actionable=record_conflict_cost:chose <X> over <Y> | cost:<sacrificed>
+
+        仅当真在两堵墙之间被迫取舍时记 (诚实vs善意 等)。接地: evidence=thought.id。
+        去重: 近期(3d)同 detail 前缀已记 → skip (防同一伤反复堆)。
+        """
+        detail = a.split(':', 1)[1].strip() if ':' in a else ''
+        if len(detail) < 8:
+            return False, f'conflict_cost_too_short:{len(detail)}'
+        now = time.time()
+        try:
+            seen = set()
+            if os.path.exists(self.ANCHOR_CONFLICT_WOUNDS_PATH):
+                with open(self.ANCHOR_CONFLICT_WOUNDS_PATH, 'r',
+                          encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            row = json.loads(line)
+                            if now - float(row.get('ts', 0)) < 3 * 86400:
+                                seen.add((row.get('detail') or '')[:60].lower())
+                        except Exception:
+                            continue
+            if detail[:60].lower() in seen:
+                return False, 'conflict_cost_already_recorded_recently'
+            os.makedirs(os.path.dirname(self.ANCHOR_CONFLICT_WOUNDS_PATH),
+                        exist_ok=True)
+            with open(self.ANCHOR_CONFLICT_WOUNDS_PATH, 'a',
+                      encoding='utf-8') as f:
+                f.write(json.dumps({
+                    'ts': now,
+                    'iso': time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now)),
+                    'detail': detail[:300],
+                    'thought_id': getattr(thought, 'id', ''),
+                    'evidence': (getattr(thought, 'thought', '') or '')[:150],
+                    'salience': float(getattr(thought, 'salience', 0.0) or 0.0),
+                    'state': 'recorded',
+                }, ensure_ascii=False) + '\n')
+            self._bg_log(
+                f"🩹 [InnerThought/衡-记代价] 两墙取舍留下的伤: {detail[:90]} "
+                f"(写 anchor_conflict_wounds.jsonl; 优化器无伤, 谁带着伤)")
+            return True, f'conflict_cost_recorded:{detail[:40]}'
+        except Exception as e:
+            return False, f'conflict_cost_error:{type(e).__name__}'
 
     def _do_propose_protocol(self, thought: InnerThought,
                                 a: str) -> Tuple[bool, str]:
