@@ -1,0 +1,103 @@
+{
+  "_doc": [
+    "LLM 路由 vocab (准则 6 持久化 + Sir CLI + 准则 7 元否决一键关).",
+    "Sir 2026-05-28 20:12 fix45: 17 USD OpenRouter DS_ONLY key (Google/Anthropic/OpenAI 被 ban). enabled=1 时, 命中 replace_models 的 caller 改路 deepseek/deepseek-v4-pro + DS_ONLY key. 钱用完 -> Sir CLI `gate off` 全部 fallback 回原 google/gemini-* 模型.",
+    "故障开放: DS_ONLY key 缺失/空 -> routing 自动 disabled (不阻塞主流). routing 命中但调用失败 + fallback_on_fail=1 -> 原 caller path 重试 (双层保护).",
+    "CLI: scripts/llm_routing_dump.py list / gate / add-model / remove-model / usage / reset-usage / history."
+  ],
+  "schema_version": 1,
+  "enabled": 1,
+  "deepseek_route": {
+    "model": "deepseek/deepseek-v4-pro",
+    "description": "DeepSeek V4 Pro (1.6T MoE / 49B activated / 1.05M context). Cost: $0.435/1M input + $0.87/1M output. Sir 真测便宜, 推理强, 适合 pro-tier reflector.",
+    "replace_models": [
+      "google/gemini-3.1-pro-preview"
+    ],
+    "exclude_callers": [],
+    "fallback_on_fail": 1,
+    "timeout_s": 60,
+    "temperature_default": 0.2,
+    "max_tokens_default": 600
+  },
+  "cost": {
+    "input_per_1m_usd": 0.435,
+    "output_per_1m_usd": 0.87,
+    "budget_total_usd": 17.0,
+    "_doc": "Sir 充值 17 USD. usage_stats.est_cost_usd >= budget_total_usd -> CLI 提示 Sir 关 routing."
+  },
+  "usage_stats": {
+    "call_count": 90,
+    "success_count": 90,
+    "fallback_count": 0,
+    "input_tokens_total": 245851,
+    "output_tokens_total": 62320,
+    "est_cost_usd": 0.161164,
+    "first_call_ts": 1779971943.759895,
+    "first_call_iso": "2026-05-28T20:39:03",
+    "last_call_ts": 1780305844.9724925,
+    "last_call_iso": "2026-06-01T17:24:04",
+    "last_error": "",
+    "per_caller": {
+      "unknown": {
+        "call_count": 88,
+        "success_count": 88,
+        "fallback_count": 0,
+        "input_tokens": 228373,
+        "output_tokens": 60882,
+        "est_cost_usd": 0.15231
+      },
+      "inner_thought_daemon": {
+        "call_count": 2,
+        "success_count": 2,
+        "fallback_count": 0,
+        "input_tokens": 17478,
+        "output_tokens": 1438,
+        "est_cost_usd": 0.008854
+      }
+    }
+  },
+  "history": [
+    {
+      "action": "reset_usage_stats",
+      "old_est_cost_usd": 0.004387,
+      "source": "sir_cli",
+      "rationale": "fix45 dev cleanup",
+      "applied_at": 1779971002.641082,
+      "applied_iso": "2026-05-28T20:23:22"
+    },
+    {
+      "action": "add_replace_model",
+      "model": "anthropic/claude-3-haiku",
+      "source": "sir_cli",
+      "rationale": "test add",
+      "applied_at": 1779971013.2032027,
+      "applied_iso": "2026-05-28T20:23:33"
+    },
+    {
+      "action": "add_exclude_caller",
+      "caller": "stm_summarizer",
+      "source": "sir_cli",
+      "rationale": "test exclude",
+      "applied_at": 1779971013.349226,
+      "applied_iso": "2026-05-28T20:23:33"
+    },
+    {
+      "action": "remove_replace_model",
+      "model": "anthropic/claude-3-haiku",
+      "source": "sir_cli",
+      "rationale": "",
+      "applied_at": 1779971017.2793093,
+      "applied_iso": "2026-05-28T20:23:37"
+    },
+    {
+      "action": "remove_exclude_caller",
+      "caller": "stm_summarizer",
+      "source": "sir_cli",
+      "rationale": "",
+      "applied_at": 1779971017.487842,
+      "applied_iso": "2026-05-28T20:23:37"
+    }
+  ],
+  "last_modified_at": 1780305844.9724925,
+  "last_modified_iso": "2026-06-01T17:24:04"
+}
