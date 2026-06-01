@@ -1,5 +1,13 @@
 ﻿# Jarvis TODO
 
+> 🧭 **当前最高优先长程 track(2026-06-01 立):放权 / 自我作者化(Letting-Go)。**
+> **接手前必读 `docs/JARVIS_LETTING_GO_ROLLOUT.md`**(零记忆安全立项:§0 硬线 + STOP 触发 +
+> 当前在**第 0 格**)。**§0 第一条:唯一能信的兜底 = 自我作者回路之外、系统碰不到的机械墙;
+> 内化进权重的诚实 + 遥测都会被腐蚀/被演,不是地基。墙先于放权。**
+> 地基 4 doc:`JARVIS_ANCHOR_AND_BOUNDARY.md`(公理/why)· `JARVIS_ANCHOR_DESIGN.md` +
+> `JARVIS_HENG_DESIGN.md`(锚 P0-P4 + 衡 H0-H3,**全完成**)· `JARVIS_ANCHOR_PROGRESS.md`(进度)。
+> 第 0 格起点 = ROLLOUT §3 的 **T0.2(回路外机械墙)最优先**,T0.1 仪表辅助,不改行为。
+
 > 🆕 **2026-05-29 00:00 — 思考脑 = Governor + SOUL Phase 4 paradigm shift PENDING SIR VERDICT** (准则 6 + β.6 + SOUL 生态续作)
 >
 > **本 anchor self-contained — agent 不翻 doc 也懂全部. 详 doc 见末尾 link list.**
