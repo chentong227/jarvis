@@ -1,23 +1,13 @@
 {
-  "_doc": "思考脑去硬编码 (识的最后一条硬编码: A-E 5 类 category 槽 → 势能驱动涌现的 kind). 详 docs/JARVIS_THINKING_DEHARDCODE_CATEGORIES_DESIGN.md + docs/AGENT_KICKOFF_THINKING_DEHARDCODE.md. CLI: scripts/thinking_kind_dump.py.",
-  "_doc_mode": "thinking_kind_mode: legacy (默认 — A-E 槽 + 类冷却 SAME_CATEGORY_COOLDOWN, 老行为不变) | emergent (体势能区 summon + kind=effect 派生, diversity 靠区放电). 逐 phase flag-gated 开, 任一步回退 = 改回 legacy. Phase 0 脚手架阶段恒 legacy (双写 derived_kind 不改行为).",
+  "_doc": [
+    "思考脑 thinking_kind 模式 + effect→kind 派生表 (准则 6 持久化, mtime 30s 热重载).",
+    "[放权 / Sir 2026-06-01] thinking_kind_mode: legacy → emergent — 拨通反刍治理主开关.",
+    "emergent 生效后: 醒需理由(_emergent_rest_floor 砍 45s 盲钟) + REST 放下决策接管 +",
+    "退 category 冷却(diversity 靠体势能指纹). legacy 老行为 0 变作安全回退.",
+    "回退: 删本文件 或 改 thinking_kind_mode='legacy' → 30s 内恢复 legacy.",
+    "py seed fallback 在 jarvis_inner_thought_daemon.py:_THINKING_KIND_DEFAULT."
+  ],
   "thinking_kind_mode": "emergent",
-  "_doc_effect_to_kind": "actionable 前缀 → 涌现的 kind label (设计 §5.1). 注: 这是 effect 的事后分类映射, 不是预声明的选择槽 — LLM 不'选 kind', 它放电产生 effect, kind 是 label. 无冷却 (diversity 靠区放电). call_tool/adjust_sensor_threshold 是 dispatch 里有但设计 §5.1 表未列的 — 按语义归入 solve/self_debug.",
-  "effect_to_kind": {
-    "update_concern_severity": "solve",
-    "adjust_concern_notes": "shape_next",
-    "propose_stance": "reflect",
-    "propose_protocol": "reflect",
-    "suggest_inside_joke": "relate",
-    "fire_nudge": "reach_out",
-    "propose_watch_task": "commit",
-    "compose_main_brain_directive": "shape_next",
-    "propose_vocab_adjustment": "self_debug",
-    "adjust_sensor_threshold": "self_debug",
-    "call_tool": "solve",
-    "request_capability": "want_capability"
-  },
-  "_doc_special": "kind_for_rest: <REST> 放下决策的 kind (没真势能 → 歇会, 有价值的输出); kind_for_none: actionable=none 且无 REST = empty filler (设计判定'不该出现, 引导 REST'); kind_for_unknown: 非 none 但前缀不在表里 (deprecated/future) 的兜底.",
   "kind_for_rest": "rest",
   "kind_for_none": "empty",
   "kind_for_unknown": "act"
