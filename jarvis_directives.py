@@ -2958,8 +2958,13 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
                 用法 (FAST_CALL):
                   <FAST_CALL>{"organ":"ui_control","command":"dashboard_open","params":{}}</FAST_CALL>
 
-                语义模糊时 (Sir 只说"看看" 没说面板) — 反问 1 句澄清, 别瞎开.
-                看完 Sir 自然会自己关; 想关也可:
+                🆕 [主页] Sir 若说"打开主页/homepage/看看你成为谁/识说体衡" 类 —
+                那是要看你的**四元架构演化主页** (识/说/体/衡 + 我是谁 + 内部演变),
+                跟运维面板不同 (主页看"谁的诞生路径", 面板看运维数值). 用:
+                  <FAST_CALL>{"organ":"ui_control","command":"homepage_open","params":{}}</FAST_CALL>
+
+                语义模糊时 (Sir 只说"看看" 没说面板/主页) — 反问 1 句澄清, 别瞎开.
+                看完 Sir 自然会自己关; 想关面板也可:
                   <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
             """).rstrip(),
             trigger=_trigger_dashboard_intent,

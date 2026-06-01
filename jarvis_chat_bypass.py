@@ -1651,7 +1651,7 @@ Spoken English:"""
             # dashboard_open / dashboard_close 会 subprocess.Popen + webbrowser.open
             # 触主 Sir 桌面 (port 8765 web server + 浏览器弹窗), 严重 break 镜像隔离.
             # 镜像 mode 短路返回 mock success, 让主脑看到"已执行"继续后续 reply.
-            if ctrl_cmd in ("dashboard_open", "dashboard_close"):
+            if ctrl_cmd in ("dashboard_open", "dashboard_close", "homepage_open"):
                 try:
                     from jarvis_mirror_mode import is_mirror_mode as _mir_check, append_mirror_output as _mir_log
                     if _mir_check():
@@ -1659,7 +1659,7 @@ Spoken English:"""
                             'event': 'mirror_fast_call_skipped',
                             'organ': 'ui_control',
                             'command': ctrl_cmd,
-                            'reason': 'dashboard subprocess + browser would leak to Sir desktop',
+                            'reason': 'dashboard/homepage subprocess + browser would leak to Sir desktop',
                         })
                         return f"🪞 [mirror] ui_control.{ctrl_cmd} 已跳过 (镜像 mode 不抢真桌面/真浏览器)"
                 except Exception:
@@ -1768,6 +1768,54 @@ Spoken English:"""
                     return f"✅ ui_control.dashboard_close (killed: {killed or 'none'})"
                 except Exception as _ce:
                     return f"❌ ui_control.dashboard_close: {_ce}"
+            # 🆕 [主页 / Sir 2026-06-01] 语音"打开主页" → 拉起四元演化主页 (web 版)
+            # Sir 喜欢语音开 (e.g. "打开主页/show me homepage"). 同 dashboard_open 模式:
+            # 探 port 8766, 在跑则只开浏览器, 否则起 scripts/jarvis_homepage_web.py。
+            if ctrl_cmd == "homepage_open":
+                try:
+                    import subprocess as _sp
+                    import sys as _sys
+                    import time as _t
+                    import socket as _sock
+                    import webbrowser as _wb
+                    HP_PORT = 8766
+                    HP_URL = f"http://127.0.0.1:{HP_PORT}/"
+                    py_exe = _sys.executable
+
+                    def _port_alive(port):
+                        with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as s:
+                            s.settimeout(0.3)
+                            try:
+                                s.connect(('127.0.0.1', port))
+                                return True
+                            except Exception:
+                                return False
+                    if _port_alive(HP_PORT):
+                        try:
+                            _wb.open(HP_URL)
+                        except Exception:
+                            pass
+                        return (f"✅ ui_control.homepage_open: 主页已在跑, "
+                                f"浏览器开 {HP_URL}")
+
+                    hp_script = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'scripts', 'jarvis_homepage_web.py')
+                    if not os.path.exists(hp_script):
+                        hp_script = 'scripts/jarvis_homepage_web.py'
+                    proc = _sp.Popen(
+                        [py_exe, hp_script],
+                        creationflags=getattr(_sp, 'CREATE_NEW_CONSOLE', 0x00000010),
+                        close_fds=True,
+                    )
+                    _t.sleep(1.2)
+                    if proc.poll() is not None:
+                        return (f"❌ ui_control.homepage_open: 主页 server 启动失败 "
+                                f"(exit={proc.returncode})")
+                    return (f"✅ ui_control.homepage_open: 四元演化主页已打开 "
+                            f"(PID={proc.pid}, {HP_URL})")
+                except Exception as _he:
+                    return f"❌ ui_control.homepage_open: {_he}"
             return f"❌ ui_control: 未知指令 {ctrl_cmd}"
 
         # 🆕 [P5-fix24-concern-dismiss / 2026-05-22] Sir 18:42 痛点
