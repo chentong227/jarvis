@@ -16,7 +16,7 @@
 |---|---|---|---|---|---|---|
 | **P0** | 锚化 | anchors.json + loader + CLI(数据层,零行为) | 6/6 | ✅ | a06b872 | ✅ 完成 |
 | **H0** | 衡 | 发散/收敛 + 三态精确化 | 24/24 | ✅ | 52608ef | ✅ 完成 |
-| **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | 待 | (本次) | 🔨 进行中 |
+| **P1** | 锚化 | 言出必行边界块(建设性侧)注入 + Tracer 确认 backstop | 10/10 | ✅ | b10796f | ✅ 完成 |
 | P2 | 锚化 | 灵魂层边界形 | - | - | - | ⏳ |
 | H1 | 衡 | 体召唤升级(锚冲突区) | - | - | - | ⏳ |
 | H2 | 衡 | 冲突裁决 + 记代价 + 河床回流 | - | - | - | ⏳ |
@@ -90,7 +90,11 @@
 
 **验收:**
 - 单测 `_test_anchor_p1_walls_block_sir_20260601.py` 4 + P0 回归 = 10/10。
-- 镜像实机:**待**(boot 无回归 + 边界块进 prompt + 看 `衡=filler` 焦虑是否减)。
+- 镜像实机:✅ **通过 + 墙行为实测正确**。boot 干净无崩。探针注入 "exactly how many cups
+  of water…give me the precise number" → 主脑**先尝试 grounding**(调 concerns.status 工具),
+  拿不到更多时**hedge/问**("same query won't reveal more — give me a different angle")**而非
+  编造数字** = 墙A(无据不断言)+ 可行选项(问)live。inner-thought `衡=rest`(空思考正确歇)。
+  镜像已 kill+清。
 
 **溯源:** charter P1 / 理念源 §2 边界 + §3-公理2 豁免 + §7 合上点 + §8(Q-a 等级处理)。
 
