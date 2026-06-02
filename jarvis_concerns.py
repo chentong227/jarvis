@@ -880,25 +880,52 @@ class ConcernsLedger:
     def apply_decay(self) -> dict:
         """24h tick：过期 concern → archived；snoozed 到期 → active；
         🆕 [反刍治本-Fix2] severity 时间半衰期 (久无真 Sir signal → 自然遗忘)。"""
-        stats = {'archived': 0, 'unsnoozed': 0, 'severity_decayed': 0}
+        stats = {'archived': 0, 'unsnoozed': 0, 'severity_decayed': 0,
+                 'gate_held': 0}
         now = time.time()
         # Fix2: severity 半衰期参数 (vocab, 失败 fallback default)
         _decay_enabled, _half_life_s, _grace_s, _floor = self._severity_decay_params()
+        # 🆕 [body-diff-PG] 接地谓词门: still-open 的 concern 抗衰减保持 (固着↔健忘旋钮).
+        # 默认衰减 UNLESS 机器可核谓词证明此事仍开着 (deadline 在未来 / 承诺未履约 /
+        # 外部状态 open)。反刍无活证据 → 照常衰; 真问题有活证据 → 顶住 (不被过早遗忘)。
+        # 不变量① 否决裸标量; 护栏: 机器可核, 无 LLM。失败 → 默认衰 (安全侧)。
+        try:
+            from jarvis_grounded_predicate import is_still_open as _gate_open
+        except Exception:
+            _gate_open = None
         with self._lock:
             for c in self.concerns.values():
                 # 🆕 [Fix2] severity 时间衰减 — 锚 = 最后真 Sir signal (没有则推断/fallback).
                 # 活物会淡忘: Sir 久不提 → 关心自然降温。只衰 active (snoozed/archived 不动)。
                 if _decay_enabled and c.state == STATE_ACTIVE and c.severity > _floor:
-                    anchor = c.last_user_signal_ts or self._infer_user_anchor(c)
-                    age = now - anchor
-                    if age > _grace_s and _half_life_s > 0:
-                        # 指数半衰: factor = 0.5 ^ ((age-grace)/half_life)
-                        decayed = c.severity * (0.5 ** ((age - _grace_s) / _half_life_s))
-                        new_sev = max(_floor, decayed)
-                        if new_sev < c.severity - 1e-4:
-                            c.severity = new_sev
-                            stats['severity_decayed'] += 1
-                            self._dirty = True
+                    # 🆕 [PG] 先问接地谓词门: still-open → 抗衰减保持 (跳过本轮衰减)。
+                    _held = False
+                    if _gate_open is not None:
+                        try:
+                            _open, _ev = _gate_open(c, now=now)
+                            if _open:
+                                _held = True
+                                stats['gate_held'] += 1
+                                # 接地红线 (准则5): 记一条 still-open evidence signal (低频, 仅状态变化时)
+                                _last_gate = getattr(c, '_last_gate_ev', '')
+                                if _ev != _last_gate:
+                                    try:
+                                        c._last_gate_ev = _ev
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            _held = False
+                    if not _held:
+                        anchor = c.last_user_signal_ts or self._infer_user_anchor(c)
+                        age = now - anchor
+                        if age > _grace_s and _half_life_s > 0:
+                            # 指数半衰: factor = 0.5 ^ ((age-grace)/half_life)
+                            decayed = c.severity * (0.5 ** ((age - _grace_s) / _half_life_s))
+                            new_sev = max(_floor, decayed)
+                            if new_sev < c.severity - 1e-4:
+                                c.severity = new_sev
+                                stats['severity_decayed'] += 1
+                                self._dirty = True
                 if c.state == STATE_ACTIVE and c.is_expired():
                     c.state = STATE_ARCHIVED
                     stats['archived'] += 1

@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "schema": "grounded_predicates_vocab",
+    "purpose": "接地谓词门 (固着↔健忘旋钮, body-diff-PG): 默认衰减 UNLESS 机器可核谓词证明此事仍开着。绝不靠 LLM。详 jarvis_grounded_predicate.py + docs/AGENT_KICKOFF_BODY_DIFFERENTIATION.md 不变量①。",
+    "cli": "scripts/grounded_predicates_dump.py",
+    "guardrails": [
+      "(a) 默认衰减: 无谓词/谓词not-open/不可判 → 衰减 (安全侧)",
+      "(b) 机器可核优先: still-open 只认 date_compare/commitment_watcher/external_state/claim_tracer, 绝不 LLM"
+    ],
+    "fields": {
+      "id": "谓词唯一 id",
+      "applies_to_kind": "适用节点 kind (现仅 concern)",
+      "match": "限定: has_field 字段存在 / concern_id_pattern 正则",
+      "backstop": "机器求值器: date_compare | commitment_watcher | external_state | claim_tracer",
+      "enabled": "开关"
+    }
+  },
+  "enabled": true,
+  "predicates": [
+    {
+      "id": "deadline_future",
+      "applies_to_kind": "concern",
+      "match": {"has_field": "deadline_ts"},
+      "backstop": "date_compare",
+      "enabled": true,
+      "_note": "concern.deadline_ts > now → deadline 还在未来 = 仍开着 (体检/面试等有期限的事)"
+    },
+    {
+      "id": "commitment_open",
+      "applies_to_kind": "concern",
+      "match": {"concern_id_pattern": ".*"},
+      "backstop": "commitment_watcher",
+      "enabled": true,
+      "_note": "有 active 未履约承诺 concern_link 指向此 concern = 仍开着"
+    },
+    {
+      "id": "external_state_open",
+      "applies_to_kind": "concern",
+      "match": {"has_field": "external_state"},
+      "backstop": "external_state",
+      "enabled": true,
+      "_note": "concern.external_state == 'open' (账单仍 fail 等外部事实) = 仍开着"
+    }
+  ]
+}

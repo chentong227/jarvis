@@ -70,16 +70,17 @@
 | **P0** | 杠杆b 去全局 seen 重叠面 (core_boundary) | ✅ | (pending) | compute_surfaces 双阈值重写 (高阈聚核分离 + 低阈边界扩张产桥); + bridge_nodes() |
 | **P0** | 桥度量 + over_fragmented health (complexity_report) | ✅ | (pending) | bridge_count/frac, over_fragmented health, score 奖桥 bridge_bonus |
 | **P0** | CLI --surfaces harvest text + --bridges | ✅ | (pending) | manifold_dump.py 改 |
-| **P0** | vocab + 单测 (8/8) + **Sir 双签验收** | 🔵 | (pending) | tests/_test_body_diff_p0_* 绿; **待 Sir 跑 --surfaces/--bridges 双签** |
-| **PG** | 接地谓词门模块 + 注册表 + backstop (并行轨) | ⬜ | — | jarvis_grounded_predicate.py, 不依赖 P0 |
-| **PG** | 门接入 apply_decay/habituation + 单测 | ⬜ | — | concern 轴 LIVE 回归 |
+| **P0** | vocab + 单测 (8/8) + **Sir 双签验收** | 🔵 | 261f25f | 杠杆a/b 代码完成; 镜像实测 P0a **不达标** (见下 §10 P0 诊断) |
+| **P0b** | 破团正解 = **合并冗余反刍 thread** (非 SLPA) | ⬜ | — | 诊断定案: 那 46 thread 是冗余反刍非多主题 |
+| **PG** | 接地谓词门模块 + 注册表 + backstop (并行轨) | ✅ | (pending) | jarvis_grounded_predicate.py, 不依赖 P0, 3 谓词 (deadline/commitment/external) + 4 backstop |
+| **PG** | 门接入 apply_decay/habituation + 单测 | ✅ | (pending) | apply_decay still-open→抗衰减 (gate_held), 单测 9/9, 隔离验证 PG 对 18 concern/body 套 0 回归 |
 | **P1** | spread recency 项 + lens 投影 + A/B | ⬜ | — | 依赖 P0 |
 | **P2** | 注意力迟滞 / 不应期 (焦点可观测后) | ⬜ | — | A 层 |
 | **P3** | 势能对齐 (与 PG 耦合, 可选) | ⬜ | — | Sir 拍 |
 | **P4** | SelfModel 一等对象 | ⬜ | — | 红线B+C |
 | **P5** | 时间坐标重构 | ⬜ | — | 延后第二期 |
 
-**当前位置**: P0 代码完成 (杠杆a/b + 桥度量 + CLI), 单测 8/8 绿, 无真实回归 (3 个 legacy 能量/几何测已 patch 隔离折扣)。**待 Sir 真机重启 weave 后跑 `manifold_dump --surfaces` + `--bridges` 双签** (面对得上主题 + 桥讲得通) → P0 ✅。PG (谓词门) 可并行开工。
+**当前位置**: (1) **PG 完成** — 接地谓词门 (固着↔健忘旋钮) 模块 + 注册表 + 4 backstop + 门接入 apply_decay, 单测 9/9 绿, 隔离验证对 18 个 concern/body 套 0 回归 (PG 本身不引入任何新红)。(2) P0a 代码完成但**镜像实测不达标** (largest_frac 0.548 ≥0.5, 见 §10), P0b 改判为合并冗余反刍 thread (非 SLPA), 待镜像复验。**P0 仍待 Sir 真机重启 weave 后跑 `manifold_dump --surfaces` + `--bridges` 双签**。
 
 ---
 
@@ -115,3 +116,22 @@ P0 第一刀 (按 design.md §3, 严格 7 步):
 - 红线 A/B/C 任一被碰 → 停, 报 Sir, 不自行决断。
 
 *创建于 body-differentiation 立项 (设计阶段完成时). 维护者: 接手该轨道的 agent.*
+
+---
+
+## 10. P0 镜像诊断 (2026-06-02, 真数据隔离沙盒, 无 LLM)
+
+P0a (接地不对称折扣 + core_boundary 重叠面 + 桥度量 + CLI) 代码完成 (commit 261f25f), 但**镜像在真实 124 节点 blob 上实测不达标**:
+- largest_frac 0.903 → 最好 0.548, **仍 ≥0.5 (blob 未破)**。
+- 单调折扣 (discount 0.5→0.15) largest_frac 纹丝不动 (折扣降权但边权仍 > 强边阈)。
+- prune-to-top-k 能降 density 但"破团"与"留桥"不可兼得 (top-k=3 → healthy 但 0 桥=孤岛; top-k≥4 → 留桥但仍 blob)。
+
+**诊断 (b) 读那 46 条 thread harvest text → 定案: 冗余反刍, 非多主题。**
+那 46 thread = 同 3-4 主题反复嚼一个月 (hydration 反刍 ≥12 / keyrouter ≥8 / "我话太多该收敛"元反刍 ≥10 / interview-pomodoro 若干)。是 concern 反刍在 thread 节点上的镜像。
+
+**P0b 方向改判 (Sir+理论 agent 定案): 不上 SLPA。**
+给一团反刍编社区号 = 假分化 (踩不变量③ 过碎 / ⑤ 别把图算法产物当真结构)。**正解 = 巩固/合并近重复反刍 thread** (体里已有 `add_alias` D2 原语 + `auto_merge_dups`, 但阈值 0.93 太高抓不到"同主题不同措辞"的 0.75-0.90 thread)。P0b = 降自产节点间合并阈 + 让巩固在 weave 跑, 把反刍团合并瘦身 (攻因: 减冗余自产节点, 非攻症: 切社区)。
+**更深一层 (备选/叠加)**: 让接地边 (cooccur/said/shared = 真实纽带) 成面权重 > 自产 embedding 边 → 面围真实共现长, 非围思考相似长 (不变量② 彻底形态)。
+SLPA 仅在"确认是多主题且团稠密破不开"时才上 — 当前诊断**否决**该前提。
+
+**P0a 代码保留** (折扣 + 重叠面框架 + 桥度量 + CLI 是 P0b 地基, 复用)。

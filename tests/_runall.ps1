@@ -164,7 +164,10 @@ $tests = @(
     "_test_p0_plus_20_beta515_inconsistency_publish_skip_persist",
     "_test_p0_plus_20_beta516_nudge_partial_flush_and_vocab_fix_persist",
     "_test_p0_plus_20_beta517_proactive_care_focus_mode_persist",
-    "_test_p0_plus_20_beta518_freeze_hardlock_persist"
+    "_test_p0_plus_20_beta518_freeze_hardlock_persist",
+    "_test_concern_rumination_root_sir_20260602",
+    "_test_body_diff_p0_sir_20260602",
+    "_test_grounded_predicate_pg_sir_20260602"
 )
 
 foreach ($t in $tests) {
