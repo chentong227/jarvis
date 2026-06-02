@@ -153,6 +153,7 @@ from jarvis_worker_helpers import (  # noqa: F401
     GENERIC_REFUSAL_PATTERNS,
     STRONG_REFUSAL_PATTERNS,
     SLEEP_INTENT_PATTERNS,
+    SLEEP_FUTURE_DAY_PATTERNS,
     SLEEP_TIME_EXTRACTORS,
     CN_DIGIT_MAP,
     REFLEX_DICT,
@@ -958,6 +959,7 @@ class JarvisWorkerThread(QThread):
     # _CN_DIGIT_MAP 抽到 jarvis_worker_helpers.py. class attr alias, 兼容 self._SLEEP_*.
     # 详见 [v5.1 / Sir-2026-05-15] sleep intent detection 设计 (helpers.py 文件头).
     _SLEEP_INTENT_PATTERNS = SLEEP_INTENT_PATTERNS
+    _SLEEP_FUTURE_DAY_PATTERNS = SLEEP_FUTURE_DAY_PATTERNS  # 🆕 [B1] 未来日期指代守门
     _SLEEP_TIME_EXTRACTORS = SLEEP_TIME_EXTRACTORS
     _CN_DIGIT_MAP = CN_DIGIT_MAP
     _SLEEP_DEFAULT_DELAY_SEC = 1800  # 默认 30 分钟
@@ -1279,6 +1281,26 @@ class JarvisWorkerThread(QThread):
                 return
             if not any(re.search(p, text) for p in self._SLEEP_INTENT_PATTERNS):
                 return
+
+            # 🆕 [B1 / Sir 2026-06-02 真机治本] 未来日期指代守门
+            # =====================================================================
+            # 真机 BUG (jarvis_20260602_194104): Sir "6月3号晚上早点休息"(为后天体检)
+            # 命中睡眠关键词 → 误启动**此刻** 632s 睡眠倒数 + 静音 app。Jarvis 自己承认
+            # "将禁食要求与休息时间混为一谈, 应用到了今晚"。
+            # 治本: 句中含未来某天指代 (明天/后天/N月N号/星期X) → 这是**排程提醒**
+            # (Time Hook 已另行调度), 不是 Sir **现在**要睡 → 不触发此刻 SleepMode 窗口。
+            # 准则 6: pattern vocab 化在 jarvis_worker_helpers.SLEEP_FUTURE_DAY_PATTERNS。
+            try:
+                if any(re.search(p, text, re.IGNORECASE)
+                       for p in self._SLEEP_FUTURE_DAY_PATTERNS):
+                    from jarvis_utils import bg_log as _b1_bg
+                    _b1_bg(
+                        f"🕐 [Sleep Intent/FutureDayGuard] 命中睡眠关键词但句含未来日期指代 "
+                        f"→ 判为排程提醒, 不触发此刻 SleepMode: '{cmd[:50]}'"
+                    )
+                    return
+            except Exception:
+                pass
 
             delay_sec = None
 

@@ -283,6 +283,23 @@ SLEEP_INTENT_PATTERNS = [
     r"(?:今晚|今天晚上|今夜|待会儿?).{0,10}(?:睡|休息|睡觉|关机|下线|休息)",
 ]
 
+# 🆕 [B1 / Sir 2026-06-02 真机治本] 未来日期指代 — 命中即"这是排程提醒, 不是此刻睡意"
+# 真机 BUG (jarvis_20260602_194104): Sir "6月3号晚上早点休息"(为后天体检) 被
+# _detect_sleep_intent 误判成"现在要睡" → 启动 632s 睡眠倒数 + 静音 app。
+# 治本: 句中含未来某天指代 (明天/后天/N月N号/星期X/N号) → 不触发**此刻** SleepMode,
+# 那是排程提醒 (Time Hook 已调度), 不是 Sir 现在要睡。准则6 持久化 + 可扩展。
+SLEEP_FUTURE_DAY_PATTERNS = [
+    r"明天|明日|tomorrow|tmrw",
+    r"后天|后日|day\s+after\s+tomorrow",
+    r"大后天",
+    r"\d{1,2}\s*月\s*\d{1,2}\s*[号日]",          # 6月3号 / 6月3日
+    r"\d{1,2}\s*[号日](?:\s*(?:早上|晚上|晚|早))",  # 3号晚上 / 3号早上
+    r"(?:周|星期|礼拜)\s*[一二三四五六日天\d]",    # 周一 / 星期三 / 礼拜五
+    r"next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+    r"\d{4}-\d{1,2}-\d{1,2}",                      # 2026-06-03
+    r"(?:这|下|本)\s*(?:周|星期|礼拜)",            # 下周 / 这周
+]
+
 # 时间提取：捕获"30 分钟" / "half hour" / "一小时" 等。命中越早越具体优先。
 SLEEP_TIME_EXTRACTORS = [
     (r"(\d+)\s*(?:分钟|分(?!\w)|min(?:ute)?s?)", lambda m: int(m.group(1)) * 60),
