@@ -3358,11 +3358,57 @@ class InnerThoughtDaemon:
                             or t.ts > _thread_latest_ts[tid]):
                         _thread_latest_ts[tid] = t.ts
                 _now = time.time()
+                # 🆕 [governor F9 / Sir 2026-06-02] 语义聚类 count (治 B 类反省反刍)
+                # ============================================================
+                # 真机 jarvis_20260602_184250 暴露: dismiss Cursor 后, 思考脑转 B 类
+                # "I have been over-attending to hydration/cursor" 反复换词转 (sal
+                # 0.95→0.99, kind=empty), 但全 same_thread 单 thread 计数 < 阈值 →
+                # F3/F4 抓不到。F8 只治 new_topic 发散, 治不了 same_thread 语义堆积。
+                # F9: 跨 thread 按 jaccard 聚类, 某语义簇 >= 阈值 → 标 aged, LLM 看到
+                # "我对这个语义想了 N 次" → 自决 let_go (对簇内任一 thread_id)。
+                # 准则 6: python 只 count 簇, LLM 自决 let_go。准则 8: 复用 jaccard helper。
+                _sem_clusters = []
+                try:
+                    _sm_enabled, _sm_thr, _, _ = _get_semantic_thread_merge_config()
+                    if _sm_enabled and len(_all_in_window) >= 2:
+                        # 贪心聚类: 每个 thought 归入第一个 jaccard>=阈值 的簇, 否则开新簇
+                        _clusters = []  # list of {rep, tids:set, count, last_ts}
+                        for t in _all_in_window:
+                            _txt = getattr(t, 'thought', '') or ''
+                            _tid = (getattr(t, 'thread_id', '') or t.id)
+                            _placed = False
+                            for cl in _clusters:
+                                if _self_reflection_jaccard(_txt, cl['rep']) >= _sm_thr:
+                                    cl['count'] += 1
+                                    cl['tids'].add(_tid)
+                                    cl['last_ts'] = max(cl['last_ts'], t.ts)
+                                    _placed = True
+                                    break
+                            if not _placed:
+                                _clusters.append({
+                                    'rep': _txt, 'tids': {_tid},
+                                    'count': 1, 'last_ts': t.ts,
+                                    'sample': _txt[:60],
+                                })
+                        # 只暴露 count>=2 的簇 (单条不算反刍), 按 count 降序
+                        for cl in sorted(_clusters, key=lambda c: -c['count']):
+                            if cl['count'] >= 2:
+                                _sem_clusters.append({
+                                    'sample': cl['sample'],
+                                    'count': cl['count'],
+                                    'n_threads': len(cl['tids']),
+                                    'thread_ids': [x[:16] for x in list(cl['tids'])[:4]],
+                                    'last_age_s': int(_now - cl['last_ts']),
+                                    'aged_flag': cl['count'] >= _tr_max_occ,
+                                })
+                except Exception:
+                    pass
                 ev['topic_distribution'] = {
                     'lookback_min': _td_lookback_min,
                     'warning_threshold': _td_warning_thr,
                     'aged_threshold': _tr_max_occ,
                     'default_let_go_ttl_min': _tr_default_ttl,
+                    'semantic_clusters': _sem_clusters,  # 🆕 F9 语义反刍簇
                     'topics': [
                         {
                             'thread_id_short': (tid or '')[:16],
@@ -4874,9 +4920,29 @@ class InnerThoughtDaemon:
                         f"{_cnt} occurrences (last {_age_str})"
                         f"{_warn_mark}{_aged_mark}"
                     )
+                # 🆕 [governor F9 / Sir 2026-06-02] 语义反刍簇 (跨 thread 同语义)
+                # 治真机暴露的 B 类"反省自己反省"反刍: same_thread 单 thread 计数不够,
+                # 但跨 thread 同语义堆积。LLM 看簇 → 对簇内任一 thread_id let_go。
+                _clusters = _td.get('semantic_clusters', []) or []
+                if _clusters:
+                    lines.append(
+                        "  — semantic clusters (same MEANING across threads, "
+                        "catches 'ruminating on the same thing in new words'):"
+                    )
+                    for _cl in _clusters[:5]:
+                        _ccnt = _cl.get('count', 0)
+                        _cwarn = ' ⚠️' if _ccnt >= _td_warn else ''
+                        _caged = ' 🍂 AGED' if _cl.get('aged_flag') else ''
+                        _ctids = ', '.join(_cl.get('thread_ids', [])[:3])
+                        lines.append(
+                            f"    \u00b7 \"{_cl.get('sample', '')[:50]}\" — "
+                            f"{_ccnt}\u00d7 across {_cl.get('n_threads', 1)} threads "
+                            f"[{_ctids}]{_cwarn}{_caged}"
+                        )
                 lines.append(
-                    f"  ↳ 🍂 AGED topics (>={_td_aged} occurrences) — "
-                    f"if you've been cycling fruitlessly, output "
+                    f"  ↳ 🍂 AGED topics/clusters (>={_td_aged} occurrences) — "
+                    f"if you've been cycling fruitlessly (incl. ruminating on the "
+                    f"SAME meaning in new words across threads), output "
                     f"<LET_GO>thread_id_short</LET_GO> to '放下' that "
                     f"thread for {_td_ttl}min (it will be pruned from "
                     f"your evidence — freeing your attention). "
