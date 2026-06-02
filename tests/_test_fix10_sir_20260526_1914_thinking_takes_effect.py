@@ -291,18 +291,23 @@ class TestAutoArbiterRelaxed(unittest.TestCase):
             "protocol prompt 不该再含 'Otherwise <0.7' 硬规")
 
     def test_a3_calibration_baseline_lowered(self):
-        """memory_pool/auto_arbiter_calibration.json baseline 0.75→0.65 (joke/thread), 0.80→0.70 (protocol)."""
+        """memory_pool/auto_arbiter_calibration.json baseline 0.75→0.65 (joke/thread), 0.80→0.70 (protocol).
+
+        🆕 [Sir 2026-06-02] 改 assertLessEqual: AutoArbiter 运行时自校准门槛 (往下调,
+        让更多通过 = 自治正常行为)。本测验 "baseline 已下调" 契约 (<= Q5-B 上限),
+        容忍 runtime 向下漂移 (live 是 gitignored 运行时数据, 硬断言固定值会脆)。
+        """
         cal_path = os.path.join(ROOT, 'memory_pool',
                                   'auto_arbiter_calibration.json')
         with open(cal_path, 'r', encoding='utf-8') as f:
             cal = json.load(f)
         thr = cal.get('thresholds', {})
-        self.assertEqual(thr.get('inside_joke'), 0.65,
-            'inside_joke threshold 应是 0.65 (Q5-B 治本)')
-        self.assertEqual(thr.get('thread'), 0.65,
-            'thread threshold 应是 0.65')
-        self.assertEqual(thr.get('protocol'), 0.70,
-            'protocol threshold 应是 0.70')
+        self.assertLessEqual(thr.get('inside_joke'), 0.65,
+            'inside_joke threshold 应 <= 0.65 (Q5-B 下调 + 容忍 runtime 校准)')
+        self.assertLessEqual(thr.get('thread'), 0.65,
+            'thread threshold 应 <= 0.65')
+        self.assertLessEqual(thr.get('protocol'), 0.70,
+            'protocol threshold 应 <= 0.70')
 
     def test_a4_tool_registered(self):
         """confirm_pending_review tool 已注册."""

@@ -5,9 +5,25 @@
     "emergent 生效后: 醒需理由(_emergent_rest_floor 砍 45s 盲钟) + REST 放下决策接管 +",
     "退 category 冷却(diversity 靠体势能指纹). legacy 老行为 0 变作安全回退.",
     "回退: 删本文件 或 改 thinking_kind_mode='legacy' → 30s 内恢复 legacy.",
-    "py seed fallback 在 jarvis_inner_thought_daemon.py:_THINKING_KIND_DEFAULT."
+    "py seed fallback 在 jarvis_inner_thought_daemon.py:_THINKING_KIND_DEFAULT.",
+    "[Sir 2026-06-02] 补全 effect_to_kind 全表 (与 seed 一致, 防 t10 漂移测红 + 准则6 vocab 完整)."
   ],
   "thinking_kind_mode": "emergent",
+  "effect_to_kind": {
+    "update_concern_severity": "solve",
+    "adjust_concern_notes": "shape_next",
+    "propose_stance": "reflect",
+    "propose_protocol": "reflect",
+    "suggest_inside_joke": "relate",
+    "fire_nudge": "reach_out",
+    "propose_watch_task": "commit",
+    "compose_main_brain_directive": "shape_next",
+    "propose_vocab_adjustment": "self_debug",
+    "adjust_sensor_threshold": "self_debug",
+    "call_tool": "solve",
+    "request_capability": "want_capability",
+    "record_conflict_cost": "weigh"
+  },
   "kind_for_rest": "rest",
   "kind_for_none": "empty",
   "kind_for_unknown": "act"

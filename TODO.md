@@ -10,6 +10,8 @@
 
 > 🆕 **2026-05-29 00:00 — 思考脑 = Governor + SOUL Phase 4 paradigm shift PENDING SIR VERDICT** (准则 6 + β.6 + SOUL 生态续作)
 >
+> **🟢 [Sir 2026-06-02 拍板 + 落地] governor F1-F7 全 implemented+committed (commits f57623e/04c316a + 早期 fix51-58), emergent 模式已 live (thinking_kind_vocab.json). 真机 4.5h 验证 (jarvis_20260602_074737): 间隔 190→397s 越放手 / value_backoff×10 / kind=empty 67%. 暴露并治本 emergent×F3/F4 张力 → 新增 F8 语义 thread 归并 (commit 44fd0f8 + doc 87a2878 §13.5). governor suite 303/303 绿. 余 SOUL C1-C4 framing (4 补点) 仍 pending.**
+>
 > **本 anchor self-contained — agent 不翻 doc 也懂全部. 详 doc 见末尾 link list.**
 >
 > ## 缘起
