@@ -333,6 +333,13 @@ class ChatBypass:
         #   - 比 chime 多了"语义匹配"，比 vocal.say 同步调用快 10 倍
         self._first_token_received = False
         self._backchannel_timer = None
+        # 🆕 [B3-TTFT / Sir 2026-06-02] OpenAI client 连接复用池 (治 TTFT 建连慢).
+        # 真机 jarvis_20260602_194104: TTFT avg 5.6s, breakdown=连接5.4s+等待0.0s →
+        # 慢在 TLS 建连, 非 prompt 增大. 根因: 每 turn new OpenAI() = 新 httpx 连接池 →
+        # 每轮全程 TLS 握手. 治本: 按 (base_url, key) 缓存 client, keep-alive 复用连接 →
+        # 第 2 轮起跳过握手. key 轮换时新建并缓存. 准则 8 治本 (复用连接), 非加预热线程糖衣。
+        self._or_client_cache: Dict[str, Any] = {}
+        self._or_client_cache_lock = threading.Lock()
         # [轴 2.4] 本地短句 PCM 缓存（启动 daemon 异步填充，不阻塞 ChatBypass 构造）
         self._local_phrase_pool = {}
         self._local_phrase_pool_lock = threading.Lock()
@@ -362,6 +369,34 @@ class ChatBypass:
             _patch_for_mirror(self)
         except Exception as _e:
             print(f"[mirror_mode] patch_chat_bypass_for_mirror wire fail (non-fatal): {_e}")
+
+    def _get_or_client(self, base_url: str, key: str, timeout):
+        """🆕 [B3-TTFT / Sir 2026-06-02] 按 (base_url, key) 缓存 OpenAI client, 复用 TLS 连接.
+
+        治 TTFT 建连慢 (真机 connect 5.4s): 每 turn new OpenAI() = 新 httpx 连接池 → 每轮全程
+        TLS 握手. 缓存后 keep-alive 复用底层连接 → 第 2 轮起跳过握手. key 轮换 (KeyRouter 切
+        key) → 新 cache entry. 失败 fallback 直接 new (不破主路径). 准则 8 治本非糖衣。
+        """
+        from openai import OpenAI
+        ck = f"{base_url}::{key[-8:] if key else ''}"
+        with self._or_client_cache_lock:
+            cli = self._or_client_cache.get(ck)
+            if cli is not None:
+                return cli
+            cli = OpenAI(
+                base_url=base_url,
+                api_key=key,
+                default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
+                timeout=timeout,
+            )
+            # 防 cache 无限增长 (key pool 有限, 但保险): 超 8 entry 清最旧
+            if len(self._or_client_cache) >= 8:
+                try:
+                    self._or_client_cache.pop(next(iter(self._or_client_cache)))
+                except Exception:
+                    self._or_client_cache.clear()
+            self._or_client_cache[ck] = cli
+            return cli
 
     # [R7-β2 v5/Sir-2026-05-14] _generate_backchannel_pcm 已删除（与 play_acknowledgment_chime 重复）。
 
@@ -868,11 +903,10 @@ class ChatBypass:
             # 🆕 [P5-fix77-I / 2026-05-23 19:11] BUG-I 真因: read=12.0 太严, 主脑 reasoning
             # 时偶尔 > 12s 思考间隔 → 半截截断. Sir 19:04 真测: "I" (5 char), "I've adjusted
             # to 2300" 等截断. 调 read=25.0 给主脑足够 reasoning 时间, 但仍不死等.
-            client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=key,
-                default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
-                timeout=_httpx_b512.Timeout(connect=10.0, read=25.0, write=10.0, pool=10.0)
+            # 🆕 [B3-TTFT / Sir 2026-06-02] 复用缓存 client (keep-alive 跳 TLS 握手).
+            client = self._get_or_client(
+                "https://openrouter.ai/api/v1", key,
+                _httpx_b512.Timeout(connect=10.0, read=25.0, write=10.0, pool=10.0),
             )
 
             # 🆕 [P5-fix77-I / 2026-05-23 19:11] max_tokens 显式设 8192 防 SDK default
@@ -3842,12 +3876,8 @@ Spoken English:"""
                                         })
                                 messages.append({"role": role, "content": msg_parts})
 
-                            or_client = OpenAI(
-                                base_url="https://openrouter.ai/api/v1",
-                                api_key=or_key,
-                                default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
-                                timeout=60.0
-                            )
+                            or_client = self._get_or_client(
+                                "https://openrouter.ai/api/v1", or_key, 60.0)
                             # 🆕 [P5-fix77-I] 同主路径加 max_tokens 防截断
                             or_response = or_client.chat.completions.create(
                                 model=self.main_brain_model,  # 🆕 P5-fix34 env override

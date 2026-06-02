@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | B1 | **时间指代消解错误**: "6月3号晚上早点休息"(为后天体检) 被 `_detect_sleep_intent` 误判成"现在要睡" → 启动 632s 睡眠倒数 + SleepMode 静音 app | 睡眠意图按关键词硬触发, 不看未来时间指代 | 🔴 高 (误触发整个睡眠链 + 静音) | ✅ commit (未来日期守门) |
 | B2 | **打开主页又开面板**: 主脑想开主页却 emit `open_url(8765)` (8765=面板端口, 主页=8766), 记错端口 | 拦截器按端口路由治标; 主脑分不清端口 | 🟡 中 (第2轮自纠了) | ✅ commit (拦截器加 Sir 原话意图消歧) |
-| B3 | **TTFT 退步**: avg 5.6s / max 10.2s / 16轮8轮破5s红线 | breakdown=连接5.4s+等待0.0s → API 建连慢(网络层), 非 prompt 增大 | 🟡 中 (体感慢但非崩溃) | ⬜ |
+| B3 | **TTFT 退步**: avg 5.6s / max 10.2s / 16轮8轮破5s红线 | breakdown=连接5.4s+等待0.0s → API 建连慢(网络层), 非 prompt 增大; 根因=每 turn new OpenAI() 新连接池 → 每轮 TLS 握手 | 🟡 中 (体感慢但非崩溃) | ✅ commit (client 连接复用 keep-alive) |
 | B4 | **思考脑反刍仍高**: Cursor 30 / hydration 24 / persist 17 次, filler 30% | F9 已落地但本 session 未触发 let_go; 更深根因=放电反馈缺口 (低 agency concern 反复 attend 却不放电→tension 不降→反复召唤) | 🟢 低→治本 | ✅ commit (习惯化 habituation 补全放电反馈) |
 
 ## 详情
@@ -29,7 +29,13 @@
 ### B3 — TTFT 网络建连慢
 - breakdown: `连接5.4s + 等待0.0s` → token 一发即来, 慢在建连
 - 非 L0 framing 增大导致 (那会体现在 prompt 处理/等待, 不是连接)
-- 治本方向: 连接复用 / keep-alive / 建连预热。需先确认是 OpenRouter 还是 Google 通道。
+- **根因**: `jarvis_chat_bypass.py` 每 turn `new OpenAI()` (主路径 ~871 + fallback ~3880)
+  = 每轮新建 httpx 连接池 → 每轮全程 TLS 握手 (无 keep-alive 复用)。OpenRouter 通道。
+- **治本 (准则 8, commit)**: `_get_or_client(base_url, key, timeout)` 按 (base_url, key)
+  缓存 OpenAI client → keep-alive 复用底层 TCP/TLS 连接 → 第 2 轮起跳过握手。key 轮换
+  (KeyRouter 切 key) → 新 cache entry。cache 上限 8 防膨胀。两处构造点都改走 helper。
+- 4/4 testcase `tests/_test_b3_client_reuse_sir_20260602.py`。**镜像/单测验复用逻辑**,
+  真实 TTFT 改善需 Sir 真机连续多轮测 (单测测不到真实网络 RTT)。
 
 ### B4 — 反刍 (深挖治本: 习惯化)
 - F8 (new_topic 归并) + F9 (same_thread 语义聚类) 机制已落地, 但都依赖 LLM 显式输出 LET_GO
