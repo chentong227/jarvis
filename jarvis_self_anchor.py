@@ -62,6 +62,8 @@ def _derive_mood(own_health: dict, recent_signals: list) -> str:
         return "steady"
     dead_keys = own_health.get('dead_keys', 0)
     healthy_keys = own_health.get('healthy_keys', 0)
+    # 🆕 [放权-mask / Sir 2026-06-02] acked_dead_keys 不计入"残疾焦虑" mood —
+    # Sir 已确认在处理, 不是 Jarvis 该焦虑的事 (只 dead_keys 真未处理才焦虑)。
     if dead_keys >= 2 and healthy_keys <= 1:
         return "diminished, but still here"
     if dead_keys >= 1:
@@ -210,6 +212,7 @@ class SelfAnchor:
         health = {
             'dead_keys': 0,
             'healthy_keys': 0,
+            'acked_dead_keys': 0,   # 🆕 [放权-mask] Sir 已确认屏蔽的死 key (不算焦虑)
             'memory_chains': 0,
             'active_concerns': 0,
         }
@@ -222,9 +225,14 @@ class SelfAnchor:
             if kr is not None:
                 stats = kr.get_stats() if hasattr(kr, 'get_stats') else {}
                 ks = stats.get('key_status', {})
+                _acked = set(stats.get('acknowledged_dead', []) or [])
                 for label, info in ks.items():
                     if not info.get('healthy', True):
-                        health['dead_keys'] += 1
+                        # 🆕 [放权-mask / Sir 2026-06-02] Sir 确认屏蔽的死 key 不算"我残疾"
+                        if label in _acked or info.get('acknowledged_dead'):
+                            health['acked_dead_keys'] += 1
+                        else:
+                            health['dead_keys'] += 1
                     else:
                         health['healthy_keys'] += 1
         except Exception:
@@ -355,6 +363,7 @@ class SelfAnchor:
         lines.append("[MY OWN HEALTH RIGHT NOW]")
         _h = health.get('healthy_keys', 0)
         _d = health.get('dead_keys', 0)
+        _acked = health.get('acked_dead_keys', 0)
         _total = _h + _d if (_h + _d) > 0 else 1
         _cap_pct = int(100 * _h / _total)
         if _d >= 1:
@@ -365,6 +374,13 @@ class SelfAnchor:
             )
         else:
             lines.append(f"  - All {_h} of my API keys are healthy ({_cap_pct}% capacity).")
+        # 🆕 [放权-mask / Sir 2026-06-02] Sir 已确认屏蔽的死 key — 中性陈述, 不焦虑/不反刍
+        if _acked >= 1:
+            lines.append(
+                f"  - ({_acked} other key(s) are offline, but Sir already knows and is "
+                f"handling it — new keys incoming. This is settled, NOT my worry. "
+                f"I do not need to think, nudge, or apologize about it.)"
+            )
         lines.append(
             f"  - my memory holds: {health['memory_chains']} chains in STM, "
             f"{health['active_concerns']} active concerns"

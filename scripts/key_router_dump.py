@@ -175,6 +175,12 @@ def cmd_reset_all(args) -> int:
     return _do_reset('all', '', args.wait)
 
 
+def cmd_ack_dead(args) -> int:
+    """🆕 [放权-mask / Sir 2026-06-02] 屏蔽死 key 的自我焦虑 (不复活/不路由)."""
+    label = 'all' if args.ack_all_dead else args.ack_dead
+    return _do_reset('acknowledge', label, args.wait)
+
+
 def cmd_audit(args) -> int:
     """看 reset 历史."""
     if not os.path.exists(AUDIT_PATH):
@@ -219,6 +225,8 @@ def main() -> int:
   --reset-permanent openrouter_3  解 openrouter_3 永久死
   --reset-all                     一键全清 (cooldown + permanent_death)
   --reset-all --wait              一键全清 + 等执行完
+  --ack-dead google_2             屏蔽 google_2 死 key 焦虑 (不复活, Sir 处理中)
+  --ack-all-dead                  屏蔽全部死 key 焦虑 (等加新 key)
   --audit                         看 reset 历史
 """,
     )
@@ -227,13 +235,16 @@ def main() -> int:
     p.add_argument('--reset-cooldown', metavar='LABEL', help='清某把 key 冷却')
     p.add_argument('--reset-permanent', metavar='LABEL', help='解某把 key 永久死亡')
     p.add_argument('--reset-all', action='store_true', help='一键复活全部')
+    p.add_argument('--ack-dead', metavar='LABEL', help='屏蔽某把死 key 的自我焦虑 (不复活/不路由, Sir 处理中)')
+    p.add_argument('--ack-all-dead', action='store_true', help='屏蔽全部死 key 的自我焦虑')
     p.add_argument('--wait', action='store_true', help='reset 后等待主进程执行完')
     p.add_argument('--audit', action='store_true', help='看 reset 历史')
     p.add_argument('--limit', type=int, default=20, help='--audit 显示最近 N 条')
     args = p.parse_args()
 
     # 至少一个 action
-    actions = [args.show, args.reset_cooldown, args.reset_permanent, args.reset_all, args.audit]
+    actions = [args.show, args.reset_cooldown, args.reset_permanent, args.reset_all,
+               args.ack_dead, args.ack_all_dead, args.audit]
     if not any(actions):
         # 默认行为: --show
         args.show = True
@@ -246,6 +257,8 @@ def main() -> int:
         return cmd_reset_permanent(args)
     if args.reset_all:
         return cmd_reset_all(args)
+    if args.ack_dead or args.ack_all_dead:
+        return cmd_ack_dead(args)
     if args.audit:
         return cmd_audit(args)
     return 0

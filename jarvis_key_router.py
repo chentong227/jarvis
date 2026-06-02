@@ -208,6 +208,9 @@ class KeyRouter:
         # 第一次 PROJECT_DENIED 又触发"标记不健康 + cooldown 5min"，每次启动都浪费一轮请求。
         # 新版：启动时从 memory_pool/key_router_state.json 载入；触发永久剔除时立即写盘。
         # 提供 reset_permanent_death(label) 让 Sir rotate key 后主动清除。
+        # 🆕 [放权-mask / Sir 2026-06-02] _acknowledged_dead: Sir 主动确认的死 key,
+        # 仍剔除不路由, 但 SELF anchor 不报焦虑 (见 acknowledge_dead_key)。
+        self._acknowledged_dead = set()
         try:
             self._load_permanent_death_state()
         except Exception as _e:
@@ -662,6 +665,13 @@ class KeyRouter:
         except Exception:
             return
         dead_dict = payload.get('permanently_dead') or {}
+        # 🆕 [放权-mask / Sir 2026-06-02] Sir 主动确认的死 key (暂时屏蔽, 等加新 key).
+        # ack 的 key 仍永久剔除 (不参与路由), 但 SELF anchor 不再报"我残疾/焦虑",
+        # 思考脑也不把它当 high-salience 痛点。语义 = "Sir 知道了, 在处理, 不是我该焦虑的事"。
+        # reset_permanent_death (Sir rotate 新 key) 会自动清掉 ack 标记。
+        ack_list = payload.get('acknowledged_dead') or []
+        if isinstance(ack_list, list):
+            self._acknowledged_dead = set(x for x in ack_list if isinstance(x, str))
         if not isinstance(dead_dict, dict) or not dead_dict:
             return
         restored = []
@@ -677,6 +687,7 @@ class KeyRouter:
             status['permanent_death_reason'] = str(info.get('reason', ''))[:200]
             status['permanent_death_announced'] = True
             status['healthy'] = False
+            status['acknowledged_dead'] = label in self._acknowledged_dead
             restored.append(label)
         if restored:
             try:
@@ -704,7 +715,8 @@ class KeyRouter:
                     'count': status.get('permanent_death_count', 3),
                     'since_iso': time.strftime('%Y-%m-%dT%H:%M:%S'),
                 }
-        payload = {'permanently_dead': dead_dict}
+        payload = {'permanently_dead': dead_dict,
+                   'acknowledged_dead': sorted(getattr(self, '_acknowledged_dead', set()))}
         try:
             tmp_path = self._STATE_FILE_PATH + '.tmp'
             with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -733,8 +745,14 @@ class KeyRouter:
             status['permanent_death_count'] = 0
             status['permanent_death_reason'] = ''
             status['permanent_death_announced'] = False
+            status['acknowledged_dead'] = False
             status['healthy'] = True
             status['error_count'] = 0
+        # 🆕 [放权-mask / Sir 2026-06-02] rotate 新 key → 清 ack 标记 (恢复健康汇报)
+        try:
+            self._acknowledged_dead.discard(label)
+        except Exception:
+            pass
         self._save_permanent_death_state()
         try:
             from jarvis_utils import bg_log as _kr_bg
@@ -742,6 +760,50 @@ class KeyRouter:
         except Exception:
             pass
         return True
+
+    def acknowledge_dead_key(self, label: str) -> bool:
+        """🆕 [放权-mask / Sir 2026-06-02] Sir 主动确认某把死 key — 暂时屏蔽其"焦虑感"。
+
+        语义: key 仍永久剔除 (不参与路由, 不复活), 但
+          - SELF anchor (Layer 0) 不再把它算进"capacity 残疾 / 我焦虑";
+          - 思考脑不把它当 high-salience 痛点反复反刍。
+        = "Sir 知道这把 key 死了, 在处理 (加新 key), 这不是我该焦虑的事"。
+
+        Sir rotate 新 key 调 reset_permanent_death(label) 会自动清掉本标记 → 恢复汇报。
+        传 'all' 确认全部当前永久死 key。
+
+        Returns: True 至少确认了一把。
+        """
+        with self._lock:
+            targets = []
+            if label == 'all':
+                for key, status in self._key_status.items():
+                    if status.get('permanently_dead', False):
+                        targets.append(status['label'])
+            else:
+                key = self._resolve_key(label)
+                if key and key in self._key_status and \
+                        self._key_status[key].get('permanently_dead', False):
+                    targets.append(self._key_status[key]['label'])
+            if not targets:
+                return False
+            for lbl in targets:
+                self._acknowledged_dead.add(lbl)
+                k = self._resolve_key(lbl)
+                if k and k in self._key_status:
+                    self._key_status[k]['acknowledged_dead'] = True
+        self._save_permanent_death_state()
+        try:
+            from jarvis_utils import bg_log as _kr_bg
+            _kr_bg(f"🔇 [KeyRouter] Sir 已确认屏蔽死 key: {targets} "
+                   f"(仍剔除不路由, 但不再触发自我焦虑; rotate 新 key 自动恢复)。")
+        except Exception:
+            pass
+        return True
+
+    def acknowledged_dead_labels(self) -> list:
+        """返回 Sir 已确认屏蔽的死 key label list (SELF anchor / CLI 用)。"""
+        return sorted(getattr(self, '_acknowledged_dead', set()))
     
     def is_openrouter_active(self) -> bool:
         return self._openrouter_call_count_today > 0
@@ -804,6 +866,7 @@ class KeyRouter:
                 'errors': v['error_count'],
                 'provider': v['provider'],
                 'permanently_dead': v.get('permanently_dead', False),
+                'acknowledged_dead': label in getattr(self, '_acknowledged_dead', set()),
                 'permanent_death_count': v.get('permanent_death_count', 0),
                 'permanent_death_reason': v.get('permanent_death_reason', '')[:120],
                 'last_error': v.get('last_error', '')[:200],
@@ -859,6 +922,8 @@ class KeyRouter:
             },
             'pools': pools,
             'overall_health': overall,
+            # 🆕 [放权-mask / Sir 2026-06-02] Sir 已确认屏蔽的死 key (SELF anchor 据此不报焦虑)
+            'acknowledged_dead': sorted(getattr(self, '_acknowledged_dead', set())),
             # 🆕 [P2 / Sir 2026-05-25 21:47] Priority + Fallback 真实生效统计
             'priority_stats': dict(self._fallback_stats),
             'low_priority_bucket': self._low_priority_bucket.snapshot(),
@@ -978,6 +1043,12 @@ class KeyRouter:
             ok = self.reset_permanent_death(label) if label else False
             result['outcome'] = 'ok' if ok else 'fail'
             result['summary'] = f"reset_permanent_death({label})={'ok' if ok else 'fail'}"
+        elif action == 'acknowledge':
+            # 🆕 [放权-mask / Sir 2026-06-02] 屏蔽死 key 的自我焦虑 (不复活, 不路由)
+            ok = self.acknowledge_dead_key(label) if label else False
+            result['outcome'] = 'ok' if ok else 'fail'
+            result['acknowledged'] = self.acknowledged_dead_labels()
+            result['summary'] = f"acknowledge_dead_key({label})={'ok' if ok else 'fail'}"
         else:
             result['outcome'] = 'unknown_action'
             result['summary'] = f"unknown action: {action}"
