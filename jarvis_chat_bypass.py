@@ -1583,6 +1583,44 @@ Spoken English:"""
             pass
         return cache
 
+    def _resolve_homepage_dashboard_intent(self) -> str:
+        """🆕 [B2 / Sir 2026-06-02] 从本轮 Sir 原话判主页/面板意图.
+
+        主脑 emit 端口常记错 (想开主页却 emit 8765=面板端口)。用 Sir 真话兜底:
+        读 dashboard_intent_vocab 的 explicit_homepage_* / explicit_dashboard_* 关键词,
+        命中 → 返 'homepage' / 'dashboard'; 都没命中或冲突 → 'unknown' (调用方 fallback 端口)。
+        准则 6: 关键词持久化在 memory_pool/dashboard_intent_vocab.json, CLI 可改。
+        """
+        try:
+            _txt = str(getattr(self, '_current_turn_user_text', '') or '').lower()
+            if not _txt:
+                return "unknown"
+            import json as _json
+            import os as _os
+            _vp = _os.path.join(
+                _os.path.dirname(_os.path.abspath(__file__)),
+                'memory_pool', 'dashboard_intent_vocab.json')
+            with open(_vp, 'r', encoding='utf-8') as _f:
+                _vocab = _json.load(_f)
+            _hp_kws, _db_kws = [], []
+            for _p in _vocab.get('patterns', []):
+                if _p.get('state') != 'active':
+                    continue
+                _pid = _p.get('id', '')
+                if _pid.startswith('explicit_homepage'):
+                    _hp_kws += _p.get('keywords', [])
+                elif _pid.startswith('explicit_dashboard') or _pid == 'open_dashboard_phrase':
+                    _db_kws += _p.get('keywords', [])
+            _hp_hit = any(k.lower() in _txt for k in _hp_kws)
+            _db_hit = any(k.lower() in _txt for k in _db_kws)
+            if _hp_hit and not _db_hit:
+                return "homepage"
+            if _db_hit and not _hp_hit:
+                return "dashboard"
+            return "unknown"  # 都命中(冲突)或都没命中 → 调用方 fallback 端口
+        except Exception:
+            return "unknown"
+
     def _execute_fast_call(self, organ_name: str, command: str, params: dict):
         import contextlib
         import re as _re_safety
@@ -1648,14 +1686,25 @@ Spoken English:"""
         # url_launcher.open_url(http://127.0.0.1:8765) — 开错端口(8765=面板, 主页=8766)
         # 且 server 没起时是死链。确定性拦截(不靠模型遵循): URL 命中 jarvis 自家端口 →
         # 改走对应 ui_control 命令(自动起对的 server + 开对的端口)。准则 8 治本非糖衣。
+        # 🆕 [B2 / Sir 2026-06-02 真机二次] 端口意图消歧: 主脑常把端口记错 (想开主页却
+        # emit 8765=面板端口)。治本: 先看**本轮 Sir 原话**的主页/面板意图 (dashboard_intent_vocab),
+        # Sir 说"主页"→ 强制 homepage_open (无视主脑 emit 的端口); 说"面板"→ dashboard_open;
+        # 没说则 fallback 端口号。准则6: 意图 vocab 持久化, LLM emit 端口不可靠时用 Sir 真话兜底。
         if (organ_name in ("url_launcher", "url_launcher_hands")
                 and command in ("open_url", "open")):
             _u = str(params.get("url", "") or params.get("target", "") or "").lower()
-            if "127.0.0.1:8766" in _u or "localhost:8766" in _u:
-                return self._execute_fast_call("ui_control", "homepage_open", {})
-            if "127.0.0.1:8765" in _u or "localhost:8765" in _u:
-                # 8765 历史是面板; 但主脑常因"主页"误开它。无法从 URL 区分意图 →
-                # 8765 = 面板端口, 老老实实走 dashboard_open (它会复用已起的 server)。
+            _is_jarvis_port = ("127.0.0.1:8766" in _u or "localhost:8766" in _u
+                               or "127.0.0.1:8765" in _u or "localhost:8765" in _u)
+            if _is_jarvis_port:
+                # 先用本轮 Sir 原话意图消歧 (主脑 emit 的端口不可靠)
+                _intent = self._resolve_homepage_dashboard_intent()
+                if _intent == "homepage":
+                    return self._execute_fast_call("ui_control", "homepage_open", {})
+                if _intent == "dashboard":
+                    return self._execute_fast_call("ui_control", "dashboard_open", {})
+                # 无明确意图 → fallback 端口号
+                if "127.0.0.1:8766" in _u or "localhost:8766" in _u:
+                    return self._execute_fast_call("ui_control", "homepage_open", {})
                 return self._execute_fast_call("ui_control", "dashboard_open", {})
 
         if organ_name == "ui_control":
@@ -4588,10 +4637,19 @@ Spoken English:"""
                                     and command in ("open_url", "open")):
                                 _ru = str(params.get("url", "") or params.get("target", "") or "").lower()
                                 _redir_cmd = None
-                                if "127.0.0.1:8766" in _ru or "localhost:8766" in _ru:
-                                    _redir_cmd = "homepage_open"
-                                elif "127.0.0.1:8765" in _ru or "localhost:8765" in _ru:
-                                    _redir_cmd = "dashboard_open"
+                                _ru_jarvis = ("127.0.0.1:8766" in _ru or "localhost:8766" in _ru
+                                              or "127.0.0.1:8765" in _ru or "localhost:8765" in _ru)
+                                if _ru_jarvis:
+                                    # 🆕 [B2] 先用 Sir 本轮原话意图消歧 (端口不可靠)
+                                    _intent = self._resolve_homepage_dashboard_intent()
+                                    if _intent == "homepage":
+                                        _redir_cmd = "homepage_open"
+                                    elif _intent == "dashboard":
+                                        _redir_cmd = "dashboard_open"
+                                    elif "127.0.0.1:8766" in _ru or "localhost:8766" in _ru:
+                                        _redir_cmd = "homepage_open"
+                                    else:
+                                        _redir_cmd = "dashboard_open"
                                 if _redir_cmd:
                                     try:
                                         _result = self._execute_fast_call("ui_control", _redir_cmd, {})
