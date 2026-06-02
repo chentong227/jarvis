@@ -26,7 +26,7 @@ class TestLayer0SelfAnchor(unittest.TestCase):
         n.self_anchor = sa
         result = n._build_layer_0_self_anchor_block()
         self.assertEqual(result, '[ANCHOR] I am JARVIS')
-        sa.build_block.assert_called_once_with(max_chars=900)
+        sa.build_block.assert_called_once_with(max_chars=1700)
 
     def test_returns_empty_when_anchor_none(self):
         from jarvis_central_nerve import CentralNerve

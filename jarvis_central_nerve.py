@@ -2450,7 +2450,7 @@ User: {user_input}
         """
         try:
             if self.self_anchor is not None:
-                return self.self_anchor.build_block(max_chars=900)
+                return self.self_anchor.build_block(max_chars=1700)
         except Exception:
             pass
         return ''
