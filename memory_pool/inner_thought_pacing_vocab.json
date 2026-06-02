@@ -80,6 +80,13 @@
     "jaccard_threshold": 0.6,
     "_note": "🆕 [governor Phase 1 F6 改 2 / Sir 2026-05-29 拍板] 思考脑 B 类反思 append 心声 (主脑 SOUL inject 看心声 = 看到反思) 前 jaccard dedup: 窗内 (window_min 30 default) 同 topic (jaccard ≥ threshold 0.6) 跳, 防 1h 22 次重复反思淹没主脑. enabled false 关 dedup (危险, 测试用). window_min 1-180, jaccard 0.0-1.0 (sanity cap). 修复缺口 ③: 旧路只 publish SWM (0 consumer) 主脑看不到 B 类反思. 详 docs/JARVIS_THINKING_BRAIN_GOVERNOR_DESIGN.md §5 F6 改 2."
   },
+  "semantic_thread_merge": {
+    "enabled": true,
+    "jaccard_threshold": 0.5,
+    "lookback_min": 60,
+    "max_candidates": 12,
+    "_note": "🆕 [governor F8 / Sir 2026-06-02 拍板] emergent×F3/F4 张力治本. 根因 (真机 jarvis_20260602_074737 实测): emergent 下主脑对同语义主题 (e.g. keyrouter) 反复声明 new_topic → 23 条同义 thought 散在 11 thread_id, 单 thread max=3 < F3/F4 阈值 → let_go 元能力永不触发, 反刍不止. 治本: LLM 声明 new_topic 时, 若 thought 文本与近 lookback_min 内某 thread jaccard >= threshold → 归并入该既有 thread (语义连续). thread_id 从此追踪'语义现实'而非'每 tick 新声明', F3/F4/let_go 全部自动复活. enabled false → 回纯 LLM thread 判定 (准则 7 Sir 可关). jaccard 0.0-1.0, lookback 1-360, max_candidates 1-50 (sanity)."
+  },
   "attention_focus_channels": {
     "_meta": {
       "purpose": "β.6 Phase 1b — 思考脑自标 NEXT_ATTENTION_FOCUS 用的合法 channel 白名单. 持久化在此 (准则 6: 不在 .py 硬编码 list).",

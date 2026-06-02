@@ -168,24 +168,32 @@ class TestL3InnerThoughtCooldownPreselect(unittest.TestCase):
             '全 cooldown 时返空 list (tick 不调 LLM)')
 
     def test_build_prompt_with_free_categories(self):
-        d = self._empty_daemon()
-        sys_p, user_p = d._build_prompt(
-            'active', {}, free_categories=['B', 'C', 'D']
-        )
+        # 🆕 [Sir 2026-06-02] pin legacy mode — emergent (live default) 砍 A-E 槽
+        # cooldown, free_categories list 形态变. 本测验 legacy 契约 (仍存为 fallback)。
+        import jarvis_inner_thought_daemon as m
+        with patch.object(m, '_thinking_kind_mode', return_value='legacy'):
+            d = self._empty_daemon()
+            sys_p, user_p = d._build_prompt(
+                'active', {}, free_categories=['B', 'C', 'D']
+            )
         self.assertIn('B|C|D', sys_p,
             'system prompt 必须含 free categories list')
         self.assertIn('COOLDOWN', user_p,
             'user prompt 必须含 COOLDOWN 提示')
 
     def test_tick_skips_when_all_cooldown(self):
-        """全 cooldown 时 _tick 不该调 LLM."""
-        d = self._empty_daemon()
-        for c in 'ABCDE':
-            d._last_category_ts[c] = time.time()
-        # mock _call_llm 检测有没有调
-        d._call_llm = MagicMock(return_value='')
-        d._tick()
-        d._call_llm.assert_not_called()
+        """全 cooldown 时 _tick 不该调 LLM (legacy mode 契约)."""
+        # 🆕 [Sir 2026-06-02] pin legacy — emergent 用 rest_floor/value_backoff
+        # 取代 category cooldown, 不再 skip-by-cooldown。
+        import jarvis_inner_thought_daemon as m
+        with patch.object(m, '_thinking_kind_mode', return_value='legacy'):
+            d = self._empty_daemon()
+            for c in 'ABCDE':
+                d._last_category_ts[c] = time.time()
+            # mock _call_llm 检测有没有调
+            d._call_llm = MagicMock(return_value='')
+            d._tick()
+            d._call_llm.assert_not_called()
 
 
 # ==========================================================================

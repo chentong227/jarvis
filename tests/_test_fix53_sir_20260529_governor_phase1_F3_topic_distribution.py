@@ -69,9 +69,19 @@ class TestF3Helper(unittest.TestCase):
         _PACING_VOCAB_CACHE['checked_at'] = 0.0
 
     def test_F3_1_default(self):
-        """F3_1: 默认 vocab → (60, 10, 10)."""
-        from jarvis_inner_thought_daemon import _get_topic_distribution_config
-        lookback, warn, max_topics = _get_topic_distribution_config()
+        """F3_1: seed 默认 (vocab 文件缺失时 fallback) → (60, 10, 10).
+
+        🆕 [Sir 2026-06-02] 指向不存在的 vocab path 测 seed fallback 契约,
+        不读 live vocab — live warning_threshold 是 Sir 可调值 (准则 6/7),
+        硬断言 live 值会随 Sir 调参而脆断。seed 常量才是契约。
+        """
+        import jarvis_inner_thought_daemon as m
+        with patch.object(m, '_PACING_VOCAB_PATH',
+                          '/nonexistent/_seed_fallback_only.json'):
+            m._PACING_VOCAB_CACHE['data'] = None
+            m._PACING_VOCAB_CACHE['mtime'] = 0.0
+            m._PACING_VOCAB_CACHE['checked_at'] = 0.0
+            lookback, warn, max_topics = m._get_topic_distribution_config()
         self.assertEqual(lookback, 60)
         self.assertEqual(warn, 10)
         self.assertEqual(max_topics, 10)

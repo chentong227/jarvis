@@ -730,6 +730,22 @@ _PACING_DEFAULT_CONFIG: dict = {
         'jaccard_threshold': 0.6,
         'enabled': True,
     },
+    # 🆕 [governor F8 / Sir 2026-06-02 拍板] 语义 thread 归并 (emergent×F3/F4 张力治本)
+    # ======================================================================
+    # 根因 (真机 jarvis_20260602_074737 log 实测): emergent 模式下主脑对同一语义
+    # 主题 (e.g. keyrouter) 反复声明 new_topic → 23 条同义 thought 散在 11 个
+    # thread_id, max 单 thread=3 < F3/F4 阈值 → let_go 元能力永不触发 → 反刍不止.
+    # 治本 (准则 8 根因非糖衣): LLM 声明 new_topic 时, 若 thought 文本与近窗某
+    # thread jaccard >= 阈值 → 归并入该既有 thread (语义连续性). thread_id 从此
+    # 追踪"语义现实"而非"LLM 每 tick 新声明", F3/F4/let_go 全部自动复活.
+    # 准则 6: 信任 LLM 主判 (它先声明 same/new), python 只在 new 时做语义兜底归并.
+    # 准则 7: enabled + 阈值 vocab 可调, Sir 可关 (设 enabled=false 回纯 LLM 判).
+    'semantic_thread_merge': {
+        'enabled': True,
+        'jaccard_threshold': 0.5,
+        'lookback_min': 60,
+        'max_candidates': 12,
+    },
 }
 
 
@@ -760,7 +776,7 @@ def _load_pacing_config() -> dict:
         for k in ('lookback_n', 'signals_enabled', 'signal_fields',
                   'prompt_signal_block', 'swm_publish',
                   'recent_thoughts_lookback', 'topic_distribution',
-                  'self_reflection_dedup'):
+                  'self_reflection_dedup', 'semantic_thread_merge'):
             if k in data:
                 if isinstance(data[k], dict) and isinstance(
                         config.get(k), dict):
@@ -844,6 +860,32 @@ def _get_self_reflection_dedup_config() -> tuple:
         return (enabled, window_min, jaccard_thr)
     except Exception:
         return (True, 30, 0.6)
+
+
+def _get_semantic_thread_merge_config() -> tuple:
+    """🆕 [governor F8 / Sir 2026-06-02] 返 (enabled, jaccard_thr, lookback_min, max_candidates).
+
+    emergent×F3/F4 张力治本: LLM 声明 new_topic 时, 若与近窗某 thread jaccard >=
+    阈值 → 归并语义连续 thread (而非新开). 让 thread_id 追踪语义现实,
+    F3/F4/let_go 自动复活.
+
+    准则 6: vocab 可改 (memory_pool/inner_thought_pacing_vocab.json).
+    准则 7: enabled=False → 关掉归并, 回纯 LLM thread 判定.
+    """
+    try:
+        cfg = _load_pacing_config()
+        block = cfg.get('semantic_thread_merge', {})
+        enabled = bool(block.get('enabled', True))
+        jaccard_thr = float(block.get('jaccard_threshold', 0.5))
+        lookback_min = int(block.get('lookback_min', 60))
+        max_candidates = int(block.get('max_candidates', 12))
+        # sanity
+        jaccard_thr = max(0.0, min(1.0, jaccard_thr))
+        lookback_min = max(1, min(360, lookback_min))
+        max_candidates = max(1, min(50, max_candidates))
+        return (enabled, jaccard_thr, lookback_min, max_candidates)
+    except Exception:
+        return (True, 0.5, 60, 12)
 
 
 def _self_reflection_jaccard(text_a: str, text_b: str) -> float:
@@ -5668,6 +5710,45 @@ class InnerThoughtDaemon:
         elif continuity_raw == 'new_topic':
             continuity = 'new_topic'
             thread_id = new_id
+
+        # 🆕 [governor F8 / Sir 2026-06-02 拍板] 语义 thread 归并 (emergent×F3/F4 治本)
+        # =====================================================================
+        # 根因 (真机 log 实测): emergent 下主脑对同语义主题反复声明 new_topic →
+        # 同义 thought 散在多 thread_id, 单 thread 计数永不到 F3/F4 阈值 → let_go
+        # 元能力永不触发. 治本: LLM 声明 new_topic 时, 若 thought 文本与近窗某
+        # thread jaccard >= 阈值 → 归并入该既有 thread. thread_id 追踪语义现实.
+        # 准则 6: LLM 先判 (same/new), python 只在 new 时语义兜底. 准则 7: vocab 可关.
+        if continuity == 'new_topic':
+            try:
+                _sm_enabled, _sm_thr, _sm_lookback, _sm_max = (
+                    _get_semantic_thread_merge_config()
+                )
+                if _sm_enabled and thought_text:
+                    _sm_cutoff = now - _sm_lookback * 60.0
+                    _best_tid = ''
+                    _best_jac = 0.0
+                    with self._lock:
+                        _recent = [
+                            t for t in self._thoughts
+                            if getattr(t, 'ts', 0) >= _sm_cutoff
+                        ][-_sm_max:]
+                    for _t in reversed(_recent):
+                        _jac = _self_reflection_jaccard(
+                            thought_text, getattr(_t, 'thought', '') or ''
+                        )
+                        if _jac > _best_jac:
+                            _best_jac = _jac
+                            _best_tid = getattr(_t, 'thread_id', '') or _t.id
+                    if _best_tid and _best_jac >= _sm_thr:
+                        thread_id = _best_tid
+                        continuity = 'semantic_merge'
+                        self._bg_log(
+                            f"🔗 [InnerThought/semantic_merge] LLM 声明 new_topic 但与 "
+                            f"thread {_best_tid[:20]} jaccard={_best_jac:.2f}>=阈值 "
+                            f"{_sm_thr} → 归并 (emergent 反刍可见化, F3/F4 复活)"
+                        )
+            except Exception:
+                pass
 
         # 🆕 [governor Phase 2 F4] 解析 + execute <LET_GO> tag
         # =====================================================================

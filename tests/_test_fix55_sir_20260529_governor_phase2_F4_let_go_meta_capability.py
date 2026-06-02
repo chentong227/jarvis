@@ -82,10 +82,27 @@ class TestF4VocabHelper(unittest.TestCase):
     """F4_1: _get_topic_repeat_config."""
 
     def test_F4_1_default_and_sanity_cap(self):
-        """F4_1: 默认 (10, 60, 30) + sanity cap."""
+        """F4_1: seed 默认 (vocab 缺失 fallback) → (10, 60, 30) + sanity cap.
+
+        🆕 [Sir 2026-06-02] 指向不存在的 aging config path 测 seed fallback,
+        不读 live vocab — live max_occurrences 是 Sir 可调值 (准则 6/7)。
+        topic_repeat 经 jarvis_inner_voice_track._load_aging_config 读, 故 patch 那里。
+        """
+        import jarvis_inner_voice_track as ivt
         from jarvis_inner_thought_daemon import _get_topic_repeat_config
-        max_occ, win_min, default_ttl = _get_topic_repeat_config()
-        # 默认值
+        _orig_path = ivt._AGING_CONFIG_PATH
+        _orig_cache = ivt._AGING_CFG_CACHE
+        _orig_mtime = ivt._AGING_CFG_CACHE_MTIME
+        try:
+            ivt._AGING_CONFIG_PATH = '/nonexistent/_seed_fallback_only.json'
+            ivt._AGING_CFG_CACHE = None
+            ivt._AGING_CFG_CACHE_MTIME = 0.0
+            max_occ, win_min, default_ttl = _get_topic_repeat_config()
+        finally:
+            ivt._AGING_CONFIG_PATH = _orig_path
+            ivt._AGING_CFG_CACHE = _orig_cache
+            ivt._AGING_CFG_CACHE_MTIME = _orig_mtime
+        # seed 默认值 (_AGING_CFG_DEFAULT.topic_repeat 缺失 → helper fallback 10/60/30)
         self.assertEqual(max_occ, 10)
         self.assertEqual(win_min, 60)
         self.assertEqual(default_ttl, 30)
@@ -225,7 +242,12 @@ class TestF4CollectEvidence(unittest.TestCase):
             return InnerThoughtDaemon(key_router=MagicMock())
 
     def test_F4_6_aged_flag_when_count_ge_max(self):
-        """F4_6: topic_distribution 加 aged_flag (count >= max_occ default 10)."""
+        """F4_6: topic_distribution 加 aged_flag (count >= max_occ).
+
+        🆕 [Sir 2026-06-02] patch aging config 到固定 threshold=10 测契约,
+        不依赖 live vocab (Sir 可调 max_occurrences, 准则 6/7)。
+        """
+        import jarvis_inner_voice_track as ivt
         daemon = self._make_daemon()
         # 12 thoughts thr_aged (≥ 10) + 5 thr_young (< 10)
         thoughts = (
@@ -235,7 +257,15 @@ class TestF4CollectEvidence(unittest.TestCase):
         )
         with daemon._lock:
             daemon._thoughts = thoughts
-        ev = daemon._collect_evidence(sir_state='active', within_seconds=600)
+        _fixed_cfg = {
+            'topic_repeat': {
+                'max_occurrences_in_window': 10,
+                'window_min': 60,
+                'default_let_go_ttl_min': 30,
+            }
+        }
+        with patch.object(ivt, '_load_aging_config', return_value=_fixed_cfg):
+            ev = daemon._collect_evidence(sir_state='active', within_seconds=600)
         td = ev.get('topic_distribution', {})
         topics = td.get('topics', [])
         # 找 thr_aged + thr_young
