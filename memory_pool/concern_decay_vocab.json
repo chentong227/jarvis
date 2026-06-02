@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "schema": "concern_decay_vocab",
+    "purpose": "反刍治本 (Sir 2026-06-02): concern severity 自我强化环 + 不遗忘 + snooze 漏电 三修的配置. 详 jarvis_soul_reflector.py / jarvis_concerns.py / docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §3.2.",
+    "cli": "scripts/concern_decay_dump.py",
+    "fields": {
+      "scan_jarvis_reply": "Fix1: reflect_turn 是否扫贾维斯自己回复 (false=只扫 Sir 真说的, 斩自我强化环)",
+      "severity_decay_enabled": "Fix2: 是否启用 severity 时间半衰期",
+      "severity_half_life_days": "Fix2: 半衰期天数 (N 天没真 Sir signal → severity 砍半)",
+      "severity_decay_grace_days": "Fix2: 宽限期 (最后 Sir signal 后 N 天内不衰)",
+      "severity_decay_floor": "Fix2: 衰减下限 (0=可衰到自然过期)"
+    }
+  },
+  "scan_jarvis_reply": false,
+  "severity_decay_enabled": true,
+  "severity_half_life_days": 7.0,
+  "severity_decay_grace_days": 2.0,
+  "severity_decay_floor": 0.0
+}

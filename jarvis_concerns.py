@@ -104,9 +104,19 @@ class Concern:
     # 详 jarvis_sir_skepticism.py + docs/JARVIS_THINKING_TO_AGENCY_DESIGN.md §3.
     skepticism_count: int = 0
 
+    # 🆕 [反刍治本-Fix2 / Sir 2026-06-02] severity 时间半衰期的锚 = 最后一次**真 Sir
+    # signal** 时间 (user_sourced=True 的 record_signal 才更新)。贾维斯自己的
+    # inner_thought / reflect 命中自己回复 不更新此锚 → Sir 久不提则 severity 自然衰。
+    # 0 = 从未有 Sir signal (legacy / seeded), apply_decay fallback 到 last_updated。
+    last_user_signal_ts: float = 0.0
+
     def record_signal(self, what: str, severity_delta: float = 0.0,
-                      source_turn_id: str = '') -> None:
-        """记一条 evidence。recent_signals 最多保 10 条。"""
+                      source_turn_id: str = '', user_sourced: bool = False) -> None:
+        """记一条 evidence。recent_signals 最多保 10 条。
+
+        user_sourced (Fix2): True = 这条 signal 来自 **Sir 真说的话** (非贾维斯自己
+        inner_thought / 自我 reflect) → 更新 last_user_signal_ts (severity 衰减锚)。
+        """
         now = time.time()
         self.recent_signals.append({
             'when': now,
@@ -119,6 +129,8 @@ class Concern:
             self.recent_signals = self.recent_signals[-10:]
         self.severity = max(0.0, min(1.0, self.severity + severity_delta))
         self.last_updated = now
+        if user_sourced:
+            self.last_user_signal_ts = now
 
     def is_expired(self) -> bool:
         """ttl_days 内没 signal 且 severity 低 → 视为过期。"""
@@ -271,13 +283,20 @@ class ConcernsLedger:
 
     def record_signal(self, concern_id: str, what: str,
                       severity_delta: float = 0.0,
-                      source_turn_id: str = '') -> bool:
-        """给某个 concern 加一条 evidence。"""
+                      source_turn_id: str = '',
+                      user_sourced: bool = False) -> bool:
+        """给某个 concern 加一条 evidence。
+
+        user_sourced (Fix2 / Sir 2026-06-02): True = signal 来自 Sir 真说的话
+        → 更新 severity 衰减锚 last_user_signal_ts。贾维斯自己的 inner_thought /
+        自我 reflect 命中自己回复 应传 False (默认), 让久不被 Sir 提的 concern 自然衰。
+        """
         with self._lock:
             c = self.concerns.get(concern_id)
             if c is None:
                 return False
-            c.record_signal(what, severity_delta, source_turn_id)
+            c.record_signal(what, severity_delta, source_turn_id,
+                            user_sourced=user_sourced)
             self._dirty = True
             return True
 
@@ -346,6 +365,8 @@ class ConcernsLedger:
                 c.severity = max(0.0, min(1.0, c.severity + sev_d))
 
             c.last_updated = now
+            # 🆕 [Fix2] Sir 真回应 (has_relevance) → 更新 severity 衰减锚
+            c.last_user_signal_ts = now
             self._dirty = True
 
         # 🩹 [β.5.43-fix2-B / 2026-05-20 18:18] Sir 真理 — 统一 SWM evidence
@@ -811,12 +832,73 @@ class ConcernsLedger:
 
     # ---- decay ----
 
+    def _severity_decay_params(self):
+        """🆕 [Fix2] 返 (enabled, half_life_s, grace_s, floor). vocab 失败 fallback default。"""
+        try:
+            from jarvis_soul_reflector import _load_concern_decay_config
+            cfg = _load_concern_decay_config()
+            enabled = bool(cfg.get('severity_decay_enabled', True))
+            hl_days = float(cfg.get('severity_half_life_days', 7.0))
+            grace_days = float(cfg.get('severity_decay_grace_days', 2.0))
+            floor = float(cfg.get('severity_decay_floor', 0.0))
+            # sanity
+            hl_days = max(0.5, min(180.0, hl_days))
+            grace_days = max(0.0, min(60.0, grace_days))
+            floor = max(0.0, min(1.0, floor))
+            return (enabled, hl_days * 86400.0, grace_days * 86400.0, floor)
+        except Exception:
+            return (True, 7.0 * 86400.0, 2.0 * 86400.0, 0.0)
+
+    @staticmethod
+    def _infer_user_anchor(c) -> float:
+        """🆕 [Fix2] 锚 fallback (legacy concern 无 last_user_signal_ts 时).
+
+        扫 recent_signals 找最后一条**真 Sir signal** 的 when。贾维斯内部 signal
+        (evidence 以 [reflect/ / [update/ / [dismiss/ 开头, 或 Sir 听到 nudge 后回应)
+        不算锚 — 只有 Sir 真说的话才刷新"上次被 Sir 关心"。全无 → fallback created_at
+        (让纯贾维斯自 high 的 legacy concern 也能开始衰, 治存量污染)。
+        """
+        try:
+            jarvis_prefixes = ('[reflect/', '[update/', '[dismiss/', '[β')
+            best = 0.0
+            for s in (c.recent_signals or []):
+                what = str(s.get('what', '') or '')
+                # Sir 真回应 nudge 的 signal (含 "Sir 听到 nudge 后") 算真 signal
+                is_jarvis_internal = any(what.startswith(p) for p in jarvis_prefixes)
+                if is_jarvis_internal:
+                    continue
+                w = float(s.get('when', 0) or 0)
+                if w > best:
+                    best = w
+            if best > 0:
+                return best
+        except Exception:
+            pass
+        # 全无真 Sir signal → 用 created_at (legacy 存量也能衰)
+        return float(getattr(c, 'created_at', 0) or getattr(c, 'last_updated', 0) or 0)
+
     def apply_decay(self) -> dict:
-        """24h tick：过期 concern → archived；snoozed 到期 → active。"""
-        stats = {'archived': 0, 'unsnoozed': 0}
+        """24h tick：过期 concern → archived；snoozed 到期 → active；
+        🆕 [反刍治本-Fix2] severity 时间半衰期 (久无真 Sir signal → 自然遗忘)。"""
+        stats = {'archived': 0, 'unsnoozed': 0, 'severity_decayed': 0}
         now = time.time()
+        # Fix2: severity 半衰期参数 (vocab, 失败 fallback default)
+        _decay_enabled, _half_life_s, _grace_s, _floor = self._severity_decay_params()
         with self._lock:
             for c in self.concerns.values():
+                # 🆕 [Fix2] severity 时间衰减 — 锚 = 最后真 Sir signal (没有则推断/fallback).
+                # 活物会淡忘: Sir 久不提 → 关心自然降温。只衰 active (snoozed/archived 不动)。
+                if _decay_enabled and c.state == STATE_ACTIVE and c.severity > _floor:
+                    anchor = c.last_user_signal_ts or self._infer_user_anchor(c)
+                    age = now - anchor
+                    if age > _grace_s and _half_life_s > 0:
+                        # 指数半衰: factor = 0.5 ^ ((age-grace)/half_life)
+                        decayed = c.severity * (0.5 ** ((age - _grace_s) / _half_life_s))
+                        new_sev = max(_floor, decayed)
+                        if new_sev < c.severity - 1e-4:
+                            c.severity = new_sev
+                            stats['severity_decayed'] += 1
+                            self._dirty = True
                 if c.state == STATE_ACTIVE and c.is_expired():
                     c.state = STATE_ARCHIVED
                     stats['archived'] += 1
@@ -893,6 +975,8 @@ class ConcernsLedger:
                         daily_progress=dict(data.get('daily_progress', {}) or {}),
                         last_user_feedback=dict(data.get('last_user_feedback', {}) or {}),
                         optimal_timing=str(data.get('optimal_timing', '') or ''),
+                        # 🆕 [Fix2] severity 衰减锚 (旧 JSON 兼容: 缺则 0 → apply_decay fallback last_updated)
+                        last_user_signal_ts=float(data.get('last_user_signal_ts', 0.0) or 0.0),
                     )
                     self.concerns[c.id] = c
                     n += 1

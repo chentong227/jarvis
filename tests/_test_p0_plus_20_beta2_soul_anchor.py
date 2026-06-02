@@ -321,15 +321,36 @@ class TestConcernsDecay(unittest.TestCase):
         self.assertEqual(self.ledger.get('old').state, STATE_ARCHIVED)
 
     def test_high_severity_not_expired(self):
+        # 🆕 [反刍治本-Fix2 / Sir 2026-06-02] 契约变更: severity>0.5 不再"永不过期".
+        # Sir 真意 "活物会淡忘": 高 severity 但**有近期真 Sir signal** → 锚新鲜 → 不衰不过期;
+        # 久无 Sir signal (本例 30 天) → severity 半衰 → 自然降温/过期。旧"永不过期"是反刍根因。
         c = Concern(
             id='important', what_i_watch="重要", why_i_care="必须保留",
             severity=0.8, ttl_days=1
         )
-        c.last_updated = time.time() - 30 * 86400  # 30 天前
+        # Sir 刚真提过 → 锚新鲜
+        c.last_user_signal_ts = time.time()
+        c.last_updated = time.time()
         self.ledger.register(c)
         stats = self.ledger.apply_decay()
-        # severity > 0.5 不应过期
+        # 有近期 Sir signal → severity 不衰, 不过期
         self.assertEqual(self.ledger.get('important').state, STATE_ACTIVE)
+        self.assertAlmostEqual(self.ledger.get('important').severity, 0.8, places=2)
+
+    def test_high_severity_stale_decays(self):
+        # 🆕 [反刍治本-Fix2] 高 severity 但久无真 Sir signal (30 天) → 半衰 → 降温.
+        # 这是 Sir 2026-06-02 痛点的直接修复: 他久不提了, 关心该自然凉.
+        c = Concern(
+            id='stale_important', what_i_watch="老牵挂", why_i_care="Sir 久不提了",
+            severity=1.0, ttl_days=60
+        )
+        c.last_user_signal_ts = time.time() - 30 * 86400  # 30 天前最后真 signal
+        c.last_updated = time.time() - 30 * 86400
+        self.ledger.register(c)
+        self.ledger.apply_decay()
+        # half_life=7d, grace=2d, age=30d → 衰 28d ≈ 4 半衰期 → 远 < 0.5
+        self.assertLess(self.ledger.get('stale_important').severity, 0.3,
+                        '久无 Sir signal 的高 severity concern 应半衰降温')
 
 
 # ============================================================

@@ -85,6 +85,19 @@
 
 **准则锚**: 5 (接地 — node=真 summon 区, discharged=heng_state, 无幻影) · 6 (publish-only — 识只报事实, Weaver 自决物理; 全 vocab 可调) · 8 (物理刹车治本, 非"meta-awareness 关键词触发 let_go"的热补丁)。**与已有机制正交** (准则6#4): decay 治时间, stance-coverage 治真化解, let_go 治 prompt 可见性 (LLM 显式), 习惯化治"反复无效 attend 的召唤力" — 四者不重叠。
 
+### 3.2 concern severity 反刍三结构根因 [Sir 2026-06-02 真机数据实证]
+
+> **诚实修正 (准则 5)**: §3.1 习惯化治的是"召唤力"(下游), 真机数据 (`body_energy.json` 6 个 top-energy 节点全 `novelty=0/drift=0` + `concerns.json` signal 溯源) 揭示真正的**燃料**(上游)是 concern severity 本身的三个结构 bug。Sir 早不提水/cursor/keyrouter 了, 贾维斯也久没提, 但它们的 standing tension 居高不下。
+
+| Fix | 根因 | 证据 | 治法 |
+|---|---|---|---|
+| **Fix1 自我强化环** | `ConcernsReflector.reflect_turn` 扫 `user_input + jarvis_reply` → 贾维斯自己回复里出现 "hydration"/"cursor" 也 +severity | concerns.json: keyrouter +0.04 的 evidence 是贾维斯自己说的 "your hydration targets are met" (一句喂两个 concern) | `reflect_turn` 只扫 `user_input` (severity 信号只来自 Sir 真说的)。vocab `scan_jarvis_reply` 可关回旧 |
+| **Fix2 不遗忘** | `Concern.is_expired`: `severity>0.5 → 永不过期`, `apply_decay` 无 severity 半衰期 | pomodoro/keyrouter 卡 `1.0`, hydration `0.905`, 锚龄 17 天 | severity 按"最后真 Sir signal"半衰 (默 half_life 7d / grace 2d)。锚 = `last_user_signal_ts` (user_sourced signal 才刷), legacy 从 recent_signals 推断 (排除 `[reflect/`/`[update/` 内部 signal) |
+| **Fix3 snooze/dismiss 漏电** | `_concern_severity_map`/`harvest_nodes` 只跳 `archived`, 不跳 `snoozed`/`triggers_proactive=False` | keyrouter snooze 到 7/2 仍 top_energy tension=1.0 | `_concern_severity_map` 只计 `state==active` 且 `triggers_proactive=True` |
+
+**数据耦合 (准则 6)**: `last_user_signal_ts` 持久化进 concerns.json; 配置 `memory_pool/concern_decay_vocab.json` + CLI `scripts/concern_decay_dump.py` (`--preview` dry-run 看衰减 / `--decay-now` 治存量污染)。**preview 实证**: pomodoro 1.0→0.23, hydration 0.91→0.21, 而 sleep (锚龄 0.1d) / interview (6.9d) 衰得少 — 真新鲜的留, 陈年自我点火的凉。
+
+
 ---
 
 ## 4. 输出闸 (Sir 接收度) — 内部转 ≠ 往外说 ★ Sir 确认: 贾维斯不打扰

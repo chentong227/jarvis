@@ -472,14 +472,23 @@ class RelationalWeaver:
 
     # ---- 体势能 E (口识体-B3): 自转的坡度 ----
     def _concern_severity_map(self) -> Dict[str, float]:
-        """{concern node_id: severity} for active concerns (张力源料)。"""
+        """{concern node_id: severity} for active concerns (张力源料)。
+
+        🆕 [反刍治本-Fix3 / Sir 2026-06-02] 只计真 active + triggers_proactive 的 concern。
+        snoozed (Sir 暂压) / archived / dismiss 软关闭 (triggers_proactive=False) 的不喂
+        体张力 — 否则 snooze/dismiss 等于没用 (真机: keyrouter snooze 到 7/2 仍 tension=1.0)。
+        """
         out: Dict[str, float] = {}
         cdata = self._read_json(self.concerns_path)
         if isinstance(cdata, dict):
             for cid, c in cdata.items():
                 if not isinstance(c, dict) or cid.startswith("_"):
                     continue
-                if c.get("state") == "archived":
+                # Fix3: 只 active 状态喂张力 (snoozed/review/archived 不喂)
+                if c.get("state") != "active":
+                    continue
+                # Fix3: dismiss 软关闭 (triggers_proactive=False) 也不喂体张力
+                if not c.get("triggers_proactive", True):
                     continue
                 try:
                     sev = float(c.get("severity", 0.0) or 0.0)

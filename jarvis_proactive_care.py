@@ -1761,6 +1761,7 @@ class ProactiveCareEngine(threading.Thread):
                         cid,
                         f"Sir 听到 nudge 后正面回应: '{sir_text[:80]}'",
                         severity_delta=-0.1,
+                        user_sourced=True,  # 🆕 [Fix2] Sir 真回应 → 更新衰减锚
                     )
                 self.notify_concern_aligned(cid)
             elif verdict == 'negative':
@@ -1770,6 +1771,7 @@ class ProactiveCareEngine(threading.Thread):
                         cid,
                         f"Sir 听到 nudge 后拒绝: '{sir_text[:80]}'",
                         severity_delta=0,
+                        user_sourced=True,  # 🆕 [Fix2] Sir 真回应 → 更新衰减锚
                     )
                 self.notify_concern_rejected(cid)
             else:
@@ -1779,6 +1781,7 @@ class ProactiveCareEngine(threading.Thread):
                         cid,
                         f"Sir 听到 nudge 后中性回应: '{sir_text[:80]}'",
                         severity_delta=0,
+                        user_sourced=True,  # 🆕 [Fix2] Sir 真回应 → 更新衰减锚
                     )
         except Exception as _e:
             bg_log(f"⚠️ [ProactiveCare/PostNudge] record_signal fail: {_e}")

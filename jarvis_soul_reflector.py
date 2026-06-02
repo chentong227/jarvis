@@ -177,6 +177,60 @@ CONCERN_KEYWORDS: Dict[str, List[tuple]] = get_concern_keywords()
 
 
 # ============================================================
+# 🆕 [反刍治本 / Sir 2026-06-02] concern 反刍治本 vocab (准则 6 持久化)
+# ============================================================
+# 真机数据实证 (concerns.json + body_energy.json): 水/cursor/keyrouter 反刍根因
+# 三条 — (Fix1) reflect 扫贾维斯自己回复造成自我强化环; (Fix2) severity 不随时间
+# 遗忘 (severity>0.5 永不过期, 无半衰期); (Fix3) snoozed/dismiss concern 仍喂体张力。
+# 配置持久化 memory_pool/concern_decay_vocab.json + CLI scripts/concern_decay_dump.py。
+# ============================================================
+_CONCERN_DECAY_DEFAULT = {
+    # Fix1: reflect 是否扫 jarvis_reply (默 False = 只扫 Sir 真说的, 斩自我强化环)
+    'scan_jarvis_reply': False,
+    # Fix2: severity 时间半衰期 — 多少天没**真 Sir signal** 后开始衰
+    'severity_decay_enabled': True,
+    'severity_half_life_days': 7.0,    # 半衰期 (7 天没 Sir 提 → severity 砍半)
+    'severity_decay_grace_days': 2.0,  # 宽限: 最后 Sir signal 后 N 天内不衰
+    'severity_decay_floor': 0.0,       # 衰减下限 (默 0 = 可一路衰到自然过期)
+}
+_CONCERN_DECAY_VOCAB_PATH = os.path.join('memory_pool', 'concern_decay_vocab.json')
+_CONCERN_DECAY_CACHE: Optional[Dict[str, Any]] = None
+_CONCERN_DECAY_MTIME: float = 0.0
+
+
+def _load_concern_decay_config() -> Dict[str, Any]:
+    """mtime cache reload concern 反刍治本 config. 失败 fallback default."""
+    global _CONCERN_DECAY_CACHE, _CONCERN_DECAY_MTIME
+    try:
+        mtime = os.path.getmtime(_CONCERN_DECAY_VOCAB_PATH) if os.path.exists(
+            _CONCERN_DECAY_VOCAB_PATH) else 0
+    except OSError:
+        mtime = 0
+    if _CONCERN_DECAY_CACHE is None or mtime > _CONCERN_DECAY_MTIME:
+        merged = dict(_CONCERN_DECAY_DEFAULT)
+        try:
+            if os.path.exists(_CONCERN_DECAY_VOCAB_PATH):
+                with open(_CONCERN_DECAY_VOCAB_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    merged.update({k: v for k, v in data.items()
+                                   if not k.startswith('_')})
+        except Exception:
+            pass
+        _CONCERN_DECAY_CACHE = merged
+        _CONCERN_DECAY_MTIME = mtime
+    return _CONCERN_DECAY_CACHE
+
+
+def _reflect_scans_jarvis_reply() -> bool:
+    """Fix1: reflect_turn 是否扫 jarvis_reply (默 False = 斩自我强化环)。"""
+    try:
+        return bool(_load_concern_decay_config().get('scan_jarvis_reply', False))
+    except Exception:
+        return False
+
+
+# ============================================================
 # ConcernsReflector — 启发式 signal 采集
 # ============================================================
 
@@ -217,9 +271,21 @@ class ConcernsReflector:
         是同步的，~50us）。"""
         if self.ledger is None:
             return {}
-        # 双源扫：user + jarvis 都要看（jarvis 说的也算关系信号）
+        # 🆕 [反刍治本-Fix1 / Sir 2026-06-02] 只扫 user_input, 不扫 jarvis_reply.
+        # =====================================================================
+        # 真机数据实证 (concerns.json): hydration/cursor/keyrouter 的 severity 被
+        # 贾维斯自己回复里的 keyword 反复 +delta (e.g. 自己说 "your hydration targets"
+        # → hydration concern +0.06)。这是自我强化环: 关心→提→reflect 命中自己的话→
+        # severity↑→更关心→更提。Sir 早不提了, 贾维斯却自己把火点着。
+        # 治本: severity 信号只该来自 **Sir 真说了什么** (user_input), 不该来自贾维斯
+        # 自己嘴里。jarvis_reply 不再喂 severity (准则 6: 关键词不该在自己嘴里循环)。
+        # vocab 可关 (scan_jarvis_reply=true 回旧行为)。
+        # =====================================================================
+        _scan_jr = _reflect_scans_jarvis_reply()
+        scan_text = f"{user_input}\n{jarvis_reply}" if _scan_jr else (user_input or '')
+        # evidence snippet 仍可含双源 (只为可读), 但 hit/delta 只从 scan_text 算
         combined = f"{user_input}\n{jarvis_reply}"
-        hits = self._scan_text(combined)
+        hits = self._scan_text(scan_text)
         if not hits:
             return {}
 
@@ -235,10 +301,14 @@ class ConcernsReflector:
                 # 120 字 + _extract_snippet 内部切到 word/标点边界, 防丑断词.
                 snippet = self._extract_snippet(combined, cid)[:120]
                 evidence = f"[reflect/{turn_id or '?'}] 检测到话题: {snippet}"
+                # 🆕 [Fix2] user_sourced = 当前未扫 jarvis_reply (hit 只来自 Sir 真说的)
+                # → 更新 severity 衰减锚。若 Sir 开了 scan_jarvis_reply, 则 hit 可能含
+                # 贾维斯自己的话, 保守不当 user signal (不更新衰减锚)。
                 ok = self.ledger.record_signal(
                     cid, evidence,
                     severity_delta=delta,
                     source_turn_id=turn_id,
+                    user_sourced=(not _scan_jr),
                 )
                 if ok:
                     recorded[cid] = delta
