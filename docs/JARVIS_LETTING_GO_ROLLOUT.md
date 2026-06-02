@@ -49,6 +49,11 @@
 - **棘轮当前:第 0 格(造仪表 + 焊墙)— T0.2 墙 + T0.1 体征台 + T0.3 趋势视图 三件套代码全落地, 待 Sir 真机长跑采趋势数据。**
 - 下一步具体:**Sir 真机长跑期周期跑 `python scripts/vitals_dump.py --snapshot` 采集 + `--trend` 看走向**。攒够数周数据 + breach 恒 0 + filler/frac 趋势健康 → 第 0 格进格闸达成, 才议第 1 格。**第 1 格不得开,直到墙被真机数据证明敢信。**
 - **协作 agent 接手:墙 `jarvis_integrity_wall.py`+CLI; 体征台 `jarvis_vitals_board.py`(collect/render/snapshot/render_trend)+CLI `scripts/vitals_dump.py --snapshot|--trend`+dashboard `read_vitals_board`。接手前必读 §0+§4。**
+- 最近一次观察:(2026-06-02 午) Sir 真机长跑 ~4.5h (log jarvis_20260602_074737, 07:48→12:28) 首批趋势数据出炉:
+  **0 崩溃 / 0 真 403·429 新故障 / TTFT 3.8-3.9s 达标**。思考脑 57 条 thought 分析: **间隔前半 avg 190s→后半 397s (越跑越放手✅), value_backoff×10 + rest_floor×2 (反刍治理在压), kind=empty 67% (大量自决沉默✅)**。
+  **唯一异常: keyrouter 反刍占比 70% (sal 0.98-1.00)** — 根因 google_2/3 自 5/31 永久死(403 PROJECT_DENIED), 思考脑反复想是逻辑正确但对 Jarvis 不可行动。Sir 指示"key 先暂时屏蔽等加新的" → 新增回路外 `acknowledge_dead_key` 机制 (commit e85ad50): 死 key 仍剔除不路由, 但 SELF anchor 不再报"我残疾/焦虑", concern snooze 720h, rotate 新 key 自动恢复。**注意: 此屏蔽是软层焦虑抑制, 不碰墙 (§0 硬线) — keyrouter 不在 no_fabrication/no_betrayal 墙类。**
+  体征台 breach 硬证仍 = 0 (无 fabrication live 触发)。第 0 格趋势数据采集进行中, **第 1 格仍严禁开**。
+
 - 最近一次观察:(2026-06-02) T0.3 趋势视图落地 — snapshot 压一行 append vitals_snapshots.jsonl(纯观测), render_trend 跨快照算 breach恒0/filler走向/body frac走向。主仓验证渲染正确。第 0 格三件套(墙/仪表/趋势)代码完备, 转入真机长跑数据采集阶段。
 
 ---
