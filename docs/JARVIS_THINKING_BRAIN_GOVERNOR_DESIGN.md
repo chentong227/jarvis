@@ -497,6 +497,41 @@
 
 ---
 
+## 13.5 F8 — 语义 thread 归并 (emergent×F3/F4 张力治本, Sir 2026-06-02 拍板)
+
+**缘起 (真机实测, 非设计推演)**: F1-F7 全落地 + emergent 模式拨通后, Sir 真机 4.5h
+跑 (`jarvis_20260602_074737.log`) 暴露一个设计盲区:
+
+- F3/F4/let_go **全部按 `thread_id` 计数** (设计时默认 thread_id ≈ topic)。
+- 但 emergent 模式让主脑**发散** — 对同一语义主题 (keyrouter) 每 tick 倾向声明
+  `<CONTINUITY>new_topic` 开新 thread。
+- 真机数据: 近 6h 25 条 thought, **23 条 (92%) 关于 keyrouter, 却散在 11 个
+  thread_id, 单 thread max=3 occurrences**。即便 F3/F4 阈值从 10 降到 6, 单 thread
+  计数 3 < 6 → **let_go 元能力对 emergent 永不触发**。
+- = emergent (发散) 与 F3/F4 (按 thread 计数) 的结构张力。**反刍治理对 emergent 失效**。
+
+**治本 (准则 8 根因非糖衣)**: 不在 F3/F4/let_go 各自旁挂语义系统 (3 处糖衣), 而在
+**thread 归属赋值的根上** 修 — `_parse_thought`: LLM 声明 `new_topic` 时, 若 thought
+文本与近窗 (`lookback_min`) 某 thread jaccard ≥ 阈值 → 归并入该既有 thread
+(`continuity='semantic_merge'`)。thread_id 从此追踪"语义现实"而非"LLM 每 tick 新声明",
+**F3/F4/let_go 全部自动复活, 0 改动它们**。
+
+**准则符合**:
+- §6 信任 LLM: LLM 先主判 (same_thread/new_topic), python 只在 LLM 选 new 时做**语义
+  兜底归并** (不抢 LLM 的判定, 只补 emergent 发散的洞)。
+- §7 Sir 可关: vocab `semantic_thread_merge.enabled=false` → 回纯 LLM thread 判定。
+- §3 持久化 + CLI: `inner_thought_pacing_vocab.json` `semantic_thread_merge` 段
+  (enabled / jaccard_threshold 0.5 / lookback_min 60 / max_candidates 12), 复用
+  `scripts/pacing_dump.py` 热重载。
+
+**验收**: `tests/_test_fix59_sir_20260602_governor_F8_semantic_thread_merge.py` 8/8 +
+全 governor suite 303/303 pass。镜像 boot 0 traceback (commit `44fd0f8`)。
+**诚实残余 (准则 5)**: 镜像弱模型 + 600s tick 无法在短窗复现 hour-scale 反刍, F8 live
+正向归并未在镜像触发 (同 T0.2 墙), 由确定性单测覆盖。Sir 真机长跑若 keyrouter 类反刍
+再现, 应看到 thread 归并 → 单 thread 计数破阈值 → let_go 触发 (体征台/log 可验)。
+
+---
+
 ## 14. 下一步 (待 Sir 拍板)
 
 1. **Sir 拍板**: ✅ 接受 → Phase 1 开工 / ⚠️ 调点 → 改 doc / ❌ 反对 → 重谈
