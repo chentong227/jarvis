@@ -10,7 +10,7 @@
 | B1 | **时间指代消解错误**: "6月3号晚上早点休息"(为后天体检) 被 `_detect_sleep_intent` 误判成"现在要睡" → 启动 632s 睡眠倒数 + SleepMode 静音 app | 睡眠意图按关键词硬触发, 不看未来时间指代 | 🔴 高 (误触发整个睡眠链 + 静音) | ✅ commit (未来日期守门) |
 | B2 | **打开主页又开面板**: 主脑想开主页却 emit `open_url(8765)` (8765=面板端口, 主页=8766), 记错端口 | 拦截器按端口路由治标; 主脑分不清端口 | 🟡 中 (第2轮自纠了) | ✅ commit (拦截器加 Sir 原话意图消歧) |
 | B3 | **TTFT 退步**: avg 5.6s / max 10.2s / 16轮8轮破5s红线 | breakdown=连接5.4s+等待0.0s → API 建连慢(网络层), 非 prompt 增大 | 🟡 中 (体感慢但非崩溃) | ⬜ |
-| B4 | **思考脑反刍仍高**: Cursor 30 / hydration 24 / persist 17 次, filler 30% | F9 已落地但本 session 未触发 let_go (thread 计数/LLM 未输出 LET_GO); 待长跑验 | 🟢 低 (F8/F9 机制已在, 观察) | ⬜ 观察 |
+| B4 | **思考脑反刍仍高**: Cursor 30 / hydration 24 / persist 17 次, filler 30% | F9 已落地但本 session 未触发 let_go; 更深根因=放电反馈缺口 (低 agency concern 反复 attend 却不放电→tension 不降→反复召唤) | 🟢 低→治本 | ✅ commit (习惯化 habituation 补全放电反馈) |
 
 ## 详情
 
@@ -31,7 +31,17 @@
 - 非 L0 framing 增大导致 (那会体现在 prompt 处理/等待, 不是连接)
 - 治本方向: 连接复用 / keep-alive / 建连预热。需先确认是 OpenRouter 还是 Google 通道。
 
-### B4 — 反刍 (观察项)
-- F8 (new_topic 归并) + F9 (same_thread 语义聚类) 机制已落地
-- 本 session continuity 47/49 same_thread, F9 应聚类 — 但未见 LLM 输出 LET_GO
-- 待 Sir 多次重启长跑, 看 let_go 是否随簇 aged 触发。暂不动代码, 观察。
+### B4 — 反刍 (深挖治本: 习惯化)
+- F8 (new_topic 归并) + F9 (same_thread 语义聚类) 机制已落地, 但都依赖 LLM 显式输出 LET_GO
+- **更深根因 (Sir 拍板深挖)**: 设计 §2/§3 承诺"放电→E降→不再醒", 但唯一 wired 放电通道是
+  stance-coverage。低 agency concern (hydration) 识反复 attend 却只 `adjust_concern_notes`
+  (不改 severity 不立 stance) → 永不放电 → tension=severity 每 weave 重算 → 那区 standing
+  energy 居高 → 反复召唤识。Jarvis 明确说"我在机械固执地关注 hydration"却停不下 = 结构缺口
+  (早于衡/锚, 纯思考脑版即有)。
+- **治本 (习惯化 habituation, 非热补丁)**: 识每 tick publish `body_attention_outcome`
+  (node + discharged=heng_state)。Weaver `_habituation_map` 消费: 某 node 反复非放电 attend
+  超 free_attends → tension ×= decay_base^excess (到 floor 止); 真放电→重置; 久不 attend→
+  spontaneous recovery。只乘 tension 源 1, novelty/drift/nudge 不受 → 真新进展自然突破。
+- 详 `docs/JARVIS_VOICE_AND_MIND_REFACTOR.md §3.1`。8/8 testcase
+  `tests/_test_b4_habituation_sir_20260602.py`。config vocab `relational_manifold_vocab.json`
+  energy.habituation_* (Sir 可调/可关)。

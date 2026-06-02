@@ -68,6 +68,23 @@
 
 > **为什么物理上杜绝 churn/重复**: 重复 = 反复醒同一区。但识一旦放电(写 stance/settle), 那区 E 骤降 → 没 delta → 不再醒。**resolved = discharged = 没燃料**。想清一次就过去了, 不会反复嚼。
 
+### 3.1 习惯化 (habituation) — 放电反馈缺口补全 [Sir 2026-06-02 反刍治本]
+
+> **背景 (诚实归因, 准则 5)**: 上面"放电→不再醒"是 §2/§3 的设计承诺, 但代码里**唯一 wired 的放电通道是 stance-coverage** (`_stance_covered_concerns`: 某 concern 被 active stance `about` 覆盖才算"化解")。问题: 低 agency concern (如 hydration) 识反复 attend 却只能 `adjust_concern_notes` (kind=`shape_next`) — **不改 severity, 不立 stance** → 永远不"放电" → tension 源 1 `tension += severity` 每 weave 重算 → 那区 standing energy 居高不下 → 反复召唤识。真机表现: Jarvis 明确说出"我一直在过度关注 hydration...近乎机械固执"却停不下 = **结构缺口** (早于衡/锚, 纯思考脑版即有, Sir 拍板"非热补丁, 深挖治本")。
+
+**机制 (纯物理, 无 LLM, 接地)**: 识每 tick publish `body_attention_outcome` event (metadata: `node`=被 summon 的体焦点区, `discharged`=heng_state 是否 discharge)。Weaver `_habituation_map` 消费 (同 `_nudge_tension_map` 模式):
+
+| 情况 | 习惯化因子 |
+|---|---|
+| 某 node 非放电 attend 数 ≤ `free_attends` (默 2) | 1.0 (免费窗, 允许正常想清) |
+| 超 `free_attends` 后每多 1 次非放电 attend | ×= `decay_base` (默 0.6), 到 `floor` (默 0.15) 止 |
+| 真放电 (discharged=True) | 重置 → 1.0 (放电=问题真解了) |
+| 久不 attend 该 node (> `recovery_s` 默 1h) | 恢复 → 1.0 (spontaneous recovery, 重新可醒) |
+
+**只乘 tension 源 1** (concern severity standing): novelty / drift / nudge 警报 / stance dyad 都**不受习惯化** → 真新进展 (novelty↑/drift↑) 或新外部警报 (nudge) 自然 **dishabituate 突破** (该想的还会想)。这补全了"放电→E降"的缺口: 反复无效 attend = 一种弱放电信号 (虽没立 stance, 但"想过且没新东西"应让该区 settle)。
+
+**准则锚**: 5 (接地 — node=真 summon 区, discharged=heng_state, 无幻影) · 6 (publish-only — 识只报事实, Weaver 自决物理; 全 vocab 可调) · 8 (物理刹车治本, 非"meta-awareness 关键词触发 let_go"的热补丁)。**与已有机制正交** (准则6#4): decay 治时间, stance-coverage 治真化解, let_go 治 prompt 可见性 (LLM 显式), 习惯化治"反复无效 attend 的召唤力" — 四者不重叠。
+
 ---
 
 ## 4. 输出闸 (Sir 接收度) — 内部转 ≠ 往外说 ★ Sir 确认: 贾维斯不打扰

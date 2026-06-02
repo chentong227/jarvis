@@ -155,6 +155,21 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "stance_dyad_enabled": 1,
         "stance_dyad_min_confidence": 0.6,   # 立场置信 >= 此才织 dyad (够坚定才算阻力)
         "stance_dyad_tension": 0.4,          # 每条 dyad 贡献的立场张力基线
+        # 习惯化 (habituation, Sir 2026-06-02 反刍治本) — 接地的"放电反馈缺口"补全.
+        # 设计 §3 承诺 "放电→E降→不再醒", 但唯一 wired 放电通道是 stance-coverage;
+        # 低 agency concern (如 hydration) 识反复 attend 却只 adjust_notes (不改 severity
+        # 不立 stance) → 永不放电 → tension=severity 每 weave 重算 → 反复被召唤 ("认识到
+        # 自己反刍却停不下"). 习惯化: 识反复 attend 某区却不放电 (heng_state!=discharge)
+        # → 该区 tension 渐衰 (×factor); 真放电 → 重置; 久不 attend → 时间恢复 (spontaneous
+        # recovery); novelty/drift 不受习惯化 (真新进展自然 dishabituate 突破). 接地: 消费
+        # 识 publish 的 body_attention_outcome event (准则5), 无 LLM, vocab 可调 (准则6).
+        "habituation_enabled": 1,
+        "habituation_outcome_etype": "body_attention_outcome",  # 识 publish 的归因 event
+        "habituation_window_s": 1800.0,      # 消费多久内的 attention outcome (覆盖多 weave)
+        "habituation_free_attends": 2,       # 前 N 次 attend 不衰 (允许正常想清的窗口)
+        "habituation_decay_base": 0.6,       # 每超 1 次非放电 attend → tension ×= 此 (0<x<1)
+        "habituation_floor": 0.15,           # tension 习惯化下限 (不归 0, 仍可被真新事唤醒)
+        "habituation_recovery_s": 3600.0,    # 久不 attend 此 node → 习惯化恢复 (count 清)
     },
 }
 

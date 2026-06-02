@@ -1755,6 +1755,9 @@ class InnerThoughtDaemon:
         }
         # 🆕 [衡 H0 / Sir 2026-06-01] 衡收敛三态计数 (dashboard 看放电/休息/filler 占比)
         self._heng_stats = {'discharge': 0, 'rest': 0, 'filler': 0}
+        # 🆕 [习惯化 / Sir 2026-06-02] 本 tick 识被哪个体焦点区 summon (top focus node).
+        # _build_prompt 渲染 BODY SIGNALS 时记, tick 末按 heng_state publish 归因。
+        self._last_attended_focus_node = ''
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus 元决策 (R3)
         # =====================================================================
         # Sir 真意: "这轮为下轮挑". 上轮 LLM 输出 <NEXT_ATTENTION_FOCUS>
@@ -2853,6 +2856,42 @@ class InnerThoughtDaemon:
                 self._heng_stats.get(thought.heng_state, 0) + 1
         except Exception:
             thought.heng_state = ''
+
+        # 🆕 [习惯化 / Sir 2026-06-02 反刍治本] publish body_attention_outcome —
+        # =====================================================================
+        # 放电反馈缺口补全 (深挖结论, 非热补丁): 识本 tick 被某体焦点区 (_last_attended_
+        # focus_node) summon, heng_state 是它对那块的"放电"结果。Weaver 消费此 event:
+        # 反复 attend 同区却 discharged=False (filler/未放电) → 该区 tension 渐衰 (习惯化),
+        # 不再反复召唤; 真放电 (discharge) → 重置。补全设计 §3 "放电→E降→不再醒" 的唯一
+        # wired 通道 (stance-coverage) 覆盖不到的低 agency concern (hydration 反刍根因)。
+        # 准则 5 接地 (node = 真 summon 区, discharged = heng_state); 准则 6 publish-only
+        # (识只报事实, Weaver 自决物理); 准则 8 治本 (物理刹车, 非关键词热补丁)。
+        # =====================================================================
+        try:
+            _att_node = getattr(self, '_last_attended_focus_node', '') or ''
+            if _att_node:
+                _discharged = (getattr(thought, 'heng_state', '') == 'discharge')
+                from jarvis_utils import get_event_bus as _geb_hab
+                _bus_hab = _geb_hab()
+                if _bus_hab is not None:
+                    _bus_hab.publish(
+                        etype='body_attention_outcome',
+                        description=(
+                            f"识 attend 体焦点区 {_att_node[:40]} → "
+                            f"{'放电(discharge)' if _discharged else '未放电(' + (getattr(thought, 'heng_state', '') or 'none') + ')'}"
+                        ),
+                        source='inner_thought',
+                        salience=0.3,
+                        ttl=1800.0,
+                        metadata={
+                            'node': _att_node,
+                            'discharged': _discharged,
+                            'heng_state': getattr(thought, 'heng_state', ''),
+                            'thought_id': getattr(thought, 'id', ''),
+                        },
+                    )
+        except Exception:
+            pass
 
         # persist (主脑通过 Layer 1.5/1.6 直接 read self._thoughts + jsonl)
         self._persist_thought(thought)
@@ -4716,11 +4755,21 @@ class InnerThoughtDaemon:
         # =====================================================================
         try:
             from jarvis_body_focus import get_body_focus as _gbf
-            _body_sig = _gbf().render_attention_block(limit=5)
+            _bf = _gbf()
+            _body_sig = _bf.render_attention_block(limit=5)
             if _body_sig:
                 for ln in _body_sig.splitlines():
                     lines.append(ln)
                 lines.append("")
+            # 🆕 [习惯化 / Sir 2026-06-02] 记本 tick 识被哪个体焦点区 summon (top focus
+            # node), 供 tick 末按 heng_state 归因 body_attention_outcome (放电反馈)。
+            # grounded: attended node = 此刻召唤思考的最高势能区 (current_focus top)。
+            try:
+                _top_focus = _bf.current_focus(limit=1)
+                self._last_attended_focus_node = (
+                    _top_focus[0].get("node", "") if _top_focus else "")
+            except Exception:
+                self._last_attended_focus_node = ""
         except Exception:
             pass
 

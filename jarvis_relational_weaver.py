@@ -537,6 +537,79 @@ class RelationalWeaver:
                     out[nid] += per_w * max(0.0, min(1.0, sal))
         return {nid: min(v, cap) for nid, v in out.items()}
 
+    def _habituation_map(self, now: Optional[float] = None) -> Dict[str, float]:
+        """习惯化因子 {node_id: factor∈[floor,1.0]} — 接地的"放电反馈缺口"补全。
+
+        Sir 2026-06-02 反刍治本: 设计 §3 承诺 "识放电→该区 E 降→不再醒", 但唯一 wired
+        放电通道是 stance-coverage。低 agency concern (hydration) 识反复 attend 却只
+        adjust_notes (不改 severity 不立 stance) → 永不放电 → tension=severity 每 weave
+        重算 → 反复被召唤 ("认识到自己反刍却停不下" = 结构缺口, 早于衡/锚)。
+
+        机制 (纯物理, 无 LLM, 准则 5 接地): 消费识每 tick publish 的 body_attention_outcome
+        event (metadata: node, discharged)。某 node 被反复 attend 却 discharged=False →
+        非放电 attend 累积 → 超 free_attends 后该 node tension ×= decay_base^excess (graded,
+        到 floor 止)。真放电 (discharged=True) → 该 node 习惯化重置 (1.0)。久不 attend (>
+        recovery_s) → 恢复 (1.0, spontaneous recovery)。
+
+        只乘到 tension 源 1 (concern severity standing): novelty/drift/nudge/dyad 不受习惯
+        化 → 真新进展 (novelty↑/drift↑) 或新外部警报 (nudge) 自然 dishabituate 突破。
+        """
+        now = time.time() if now is None else now
+        cfg = self._ecfg()
+        try:
+            if not int(cfg.get("habituation_enabled", 1)):
+                return {}
+        except (TypeError, ValueError):
+            return {}
+        bus = self._event_bus if self._event_bus is not None else _default_event_bus()
+        if bus is None:
+            return {}
+        etype = str(cfg.get("habituation_outcome_etype", "body_attention_outcome"))
+        window = float(cfg.get("habituation_window_s", 1800.0))
+        free = int(cfg.get("habituation_free_attends", 2))
+        base = float(cfg.get("habituation_decay_base", 0.6))
+        floor = float(cfg.get("habituation_floor", 0.15))
+        recovery = float(cfg.get("habituation_recovery_s", 3600.0))
+        base = max(0.0, min(0.999, base))
+        floor = max(0.0, min(1.0, floor))
+        try:
+            events = bus.recent_events(within_seconds=window, types={etype})
+        except Exception as exc:
+            _log(f"[Weaver/habituation] outcome read failed ({exc!r})")
+            return {}
+        # 按 node 聚: 时间序列 [(ts, discharged)]
+        per_node: Dict[str, List[tuple]] = collections.defaultdict(list)
+        for e in events or []:
+            meta = e.get("metadata") or {}
+            nid = self.manifold.resolve(str(meta.get("node") or ""))  # alias→代表
+            if not nid:
+                continue
+            try:
+                ts = float(e.get("timestamp", now) or now)
+            except (TypeError, ValueError):
+                ts = now
+            per_node[nid].append((ts, bool(meta.get("discharged", False))))
+        out: Dict[str, float] = {}
+        for nid, seq in per_node.items():
+            seq.sort(key=lambda x: x[0])
+            last_ts = seq[-1][0]
+            # spontaneous recovery: 久不 attend → 恢复
+            if now - last_ts > recovery:
+                continue  # factor 1.0 (不衰)
+            # 从最近一次放电之后起算非放电 attend 数 (放电 = 重置点)
+            non_discharge = 0
+            for _ts, discharged in seq:
+                if discharged:
+                    non_discharge = 0   # 放电重置
+                else:
+                    non_discharge += 1
+            excess = max(0, non_discharge - free)
+            if excess <= 0:
+                continue  # 仍在免费窗内 → 不衰
+            factor = max(floor, base ** excess)
+            out[nid] = factor
+        return out
+
     def _stance_covered_concerns(self) -> set:
         """有 active stance 覆盖的 concern node_id 集合 (张力已化解 = 不计能量)。"""
         covered: set = set()
@@ -647,12 +720,17 @@ class RelationalWeaver:
                 energy[e["a"]]["drift"] += d
                 energy[e["b"]]["drift"] += d
         # 张力源 1: 高 severity concern 且无 active stance 覆盖
+        # 习惯化补全 (Sir 2026-06-02): 识反复 attend 某 concern 却不放电 (只 adjust_notes,
+        # 不改 severity 不立 stance) → 该 concern tension ×= habituation factor (graded 衰
+        # 到 floor). 补全设计 §3 "放电→E降→不再醒" 的缺口 (唯一 wired 放电是 stance-coverage,
+        # 低 agency concern 永不放电 → 反复召唤). 真放电/真新进展 (novelty/drift) → 突破。
         sev_min = float(cfg.get("tension_severity_min", 0.40))
         sev = self._concern_severity_map()
         covered = self._stance_covered_concerns()
+        habit = self._habituation_map(now=now)
         for nid, s in sev.items():
             if s >= sev_min and nid not in covered:
-                energy[nid]["tension"] += s
+                energy[nid]["tension"] += s * habit.get(nid, 1.0)
         # 张力源 2 (口识体-C): 近期 nudge/care 警报 → 体张力 (感知环穿体).
         # 新外部警报是新扰动 → 不受 stance 覆盖压制 (放电靠 event 老化出窗 + 识 attend);
         # delta-on-rise 机制保证 tension 平台期不重复派 delta (杜绝 churn)。
