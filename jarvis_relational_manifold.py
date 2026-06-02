@@ -98,9 +98,25 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
     "embed_threshold": 0.72,           # cosine >= 阈值才连 embed 边
     "embed_top_k_per_node": 8,         # 每节点最多保留 K 条最强 embed 边 (防稠密图)
     "merge_threshold": 0.90,           # cosine >= 此 = 近重复 → 合并 alias (口识体-D2 防 bloat)
+    # 🆕 [body-diff-P0a / Sir 2026-06-02] 破 blob 双杠杆 (a 降密度 + 接地不对称).
+    # 真理源: docs/AGENT_KICKOFF_BODY_DIFFERENTIATION.md + .kiro/specs/body-differentiation/.
+    # 实测: 124 节点 112 挤一个面 (blob), 成分 49 thread + 31 joke + 26 proto + 6 concern
+    # → 自产质量 106 vs 外部 6. 接地不对称 (不变量②): 体形状偏向外部实证节点, 不让自产
+    # 内容 (thread/joke/proto) 互连糊成团主导倾斜。**不删自产节点 (私生活保), 只降自产↔
+    # 自产 embed 边权**。自产↔concern (自产↔外部) 边不打折 (思考与现实的连接保留)。
+    "self_produced_edge_discount": 0.5,   # 两端都自产的 embed 边 weight ×= 此 (0<x<=1)
+    "self_produced_kinds": ["thread", "joke", "proto"],  # 自产节点 kind (起点含 joke/proto)
     # 面 (体-P3) — 语义曲面 = 图里强连通的节点社区
     "surface_min_weight": 0.45,        # 边有效权重 >= 此值才算"紧"连接 (聚面用)
     "surface_min_size": 3,             # 面最小节点数 (< 此不算一个面)
+    # 🆕 [body-diff-P0b / Sir 2026-06-02] 破 blob 杠杆 b — 重叠面 (去全局 seen).
+    # 旧 compute_surfaces 用全局 seen 做连通分量 = 硬分区 (每节点恰属一个面), "面间共享
+    # 点 (桥)" 从未存在 = blob 根因之一。新: 连通分量得核 → 边界扩张 pass (节点强连到多
+    # 核 → 多归属) → 桥节点 = 属 >=2 面。method=core_boundary (最小改); slpa 留升级口。
+    "surface_method": "core_boundary",    # "core_boundary" (默, 最小重叠) | "legacy" (旧硬分区)
+    "surface_core_min_weight": 0.60,      # 阶段1 核: 边权 >= 此才算"核内紧边" (高阈, 核分离)
+    "surface_overlap_min_links": 2,       # 阶段2: 节点到某核的(低阈)强边数 >= 此 → 也归入 (桥)
+    "over_frag_min_surfaces": 8,          # 面数 >= 此 且 bridge=0 → over_fragmented (碎成孤岛)
     # 透镜 (体-P6) — 投影主脑. 默认 0 (Sir 真机验投影质量后再开, 动主脑热路径)
     "lens_inject_enabled": 0,
     # 口识体-E (内敛): 透镜活时替 SOUL Layer2/3 平行表示 (默认 0, 渐进退旧块).
@@ -457,17 +473,22 @@ class RelationalManifold:
                              confidence=confidence, inferred=True, now=now)
 
     def add_geometric_edge(
-        self, a: str, b: str, cosine: float, *, now: Optional[float] = None,
+        self, a: str, b: str, cosine: float, *, weight_scale: float = 1.0,
+        now: Optional[float] = None,
     ) -> Optional[str]:
         """体-P2 几何边: embedding cosine 相似度。
 
         相似度是**静态属性**非事件 → accumulate=False (set-to-floor, 重复 weave 不膨胀)。
         ref='cosine' (稳定, provenance 去重为一条, 每次刷新最新 cos 值 = 可复现接地)。
-        weight ≈ embed_increment * cosine (confidence 缩放)。
+        weight ≈ embed_increment * cosine * weight_scale (confidence 缩放)。
+
+        🆕 [body-diff-P0a] weight_scale: 接地不对称折扣 (两端都自产 → < 1.0), 由 Weaver
+        传入。默 1.0 = 不打折 (向后兼容)。纯几何, 不删节点, 只降自产↔自产边权。
         """
         return self.add_edge(
             a, b, PROV_EMBED, "cosine",
             detail=f"cos={cosine:.3f}", confidence=float(cosine),
+            weight_scale=float(weight_scale),
             accumulate=False, now=now,
         )
 
@@ -564,10 +585,18 @@ class RelationalManifold:
         self, *, min_weight: Optional[float] = None,
         min_size: Optional[int] = None, now: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """图社区检测: 沿"强边"(有效权重 >= min_weight) BFS 连通块 → 语义曲面。
+        """图社区检测 → 语义曲面。纯几何, 无 LLM (准则 1/6)。
 
-        纯几何, 无 LLM (准则 1/6)。每个面 = {surface_id, members, size, kinds, top_nodes}。
-        面是"Sir 的某一片关注/某一簇笑话"这种自然涌现的区域。
+        每个面 = {surface_id, members, size, kinds, top_nodes, is_bridge_member?}。
+
+        🆕 [body-diff-P0b / Sir 2026-06-02] surface_method:
+        - "core_boundary" (默): **双阈值**破"全局 seen 硬分区"根因 —
+          阶段1 用**高阈** (surface_core_min_weight) 连通分量得**核** (紧簇彼此分离,
+          单条桥边不会把两核并成一个); 阶段2 用 min_weight (低阈) 边界扩张 (节点到某核
+          的低阈强边数 >= overlap_min_links → 也归入该核) → **允许重叠**, 桥节点 (属
+          >=2 面) = 关联/洞见发生处。
+        - "legacy": 旧全局 seen 连通分量 (硬分区, 每节点恰属一个面)。保留作回退。
+        详 .kiro/specs/body-differentiation/design.md §3.2。
         """
         now = time.time() if now is None else now
         cfg = get_manifold_config()
@@ -575,15 +604,28 @@ class RelationalManifold:
             min_weight = float(cfg.get("surface_min_weight", 0.45))
         if min_size is None:
             min_size = int(cfg.get("surface_min_size", 3))
+        method = str(cfg.get("surface_method", "core_boundary"))
+        overlap_min_links = int(cfg.get("surface_overlap_min_links", 2))
+        core_min_weight = float(cfg.get("surface_core_min_weight", 0.60))
+        # core_boundary 用高阈聚核 (核分离); legacy 用 min_weight (原行为)
+        core_w = core_min_weight if method == "core_boundary" else min_weight
         with self._lock:
+            # 低阈强边邻接 (扩张/桥用) + 高阈核边邻接 (聚核用)
             strong: Dict[str, set] = collections.defaultdict(set)
+            core_adj: Dict[str, set] = collections.defaultdict(set)
             for e in self._edges.values():
-                if self.effective_weight(e, now) >= min_weight:
+                w = self.effective_weight(e, now)
+                if w >= min_weight:
                     strong[e["a"]].add(e["b"])
                     strong[e["b"]].add(e["a"])
+                if w >= core_w:
+                    core_adj[e["a"]].add(e["b"])
+                    core_adj[e["b"]].add(e["a"])
+
+            # 阶段 1: 高阈连通分量得"核" (紧簇分离, 单桥边不并核)
             seen: set = set()
-            surfaces: List[Dict[str, Any]] = []
-            for start in list(strong.keys()):
+            cores: List[List[str]] = []
+            for start in list(core_adj.keys()):
                 if start in seen:
                     continue
                 comp: List[str] = []
@@ -592,24 +634,63 @@ class RelationalManifold:
                 while stack:
                     n = stack.pop()
                     comp.append(n)
-                    for m in strong[n]:
+                    for m in core_adj[n]:
                         if m not in seen:
                             seen.add(m)
                             stack.append(m)
+                cores.append(comp)
+
+            # 阶段 2 (core_boundary): 低阈边界扩张 pass → 产生重叠 (桥)。
+            # 节点 n 到它**不属于**的核 C 的低阈强边数 >= overlap_min_links → n 也归入 C。
+            # 同时归入 >=2 核的节点 = 桥节点 (属多面)。去掉了全局 seen 的硬分区。
+            members_list: List[set] = [set(c) for c in cores]
+            if method == "core_boundary" and len(cores) >= 2:
+                core_sets = [set(c) for c in cores]
+                all_nodes = set(strong.keys())
+                for n in all_nodes:
+                    n_nbrs = strong[n]
+                    for ci, cset in enumerate(core_sets):
+                        if n in cset:
+                            continue
+                        links = len(n_nbrs & cset)
+                        if links >= overlap_min_links:
+                            members_list[ci].add(n)  # 多归属 → 桥
+
+            # 阶段 3: 组装面 (过滤 min_size)
+            surfaces: List[Dict[str, Any]] = []
+            for mem in members_list:
+                comp = sorted(mem)
                 if len(comp) < min_size:
                     continue
+                comp_set = set(comp)
                 kinds = collections.Counter(split_node_id(n)[0] for n in comp)
-                # top_nodes = 面内强连接度最高的几个 (代表节点)
-                deg = sorted(comp, key=lambda n: len(strong[n] & set(comp)), reverse=True)
+                deg = sorted(comp, key=lambda n: len(strong[n] & comp_set),
+                             reverse=True)
                 surfaces.append({
                     "surface_id": "surf:" + min(comp),
-                    "members": sorted(comp),
+                    "members": comp,
                     "size": len(comp),
                     "kinds": dict(kinds),
                     "top_nodes": deg[:5],
                 })
             surfaces.sort(key=lambda s: s["size"], reverse=True)
             return surfaces
+
+    def bridge_nodes(self, surfaces: Optional[List[Dict[str, Any]]] = None
+                     ) -> Dict[str, List[str]]:
+        """🆕 [body-diff-P0b] 桥节点 = 属 >=2 面的节点。返 {node_id: [surface_id,...]}。
+
+        桥是关联/洞见实际发生处 (例: "早睡→长期没睡→面试/体检→推断" 是桥遍历)。
+        纯几何, 供 complexity_report 桥度量 + CLI --bridges 人读双签。
+        """
+        if surfaces is None:
+            surfaces = self.get_surfaces()
+        node_surfaces: Dict[str, List[str]] = collections.defaultdict(list)
+        for s in surfaces:
+            sid = s.get("surface_id", "")
+            for n in s.get("members", ()):
+                node_surfaces[n].append(sid)
+        return {n: sids for n, sids in node_surfaces.items() if len(sids) >= 2}
 
     def set_surfaces(self, surfaces: List[Dict[str, Any]]) -> None:
         with self._lock:
@@ -695,22 +776,36 @@ class RelationalManifold:
         grounded_frac = round(1.0 - (review / ec), 3) if ec else 1.0
         surf_count = len(surfaces)
         compression = round(nc / surf_count, 2) if surf_count else float(nc)
-        # health 判定 (体积大但低复杂度 = 病)
+        # 🆕 [body-diff-P0b] 桥度量: 桥节点 = 属 >=2 面 (关联/洞见发生处, 不变量④)。
+        bridges = self.bridge_nodes(surfaces)
+        bridge_count = len(bridges)
+        members_union = set()
+        for sf in surfaces:
+            members_union.update(sf.get("members", ()))
+        bridge_frac = round(bridge_count / len(members_union), 3) if members_union else 0.0
+        over_frag_min = int(get_manifold_config().get("over_frag_min_surfaces", 8))
+        # health 判定 (体积大但低复杂度 = 病; 碎成孤岛也病 — 分化-整合平衡, 不变量③)
         if largest_frac >= 0.5:
             health = "blob"            # 一个大簇吃掉过半节点 = 冗余体积, 低复杂度
+        elif surf_count >= over_frag_min and bridge_count == 0:
+            health = "over_fragmented"  # 🆕 面多但无桥 = 碎成互不相连孤岛 (与 blob 同病)
         elif density >= 6.0:
             health = "over_dense"      # 边/节点过高 = 过连接, 信息稀释
         elif nc >= 3 and density < 0.4:
             health = "sparse"          # 太稀 = 还没织出结构
         else:
             health = "healthy"
-        # 复杂度分 (0-1): 奖均衡面+接地, 罚 blob+过密
+        # 复杂度分 (0-1): 奖均衡面+接地+有桥, 罚 blob+过密+无桥
+        # 🆕 [body-diff-P0b] bridge_bonus: 有桥加分, 无桥腰斩 (面间能走通才推得出东西)
+        bridge_bonus = min(1.0, 0.5 + bridge_frac) if surf_count >= 2 else 1.0
         score = round(grounded_frac * (1.0 - min(1.0, largest_frac))
-                      * (1.0 if density <= 5 else 5.0 / density), 3)
+                      * (1.0 if density <= 5 else 5.0 / density)
+                      * bridge_bonus, 3)
         return {
             "node_count": nc, "edge_count": ec, "surface_count": surf_count,
             "density": density, "largest_surface_frac": largest_frac,
             "grounded_frac": grounded_frac, "compression": compression,
+            "bridge_count": bridge_count, "bridge_frac": bridge_frac,
             "health": health, "complexity_score": score,
             "merged_dups": len(self._aliases),  # 口识体-D2: 已合并的近重复数
         }

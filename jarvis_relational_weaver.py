@@ -33,8 +33,8 @@ import numpy as np
 
 from jarvis_relational_manifold import (
     RelationalManifold, get_manifold, get_manifold_config,
-    make_node_id, KIND_THREAD, KIND_CONCERN, KIND_JOKE, KIND_PROTOCOL,
-    KIND_STANCE, PROV_SHARED,
+    make_node_id, split_node_id, KIND_THREAD, KIND_CONCERN, KIND_JOKE,
+    KIND_PROTOCOL, KIND_STANCE, PROV_SHARED,
 )
 
 EmbedFn = Callable[[List[str]], List[Optional[List[float]]]]
@@ -374,6 +374,9 @@ class RelationalWeaver:
         cfg = get_manifold_config()
         thr = float(cfg.get("embed_threshold", 0.72))
         topk = int(cfg.get("embed_top_k_per_node", 8))
+        # 🆕 [body-diff-P0a] 接地不对称折扣 (不变量②): 两端都自产 → embed 边权打折.
+        sp_kinds = set(cfg.get("self_produced_kinds", ["thread", "joke", "proto"]))
+        sp_discount = float(cfg.get("self_produced_edge_discount", 0.5))
         M = np.array([vecs[i] for i in ids], dtype=np.float32)
         norms = np.linalg.norm(M, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
@@ -396,7 +399,12 @@ class RelationalWeaver:
                 if key in seen:
                     continue
                 seen.add(key)
-                if self.manifold.add_geometric_edge(a, b, c, now=now):
+                # 接地不对称: 两端都自产 (thread/joke/proto) → 边权折扣 (不删节点, 只降权)
+                _ws = 1.0
+                if (split_node_id(a)[0] in sp_kinds
+                        and split_node_id(b)[0] in sp_kinds):
+                    _ws = sp_discount
+                if self.manifold.add_geometric_edge(a, b, c, weight_scale=_ws, now=now):
                     added += 1
                 if c >= merge_thr:           # 近重复 → 候选合并
                     dup_pairs.append((a, b))

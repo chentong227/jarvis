@@ -20,11 +20,14 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import jarvis_relational_manifold as _rm
+import jarvis_relational_weaver as _rw
 from jarvis_relational_manifold import (
     RelationalManifold, make_node_id, get_manifold_config,
     KIND_THREAD, KIND_CONCERN, KIND_JOKE, KIND_PROTOCOL,
@@ -33,6 +36,13 @@ from jarvis_relational_manifold import (
 from jarvis_relational_weaver import RelationalWeaver
 
 T0 = 1_780_000_000.0
+
+
+def _no_discount_cfg():
+    """[body-diff-P0a] 关接地不对称折扣 (本组测几何边权公式, 与折扣正交)。"""
+    cfg = dict(_rm._SEED_MANIFOLD_CONFIG)
+    cfg["self_produced_edge_discount"] = 1.0
+    return cfg
 
 # 确定向量 → 已知 cosine: alpha 系两条近平行 (cos≈0.99), beta 正交 (cos=0)
 _VEC = {
@@ -129,7 +139,8 @@ class TestGeometric(unittest.TestCase):
     def test_t2_geometric_edges(self):
         with tempfile.TemporaryDirectory() as d:
             w = self._three_node_weaver(d, _CountingEmbed())
-            added = w.weave_geometric(now=T0)
+            with patch.object(_rw, "get_manifold_config", return_value=_no_discount_cfg()):
+                added = w.weave_geometric(now=T0)
             self.assertEqual(added, 1)  # 仅 alpha one ~ alpha two
             a = make_node_id(KIND_THREAD, "th1")
             b = make_node_id(KIND_THREAD, "th2")

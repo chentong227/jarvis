@@ -158,11 +158,51 @@ def cmd_surfaces(m: RelationalManifold) -> None:
         print("(无语义曲面 — 织网者还没织, 或没有 >= surface_min_weight 的紧连块)")
         print("提示: 先 python scripts/manifold_dump.py --weave")
         return
-    print(f"语义曲面 (体-P3 面) {len(surfaces)} 个:")
+    # 🆕 [body-diff-P0b] 取 harvest text 让 Sir 能读面的语义 (不只 node id)
+    text_map = {}
+    try:
+        from jarvis_relational_weaver import RelationalWeaver
+        text_map = RelationalWeaver(manifold=m).harvest_nodes()
+    except Exception as exc:
+        print(f"(harvest text 不可用: {exc!r}; 仅显 node id)")
+    bridges = m.bridge_nodes(surfaces)
+    print(f"语义曲面 (体-P3 面) {len(surfaces)} 个 | 桥节点 {len(bridges)} 个:")
     for s in surfaces:
         print(f"\n● {s['surface_id']}  size={s['size']}  kinds={s.get('kinds', {})}")
         for nid in s.get("top_nodes", [])[:5]:
-            print(f"    · {_short(nid, 56)}")
+            txt = (text_map.get(nid) or "").replace("\n", " ")[:70]
+            tag = " 🌉桥" if nid in bridges else ""
+            print(f"    · {_short(nid, 40)}{tag}  {txt}")
+
+
+def cmd_bridges(m: RelationalManifold) -> None:
+    """🆕 [body-diff-P0b] 列出桥节点 (属 >=2 面) + 它连接的面 + harvest text。
+
+    桥 = 关联/洞见实际发生处 (不变量④ 人读双签: 抽查桥讲不讲得通)。
+    """
+    surfaces = m.get_surfaces()
+    if not surfaces:
+        print("(无面 — 先 python scripts/manifold_dump.py --weave)")
+        return
+    bridges = m.bridge_nodes(surfaces)
+    if not bridges:
+        print(f"(无桥节点 — {len(surfaces)} 个面互不共享点)")
+        print("⚠️ 面多但无桥 = 碎成孤岛 (over_fragmented), 推不出东西 — 调 surface_overlap_min_links↓ / 阈值↓")
+        return
+    text_map = {}
+    try:
+        from jarvis_relational_weaver import RelationalWeaver
+        text_map = RelationalWeaver(manifold=m).harvest_nodes()
+    except Exception:
+        pass
+    print(f"🌉 桥节点 (属 >=2 面 = 关联/洞见发生处) {len(bridges)} 个:")
+    print("=" * 78)
+    for nid, sids in sorted(bridges.items(), key=lambda x: -len(x[1])):
+        txt = (text_map.get(nid) or "").replace("\n", " ")[:90]
+        print(f"\n🌉 {_short(nid, 44)}  (属 {len(sids)} 面)")
+        print(f"    文本: {txt}")
+        print(f"    连接面: {', '.join(_short(s, 30) for s in sids)}")
+    print(f"\n共 {len(bridges)} 桥。人读双签: 抽查这些桥的语义讲不讲得通 (面间能走通才推得出东西)。")
 
 
 def cmd_lens(m: RelationalManifold, seed_prefix: str) -> None:
@@ -253,6 +293,8 @@ def main(argv=None) -> int:
     ap.add_argument("--review", action="store_true", help="看 LLM 推断待审边")
     ap.add_argument("--spread", metavar="ID", help="spreading-activation 预览 (透镜原型)")
     ap.add_argument("--surfaces", action="store_true", help="看语义曲面 (体-P3 面)")
+    ap.add_argument("--bridges", action="store_true",
+                    help="看桥节点 (属 >=2 面 = 关联/洞见发生处, body-diff-P0b 人读双签)")
     ap.add_argument("--complexity", action="store_true", help="复杂度 vs 体积度量 (closure D1)")
     ap.add_argument("--lens", nargs="?", const="", metavar="SEED",
                     help="预览透镜投影 block (体-P6; 可选 seed 节点前缀)")
@@ -299,6 +341,8 @@ def main(argv=None) -> int:
         cmd_spread(m, args.spread)
     elif args.surfaces:
         cmd_surfaces(m)
+    elif args.bridges:
+        cmd_bridges(m)
     elif args.complexity:
         cmd_complexity(m)
     elif args.lens is not None:

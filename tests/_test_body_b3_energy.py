@@ -19,17 +19,46 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import jarvis_relational_manifold as _rm
+import jarvis_relational_weaver as _rw
 from jarvis_relational_manifold import (
     RelationalManifold, make_node_id, KIND_THREAD, KIND_CONCERN,
 )
 from jarvis_relational_weaver import RelationalWeaver
 
 T0 = 1_780_000_000.0
+
+
+def _no_discount_cfg():
+    """[body-diff-P0a] 关掉接地不对称折扣 (本组测能量/几何机制, 与折扣正交)。"""
+    cfg = dict(_rm._SEED_MANIFOLD_CONFIG)
+    cfg["self_produced_edge_discount"] = 1.0
+    return cfg
+
+
+def _patch_no_discount():
+    """patch weaver + manifold 命名空间的 get_manifold_config (weave_once 两处都用)。"""
+    import contextlib
+    cm = contextlib.ExitStack()
+
+    class _Both:
+        def __enter__(self_):
+            cm.enter_context(patch.object(_rw, "get_manifold_config",
+                                          return_value=_no_discount_cfg()))
+            cm.enter_context(patch.object(_rm, "get_manifold_config",
+                                          return_value=_no_discount_cfg()))
+            return self_
+
+        def __exit__(self_, *a):
+            cm.close()
+            return False
+    return _Both()
 
 _VEC = {
     "alpha one": [1.0, 0.0, 0.0],
@@ -70,7 +99,8 @@ class TestBodyEnergy(unittest.TestCase):
             w = _mk(d, threads=[
                 {"thread_id": "th1", "summary": "alpha one", "status": "open"},
                 {"thread_id": "th2", "summary": "alpha two", "status": "open"}])
-            stats = w.weave_once(now=T0)
+            with _patch_no_discount():
+                stats = w.weave_once(now=T0)
             deltas = w.recent_deltas()
             nov = [x for x in deltas if x["kind"] == "novelty"]
             self.assertTrue(nov, "新几何边应产生 novelty delta")
@@ -100,10 +130,11 @@ class TestBodyEnergy(unittest.TestCase):
                 {"thread_id": "th2", "summary": "alpha two", "status": "open"}],
                 concerns={"c1": {"id": "c1", "what_i_watch": "x",
                                  "severity": 0.6, "state": "active"}})
-            w.weave_once(now=T0)
-            self.assertTrue(w.recent_deltas(), "首轮应有 delta")
-            # 第二轮: 无新边 + prev_energy 已记 → rise=0 → settled, 不再 delta (杜绝重复)
-            w.weave_once(now=T0)
+            with _patch_no_discount():
+                w.weave_once(now=T0)
+                self.assertTrue(w.recent_deltas(), "首轮应有 delta")
+                # 第二轮: 无新边 + prev_energy 已记 → rise=0 → settled, 不再 delta (杜绝重复)
+                w.weave_once(now=T0)
             self.assertEqual(len(w.recent_deltas()), 0,
                              "settled 后不应再 delta (resolved=discharged 不复发)")
 
@@ -114,7 +145,8 @@ class TestBodyEnergy(unittest.TestCase):
                 {"thread_id": "th1", "summary": "alpha one", "status": "open"},
                 {"thread_id": "th2", "summary": "alpha two", "status": "open"}],
                 publisher=lambda dlt: got.append(dlt))
-            w.weave_once(now=T0)
+            with _patch_no_discount():
+                w.weave_once(now=T0)
             self.assertTrue(got, "delta_publisher 应被调")
             self.assertTrue(os.path.exists(os.path.join(d, "energy.json")))
             data = json.load(open(os.path.join(d, "energy.json"), encoding="utf-8"))
