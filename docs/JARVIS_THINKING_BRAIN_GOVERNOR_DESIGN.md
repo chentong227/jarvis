@@ -532,6 +532,35 @@
 
 ---
 
+## 13.6 F9 — 语义聚类反刍检测 (治 B 类"反省自己反省", Sir 2026-06-02 真机暴露)
+
+**缘起 (真机 jarvis_20260602_184250 实测)**: F8 落地 + Sir 真机跑。Sir 明确说 3 次
+"别管 Cursor 订阅了" → 主脑**真接住** emit `concerns.dismiss(sir_cursor_payment)`
+(转录把 Cursor 念成"cl"都听懂了, 懂我✅)。但 dismiss 后思考脑**转 B 类自我反省**:
+连续 `[B/sal=0.95→0.99] I have been over-attending to hydration/cursor` 换词原地转,
+`kind=empty`。
+
+**新反刍盲区**: 这些 B 类反省 thought **全是 same_thread** (主脑声明连续), 单 thread
+计数 max=3 < F3/F4 阈值 6 → let_go 不触发。F8 治 new_topic 发散, **治不了 same_thread
+内语义堆积**。= "反省自己反省" 的退化双胞胎 (ANCHOR §1 反刍定义)。
+
+**治本 (准则 8 复用 jaccard, 0 新系统)**: `_collect_evidence` topic_distribution 加
+`semantic_clusters` — 跨 thread 按 jaccard 贪心聚类 (复用 `_self_reflection_jaccard`),
+某语义簇 count≥2 暴露, ≥aged 阈值标 `aged_flag`。prompt 渲染 `[semantic clusters]`
+段让 LLM 看 "同义想了 N 次跨 M thread" → 自决 `<LET_GO>` (对簇内任一 thread)。
+
+**F8 vs F9 分工**: F8 = thread 归属时按语义归并 (治 new_topic 发散); F9 = evidence
+呈现时按语义聚类计数 (治 same_thread 堆积)。两者互补, 覆盖 emergent 反刍的两种形态。
+
+**准则符合**: §6 python 只 count 簇, LLM 自决 let_go; §7 vocab `semantic_thread_merge.
+enabled=false` 同时关 F8+F9; §8 复用 jaccard helper + topic_distribution 框架, 不新增系统。
+
+**验收**: `tests/_test_fix60_..._F9_semantic_cluster_rumination.py` 6/6 + governor 套件
+103/103 (commit `c20c861`)。**诚实残余 (准则 5)**: 镜像/单测证机制正确; "let_go 真减少
+B 类反刍" 需 Sir 真机重启 (带 F8+F9+C1/C3) 长跑验 — 这是下一轮真机观察点。
+
+---
+
 ## 14. 下一步 (待 Sir 拍板)
 
 1. **Sir 拍板**: ✅ 接受 → Phase 1 开工 / ⚠️ 调点 → 改 doc / ❌ 反对 → 重谈

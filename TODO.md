@@ -12,6 +12,8 @@
 >
 > **🟢 [Sir 2026-06-02 拍板 + 落地] governor F1-F7 全 implemented+committed (commits f57623e/04c316a + 早期 fix51-58), emergent 模式已 live (thinking_kind_vocab.json). 真机 4.5h 验证 (jarvis_20260602_074737): 间隔 190→397s 越放手 / value_backoff×10 / kind=empty 67%. 暴露并治本 emergent×F3/F4 张力 → 新增 F8 语义 thread 归并 (commit 44fd0f8 + doc 87a2878 §13.5). governor suite 303/303 绿. 余 SOUL C1-C4 framing (4 补点) 仍 pending.**
 >
+> **🟢 [Sir 2026-06-02 续] SOUL C1-C4 落地 (commit 7ab0670, 经锚审查: C2 撤假有限性 / C3 改多锚版避单锚病). F9 语义聚类反刍检测 (commit c20c861) 治真机 jarvis_20260602_184250 暴露的 B 类'反省自己反省'反刍 — F8 治 new_topic 发散, F9 治 same_thread 语义堆积, 互补. 真机验证 dismiss-Cursor 真生效(懂我), C1/C3/F8/F9 待 Sir 重启带上长跑.**
+>
 > **本 anchor self-contained — agent 不翻 doc 也懂全部. 详 doc 见末尾 link list.**
 >
 > ## 缘起
