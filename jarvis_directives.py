@@ -2957,6 +2957,11 @@ def bootstrap_default_registry(registry: DirectiveRegistry,
 
                 ❗ "主页" ≠ "面板". 听到"主页/homepage" 必用 homepage_open, 绝不用 dashboard_open.
 
+                🚫 绝对禁止 (Sir 2026-06-02 真痛 2): 不要用 url_launcher.open_url 直接开
+                网址 (如 http://127.0.0.1:8765)! 主页/面板各有独立 server + 端口, 必须走
+                上面的 ui_control 命令 — 它会自动起对的 server + 开对的端口。你直接 open_url
+                会开错端口 (8765 是面板, 主页是另一个), 且 server 没起时是死链。
+
                 语义模糊时 (Sir 只说"看看" 没说主页/面板) — 反问 1 句澄清要哪个, 别瞎开.
                 想关面板: <FAST_CALL>{"organ":"ui_control","command":"dashboard_close","params":{}}</FAST_CALL>
             """).rstrip(),

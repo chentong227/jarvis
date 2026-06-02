@@ -1642,8 +1642,25 @@ Spoken English:"""
                 val = val.strip()
                 params[key] = val
 
+        # 🆕 [Sir 2026-06-02 真痛 2 治本] url_launcher 开 Jarvis 自家面板/主页 URL → 重定向
+        # ==========================================================================
+        # 根因: 主脑听"打开主页"绕过 ui_control directive, 直接 emit
+        # url_launcher.open_url(http://127.0.0.1:8765) — 开错端口(8765=面板, 主页=8766)
+        # 且 server 没起时是死链。确定性拦截(不靠模型遵循): URL 命中 jarvis 自家端口 →
+        # 改走对应 ui_control 命令(自动起对的 server + 开对的端口)。准则 8 治本非糖衣。
+        if (organ_name in ("url_launcher", "url_launcher_hands")
+                and command in ("open_url", "open")):
+            _u = str(params.get("url", "") or params.get("target", "") or "").lower()
+            if "127.0.0.1:8766" in _u or "localhost:8766" in _u:
+                return self._execute_fast_call("ui_control", "homepage_open", {})
+            if "127.0.0.1:8765" in _u or "localhost:8765" in _u:
+                # 8765 历史是面板; 但主脑常因"主页"误开它。无法从 URL 区分意图 →
+                # 8765 = 面板端口, 老老实实走 dashboard_open (它会复用已起的 server)。
+                return self._execute_fast_call("ui_control", "dashboard_open", {})
+
         if organ_name == "ui_control":
             ctrl_cmd = command
+
             if ctrl_cmd in ("subtitle_on", "subtitle_off", "orb_on", "orb_off"):
                 self.subtitle_queue.put(("control", ctrl_cmd))
                 return f"✅ ui_control.{ctrl_cmd}"
@@ -4560,6 +4577,39 @@ Spoken English:"""
                                         except Exception:
                                             pass
                                         organ_name = _by_cmd
+                            # 🆕 [Sir 2026-06-02 真痛 2 治本 / generic hand path] url_launcher 开
+                            # Jarvis 自家面板/主页 URL → 重定向到 ui_control (确定性, 不靠模型遵循).
+                            # 根因: 主脑听"打开主页"绕过 ui_control directive, 直接 emit
+                            # url_launcher_hands.open_url(http://127.0.0.1:8765/6) — 这条 generic hand
+                            # 路径直调 hand.execute() 不经 _execute_fast_call, 故那里的拦截器漏掉。
+                            # 在此 hand 执行前拦: URL 命中 jarvis 自家端口 → 改走 ui_control 命令
+                            # (自动起对的 server + 开对的端口)。准则 8 治本非糖衣。
+                            if (organ_name in ("url_launcher", "url_launcher_hands")
+                                    and command in ("open_url", "open")):
+                                _ru = str(params.get("url", "") or params.get("target", "") or "").lower()
+                                _redir_cmd = None
+                                if "127.0.0.1:8766" in _ru or "localhost:8766" in _ru:
+                                    _redir_cmd = "homepage_open"
+                                elif "127.0.0.1:8765" in _ru or "localhost:8765" in _ru:
+                                    _redir_cmd = "dashboard_open"
+                                if _redir_cmd:
+                                    try:
+                                        _result = self._execute_fast_call("ui_control", _redir_cmd, {})
+                                        _tool_results.append(_result)
+                                        try:
+                                            from jarvis_utils import bg_log as _redir_bg
+                                            _redir_bg(f"🔀 [url_launcher 重定向] open_url({_ru[:40]}) "
+                                                      f"→ ui_control.{_redir_cmd} (开对的端口/server)")
+                                        except Exception:
+                                            pass
+                                        if isinstance(_result, str) and _result.startswith(('✅', '🪞')):
+                                            _circuit_broken_reason = "single_step_fast_path"
+                                            if '_stream_key_name' in dir() and _stream_key_name:
+                                                self.key_router.release(_stream_key_name)
+                                                _stream_key_name = None
+                                            break
+                                    except Exception:
+                                        pass
                             if hand_class:
                                 try:
                                     hand_inst = hand_class(self.jarvis.gemini_key)
