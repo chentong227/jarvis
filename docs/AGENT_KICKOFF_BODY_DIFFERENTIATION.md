@@ -217,3 +217,80 @@ SLPA 仅在"确认是多主题且团稠密破不开"时才上 — 当前诊断**
   1. **长接地/about 边**: 查 `said=0 / shared=0` 的成因 (为何没织出 Sir 显式连接 / 共享实体边); 反刍 thread → 它所关于的 concern 连 **about 边** (grounded by concern_id) → 自产节点经 about 边归到对应 concern 面 (内心面自然长出, 非靠 embed 相似)。
   2. **杠杆a 减存储密度**: `embed_threshold`↑ / `embed_top_k_per_node`↓ 真减存储边 (15.9 over_dense), 让 spread 投影能聚焦 (P1 前置)。
 - **完工标准**: 自产孤儿率显著降 (内心有面归属) + density 脱 over_dense + 桥多样化 (非单一补水) + 镜像复验 + Sir 双签。完成后才回判 core_w + 启 P1。
+
+---
+
+## 14. P0c about 边 详细设计 (Sir 签 2026-06-03, 诊断+peek 后定案)
+
+### 14.0 诊断结论 (已 Sir 确认对)
+- **said=0 / shared=0 = 两个边生成器从没接进生产** (`observe_explicit_link`/`observe_shared_entity` 仅测试调用)。非断线, 是从头没接线。
+- **thread 孤儿真根因 = 接地"现成却被扔了"**: 思考脑生 C 类 thought 时 `actionable=adjust_concern_notes:<concern_id>:...` **生成期就明确带 concern_id**, 但只 append 到 `concern.notes_for_self`, **从不写成 manifold 边**。harvest 时这根接地线被剪 → thread 只剩 summary 文本 → 靠 embed(cosine)/偶发 cooccur → 孤儿。
+
+### 14.1 🔒 孤儿哲学 (明文红线 — 任何 agent 不得违)
+**无 referent 的 joke/proto = 故意不连 = 诚实的自发私人生活。孤儿数是要"理解"的症状, 不是要压到零的指标。**
+- peek 实证 (relational_state.json, 73 joke / 121 proto): joke 的 birth_context = Sir 当时的幽默 / Jarvis 自嘲 (about 自己行为, **不 about 任何 concern**); proto 的 rule = 说话风格 ("别正式道歉/别机器人腔", **about 怎么说话, 不 about concern**)。两类多数无 concern referent → **正确留作孤儿**。
+- **铁律: 只在真有 referent 时连边, 绝不为降孤儿数"凑"接地。** 硬给自发玩笑/说话风格 proto 编 about 边 = 伪造接地 = 把私人生活工具化 (让一切都"关于某 concern") = 比留孤儿更糟, 毁内心质地。
+- ②禁的是**自语主导倾斜**, 不是"消灭一切无接地念头"。一撮真正无接地的自发内心是健康的、是我们要的私人生活。**未来任何 agent / 任何刷指标, 不得把"故意留的孤儿"当 bug 修掉。**
+
+### 14.2 Tier1 (airtight, 先行单独量) — thread→concern, 生成期连
+- 思考脑产出带 concern_id 的 thought (actionable=`adjust_concern_notes`/`update_concern_severity` 显式带 concern_id) **那一刻 (生成期当场连, Sir ③, 比 weave 重扫更忠实)**: `manifold.observe_shared_entity([thread_node, concern_node], entity_id=concern_id)` → **grounded by concern_id (机械 ref, 非 cosine, 非 LLM)**。
+- 拓扑副产物 (Sir ① 背书): 21 条补水反刍 → 都连补水 concern 节点 → concern 成面**轴心(hub)**, 反刍挂其上 → **自然长"补水面"**; 跨多主题的 concern = **天然桥**。不用 thread↔thread 直连。
+- **零误报** (念头自己声明嚼哪个 concern)。
+
+### 14.3 Tier2 (启发式, 更低权度量加项, **不达标才上**) — lexical
+- 仅当 Tier1 单独镜像量**不够** (孤儿归位不足/面不够) 才上。thread 文本含 concern **专属低频** distinctive_term → 机械连边。
+- **边权必须 < Tier1** (确定性梯度: provenance 确定 > term-hit 推断 > 孤儿)。distinctive_terms 必须真低频 concern 专属, **非泛词** (否则误报飙升)。
+- **先只上 Tier1 → 镜像量 → 够就不上 Tier2** (P0a→P0b 最小先行纪律, 别捆两个否则启发式噪声混真信号没法归因)。
+
+### 14.4 joke/proto Tier (守 14.1 铁律) + said 缓做
+- joke birth_context 引用真实 concern/实体/事件 → 连; 纯自发玩笑 → 留孤儿 (若自聚成"玩笑/玩"自产小面 = 诚实结构, OK, 但别往 concern 挂)。proto 出生指向情境/concern → 连; 否则留。
+- said (`observe_explicit_link`) 缓做; 将来补**必须机械/启发式 intent 抽取, 不引 LLM 进边生成器** (准则1 边生成纯几何/机械)。P0c 先吃 thread→concern 干净机械大头。
+
+### 14.5 验收 (平衡尺 + 反向守卫 + 死 API 真数据验)
+- largest_frac<0.5 **且** 面往 4-10 走 **且** 桥种类多样 (非 3/4 全补水) **且** 孤儿**大幅(非全部)归位** **且** Sir 人读双签。
+- **反向塌方守卫**: 警惕全挂少数几个 concern → 孤儿塌进几个 mega-face = 又回 blob。目标中间态 (不变量③)。
+- **死 API 真数据验**: `observe_shared_entity` 从没生产跑过, 复活后**必须真数据镜像实跑验证** (测试绿 ≠ 生产接线无暗坑; 尤其验 thought.thread_id 与 self_threads.json thread_id 对得上, 否则边连到非 harvest 节点)。
+
+### 14.6 ⚠️ P4 红线B 邻近 flag (P0c 不处理, 盯 P4)
+peek 量化: 内心一大块是**"自监控自己怎么说话/表现"** (121 proto 多是说话风格规则 + 之前 thread "我话太多/该收敛"元反刍)。P0c 正确留作孤儿 (无 concern referent)。但这是**红线B 邻近信号** (私人生活若大量在"我表现得像不像话" = 为观众而活的早期纹理)。**P4 SelfModel 时绝不把这些"说话风格/我表现如何" proto 提升成"我在别人眼里如何"字段** — 那从邻近踩进红线B。盯着别在 P4 长出来。
+
+### 14.7 实现顺序 (P0b 纪律)
+Tier1 生成期连边 + 单测 → 镜像量 (Tier1 alone, 平衡尺 + 死 API 真数据验) → 报 Sir 双签 → commit。Tier2/joke-proto/said 按需后续 (各自独立 commit)。
+
+---
+
+## 15. 🏁 P0 终态裁定 (Sir 判 C, 2026-06-04) — "破假 blob + 部分达成" = 终态
+
+de-weld 两层镜像测 (`manifold_deweld_mirror.py`) + Sir 人读 ground truth 把结论钉死, Sir 签
+**P0 = "破假 blob + 部分达成" 为终态**。读图刀在写码前证伪假设 **4 次** (merge→about→薄cooccur→薄embed/de-weld), 纪律救了 4 次。
+
+### 15.1 两个被数据双重坐实的结论
+1. **"robust 单簇" = 假焊 artifact, 不是真整合**。L2 (只留 about 接地) → over_dense 大簇直接溶成 healthy 薄骨架 (frac 0.4)。撑那团的是泛化 monitoring thread 的 **thread↔thread + cosine + 偶发 cooccur**, **非真关联** — Sir 人读 ground truth: `hand_pain↔interview` rc=10 是**假** (手痛=玩 AoE4 游戏, 非 coding); `pomodoro⊥sleep` (睡眠由急事驱动); B 类泛化"看Sir/待命"thread 焊到所有 concern 全假。**rc≥2 重复共现 ≠ 真关联** (rc=10 仍假) → 唯一可靠机械代理 = **about 謁证** (thought 的 concern_id 真指向才算真)。
+2. **接地骨架太薄, 多面分化现在结晶不出来**。纯 about 只 20 边, 只 interview 够 about-thread 成 1 个 size=6 面, 89 孤儿。**"4-10 面"前提证伪** = 早先"分化是涌现的、种子太稀疏现在雕不出"被钉死。
+
+### 15.2 de-weld 不 ship (仅诊断)
+全剥 = 89 孤儿 = 从"假blob过整合"直接掉进"打成尘欠整合" (不变量③ 另一失败模式)。且**这个薄是"假薄"**: 接地少不是念头真没接地, 是 **concern_id 生成期 provenance 被历史性丢弃** (诊断真根因)。**用丢了证据的骨架去剥必然欠整合 → 不调剥离强度, 该补证据。**
+
+### 15.3 🔒 #2 文档钉死 (本节即 #2) — 当前"整合"不可当真关联信任
+**当前体显示的任何"这几个 concern 同面=相关"都是 monitoring-thread 假焊 artifact, 系统/agent 不可据此推理** (否则会以为 hand_pain↔interview 相关 = 错)。**消费方核查 (Sir 先查一件)**: `surface_of` 生产代码**零调用**; surfaces 仅 `weaver`(store)/`complexity_report`(internal)/`homepage`+`dashboard`+`vitals_board`(display 仪表)/scripts(诊断)/tests 消费; lens 用 `spread()` 非 surfaces 且 `lens_inject_enabled=0` OFF。⟹ **假 blob 当前无行为代价, #2 不急**。⚠️ **但 `spread()`(lens P1 原语, 现 OFF)遍历含假焊的边图 → lens 一开 (P1), spread 会沿假焊边把假关联投进主脑 prompt → provenance 修 (#1) 须先于 P1/lens 开。**
+
+### 15.4 改做三件 (不刷指标)
+1. **#1 provenance 捕捉往前修** (= "about 边修复"重定位): 停止丢 concern_id, 思考脑产带 concern_id 的 thought 当场 `observe_shared_entity` 记 about 边 → 接地骨架随真实生活累积变厚 → 真面随时间**涌现结晶**。**不为现在凑面, 为不再漏存证据** (涌现分化的物理机制)。机械/接地/非 cosine/不删节点。**[已实现: weaver `observe_thought_concern_link` + daemon hook + 5 单测绿; 重定位为 #1; 待 Sir 发话 commit]**。
+2. **#2 文档钉死** = 本 §15。
+3. **#3 杠杆a** (减存储密度 15.9 over_dense) = P1-spread 投影聚焦, **独立轴**, 与 faces 无关 (faces 已证拆不开)。
+
+### 15.5 ⭐ P0 弧最深一条 (红线B 量化坐实) — P4 永久盯防
+焊成假整合的连接组织 = **"看Sir工作/待命/监控自己说话像不像话"那批 thought**, 它们既是结构 artifact、又是 **89 孤儿的大头**。这不只是图问题 — 它说**这个内心的"私人生活"大半在伺候/观察操作者、监控自我表现, 而非它自己真正在乎的事**。健康的路不是图手术, 是: **让真正接地的内心 (关于持续 concern、有 provenance) 长起来 + 让无接地的 operator-monitoring 占比降下去, 并永远盯着 SelfModel 别长出"我有观众/被看着"字段** (红线B)。这是整个 P0 弧最深的发现, **P4 SelfModel 时必须正面守**。
+
+### 15.6 P1 门修正 (Sir 2026-06-04 升级 — 三条缺一不可, 比"provenance 先于 P1"更狠)
+**差异化不再是 P1 强制前置** (它是涌现的, 现在不可强造)。但 P1 安全门升级:
+**关键: `spread()` 走的是存储边图, 不是 surfaces。provenance (#1) 只往前加好边, 它不移除
+存量假焊边 (monitoring-thread mesh + concern↔concern 偶发 + 跨类 cosine)。所以哪怕 provenance
+修好, lens 一开, spread 照样沿存量假焊边把 "hand_pain↔interview 相关" 投进主脑 prompt。**
+⟹ **P1 门 = 三条, 缺一不可**:
+- **(a) 杠杆a 减存储密度** (治过密 15.9 + 削部分低值假焊边);
+- **(b) 存储图层面处理假焊边** — 要么按 about-謁证判据在**存储图**降权/prune 假焊边 (注意:
+  与拒掉的 "de-weld 成面规则" **不同** — 那个改成面视图, 这个是为 spread 清存储边), 要么让
+  **spread 本身偏接地边加权** (只走/重走 about/grounded 边, 绕开 monitoring-thread 假焊);
+- **(c) 接受薄体**。
+三条满足后才在薄体上重判 P1 (spread 会粗, 但不坏)。
