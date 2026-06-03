@@ -117,6 +117,18 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
     "surface_core_min_weight": 0.60,      # 阶段1 核: 边权 >= 此才算"核内紧边" (高阈, 核分离)
     "surface_overlap_min_links": 2,       # 阶段2: 节点到某核的(低阈)强边数 >= 此 → 也归入 (桥)
     "over_frag_min_surfaces": 8,          # 面数 >= 此 且 bridge=0 → over_fragmented (碎成孤岛)
+    # 🆕 [body-diff-P0b-① / Sir 2026-06-03] 接地加权成面 (weighted 非 only, 不变量② 彻底形态).
+    # 镜像诊断: 全部边成面 largest_frac 0.702, 1092/1439 边是自产↔自产 embed (思考相似糊成团);
+    # 只认 grounded 边 → 0.355 但 49 thread 变孤儿 (接近删思考, 违 R2.2)。正解 = weighted:
+    # 成面阶段接地边 (cooccur/said/shared = 真实纽带) 全权, 两端都自产 (thread/joke/proto) 的
+    # **非接地边** (embed/inferred-only) ×乘子 (<1) → 面围真实共现长, 不围思考相似长。
+    # **与 weave 时 self_produced_edge_discount 正交**: 那个改"存储边权"(也影响 spread/势能);
+    # 这个只在 compute_surfaces 改"成面阈值判定" (不碰 spread/势能, 自产边仍在图、仍能成面归属)。
+    # ⚠️ 当前真数据 NO-OP (镜像 2026-06-03, Sir 双签): P0a weave 折扣 (self_produced_edge_discount)
+    # 已把自产↔自产 embed 存储权压到 ~0.30 < 成面阈 (0.45/0.60), 此乘子"无折可打"。**保留为防御
+    # 冗余** (日后放松 weave 折扣时, 它是成面层最后防线; 有 5 单测守), 不删 (删=拆安全网换一时精简)。
+    "surface_self_produced_embed_weight": 0.5,   # 成面阶段两端自产非接地边权乘子 (0<x<=1)
+    "surface_grounded_provenance": ["cooccur", "said", "shared"],  # 这些 provenance = 接地边 (全权)
     # 透镜 (体-P6) — 投影主脑. 默认 0 (Sir 真机验投影质量后再开, 动主脑热路径)
     "lens_inject_enabled": 0,
     # 口识体-E (内敛): 透镜活时替 SOUL Layer2/3 平行表示 (默认 0, 渐进退旧块).
@@ -620,6 +632,12 @@ class RelationalManifold:
         method = str(cfg.get("surface_method", "core_boundary"))
         overlap_min_links = int(cfg.get("surface_overlap_min_links", 2))
         core_min_weight = float(cfg.get("surface_core_min_weight", 0.60))
+        # 🆕 [body-diff-P0b-① / Sir 2026-06-03] 接地加权成面 (weighted 非 only): 两端自产的
+        # 非接地边 (embed/inferred-only) 成面权 ×乘子 → 面围真实共现长, 不围思考相似长。
+        sp_kinds = set(cfg.get("self_produced_kinds", ["thread", "joke", "proto"]))
+        sp_surface_w = float(cfg.get("surface_self_produced_embed_weight", 0.5))
+        grounded_kinds = set(cfg.get("surface_grounded_provenance",
+                                     ["cooccur", "said", "shared"]))
         # core_boundary 用高阈聚核 (核分离); legacy 用 min_weight (原行为)
         core_w = core_min_weight if method == "core_boundary" else min_weight
         with self._lock:
@@ -637,6 +655,16 @@ class RelationalManifold:
                 if ra == rb:
                     continue  # alias 折叠后自环, 跳
                 w = self.effective_weight(e, now)
+                # 🆕 [body-diff-P0b-① / Sir 2026-06-03] 接地加权 (weighted 非 only): 两端都
+                # 自产 (thread/joke/proto) 且**非接地边** (provenance 无 cooccur/said/shared)
+                # → 成面权 ×乘子。接地边全权 (真实纽带), 自产↔外部边全权 (思考↔现实保留)。
+                # 只改成面阈值判定, 不删边/不碰 spread (自产节点仍能经接地纽带成面归属)。
+                if (sp_surface_w < 1.0
+                        and split_node_id(ra)[0] in sp_kinds
+                        and split_node_id(rb)[0] in sp_kinds
+                        and not any(p.get("kind") in grounded_kinds
+                                    for p in e.get("provenance", ()))):
+                    w *= sp_surface_w
                 if w >= min_weight:
                     strong[ra].add(rb)
                     strong[rb].add(ra)
