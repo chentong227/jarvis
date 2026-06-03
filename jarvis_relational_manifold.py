@@ -348,6 +348,7 @@ class RelationalManifold:
         confidence: Optional[float] = None,
         inferred: bool = False,
         accumulate: bool = True,
+        set_to_target: bool = False,
         now: Optional[float] = None,
     ) -> Optional[str]:
         """造/强化一条边。**接地红线**: ref 必填 (trace 来源), 否则拒绝 (返回 None)。
@@ -358,6 +359,10 @@ class RelationalManifold:
         - accumulate=True (默认, 事件边 cooccur/said/shared): Hebbian 累加 (越多次越强)。
           accumulate=False (属性边 embed, 体-P2): set-to-floor (相似度是静态属性,
           重复 weave 不膨胀; weight = max(已衰减值, 本次增量))。
+        - 🆕 [body-diff-P0a] set_to_target=True: 几何属性边直接 set weight=本次增量 (允许
+          **下调**), 不被 max 保住旧高值。用于接地不对称折扣 — 折扣改变的是边权"应该是
+          多少"(静态属性), 旧高边权该被折扣后真值下拉, 否则折扣被 set-to-floor 的 max 吃掉
+          (真机镜像实测: edges 1439 不变, largest_frac 卡 0.71)。idempotent (每 weave 重算)。
         返回 edge_key, 或 None (被拒)。
         """
         if a == b or not a or not b:
@@ -391,6 +396,10 @@ class RelationalManifold:
                 # 事件边: Hebbian 累加 (越多次越强)
                 e["weight"] = min(cap, decayed + inc)
                 e["reinforce_count"] = int(e.get("reinforce_count", 0)) + 1
+            elif set_to_target:
+                # 🆕 [body-diff-P0a] 几何属性边 set-to-target: weight = 本次增量 (允许下调).
+                # 折扣改变"应该多重", 旧高值该被折扣后真值下拉 (不被 max 保住)。
+                e["weight"] = min(cap, inc)
             else:
                 # 属性边 (embed): set-to-floor, 几何相似度提供权重下限, 不累加膨胀
                 e["weight"] = min(cap, max(decayed, inc))
@@ -489,7 +498,11 @@ class RelationalManifold:
             a, b, PROV_EMBED, "cosine",
             detail=f"cos={cosine:.3f}", confidence=float(cosine),
             weight_scale=float(weight_scale),
-            accumulate=False, now=now,
+            accumulate=False,
+            # 🆕 [body-diff-P0a] 折扣边 (scale<1) 用 set_to_target 允许下调 (折扣真生效);
+            # 未折扣边保持 set-to-floor (idempotent, 不膨胀)。
+            set_to_target=(float(weight_scale) < 1.0),
+            now=now,
         )
 
     # ---- decay / prune (织网者 Weaver 周期调, 体-P5) ----

@@ -222,11 +222,15 @@ class TestWeaveOnceAndMaintain(unittest.TestCase):
             w.manifold.add_edge(a, b, PROV_COOCCUR, "t1", now=T0)
             w.manifold.add_edge(a, b, PROV_COOCCUR, "t2", now=T0)
             ev = w.manifold.get_edge(a, b)["weight"]
-            # 几何 floor (0.60*0.99≈0.594) < 事件 0.60 → max 保留事件值
+            # 🆕 [body-diff-P0a 对齐 / 2026-06-03] th1/th2 两端都自产 (thread) → weave_geometric
+            # 接地不对称折扣 (weight_scale=0.5) + set_to_target 允许下调 → 几何边权 set 到
+            # 0.60×0.5×cos ≈ 0.30 < 事件 0.60。P0a 接地不对称真生效 (自产↔自产 embed 降权)。
+            # 注: set_to_target 下拉的是 combined 边权 (含已累加 cooccur), 自产对几何折扣会盖过
+            # 其 cooccur 事件权 — P0a 轨行为, 与 grounded 边强度处理相关 (P0c 关注), 非本测范围。
             w.weave_geometric(now=T0)
             after = w.manifold.get_edge(a, b)["weight"]
-            self.assertGreaterEqual(after, ev - 1e-6)
-            # 两种 provenance 都在
+            self.assertLess(after, ev, "自产↔自产: 几何折扣 set_to_target 下拉边权 (P0a 接地不对称)")
+            # 两种 provenance 都在 (折扣只改权, 不删 provenance)
             kinds = {p["kind"] for p in w.manifold.get_edge(a, b)["provenance"]}
             self.assertIn(PROV_COOCCUR, kinds)
             self.assertIn(PROV_EMBED, kinds)
