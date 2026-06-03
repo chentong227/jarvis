@@ -193,3 +193,27 @@ SLPA 仅在"确认是多主题且团稠密破不开"时才上 — 当前诊断**
 **commit 次序 (Sir Q2=C, 现在不提交)**: 先定 P0a 去留 (它是 P0b 地基; 没 P0a 折扣 ① 反而变活 lever, 提交态行为会和测的不同) → 确定基线上重确认数字 → runall 全绿 (现 T7 红) → 再把 P0b 作两独立 commit (③ 一个 / ①+core_w 一个)。**P0a/T7 走 P0 轨自己 -hotfix** (改过期 beta540 测试对齐 fa9b365 真修复, 非回退), 不替它扛、不捆进 P0b。
 
 **下一步候选**: (1) Sir 定 P0a 去留以锚基线; (2) 杠杆a 减存储密度 (P1 前置, 也可能让内心借更稀疏图重聚面); (3) -hotfix 收 T7 + 3 beta540 旧红。
+
+---
+
+## 13. Sir 终判 + P0b 闭环 + P0c 立项 (2026-06-03 19:xx)
+
+**Sir 拍板 (3 条)**:
+1. **P0a 落地** (已做): commit `851ecc6` set_to_target + T7 对齐。理由: 留 P0a → ① 维持 no-op 安全网, 镜像 0.299 = 提交态真实行为 (测量一致、低风险), ② 存储层实现 + 助 P1 spread。
+2. **core_w 维持 0.60** (不锁 0.80): 0.80 双签材料看清 = 用更多孤儿换单一类型桥 (3/4 补水, 面2 的 4 成员就是 4 桥) = 刷指标, **不签**。0.80 留作**诊断透镜** (`manifold_p0b_mirror.py`), production 默认 0.60。core_w 等 P0c 后重判 (真桥应 P0c 长出 grounded/about 边后自然形成, 现不必为 bridge>0 拧 core_w)。
+3. **签字 = 只签"脱 blob / 部分达成", 不进 P1。绿灯 P0c。**
+
+**P0b commit 链 (4)**: `851ecc6`(P0a+T7) → `b89d286`(③ alias-fold, 0.702→0.299 真 lever) → `c79026d`(① 加权安全网+镜像+文档) → `7d68b04`(③/① 入 runall 门)。
+
+**零回归证明 (Sir ①, P0b 闭环地基, 准则8) — ✅ 已证明 (非判定)**: airtight 隔离 (只把 manifold.py + _runall.ps1 回退 00cfbf5, memory_pool/环境全不变) 跑同一条全量 runall:
+- 基线 pre-P0a (test_20260603_191111, 00cfbf5): **83/123 OK, 40 FAIL**
+- post-P0b (test_20260603_184816, c79026d): **83/123 OK, 40 FAIL**
+- **两边失败集逐套完全相同 (40==40)**: `beta2_soul_relational` (唯一名带 relational) 两边都 FAIL → 预存非我带入; `body_diff_p0`/`PG`/`rumination`/`three_centers` 两边都 OK。
+⟹ **P0a+P0b 新增 0 红、移除 0 红**。那 40 红是 00cfbf5 之前就有的**项目级欠债** (值得日后单独清, 非 P0b 事、不阻塞)。**P0b 真正闭环。** 复跑还原已做 (`git checkout HEAD -- manifold.py _runall.ps1`, 工作区 == HEAD)。
+
+**P0c 立项 (Sir 绿灯, 真正解锁 P1 的前置)**:
+- **目标**: 把 79 个自产孤儿 (joke 24 / proto 34 / thread 21, 没进任何面) 按"在说什么"归位、分化做厚 + 治 over_dense (density 15.9)。
+- **两刀并做**:
+  1. **长接地/about 边**: 查 `said=0 / shared=0` 的成因 (为何没织出 Sir 显式连接 / 共享实体边); 反刍 thread → 它所关于的 concern 连 **about 边** (grounded by concern_id) → 自产节点经 about 边归到对应 concern 面 (内心面自然长出, 非靠 embed 相似)。
+  2. **杠杆a 减存储密度**: `embed_threshold`↑ / `embed_top_k_per_node`↓ 真减存储边 (15.9 over_dense), 让 spread 投影能聚焦 (P1 前置)。
+- **完工标准**: 自产孤儿率显著降 (内心有面归属) + density 脱 over_dense + 桥多样化 (非单一补水) + 镜像复验 + Sir 双签。完成后才回判 core_w + 启 P1。
