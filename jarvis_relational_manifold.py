@@ -627,13 +627,22 @@ class RelationalManifold:
             strong: Dict[str, set] = collections.defaultdict(set)
             core_adj: Dict[str, set] = collections.defaultdict(set)
             for e in self._edges.values():
+                # 🆕 [body-diff-P0b-③ / Sir 2026-06-03] alias-fold: dup 端点折叠成代表节点.
+                # 修真 bug — 旧码用原始 e["a"]/e["b"] 不 resolve, 故 add_alias 合并对成面零效果
+                # (dup 节点+边照常成面, largest_frac 不动 = "光降合并阈零效果"根因)。折叠后 dup 的
+                # 边归入 rep, 既有合并 (merge_threshold) 真生效。**merge_threshold 不动, 不复活
+                # "降自产合并阈"** (alias-fold ≠ 降阈合并)。无 alias 时为恒等 (回归安全)。
+                ra = self.resolve(e["a"])
+                rb = self.resolve(e["b"])
+                if ra == rb:
+                    continue  # alias 折叠后自环, 跳
                 w = self.effective_weight(e, now)
                 if w >= min_weight:
-                    strong[e["a"]].add(e["b"])
-                    strong[e["b"]].add(e["a"])
+                    strong[ra].add(rb)
+                    strong[rb].add(ra)
                 if w >= core_w:
-                    core_adj[e["a"]].add(e["b"])
-                    core_adj[e["b"]].add(e["a"])
+                    core_adj[ra].add(rb)
+                    core_adj[rb].add(ra)
 
             # 阶段 1: 高阈连通分量得"核" (紧簇分离, 单桥边不并核)
             seen: set = set()
@@ -763,7 +772,11 @@ class RelationalManifold:
                     if k and k not in seen:
                         kind_counts[k] += 1
                         seen.add(k)
-            node_count = len([n for n, ks in self._adj.items() if ks])
+            # 🆕 [body-diff-P0b-③ / Sir 2026-06-03] node_count 按 resolve 折叠 (dedup): merge 后
+            # dup 并入 rep → distinct 节点数真降 → complexity_report largest_frac 分母随之降
+            # (修发现 A: 旧码不 resolve → merge 对 largest_frac 零效果)。edge_count/权/kinds 保持
+            # 物理计数 (introspection/持久化语义不变)。无 alias 时折叠为恒等 (回归安全)。
+            node_count = len({self.resolve(n) for n, ks in self._adj.items() if ks})
         return {
             "edge_count": len(self._edges),
             "node_count": node_count,
