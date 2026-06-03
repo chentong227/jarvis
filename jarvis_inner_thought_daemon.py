@@ -7058,6 +7058,18 @@ class InnerThoughtDaemon:
         if not link_ok:
             return False, f'evidence_link_wrong_concern:{cid}:{link_msg}'
 
+        # 🆕 [body-diff-P0c-Tier1 / Sir 2026-06-03] 生成期连 thread→concern "about" 边.
+        # cid 已验证 (concern 真存在 + evidence_link 双层 gate 过 = 念头确实嚼这个 concern)
+        # → 把这根生成期接地线当场记成 manifold grounded 边 (concern_id 机械 ref, 非 cosine)。
+        # 修 P0c 诊断真根因: 老码 concern_id 只 append 下面的 notes, 从不写成边 → thread 孤儿。
+        # 背景非致命, 不阻 daemon (准则1)。详 docs/AGENT_KICKOFF_BODY_DIFFERENTIATION.md §14.2。
+        try:
+            from jarvis_relational_weaver import observe_thought_concern_link
+            observe_thought_concern_link(
+                getattr(thought, 'thread_id', '') or thought.id, cid)
+        except Exception:
+            pass
+
         # build new notes (append 不覆盖 + tag 来源 + cap)
         note_capped = note[:self._NOTES_APPEND_MAX]
         existing = (c.notes_for_self or '').strip()

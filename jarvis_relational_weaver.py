@@ -154,6 +154,45 @@ def observe_turn_cooccurrence(
         return 0
 
 
+def observe_thought_concern_link(
+    thread_id: str, concern_id: str, *, manifold=None, save: bool = True,
+) -> Optional[str]:
+    """[body-diff-P0c-Tier1 / Sir 2026-06-03] thread→concern "about" 边 (生成期连).
+
+    思考脑产出带 concern_id 的 thought (C 类 adjust_concern_notes) **那一刻**调: 把"这念头
+    在嚼哪个 concern"当场记成 grounded 边 — observe_shared_entity([thread_node, concern_node],
+    entity_id=concern_id)。
+
+    **判据 = concern_id 机械 ref, 绝非 cosine, 绝非 LLM** (准则1 边生成纯几何/机械; 不变量②
+    接地形态)。修 P0c 诊断真根因: 老码 concern_id 只 append concern.notes_for_self, 从不写成
+    manifold 边 → thread 节点进体只剩 summary → 靠 embed/偶发 cooccur → 49 thread 孤儿。
+
+    拓扑效果 (Sir 背书): 反刍 thread 都连到它嚼的 concern → concern 成面**轴心(hub)**,
+    反刍挂其上自然长面; 跨多主题 concern = 天然桥。不用 thread↔thread 直连。
+
+    thread_node id = make_node_id(KIND_THREAD, thread_id), 与 weaver harvest self_threads.json
+    的节点同 id (consolidate 用同一 thread_id, 已核对) → 边接真节点非幽灵。
+    返 edge_key 或 None。失败非致命 (背景, 不阻 daemon)。
+    """
+    try:
+        cid = (concern_id or "").strip()
+        tid = (thread_id or "").strip()
+        if not cid or not tid:
+            return None
+        m = manifold if manifold is not None else get_manifold()
+        tnode = make_node_id(KIND_THREAD, tid)
+        cnode = make_node_id(KIND_CONCERN, cid)
+        if tnode == cnode:
+            return None
+        n = m.observe_shared_entity([tnode, cnode], cid)
+        if save and n:
+            m.save()
+        return f"{tnode}\u241f{cnode}" if n else None
+    except Exception as exc:
+        _log(f"[Weaver] observe_thought_concern_link failed ({exc!r})")
+        return None
+
+
 def default_embed_fn(texts: List[str]) -> List[Optional[List[float]]]:
     """批量 embed (复用 Hippocampus._embed_with_rotation)。
 

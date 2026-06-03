@@ -169,7 +169,8 @@ $tests = @(
     "_test_body_diff_p0_sir_20260602",
     "_test_grounded_predicate_pg_sir_20260602",
     "_test_body_diff_p0b_aliasfold_sir_20260603",
-    "_test_body_diff_p0b_weighted_sir_20260603"
+    "_test_body_diff_p0b_weighted_sir_20260603",
+    "_test_body_diff_p0c_tier1_sir_20260603"
 )
 
 foreach ($t in $tests) {
