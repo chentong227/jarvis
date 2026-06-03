@@ -167,7 +167,9 @@ $tests = @(
     "_test_p0_plus_20_beta518_freeze_hardlock_persist",
     "_test_concern_rumination_root_sir_20260602",
     "_test_body_diff_p0_sir_20260602",
-    "_test_grounded_predicate_pg_sir_20260602"
+    "_test_grounded_predicate_pg_sir_20260602",
+    "_test_body_diff_p0b_aliasfold_sir_20260603",
+    "_test_body_diff_p0b_weighted_sir_20260603"
 )
 
 foreach ($t in $tests) {
