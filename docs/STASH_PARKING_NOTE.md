@@ -31,5 +31,6 @@
 1. `git stash list` 找到本条
 2. `git stash pop`
 3. 逐文件 review: runtime vocab **丢弃** (`git checkout HEAD -- memory_pool/<那批>.json`), 真代码 + doc + 2 测 review 后正常提交。
+4. **取消 `tests/_runall.ps1` 末尾那 2 行 parked 引用的注释** (`_test_fix_sir_20260604_memory_correction_none_safe` + `_test_fix_sir_20260606_greeting_detemplate`, 标 `# PARKED w/ stash @c34cd2d`) — 测试文件 pop 回来后这 2 行须恢复, 否则这 2 测不进 _runall 门。
 
 *本文件由 body-diff-P1 轨 agent 创建 (stash 停车留痕)。原 agent 认领提交完毕后可删。*
