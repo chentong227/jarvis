@@ -1842,6 +1842,14 @@ User: {user_input}
                 validate_lens_coupling()
             except Exception:
                 pass
+            # 🆕 [body-diff-P2 耦合护栏 层1: 启动期 loud 早警 / Sir 2026-06-06]
+            # 对称 lens: 校验 energy_grounded_only 配置自洽 (flag=1 时白名单须非空且全接地
+            # prov)。防有人把白名单清空/混入 embed = 势能数假焊 = 洗白态借配置复活。非致命。
+            try:
+                from jarvis_relational_weaver import validate_energy_coupling
+                validate_energy_coupling()
+            except Exception:
+                pass
         except Exception as _w_e:
             try:
                 from jarvis_utils import bg_log as _bg

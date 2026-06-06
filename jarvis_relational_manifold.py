@@ -52,6 +52,16 @@ PROV_SHARED = "shared"      # 共享实体 / concern
 PROV_EMBED = "embed"        # embedding cosine (体-P2)
 PROV_INFERRED = "inferred"  # LLM 推断 (体-P4, propose-not-trust)
 
+# 🆕 [body-diff-P2 / Sir 2026-06-06] 统一接地谓词 — spread (通道1 lens) + energy (通道2
+# compute_energy) 共用 (盲点 #2/#3: 一个关口一次审计, 体对消费方唯一"何为真"接口)。
+# 红线 A: 纯集合交, 无 argmax/utility/打分排名 — 只按 provenance tag 二元放行/拒绝。
+# 边含**任一**接地 prov 即接地 (与 neighbors grounded_only 内联判定逐字等价)。
+# 详 docs/JARVIS_ENERGY_GROUNDING_DESIGN_P2.md §3。
+def is_grounded(edge_provs: set, grounded_provs: set) -> bool:
+    """边是否接地 = 其 provenance kinds 与接地白名单 (默 {shared,said}) 有交集。"""
+    return bool(edge_provs & grounded_provs)
+
+
 _NODE_SEP = ":"
 _KEY_SEP = "\u241f"  # SYMBOL FOR UNIT SEPARATOR — 不会出现在任何 node id 里
 
@@ -172,6 +182,14 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "delta_threshold": 0.30,       # 节点能量上升超此 → 派 body_delta (唤醒识)
         "tension_severity_min": 0.40,  # concern severity >= 此且无 stance 覆盖 = 张力
         "drift_min": 0.05,             # 边权变化超此才算 drift
+        # 🆕 [body-diff-P2 / Sir 2026-06-06] 势能层接地化 (默 0 = 当前行为不变, 全量数边).
+        # 1 时 compute_energy 的 novelty/drift **只数接地边** (走统一 is_grounded 谓词, 白名单
+        # = spread_grounded_provenance {shared,said}), 排 embed cosine mesh + cooccur 偶发假焊。
+        # 治: compute_energy 是唯一未设防的 body->brain 通道 (实测洗白 8:0 + 4 对双高频假焊驱动
+        # 自发思考往假区打转)。tension 不数边、不受影响。设计 §4 取舍: cooccur/embed novelty→0
+        # 是有意取舍 (接受丢失弱共现先验, 真关系会以接地边重现)。详 JARVIS_ENERGY_GROUNDING_
+        # DESIGN_P2.md。⚠️ flip 检查单 (设计 §5 收紧2): 真机翻 1 后, 翻回 0 = 洗白态复发。
+        "energy_grounded_only": 0,
         "max_deltas_per_weave": 12,    # 单次 weave 最多派几个 delta (防洪泛)
         # 口识体-C: nudge/care 警报 → 体张力 (感知环穿体). wellness/proactive 警报
         # 退化为体能量, 不直推 __NUDGE__ → 识经 body_delta attend (而非 nudge 抢话筒).
@@ -586,9 +604,10 @@ class RelationalManifold:
                 if not e:
                     continue
                 if grounded_provs is not None:
-                    # 按 provenance tag 精确放行 (排 cooccur/embed); 边须含任一接地 prov
+                    # 🆕 [body-diff-P2 / Sir 2026-06-06] 改调统一谓词 is_grounded (保行为
+                    # 重构: 与原内联 `e_provs & grounded_provs` 逐字等价, spread+energy 共用)
                     e_provs = {p.get("kind") for p in e.get("provenance", [])}
-                    if not (e_provs & grounded_provs):
+                    if not is_grounded(e_provs, grounded_provs):
                         continue
                 w = self.effective_weight(e, now)
                 if w < min_weight:
@@ -906,10 +925,17 @@ class RelationalManifold:
             return [dict(e, _key=k) for k, e in self._edges.items()]
 
     def edge_snapshot(self, now: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
-        """{edge_key: {a, b, w(effective)}} 快照 (体势能 diff 用, 不暴露内部)。"""
+        """{edge_key: {a, b, w(effective), provs}} 快照 (体势能 diff 用, 不暴露内部)。
+
+        🆕 [body-diff-P2 / Sir 2026-06-06] 纯追加 "provs" 字段 (边的 provenance kind 集合),
+        现有 a/b/w 三键**语义一字不动** (炸半径报告: 仅 2 caller weave_once pre/post, 都只
+        读 a/b/w; provs 是 compute_energy 接地化 (energy_grounded_only) 的唯一新消费者)。
+        详 docs/JARVIS_ENERGY_GROUNDING_DESIGN_P2.md §1.2 (选纯追加方案 a)。
+        """
         now = time.time() if now is None else now
         with self._lock:
-            return {k: {"a": e["a"], "b": e["b"], "w": self.effective_weight(e, now)}
+            return {k: {"a": e["a"], "b": e["b"], "w": self.effective_weight(e, now),
+                        "provs": {p.get("kind") for p in e.get("provenance", [])}}
                     for k, e in self._edges.items()}
 
 

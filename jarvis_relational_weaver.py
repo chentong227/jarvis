@@ -34,7 +34,7 @@ import numpy as np
 from jarvis_relational_manifold import (
     RelationalManifold, get_manifold, get_manifold_config,
     make_node_id, split_node_id, KIND_THREAD, KIND_CONCERN, KIND_JOKE,
-    KIND_PROTOCOL, KIND_STANCE, PROV_SHARED,
+    KIND_PROTOCOL, KIND_STANCE, PROV_SHARED, PROV_SAID, is_grounded,
 )
 
 EmbedFn = Callable[[List[str]], List[Optional[List[float]]]]
@@ -193,6 +193,57 @@ def observe_thought_concern_link(
         return None
 
 
+# 🆕 [body-diff-P2 耦合护栏 / Sir 2026-06-06] 对称 lens validate_lens_coupling。
+# energy 与 lens 不对称 (设计 §5 收紧2): lens 安全态是 OFF, energy 安全态是 ON
+# (compute_energy 永远在跑, 无总开关)。最危险复发 = energy_grounded_only 翻回 0 =
+# 势能又全量吃假焊 = 洗白态复活。但提交时默认 0, 不能对默认 fail-loud (会误伤老行为)。
+# 故本护栏只校验"配置自洽性": flag=1 时白名单必须非空且全是接地 prov — 防有人把白名单
+# 清空/混入 embed (= 势能只数假焊 = 洗白态借配置复活)。flip 回 0 的复发风险走真机
+# flip 检查单 (设计 §5), 不在此 fail-loud。
+_ENERGY_GROUNDED_PROVS = frozenset({PROV_SHARED, PROV_SAID})
+
+
+def validate_energy_coupling(*, raise_on_violation: bool = False) -> Optional[str]:
+    """校验 energy_grounded_only 配置自洽 (对称 lens 耦合护栏)。
+
+    flag=0 (默认/老行为): OK, 返 None (提交默认不报警, §5)。
+    flag=1: spread_grounded_provenance 白名单须 (a) 非空 (b) ⊆ 合法接地 prov {shared,said}。
+      - 空 → 势能无边可数 (退化) → violation。
+      - 含非接地 prov (embed/cooccur/inferred) → 势能数假焊 = 洗白态借配置复活 → violation。
+
+    返回: None = OK; 否则 violation 描述 str (已 print + bg_log WARNING)。
+    raise_on_violation=True → 违规 raise RuntimeError (调用方要"拒绝起势能接地化"可用)。
+    """
+    try:
+        cfg = get_manifold_config()
+        flag = bool(int((cfg.get("energy", {}) or {}).get("energy_grounded_only", 0)))
+    except Exception:
+        return None
+    if not flag:
+        return None
+    wl = set(cfg.get("spread_grounded_provenance", [PROV_SHARED, PROV_SAID]))
+    bad = wl - _ENERGY_GROUNDED_PROVS
+    msg = None
+    if not wl:
+        msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但 "
+               "spread_grounded_provenance 白名单为空 — 势能无边可数 (退化)。"
+               "应含 {shared,said}。")
+    elif bad:
+        msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但白名单含"
+               f"非接地 provenance {sorted(bad)} — 势能将数假焊 = 洗白态借配置复活 "
+               "(JARVIS_ENERGY_GROUNDING_DESIGN_P2 §5)。白名单应 ⊆ {shared,said}。")
+    if msg:
+        try:
+            print(msg)
+        except Exception:
+            pass
+        _log(msg)
+        if raise_on_violation:
+            raise RuntimeError(msg)
+        return msg
+    return None
+
+
 def default_embed_fn(texts: List[str]) -> List[Optional[List[float]]]:
     """批量 embed (复用 Hippocampus._embed_with_rotation)。
 
@@ -283,6 +334,7 @@ class RelationalWeaver:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._energy_coupling_warn_last: Optional[str] = None  # P2 护栏限流状态
         self._load_vectors()
 
     def _wcfg(self) -> Dict[str, Any]:
@@ -290,6 +342,13 @@ class RelationalWeaver:
 
     def _ecfg(self) -> Dict[str, Any]:
         return get_manifold_config().get("energy", {}) or {}
+
+    def _energy_coupling_warn_once(self, msg: str) -> None:
+        """🆕 [body-diff-P2 护栏 层2 限流 / Sir 2026-06-06] 误配 warn 只在状态变化时 log
+        一次 (weave 600s 一跑, 不刷屏; validate_energy_coupling 已 print+bg_log, 此处限流)。"""
+        if msg != self._energy_coupling_warn_last:
+            self._energy_coupling_warn_last = msg
+            _log(f"[Weaver] energy coupling 误配持续: {msg[:80]}")
 
     # ---- json read helpers (robust) ----
     @staticmethod
@@ -759,18 +818,31 @@ class RelationalWeaver:
         now = time.time() if now is None else now
         cfg = self._ecfg()
         drift_min = float(cfg.get("drift_min", 0.05))
+        # 🆕 [body-diff-P2 / Sir 2026-06-06] 接地化门 (默 0 = 老行为全量数边). 1 时 novelty/
+        # drift 只数接地边 (统一 is_grounded 谓词, 白名单 = top-level spread_grounded_provenance
+        # {shared,said}, spread+energy 共用)。tension 不数边、不受此门影响。设计 §4 取舍:
+        # cooccur/embed 边 novelty/drift 贡献→0 (接受丢失弱共现先验, 真关系以接地边重现)。
+        _grounded_only = bool(int(cfg.get("energy_grounded_only", 0)))
+        _grounded_provs = set(get_manifold_config().get(
+            "spread_grounded_provenance", [PROV_SHARED, PROV_SAID])) if _grounded_only else None
         energy: Dict[str, Dict[str, float]] = collections.defaultdict(
             lambda: {"novelty": 0.0, "drift": 0.0, "tension": 0.0, "total": 0.0})
         # 新颖: 本轮新边的权重计给两端
         for key in new_edge_keys:
             e = post_snapshot.get(key)
             if e:
+                if _grounded_provs is not None and not is_grounded(
+                        e.get("provs") or set(), _grounded_provs):
+                    continue  # 接地化: 纯假焊新边 (embed/cooccur) 不供 novelty 势能
                 energy[e["a"]]["novelty"] += e["w"]
                 energy[e["b"]]["novelty"] += e["w"]
         # 漂移: 非新边里权重变动超 drift_min 的
         for key, e in post_snapshot.items():
             if key in new_edge_keys or key not in pre_snapshot:
                 continue
+            if _grounded_provs is not None and not is_grounded(
+                    e.get("provs") or set(), _grounded_provs):
+                continue  # 接地化: 纯假焊边权变动不供 drift 势能
             d = abs(e["w"] - pre_snapshot[key]["w"])
             if d >= drift_min:
                 energy[e["a"]]["drift"] += d
@@ -886,6 +958,15 @@ class RelationalWeaver:
             # 体势能 E (口识体-B3): 算势能 + diff → 派 body_delta 唤醒识
             post_snapshot = self.manifold.edge_snapshot(now=now)
             new_keys = set(post_snapshot.keys()) - set(pre_snapshot.keys())
+            # 🆕 [body-diff-P2 耦合护栏 层2: 热路径 / Sir 2026-06-06] 误配 (flag=1 但白名单
+            # 非法) 不静默 — 限流 bg_log 一次 (compute_energy 仍按 flag 跑, 配置错由层1 启动
+            # 警 + 此处提醒; 不阻 weave 主流, 准则1 高效)。
+            try:
+                _ec_violation = validate_energy_coupling()
+                if _ec_violation:
+                    self._energy_coupling_warn_once(_ec_violation)
+            except Exception:
+                pass
             curr_energy = self.compute_energy(new_keys, pre_snapshot, post_snapshot, now=now)
             deltas = self._diff_and_emit_deltas(curr_energy, now)
             self._save_energy(curr_energy, deltas)
