@@ -136,6 +136,16 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
     # 逐块退: 先 lens_inject_enabled=1 加投影看质量, 满意再 replaces_layer2/3=1 退旧。
     "lens_replaces_layer2": 0,
     "lens_replaces_layer3": 0,
+    # 🆕 [body-diff-P1 / Sir 2026-06-06] 接地偏权 spread: grounded_only=True 时 spread/
+    # neighbors 只沿这些 provenance 的 about 接地边传播 (绕开 embed cosine mesh + cooccur
+    # 偶发假焊)。**按 provenance tag 精确放行**: shared (concern_id about 边) + said (Sir
+    # 显式连接) = 真接地; cooccur 是 grounded-type 但虚假 (§15.7 hand_pain↔interview rc=10
+    # = 玩 AoE4 非 coding), **不列入**; embed (cosine) 是思考相似非真关联, 不列入。
+    # 治 §15.6 P1 门(b): lens 一开 spread 沿假焊投假关联进主脑 (95.6% 假焊实测)。
+    "spread_grounded_provenance": ["shared", "said"],
+    # 🆕 [body-diff-P1 / Sir 2026-06-06] lens 投影是否用接地偏权 spread (默 0=naive 全边,
+    # 老行为)。重开 lens 时与 lens_inject_enabled 一并设 1 = 接地偏权投影 (零假焊)。
+    "lens_spread_grounded_only": 0,
     # 织网者 Weaver (体-P5) — 后台慢工节奏
     "weaver": {
         "weave_interval_s": 600,       # daemon 两次全量 weave 间隔 (慢工, 不抢 TTFT)
@@ -550,17 +560,36 @@ class RelationalManifold:
     def neighbors(
         self, node_id: str, *, min_weight: float = 0.0,
         limit: Optional[int] = None, now: Optional[float] = None,
+        grounded_only: bool = False,
     ) -> List[Tuple[str, float]]:
-        """返回与 node_id 相连的节点 [(node, effective_weight)], 按权重降序。"""
+        """返回与 node_id 相连的节点 [(node, effective_weight)], 按权重降序。
+
+        🆕 [body-diff-P1 / Sir 2026-06-06] grounded_only (默 False, 不破签名):
+        True 时只放行 provenance ∈ spread_grounded_provenance (默 ["shared","said"] =
+        about 接地边) 的边, 其余 (embed cosine mesh / cooccur 偶发假焊) **跳过**。
+        按 provenance tag 精确放行 — cooccur 是 grounded-type 但虚假 (§15.7
+        hand_pain↔interview rc=10 = 玩 AoE4 非 coding), 不列入。这是**唯一**改动点
+        (只在 neighbors 层过滤边类), effective_weight/排序逻辑逐字不动。
+        """
         now = time.time() if now is None else now
+        cfg = get_manifold_config()
         if limit is None:
-            limit = int(get_manifold_config().get("neighbor_default_limit", 24))
+            limit = int(cfg.get("neighbor_default_limit", 24))
+        grounded_provs = None
+        if grounded_only:
+            grounded_provs = set(cfg.get("spread_grounded_provenance",
+                                         [PROV_SHARED, PROV_SAID]))
         out: List[Tuple[str, float]] = []
         with self._lock:
             for key in self._adj.get(node_id, ()):  # type: ignore[arg-type]
                 e = self._edges.get(key)
                 if not e:
                     continue
+                if grounded_provs is not None:
+                    # 按 provenance tag 精确放行 (排 cooccur/embed); 边须含任一接地 prov
+                    e_provs = {p.get("kind") for p in e.get("provenance", [])}
+                    if not (e_provs & grounded_provs):
+                        continue
                 w = self.effective_weight(e, now)
                 if w < min_weight:
                     continue
@@ -575,10 +604,17 @@ class RelationalManifold:
     def spread(
         self, seeds: Iterable[str], *, hops: int = 2, decay_per_hop: float = 0.5,
         min_activation: float = 0.05, now: Optional[float] = None,
+        grounded_only: bool = False,
     ) -> Dict[str, float]:
         """Spreading-activation: 从 seeds 出发逐跳扩散激活值 (透镜 Lens 体-P6 的核心原语)。
 
         返回 {node: activation}。seed 激活=1.0, 每跳 *= decay_per_hop * 边相对权重。
+
+        🆕 [body-diff-P1 / Sir 2026-06-06] grounded_only (默 False, 向后兼容): 透传给
+        neighbors → True 时激活只沿 about 接地边 (PROV_SHARED/SAID) 传播, 绕开 embed
+        mesh + cooccur 假焊 (§15.6 P1 门 b "spread 偏接地边")。**传播/衰减数学逐字不动**
+        (act*decay_per_hop*tanh(w)), 只换"走哪些边"。seed 无接地路径 → 返 {seed:1.0}
+        (仅 seed), project 过滤掉 seed → 投影空 = 诚实沉默 (不变量①, 不回退 embed 填满)。
         """
         now = time.time() if now is None else now
         activation: Dict[str, float] = {}
@@ -588,7 +624,8 @@ class RelationalManifold:
         for _hop in range(max(0, hops)):
             nxt: Dict[str, float] = {}
             for node, act in frontier.items():
-                for other, w in self.neighbors(node, now=now, limit=None):
+                for other, w in self.neighbors(node, now=now, limit=None,
+                                               grounded_only=grounded_only):
                     # 边权归一到 (0,1] 用 tanh, 防强边吃掉一切
                     edge_factor = math.tanh(w)
                     new_act = act * decay_per_hop * edge_factor

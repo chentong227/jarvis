@@ -177,13 +177,24 @@ class RelationalLens:
         seed_set = set(seeds)
         text_map = self._node_text_map()
 
+        # 🆕 [body-diff-P1 / Sir 2026-06-06] 接地偏权 spread flag (默 0, 向后兼容):
+        # lens_spread_grounded_only=1 → spread 只沿 about 接地边传播, 绕开 embed mesh +
+        # cooccur 假焊 (§15.6 P1 门 b)。默 0 = naive 全边 (老行为)。重开 lens 时与此 flag
+        # 一并打开 = 接地偏权投影 (零假焊)。无路径 seed → 投影空 = 诚实沉默 (不变量①)。
+        try:
+            _grounded_only = bool(int(get_manifold_config().get(
+                "lens_spread_grounded_only", 0)))
+        except Exception:
+            _grounded_only = False
+
         # 相关性: 激活扩散 (排除 seed 本身, 主脑已有当前语境)
         # 口识体 数据卫生: resolve 近重复 alias → 折叠到代表去重 (识自生成的近重复
         # self-talk 如多个 'Sir 装睡' joke 变体不重复投影占预算)。
         relevant: List[tuple] = []
         if seeds:
             activation = self.manifold.spread(
-                seeds, hops=hops, min_activation=min_activation, now=now)
+                seeds, hops=hops, min_activation=min_activation, now=now,
+                grounded_only=_grounded_only)
             best: Dict[str, float] = {}
             for nid, score in activation.items():
                 rep = self.manifold.resolve(nid)
