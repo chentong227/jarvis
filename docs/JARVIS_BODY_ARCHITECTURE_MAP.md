@@ -170,3 +170,54 @@ InnerThoughtDaemon 自发思考确实读体, 两处:
 - **盲点标注 (设计须写)**: (#1) grounded 只保证可追溯, 不保证正确; corroborated(Sir 确证)是更高层级, P2 不碰。(#4) 锚衰减风险待 Phase 1 查锚位置后记 open-question。
 
 *本文件由 body-diff-P1 收口后 agent 创建, 供 Sir 消化体架构。基于真读代码 (file:line 标注)。块4.3/块5 已由 2026-06-06 只读实测更新为 (c) 洗白实锤。*
+
+---
+
+## 6. Phase 1 架构补图 (P2 设计前提, 真读代码 file:line)
+
+### 6.1 compute_energy 详细机械 (`weaver.py:754-808`) — 改哪行能只数接地边
+
+**三分量, 边的枚举只在 novelty/drift, tension 不数边**:
+
+| 分量 | 枚举什么边 | 代码行 | 接地? |
+|---|---|---|---|
+| **novelty** | `new_edge_keys` 每条新边, w 计给两端 | `weaver.py:765-770` | ❌ **全量, 不分 provenance** |
+| **drift** | `post_snapshot` 全部边, 权重变动 ≥drift_min 的 | `weaver.py:771-777` | ❌ **全量, 不分 provenance** |
+| **tension** | **不数边** — 读 concern severity (`_concern_severity_map`) + nudge event + stance dyad | `weaver.py:778-802` | 读 concern/stance, 非边 |
+
+**入参来源** (`weaver.weave_once:887-889`):
+```
+post_snapshot = manifold.edge_snapshot()           # weaver.py:887
+new_keys = set(post) - set(pre)                    # weaver.py:888
+compute_energy(new_keys, pre, post)                # weaver.py:889
+```
+
+**⚠️ Phase-2 关键卡点 — edge_snapshot 不带 provenance (`manifold.py:908-914`)**:
+```
+edge_snapshot 返回 {edge_key: {a, b, w}}   # 只有 a/b/有效权重, 无 provenance!
+```
+⟹ **compute_energy 当前无法按 provenance 过滤** (它拿不到边的 kind)。要让 novelty/drift 只数接地边, **必须先改 edge_snapshot 也带 provenance kinds**, 再在 `:765`(novelty) + `:771`(drift) 两个循环里加 `is_grounded` 判定。这是"改哪行"的精确答案: **edge_snapshot:908 加 provenance 字段 + compute_energy:765/771 加白名单过滤**。tension(:778-802) 不动 (不数边)。
+
+### 6.2 锚在代码住哪 + decay-immunity (盲点 #4) — **largely 解除**
+
+- 锚**不是 manifold 节点**, 是独立子系统:
+  - `jarvis_anchors.py` + `memory_pool/anchors.json` (墙/边界, 公理); `jarvis_self_anchor.py` `SelfAnchor.build_block` (Layer 0 prompt 块, 读 anchors/sir_profile)。
+  - `jarvis_anchors.py:227` 明文: **"若对象是锚 → 跳过打分/仲裁/衰减"** → 锚是 **decay-immune by design**。
+- ⟹ manifold 的 14d 边衰减 (`apply_decay`/`prune`) **完全不碰锚** (锚不在 manifold 里)。**盲点 #4 (flat 衰减腐蚀锚) 基本不成立**。
+- **残留 open-question (P2 设计须记)**: 锚本体免疫, 但若某 anchor 主题**同时存在一个 concern/stance manifold 节点** (如 "诚实" 既是锚又可能有 concern 镜像), 那个 manifold 节点会随边衰减 — 锚本身不腐蚀, 但它在体里的"投影残影"会。是否需要让锚关联的 concern/stance 节点也免疫, 列为 P2 open-question, 不一定这轮修。
+
+### 6.3 全通道接地矩阵 (更新版, 盲点 #2/#3) — 找出所有 provenance-blind 的 body→brain 通道
+
+| # | body→brain 通道 | 路径 (file:line) | 走 provenance 判定? | 用啥判定逻辑 | 状态 |
+|---|---|---|---|---|---|
+| 1 | **lens 投影** (反应式 prompt) | `central_nerve.py:3625`→`lens.py build_lens_block`→`project:185`→`manifold.spread:575` | ✅ (c34cd2d 后) | `grounded_only` 白名单 {shared,said} | 已设防 + 耦合护栏; 真机关 |
+| 2 | **compute_energy → body_delta → 识** (自发式势能) | `weaver.py:765/771`→`body_energy.json`→`BodyFocus`→`daemon:2323` | ❌ **provenance-blind** | 无 (novelty/drift 全量数边) | **未设防 = P2 主战场** |
+| 3 | body_claim_evidence (claim 验证) | `chat_bypass`→`ClaimTracer`→`lens.py:381` | ❌ | 词重叠 `_node_text_map` (非 provenance) | 低阶旁路, 不注入 prompt; 不走边遍历 |
+| 4 | 思考脑 BODY SIGNALS (focus 渲染) | `daemon._build_prompt` 读 `BodyFocus.current_focus` | ⚠️ 间接 | 读 body_energy.json (= 通道2 产物) | 随通道2 接地化而净化 |
+| 5 | CLI/dashboard/vitals | manifold_dump / homepage / 仪表 | spread/surfaces | 展示用 | 非 brain |
+
+**矩阵结论 (盲点 #2 落地)**: provenance-blind 的 body→brain 活线 = **通道2 (compute_energy 势能)**。通道4 是它的下游 (读 body_energy.json), 接地化通道2 即顺带净化通道4。通道1 已设防, 通道3 是不走 spread 的低阶旁路。⟹ **P2 只需接地化一处 (compute_energy), 即堵住唯一未设防的核心 body→brain 通道。**
+
+**盲点 #3 (统一契约)**: 通道1 用 `grounded_only` 白名单, 通道2 现在没有 — 两处各自为政。P2 抽 `is_grounded(edge)→bool` 统一谓词, 通道1+2 共用 (一个关口一次审计), 是"体作为地基对消费方的唯一真实接口"。
+
+*Phase 1 补图完 (2026-06-06)。下一步 Phase 2 设计 (energy_grounded_only + 统一 is_grounded 谓词 + 耦合护栏) 待 Sir 审本补图后发。不碰 compute_energy 代码、不碰真机 flag。*
