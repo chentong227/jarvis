@@ -119,26 +119,24 @@ InnerThoughtDaemon 自发思考确实读体, 两处:
 ### 4.2 识**回写**体 (识→体) — ⚠️ 有一条写边路径
 `daemon._do_adjust_concern_notes` (`daemon:7067`): 思考脑产出带 concern_id 的 C 类 thought 时, **当场调 `observe_thought_concern_link(thread_id, concern_id)`** → 在体里写一条 **thread→concern 的 PROV_SHARED about 边** (manifold)。这是识→体的**回写闭环**。
 
-### 4.3 这条回写会不会把假焊固化进体? — **未测, 两条待实测 open-question (不给安全定性)**
+### 4.3 这条回写会不会把假焊固化进体? — **实测 (c): 洗白实锤 (2026-06-06 只读实测)**
 
-⚠️ **本节结论未经实测, 不下"安全/不固化"定论 (规范: 没 B/数据证据不许称验过)。** 已知事实 + 两条 open-question:
+⚠️ 已用只读实测 (inner_thoughts.jsonl 3277 thought + relational_manifold.json) 验证, **不再是 open-question**。
 
 **已知事实 — 回写的边本身是接地的, 不是假焊**:
-- `observe_thought_concern_link` 写 `PROV_SHARED` 边, ref = concern_id (机械, 非 cosine), 触发需 actionable 显式带 concern_id + evidence_link 双层 gate 过。⟹ 这条边是"念头 X 关于 concern Y"的真 provenance, 是 P0c #1 要补的接地骨架, 单看它**不是假焊**。
+- `observe_thought_concern_link` 写 `PROV_SHARED` 边, ref = concern_id (机械, 非 cosine)。单看它不是假焊。
 
-**但闭环有两条放大/洗白动力学, 均【待实测】, 不可据"边本身接地"就判全局安全**:
+**实测结论 — 但两条动力学均已坐实, 全局不安全**:
 
-- **Open-Q1 (势能层放大 — 没设防的核心通道)**: 假焊边 (embed/cooccur) **全量参与 `compute_energy` 的 novelty/drift** (块2; novelty/drift 不分接地, 所有边都算)。⟹ 假焊边权变动 → drift 势能 → body_delta → **唤醒识去 attend 那个被假焊连起来的区** + BODY SIGNALS 进思考脑 prompt。**这条通道完全没走 spread、完全没被 grounded_only 设防、现在仍在全量吃假焊。** 块3"进主脑唯一 spread 线=lens"只在**反应式 spread 注入**口径成立; 这条**自发式势能通道**是另一条 body→brain 路径, 一直敞着。**这是比 lens 更核心的主战场 (势能层接地化), P1 范围未覆盖。**
+- **(i) 势能层放大 = 已证实 (Open-Q1)**: 假焊边全量参与 `compute_energy` novelty/drift, **完全没走 spread、没被 grounded_only 设防**。实测: 自发思考反复打转的高频 concern (hydration 94 / sleep 53 / interview 37 / pomodoro 33 / keyrouter 20 / cursor 18) 之间有 **7 对 concern↔concern 假焊连接 (无 shared/said, 纯 embed/cooccur), 其中 4 对是"双高频假焊"** (pomodoro↔sleep / cursor↔pomodoro / keyrouter↔cursor / keyrouter↔interview)。⟹ 自发思考高频区之间确实大量靠假焊边连着, 势能层在数它们的 novelty/drift。**这条自发式势能通道是比 lens 更核心的没设防主战场。**
 
-- **Open-Q2 (接地边洗白假焊区 — 比 Q1 更隐蔽)**: 闭环可能让假焊"洗白":
-  1. 假焊势能 (Q1) 误导识去 attend 假关联区;
-  2. 识在假区产 C 类 thought → 写一条真接地 thread→concern 边 (本身接地, "好事");
-  3. **但这条真接地边落在假焊区邻域** → 假区有了真 provenance 的接地脚手架;
-  4. 重复 → 假焊区被越来越多真接地边包裹, 越来越"合法", 越来越难与真分化区区分。
-  - = **洗钱**: 假焊招募真接地边沉积到自己周围, 把自己镶金边。假焊不是被写回, 是它**招募真接地边给自己洗白**。**时间站在假焊那边。**
-  - ⟹ "接受薄体 + 慢慢长接地边" (P0 终态) 若势能层不先接地化, **可能反在喂这个洗白过程**。
+- **(ii) 洗白 = 8:0 实锤 (Open-Q2)**: 识回写的接地边 (thread→concern PROV_SHARED) 共 8 条, **8 条全落在"有假焊邻居的 concern"(假区邻域: sleep 7 + hydration 1), 0 条落在无假焊邻居的真分化区**。⟹ 假焊区在持续吸真接地边镶金边 (洗白), 干净区一条接地边都没长。方向 8:0 无反例。
 
-**6 天假焊事件影响重估**: lens 投影(读)是已证污染路径 (95.6%); 但 Q1/Q2 这两条 (假焊势能带偏自发思考 / 接地边洗白假区) **是否真在发生, 尚无证据, 待块5 只读实测**。这比"投一次 prompt"深 — 它问"假焊有没有渗进自发思考的势能地形"。
+- **通道独立性**: hand_pain 自发思考命中 = 0 (它只被 lens 反应式投影命中, 没进自发思考高频区)。⟹ lens(读)与势能(自发)两条通道命中的假焊区**不完全重叠**, 各有暴露面。
+
+**口径限制 (不夸大)**: 回写接地边总量还小 (8 条), 洗白是"早期 + 方向明确 (8:0)", 非"已洗白成型"。body_energy.json 是单帧快照 (每 weave 覆写, 非时序), 故 Q1 用 inner_thoughts.jsonl "识实际想了什么" (3277 条) 作势能带偏代理证据。
+
+**结论**: 回写边本身接地; 但 **(i) 势能层放大已证实 + (ii) 洗白方向 8:0 已实锤** → **势能层接地化升为下一主线 (P2), 优先级高于重开 lens**。
 
 ### 4.4 闭环全图
 ```
@@ -160,18 +158,15 @@ InnerThoughtDaemon 自发思考确实读体, 两处:
 
 ---
 
-## 5. 下一步: 只读实测 (红先于绿, 不设计修法)
+## 5. 实测已出 (c) 洗白实锤 → P2 势能层接地化 (设计待 Sir 审, 不预写修法)
 
-势能层接地化是否要做, **取决于实测**, 不先推测设计。两件只读实测 (body_energy.json + inner_thoughts.jsonl, 零 token 零风险):
+块5 两件只读实测已跑 (2026-06-06, 见 §4.3): **结果 = (c) 洗白实锤** (势能放大已证实 + 洗白 8:0)。
 
-- **实测1 (Open-Q1 势能带偏)**: body_energy.json 历史里长期高 E (top novelty/drift) 的节点, 是不是 hand_pain↔interview 这类假焊区? inner_thoughts.jsonl 自发 thought 是不是长期围假焊连起来的节点打转?
-- **实测2 (Open-Q2 洗白实锤)**: 统计识回写的 thread→concern 接地边, 多少落在假焊区邻域 vs 真分化区。假区邻域持续沉积接地边 = 洗白实锤 (非推测)。
+⟹ **势能层接地化 = 下一主线 (P2), 优先级高于重开 lens。** P2 设计要点 (待 Sir 审架构补图后定, 此处仅锚方向, 不预写代码):
+- 核心: `energy_grounded_only` flag (默 0 不变行为); flag=1 时 compute_energy 的 novelty/drift **只数接地边** (白名单 {shared,said}, 与 spread 同谓词)。
+- 统一谓词: 抽 `is_grounded(edge)→bool`, spread + energy 共用 (一个关口一次审计)。
+- 耦合护栏 (P1 教训迁移): 堵"一翻就回洗白态"。
+- **红线 A**: 机械 provenance 白名单判定, **不引入 argmax/utility 标量** (不给边打分排名)。
+- **盲点标注 (设计须写)**: (#1) grounded 只保证可追溯, 不保证正确; corroborated(Sir 确证)是更高层级, P2 不碰。(#4) 锚衰减风险待 Phase 1 查锚位置后记 open-question。
 
-三种可能 → 决定优先级:
-- (a) 假焊势能基本没带偏识 → 影响仅限 lens 那次读 → 势能层可暂不动;
-- (b) 带偏但没洗白 → 中度, 记账;
-- (c) 洗白实锤 → 势能层接地化升为下一个 P 主线, 优先级高于任何重开 lens。
-
-**修法约束 (若需修, 红线 A)**: 势能层接地化**不能拿 argmax/utility 标量糊** (红线 A: C 层不加标量最优; 势能在 A 层但接地化判据须是 provenance 机械判, 非打分)。具体待实测出 (c) 再设计。
-
-*本文件由 body-diff-P1 收口后 agent 创建, 供 Sir 消化体架构。基于真读代码 (file:line 标注)。块4.3/块5 为待实测 open-question, 未给安全定性。*
+*本文件由 body-diff-P1 收口后 agent 创建, 供 Sir 消化体架构。基于真读代码 (file:line 标注)。块4.3/块5 已由 2026-06-06 只读实测更新为 (c) 洗白实锤。*
