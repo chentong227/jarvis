@@ -73,11 +73,13 @@ class TestSmartParseDeadlineExplicitFormats(unittest.TestCase):
         self.assertGreater(ts, 0)
         self.assertEqual(self._hour_min_of(ts)[0], 8)
 
-    @unittest.skip(
-        "[quarantine / Sir 2026-06-07] 预存真 bug (非本笔引入, 非时间 flaky): "
-        "_smart_parse_deadline('11:30pm') 解析成 (11,30) 而非 (23,30) — pm 未 +12。"
-        "干净 HEAD 连跑同红, 与 body-diff-P2 无关。隔离防破窗 (红噪声掩盖真信号), "
-        "待独立一笔修 pm 解析。详 commit message。")
+    # [xfail 挂账 / Sir 2026-06-07] 预存真 BUG (非 flaky, 非本笔引入):
+    # _smart_parse_deadline('11:30pm') 解析成 (11,30) 而非 (23,30) — pm 未 +12。
+    # 稳定红 (连跑3次同红 + 干净 HEAD 同红), 与 body-diff-P2 无关。
+    # 用 expectedFailure 而非 skip: 真 bug 必须可见地挂着, 修好后会 xpass 提醒摘标,
+    # 不从 _runall 静默消失 (诚实挂账, 非伪装 flaky 忽略)。
+    # 挂账: docs/KNOWN_ISSUES.md #pm-parse-12h。待独立一笔修 pm+12 解析逻辑。
+    @unittest.expectedFailure
     def test_explicit_pm_with_minutes(self):
         ts = self.cw._smart_parse_deadline('11:30pm', '', '')
         self.assertGreater(ts, 0)
