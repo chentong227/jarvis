@@ -57,6 +57,7 @@
       "delta_threshold": 0.30,
       "tension_severity_min": 0.40,
       "drift_min": 0.05,
+      "energy_grounded_only": 1,
       "max_deltas_per_weave": 12,
       "nudge_tension_enabled": 1,
       "nudge_window_s": 600.0,

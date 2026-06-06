@@ -193,45 +193,52 @@ def observe_thought_concern_link(
         return None
 
 
-# 🆕 [body-diff-P2 耦合护栏 / Sir 2026-06-06] 对称 lens validate_lens_coupling。
+# 🆕 [body-diff-P2 耦合护栏 / Sir 2026-06-06; 真机激活扩展 Sir 2026-06-07] 对称 lens。
 # energy 与 lens 不对称 (设计 §5 收紧2): lens 安全态是 OFF, energy 安全态是 ON
 # (compute_energy 永远在跑, 无总开关)。最危险复发 = energy_grounded_only 翻回 0 =
-# 势能又全量吃假焊 = 洗白态复活。但提交时默认 0, 不能对默认 fail-loud (会误伤老行为)。
-# 故本护栏只校验"配置自洽性": flag=1 时白名单必须非空且全是接地 prov — 防有人把白名单
-# 清空/混入 embed (= 势能只数假焊 = 洗白态借配置复活)。flip 回 0 的复发风险走真机
-# flip 检查单 (设计 §5), 不在此 fail-loud。
+# 势能又全量吃假焊 = 洗白态复活 (盲点① "翻回 6 天前" 在势能层的对应)。
+# [2026-06-07 真机激活后] 默认已翻 1 (接地=缺省安全态)。本护栏校验两类:
+#   (1) effective flag=0 → relapse loud 告警 (限流, 非 refuse; 0 仍允许=显式 override 调试)
+#   (2) flag=1 但白名单空/混非接地 prov → 配置自洽 violation (防洗白态借配置复活)
 _ENERGY_GROUNDED_PROVS = frozenset({PROV_SHARED, PROV_SAID})
 
 
 def validate_energy_coupling(*, raise_on_violation: bool = False) -> Optional[str]:
-    """校验 energy_grounded_only 配置自洽 (对称 lens 耦合护栏)。
+    """校验 energy_grounded_only 配置 (对称 lens 耦合护栏 + relapse 告警)。
 
-    flag=0 (默认/老行为): OK, 返 None (提交默认不报警, §5)。
+    effective flag=0 (真机激活后默认已 1, 此为显式 override 回 0): loud relapse 告警
+      "生产期势能未接地 = 已知洗白态" (限流由调用方 _energy_coupling_warn_once; 0 仍允许,
+      调试用, 但每次都喊防默默翻回)。返 violation str。
     flag=1: spread_grounded_provenance 白名单须 (a) 非空 (b) ⊆ 合法接地 prov {shared,said}。
       - 空 → 势能无边可数 (退化) → violation。
       - 含非接地 prov (embed/cooccur/inferred) → 势能数假焊 = 洗白态借配置复活 → violation。
 
-    返回: None = OK; 否则 violation 描述 str (已 print + bg_log WARNING)。
-    raise_on_violation=True → 违规 raise RuntimeError (调用方要"拒绝起势能接地化"可用)。
+    返回: None = OK (flag=1 且白名单合法); 否则 violation 描述 str (已 print + bg_log WARNING)。
+    raise_on_violation=True → 违规 raise RuntimeError。
     """
     try:
         cfg = get_manifold_config()
-        flag = bool(int((cfg.get("energy", {}) or {}).get("energy_grounded_only", 0)))
+        flag = bool(int((cfg.get("energy", {}) or {}).get("energy_grounded_only", 1)))
     except Exception:
         return None
-    if not flag:
-        return None
-    wl = set(cfg.get("spread_grounded_provenance", [PROV_SHARED, PROV_SAID]))
-    bad = wl - _ENERGY_GROUNDED_PROVS
     msg = None
-    if not wl:
-        msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但 "
-               "spread_grounded_provenance 白名单为空 — 势能无边可数 (退化)。"
-               "应含 {shared,said}。")
-    elif bad:
-        msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但白名单含"
-               f"非接地 provenance {sorted(bad)} — 势能将数假焊 = 洗白态借配置复活 "
-               "(JARVIS_ENERGY_GROUNDING_DESIGN_P2 §5)。白名单应 ⊆ {shared,said}。")
+    if not flag:
+        # relapse 告警 (盲点①): 真机已激活接地化, effective=0 = 有人/某流程翻回洗白态。
+        msg = ("[Energy][COUPLING-GUARD] WARNING relapse: energy_grounded_only=0 "
+               "(effective) — 生产期势能未接地 = 已知洗白态 (假焊驱动自发思考 + 洗白 8:0)。"
+               "真机已于 2026-06-07 激活接地化; 0 仅供显式 override 调试。"
+               "翻回 1 恢复止血 (JARVIS_ENERGY_GROUNDING_DESIGN_P2 §5 flip 检查单)。")
+    else:
+        wl = set(cfg.get("spread_grounded_provenance", [PROV_SHARED, PROV_SAID]))
+        bad = wl - _ENERGY_GROUNDED_PROVS
+        if not wl:
+            msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但 "
+                   "spread_grounded_provenance 白名单为空 — 势能无边可数 (退化)。"
+                   "应含 {shared,said}。")
+        elif bad:
+            msg = ("[Energy][COUPLING-GUARD] WARNING 误配: energy_grounded_only=1 但白名单含"
+                   f"非接地 provenance {sorted(bad)} — 势能将数假焊 = 洗白态借配置复活 "
+                   "(JARVIS_ENERGY_GROUNDING_DESIGN_P2 §5)。白名单应 ⊆ {shared,said}。")
     if msg:
         try:
             print(msg)
@@ -822,7 +829,7 @@ class RelationalWeaver:
         # drift 只数接地边 (统一 is_grounded 谓词, 白名单 = top-level spread_grounded_provenance
         # {shared,said}, spread+energy 共用)。tension 不数边、不受此门影响。设计 §4 取舍:
         # cooccur/embed 边 novelty/drift 贡献→0 (接受丢失弱共现先验, 真关系以接地边重现)。
-        _grounded_only = bool(int(cfg.get("energy_grounded_only", 0)))
+        _grounded_only = bool(int(cfg.get("energy_grounded_only", 1)))
         _grounded_provs = set(get_manifold_config().get(
             "spread_grounded_provenance", [PROV_SHARED, PROV_SAID])) if _grounded_only else None
         energy: Dict[str, Dict[str, float]] = collections.defaultdict(

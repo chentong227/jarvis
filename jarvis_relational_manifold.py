@@ -188,8 +188,10 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         # 治: compute_energy 是唯一未设防的 body->brain 通道 (实测洗白 8:0 + 4 对双高频假焊驱动
         # 自发思考往假区打转)。tension 不数边、不受影响。设计 §4 取舍: cooccur/embed novelty→0
         # 是有意取舍 (接受丢失弱共现先验, 真关系会以接地边重现)。详 JARVIS_ENERGY_GROUNDING_
-        # DESIGN_P2.md。⚠️ flip 检查单 (设计 §5 收紧2): 真机翻 1 后, 翻回 0 = 洗白态复发。
-        "energy_grounded_only": 0,
+        # DESIGN_P2.md。⚠️ flip 检查单 (设计 §5 收紧2): 翻回 0 = 洗白态复发 (validate_energy_
+        # coupling 会 loud 告警)。[Sir 2026-06-07 真机激活] 默认翻 1 = 接地为缺省安全态
+        # (与"势能安全态是 ON"一致); 0 = 显式 override 调试用 + 每 weave loud 告警。
+        "energy_grounded_only": 1,
         "max_deltas_per_weave": 12,    # 单次 weave 最多派几个 delta (防洪泛)
         # 口识体-C: nudge/care 警报 → 体张力 (感知环穿体). wellness/proactive 警报
         # 退化为体能量, 不直推 __NUDGE__ → 识经 body_delta attend (而非 nudge 抢话筒).

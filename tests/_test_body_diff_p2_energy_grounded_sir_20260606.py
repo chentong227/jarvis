@@ -162,11 +162,16 @@ class TestEnergyCouplingGuard(unittest.TestCase):
         with mock.patch.object(W, "get_manifold_config", return_value=cfg):
             self.assertIsNone(W.validate_energy_coupling())
 
-    def test_guard_ok_when_flag_off(self):
-        """flag=0 (默认) 不该 fail-loud (提交时默认 0, §5 不能对默认报警)。"""
+    def test_guard_relapse_warns_when_flag_off(self):
+        """★ [真机激活后 / Sir 2026-06-07] flag=0 = relapse 洗白态 → loud 告警 (非 None)。
+
+        真机已激活接地化 (默认翻 1), effective=0 = 有人翻回洗白态 → 护栏必须 loud 喊
+        (盲点① relapse 防线)。0 仍允许 (显式 override 调试), 但每次都告警。"""
         cfg = _cfg(energy_grounded_only=0)
         with mock.patch.object(W, "get_manifold_config", return_value=cfg):
-            self.assertIsNone(W.validate_energy_coupling())
+            v = W.validate_energy_coupling()
+        self.assertIsNotNone(v, "flag=0 relapse 应 loud 告警 (真机激活后)")
+        self.assertIn("relapse", v)
 
     def test_guard_warns_empty_whitelist(self):
         """★ RED 锚: flag=1 但白名单空 → 势能无边可数 (退化) → 返回 violation。"""
