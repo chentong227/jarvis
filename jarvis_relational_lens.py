@@ -365,6 +365,61 @@ def lens_inject_enabled() -> bool:
         return False
 
 
+def lens_spread_grounded_only() -> bool:
+    """🆕 [body-diff-P1 / Sir 2026-06-06] 接地偏权 spread flag (默 0)。
+
+    1 → lens 投影 spread 只沿 about 接地边 (PROV_SHARED/SAID) 传播, 绕开 embed mesh +
+    cooccur 假焊 (零假焊)。重开 lens 必须与 lens_inject_enabled 一并设 1 (见耦合护栏)。
+    """
+    try:
+        return bool(int(get_manifold_config().get("lens_spread_grounded_only", 0)))
+    except Exception:
+        return False
+
+
+# 🆕 [body-diff-P1 耦合护栏 / Sir 2026-06-06] 热路径 REFUSE 限流: 误配 (inject=1 但
+# grounded_only=0) 会每 turn 触发, bg_log 限一次/状态变化, 防刷屏。
+_REFUSE_LOG_STATE: dict = {"last": None}
+
+
+def _refuse_log_once(msg: str, state_key) -> None:
+    """状态不变则不重复 bg_log (防热路径刷屏)。state_key 变化才重报。"""
+    if _REFUSE_LOG_STATE.get("last") != state_key:
+        _REFUSE_LOG_STATE["last"] = state_key
+        _log(msg)
+
+
+def validate_lens_coupling(*, raise_on_violation: bool = False) -> Optional[str]:
+    """🆕 [body-diff-P1 耦合护栏 层1: 启动期 loud 早警 / Sir 2026-06-06].
+
+    校验 lens flag 耦合: inject=1 但 grounded_only=0 = 裸 naive lens (已证投 95.6% 假焊,
+    JARVIS_VALIDATION_STANDARD §6) = 误配。在跑第一个 turn 之前 (启动/配置加载时) 调,
+    把误配 loud 抓住, 不靠事后翻日志。
+
+    返回: None = 配置 OK; 否则返回 violation 描述 str (并已 print + bg_log WARNING 级)。
+    raise_on_violation=True → 违规时 raise RuntimeError (调用方若要"拒绝起 lens"可用)。
+    """
+    try:
+        inject = lens_inject_enabled()
+        grounded = lens_spread_grounded_only()
+    except Exception:
+        return None
+    if inject and not grounded:
+        msg = ("[Lens][COUPLING-GUARD] WARNING 误配: lens_inject_enabled=1 但 "
+               "lens_spread_grounded_only=0 — 裸 naive lens 已证投 95.6% 假焊 "
+               "(JARVIS_VALIDATION_STANDARD #6 / hand_pain<->interview)。lens 注入将被"
+               "拒绝 (当 off 处理)。重开 lens 须同时设 lens_spread_grounded_only=1。")
+        try:
+            print(msg)
+        except Exception:
+            pass
+        _log(msg)
+        if raise_on_violation:
+            raise RuntimeError(msg)
+        return msg
+    return None
+
+
 def lens_replaces_layer2() -> bool:
     """口识体-E flag-gated (默认 0): 透镜活时是否替 SOUL Layer2 relational 块 (退平行)。
 
@@ -441,6 +496,18 @@ def build_lens_block(seeds: Optional[Iterable[str]] = None, *,
     角色) — 当前话题 seed 优先 + 体 standing 势能焦点补充。
     """
     if not lens_inject_enabled():
+        return ""
+    # 🆕 [body-diff-P1 耦合护栏 层2: 热路径安全网 / Sir 2026-06-06]
+    # inject=1 但 grounded_only=0 = 裸 naive lens (已证投 95.6% 假焊) → 拒绝注入,
+    # 当 off 处理 (return "", Layer3 保留, 老行为零伤害)。不静默走 naive。
+    # 限流 bg_log: 误配每 turn 触发, 状态不变只报一次 (防刷屏)。不 raise (热路径防崩主脑)。
+    if not lens_spread_grounded_only():
+        _refuse_log_once(
+            "[Lens][COUPLING-GUARD] REFUSE inject: lens_inject_enabled=1 但 "
+            "lens_spread_grounded_only=0 — 裸 naive lens 已证投假焊, 拒绝注入 "
+            "(当 off; 重开须同设 lens_spread_grounded_only=1)。",
+            state_key=("refuse", True),
+        )
         return ""
     try:
         lens = get_lens()

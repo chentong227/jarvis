@@ -1833,6 +1833,15 @@ User: {user_input}
                 _w_bg("🕸️ [Weaver] 织网者启动 (体/Body 维护器官 — 后台几何织网 + decay/prune)")
             except Exception:
                 pass
+            # 🆕 [body-diff-P1 耦合护栏 层1: 启动期 loud 早警 / Sir 2026-06-06]
+            # 在跑第一个 turn 之前校验 lens flag 耦合: inject=1 但 grounded_only=0 =
+            # 裸 naive lens (已证投 95.6% 假焊) → 启动期 loud (print+bg_log WARNING),
+            # 不靠事后翻日志。非致命 (不 raise), 热路径 build_lens_block 层2 安全网兜底。
+            try:
+                from jarvis_relational_lens import validate_lens_coupling
+                validate_lens_coupling()
+            except Exception:
+                pass
         except Exception as _w_e:
             try:
                 from jarvis_utils import bg_log as _bg

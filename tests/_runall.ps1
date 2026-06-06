@@ -172,8 +172,11 @@ $tests = @(
     "_test_body_diff_p0b_weighted_sir_20260603",
     "_test_body_diff_p0c_tier1_sir_20260603",
     "_test_body_diff_p1_zero_falseweld_sir_20260606",
-    "_test_fix_sir_20260604_memory_correction_none_safe",
-    "_test_fix_sir_20260606_greeting_detemplate"
+    "_test_body_diff_p1_coupling_guard_sir_20260606"
+    # PARKED w/ stash @c34cd2d — 取消注释 on pop, 见 STASH_PARKING_NOTE.md
+    # (测试文件 + 依赖代码 chat_bypass/daemon 已随 stash 停走, 引用一并 parked 保持自洽)
+    # ,"_test_fix_sir_20260604_memory_correction_none_safe"
+    # ,"_test_fix_sir_20260606_greeting_detemplate"
 )
 
 foreach ($t in $tests) {
