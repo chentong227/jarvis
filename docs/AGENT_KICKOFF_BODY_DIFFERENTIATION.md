@@ -4,6 +4,8 @@
 > 它是这条轨道的单一入口 + 活进度看板。看完你应能回答: 我们在做什么 / 为什么 / 做到哪 / 我下一步具体做什么 / 哪些红线碰不得。
 >
 > 真理源: 需求 `.kiro/specs/body-differentiation/requirements.md` (R1-R19) · 设计 `.kiro/specs/body-differentiation/design.md` · 进度 = 本文件 §6 看板 (改完即更新)。
+>
+> **验收规范 (进主脑/真机行为类改动必读)**: → `docs/JARVIS_VALIDATION_STANDARD.md` — 双镜像边界 + 真路径铁律 + 投影零假焊维。本轨 P1 lens/spread 改动属"进主脑"半径, 终验必须走整机 Agent Mirror (B), A 镜像/单测不得冒充。
 
 ---
 

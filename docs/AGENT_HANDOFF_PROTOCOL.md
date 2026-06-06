@@ -64,6 +64,8 @@
 
 ### 2.2 红线 (违反立刻 stop + alert Sir)
 
+> **§验收铁律 (接手前必读)**: 任何"进主脑 prompt / 影响决策 / 改真机行为"的改动, 验收层级必须匹配影响半径 —— 真路径改动必须经整机 Agent Mirror (B) 验收, 体图镜像 (A) 或单测不得冒充终验。**接手第一轮即读 `docs/JARVIS_VALIDATION_STANDARD.md`** (双镜像边界表 + 真路径铁律 + 投影零假焊维 + 05-31→假焊事故反例), 不是到验收时才翻。
+
 | 红线 | 来源 |
 |---|---|
 | 触碰 `.env` / `jarvis_config/sir_profile.json` / `memory_pool/*.db` / 任何 `.gitignore` 内文件 | AGENTS.md §7 |
@@ -75,6 +77,7 @@
 | Auto `git push` 没 Sir 显式说"push" / "上线" | AGENTS.md §6 |
 | 加新 `_<X>_PATTERNS = [...]` 硬编码 in py (违准则 6.5) | docs/JARVIS_PYTHON_STYLE.md §6 |
 | `from jarvis_nerve import *` / 主线程 busy-loop / raw sqlite | docs/JARVIS_PYTHON_STYLE.md §4 |
+| 进主脑/决策/真机行为类改动用 A 镜像或单测冒充终验 (未经 B 真路径) | docs/JARVIS_VALIDATION_STANDARD.md |
 
 ### 2.3 主动 stop 必备情境 (Sir 物理操作, agent 替不了)
 
