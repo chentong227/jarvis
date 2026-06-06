@@ -4400,6 +4400,14 @@ class InnerThoughtDaemon:
                     + (f"{_cg}\n" if _cg else "")
                     + "\n"
                 )
+            # 🆕 [inner-anchor-P1 / Sir 2026-06-07] affordance 自知 (许可诚实承认能力边界)
+            try:
+                import jarvis_affordance as _aff_h1
+                _ab = _aff_h1.render_affordance_block(max_chars=420)
+                if _ab:
+                    _anchor_walls = (_anchor_walls + _ab + "\n\n")
+            except Exception:
+                pass
         except Exception:
             _anchor_walls = ""
         system = (
@@ -6158,6 +6166,10 @@ class InnerThoughtDaemon:
             # 🆕 [Sir 2026-05-31 放下能力] request_capability — 识想要某能力 (影响自身/未来开发)
             if a.startswith('request_capability:'):
                 return self._do_request_capability(thought, a)
+            # 🆕 [inner-anchor-P1 / Sir 2026-06-07] propose_affordance — 识提"我也许能做X"
+            # 线索 (仅触发核验, 不直写 can=yes; 补遗-2: 核验闸是唯一写入者)。
+            if a.startswith('propose_affordance:'):
+                return self._do_propose_affordance(thought, a)
             # 🆕 [衡 H2 / Sir 2026-06-01] record_conflict_cost — 两墙取舍记代价(伤)
             if a.startswith('record_conflict_cost:'):
                 return self._do_record_conflict_cost(thought, a)
@@ -6664,6 +6676,32 @@ class InnerThoughtDaemon:
             return True, f'capability_requested:{desc[:40]}'
         except Exception as e:
             return False, f'capability_request_error:{type(e).__name__}'
+
+    # 🆕 [inner-anchor-P1 / Sir 2026-06-07] propose_affordance — 识提能力线索 =========
+    def _do_propose_affordance(self, thought: InnerThought, a: str) -> Tuple[bool, str]:
+        """actionable=propose_affordance:<capability_id>[:reason]
+
+        识觉得"我也许能做 X" → **仅作线索触发核验**, 不直写 can=yes (补遗-2)。
+        核验闸 (jarvis_affordance.verify_and_write) 对照能力注册表/执行 trace 决定真值:
+        无真证据 → can=no (命门: Sir/识说了不算, 只认注册表/trace)。
+        """
+        body = a.split(':', 1)[1].strip() if ':' in a else ''
+        if not body:
+            return False, 'propose_affordance_empty'
+        parts = body.split(':', 1)
+        cap_id = parts[0].strip()
+        reason = parts[1].strip() if len(parts) > 1 else ''
+        if len(cap_id) < 2:
+            return False, f'capability_id_too_short:{len(cap_id)}'
+        try:
+            import jarvis_affordance as _aff
+            rec = _aff.propose_affordance(cap_id, reason=reason)
+            self._bg_log(
+                f"🪪 [InnerThought/affordance] propose '{cap_id}' → 核验后 can="
+                f"{rec.get('can')} (核验闸定真值, 非 propose 直写)")
+            return True, f"affordance_verified:{cap_id}:can={rec.get('can')}"
+        except Exception as e:
+            return False, f'propose_affordance_error:{type(e).__name__}'
 
     # 🆕 [衡 H2 / Sir 2026-06-01] 锚冲突记代价 (伤) — 自我在此锻造 ====================
     # 理念源 §5 / charter JARVIS_HENG_DESIGN.md H2: 两墙同时撑不住 → 被迫选一堵守, 把

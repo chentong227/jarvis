@@ -4347,6 +4347,17 @@ Then proceed with the rest of your response normally.
                 anchor_boundary_block = (
                     (anchor_boundary_block + "\n\n" + _cg).strip()
                 )
+            # 🆕 [inner-anchor-P1 / Sir 2026-06-07] affordance 自知 (许可诚实承认能力边界).
+            # 接地源=能力注册表/执行trace (非对话边); 框成许可承认非驱动揽活 (§6.3)。
+            try:
+                import jarvis_affordance as _aff
+                _ab = _aff.render_affordance_block()
+                if _ab:
+                    anchor_boundary_block = (
+                        (anchor_boundary_block + "\n\n" + _ab).strip()
+                    )
+            except Exception:
+                pass
         except Exception:
             anchor_boundary_block = ""
 
