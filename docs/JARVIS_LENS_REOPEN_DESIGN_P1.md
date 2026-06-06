@@ -151,4 +151,30 @@ if inject and not grounded:
 
 **设计状态: 已审过。** 拍4 实做门 (Sir 提醒): 耦合护栏是改 build_lens_block 入口 = 进主脑热路径 code 改动, 哪怕默认惰性 (真机 inject=0 永不触发), 仍须 **过零假焊门 + _runall 零增红 → 然后 Tier2 B 端到端 → B 结果回 Sir 审 → 审过才翻真机 lens_inject_enabled。别裸翻。**
 
+---
+
+## 6. 🅿️ B 端到端 PARKED (Sir 2026-06-06)
+
+**状态: Tier2 B 暂停 (parked), 非放弃。P1 停在完全安全的休息态, 不流血。**
+
+### 6.1 停在哪 (不掉血的依据)
+- 真机 `lens_inject_enabled=0` (止血态 75d702b) → Layer3 真注意力在岗 = 诚实, 假焊不复发。
+- `grounded_only` + 耦合护栏代码已提交 (c34cd2d / ac4483b) 但**惰性** (inject=0 永不触发), 既不生效也不碍事。
+- "重开 lens" 本质 = 把一个反应式上下文功能开回来 (更多上下文进 prompt), **不是修复** — 修复(止血)早做完。故 B + 重开可延可不做, Jarvis 照常安全跑, lens 暂时安静 ("少说但真 > 常说但假")。
+
+### 6.2 smoke 已证的 + 还差的 (恢复时别误判"环境不行")
+- ✅ **LLM key 可用**: 2026-06-06 smoke 起 mirror (copytree 1865 files / 6.9s, subprocess nerve 真启), Weaver + InnerThought daemon **真调 LLM 出 thought** → 证明这台环境 LLM key 能调通。Q2 "key 没在这跑过" 的担忧已解。
+- ⏳ **仅差**: 反应式对话 `turn_complete` 未观测到 (注入 "hi jarvis" 后 20s 内 count=0 即被 Cancel)。**worker turn (收注入→tick) 是另一条代码路径, 比 daemon 慢, 很可能只是没等够, 不是坏了。** 恢复时多等即可。
+
+### 6.3 恢复 B 的步骤 (随时可做, 今天不做零损失)
+1. `python scripts/jarvis_mirror.py --task "P1 lens B"` (重建 ~7s)
+2. **只在 mirror 副本** 改 vocab: `lens_inject_enabled=1` + `lens_spread_grounded_only=1` (绝不碰真盘)
+3. `jarvis_mirror_say` 注 hand_pain / interview / hydration 三 seed
+4. **等够 worker turn** (比 daemon 慢, 多等; 别 20s 就判死)
+5. `jarvis_mirror_tail` 看 turn_complete, 断言压 lens 块 (§3.3: 整链通 + 真调 grounded 路径 + 沉默 seed 验 Layer3 保留, 不压 reply)
+6. mirror 跑完即删 → 结论 + lens 块证据落 commit/看板
+7. B 结果回 Sir 审 → 审过才翻真机 lens
+
+**优先级**: B parked 期间, 工程重心转向"完整了解体架构" (体势能 / 体↔识 闭环 — 自我核心, 比反应式 lens 通道重要一个量级)。lens 关着不影响自发思考。
+
 *本文件由 body-diff-P1 轨 agent 创建 (拍4 设计草稿)。Sir 审过 + B 验过, 方可碰真机重开 lens。*
