@@ -36,10 +36,11 @@
     "merge_threshold": 0.90,
     "surface_min_weight": 0.45,
     "surface_min_size": 3,
-    "lens_inject_enabled": 1,
+    "lens_inject_enabled": 0,
     "lens_replaces_layer3": 1,
     "lens_replaces_layer2": 0,
     "_doc_lens_replace": "口识体-E (Sir 2026-05-31 镜像 A/B 验过): lens_replaces_layer3=1 透镜替 Layer3 attention (透镜 relevance 排序优于旧 severity-blind, concern 信息仍经透镜流; 镜像验回复相关且无人设违反). lens_replaces_layer2=0 暂留 (Layer2 含 inside jokes/persona, 逐块退: Sir 真机用一轮 layer3 满意后, CLI 改本字段=1 退 Layer2). 退回: 任一字段=0 即恢复旧块.",
+    "_doc_lens_stopbleed": "[body-diff-P1 / Sir 2026-06-06] lens_inject_enabled 1→0 止血: P1 镜像 (manifold_p1_spread_mirror.py) 实测 naive spread 投影 95.6% (43/45 节点) 经非接地边 (embed mesh / cooccur 偶发假焊), 含人读已证伪的 hand_pain<->interview 互焊双向漏进主脑 prompt; 且 lens_replaces_layer3=1 是顶替非附加 (加假信号+删原 Layer3 真信号双重代价). 不变量① 诚实沉默 > 投假. inject=0 后 build_lens_block 返空 → _lens_replaces_l3 自动 False → Layer3 attention 回归. 重开前置: 接地偏权 spread (只走 PROV_SHARED about 边) 实做 + replaces_layer3 改条件顶替 + 镜像 Sir 审.",
     "weaver": {
       "weave_interval_s": 600,
       "initial_delay_s": 90,
