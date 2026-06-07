@@ -4,7 +4,8 @@
     "created_at": "2026-05-20T12:50:00",
     "purpose": "Intent → tool 映射 — Sir 准则 5 防工具名泄漏 (β.5.36-E)",
     "doc": "docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md",
-    "usage": "LLM 输出 <TOOL_CALL>{\"intent\":\"check_top_cpu\"}</TOOL_CALL>, intent_router 翻 tool 名执行"
+    "usage": "LLM 输出 <TOOL_CALL>{\"intent\":\"check_top_cpu\"}</TOOL_CALL>, intent_router 翻 tool 名执行",
+    "updated_at": "2026-06-07T11:00:45"
   },
   "intents": [
     {
@@ -12,8 +13,16 @@
       "state": "active",
       "tool": "process_hands.get_top_cpu",
       "semantic_hint": "查看后台 CPU 占用最高的进程",
-      "human_phrases_en": ["let me check CPU", "look at running processes", "see what's taking CPU"],
-      "human_phrases_zh": ["查一下 CPU", "看看后台进程", "看是不是哪个进程吃 CPU"],
+      "human_phrases_en": [
+        "let me check CPU",
+        "look at running processes",
+        "see what's taking CPU"
+      ],
+      "human_phrases_zh": [
+        "查一下 CPU",
+        "看看后台进程",
+        "看是不是哪个进程吃 CPU"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -22,8 +31,14 @@
       "state": "active",
       "tool": "process_hands.list_processes",
       "semantic_hint": "列出当前所有进程",
-      "human_phrases_en": ["list running apps", "what's running"],
-      "human_phrases_zh": ["列一下当前进程", "看看在跑什么"],
+      "human_phrases_en": [
+        "list running apps",
+        "what's running"
+      ],
+      "human_phrases_zh": [
+        "列一下当前进程",
+        "看看在跑什么"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -32,8 +47,14 @@
       "state": "active",
       "tool": "process_hands.kill_process",
       "semantic_hint": "结束指定进程 (需 process_name 或 pid)",
-      "human_phrases_en": ["kill that app", "end the process"],
-      "human_phrases_zh": ["把那个进程关了", "结束掉"],
+      "human_phrases_en": [
+        "kill that app",
+        "end the process"
+      ],
+      "human_phrases_zh": [
+        "把那个进程关了",
+        "结束掉"
+      ],
       "dangerous_flag": "risky",
       "source": "β.5.36-E seed"
     },
@@ -42,8 +63,14 @@
       "state": "active",
       "tool": "audio_hands.mute",
       "semantic_hint": "全局静音",
-      "human_phrases_en": ["mute audio", "silence the system"],
-      "human_phrases_zh": ["静音", "把声音关了"],
+      "human_phrases_en": [
+        "mute audio",
+        "silence the system"
+      ],
+      "human_phrases_zh": [
+        "静音",
+        "把声音关了"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -52,8 +79,14 @@
       "state": "active",
       "tool": "audio_hands.unmute",
       "semantic_hint": "取消静音",
-      "human_phrases_en": ["unmute", "turn audio back on"],
-      "human_phrases_zh": ["取消静音", "把声音打开"],
+      "human_phrases_en": [
+        "unmute",
+        "turn audio back on"
+      ],
+      "human_phrases_zh": [
+        "取消静音",
+        "把声音打开"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -62,8 +95,15 @@
       "state": "active",
       "tool": "audio_hands.set_volume",
       "semantic_hint": "调音量 (需 level 0-100)",
-      "human_phrases_en": ["set volume", "turn down the volume"],
-      "human_phrases_zh": ["调音量", "声音小一点", "声音大一点"],
+      "human_phrases_en": [
+        "set volume",
+        "turn down the volume"
+      ],
+      "human_phrases_zh": [
+        "调音量",
+        "声音小一点",
+        "声音大一点"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -72,8 +112,14 @@
       "state": "active",
       "tool": "media_control_hands.pause",
       "semantic_hint": "暂停媒体播放",
-      "human_phrases_en": ["pause", "pause that"],
-      "human_phrases_zh": ["暂停", "停一下"],
+      "human_phrases_en": [
+        "pause",
+        "pause that"
+      ],
+      "human_phrases_zh": [
+        "暂停",
+        "停一下"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -82,8 +128,14 @@
       "state": "active",
       "tool": "media_control_hands.play",
       "semantic_hint": "恢复媒体播放",
-      "human_phrases_en": ["play", "resume"],
-      "human_phrases_zh": ["播放", "继续放"],
+      "human_phrases_en": [
+        "play",
+        "resume"
+      ],
+      "human_phrases_zh": [
+        "播放",
+        "继续放"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -92,8 +144,14 @@
       "state": "active",
       "tool": "notification_hands.send",
       "semantic_hint": "发桌面通知 (需 title + body)",
-      "human_phrases_en": ["send a notification", "remind me on screen"],
-      "human_phrases_zh": ["发个通知", "弹个窗提醒"],
+      "human_phrases_en": [
+        "send a notification",
+        "remind me on screen"
+      ],
+      "human_phrases_zh": [
+        "发个通知",
+        "弹个窗提醒"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -102,28 +160,47 @@
       "state": "active",
       "tool": "file_operator.list_recent",
       "semantic_hint": "列最近修改的文件",
-      "human_phrases_en": ["recent files", "what files did i edit"],
-      "human_phrases_zh": ["最近改了什么文件", "最近的文件"],
+      "human_phrases_en": [
+        "recent files",
+        "what files did i edit"
+      ],
+      "human_phrases_zh": [
+        "最近改了什么文件",
+        "最近的文件"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
     {
       "id": "search_memory",
       "state": "active",
-      "tool": "hippocampus.search_recent",
+      "tool": "memory_hands.search_memory",
       "semantic_hint": "在海马体记忆库搜索",
-      "human_phrases_en": ["search my memory", "find what i said about"],
-      "human_phrases_zh": ["翻一下记忆", "搜一下我之前说过"],
+      "human_phrases_en": [
+        "search my memory",
+        "find what i said about"
+      ],
+      "human_phrases_zh": [
+        "翻一下记忆",
+        "搜一下我之前说过"
+      ],
       "dangerous_flag": "safe",
-      "source": "β.5.36-E seed"
+      "source": "β.5.36-E seed",
+      "tool_updated_at": "2026-06-07T11:00:45"
     },
     {
       "id": "dashboard_open",
       "state": "active",
       "tool": "ui_control.dashboard_open",
       "semantic_hint": "打开 Jarvis dashboard 界面",
-      "human_phrases_en": ["open dashboard", "show dashboard"],
-      "human_phrases_zh": ["打开面板", "打开 dashboard"],
+      "human_phrases_en": [
+        "open dashboard",
+        "show dashboard"
+      ],
+      "human_phrases_zh": [
+        "打开面板",
+        "打开 dashboard"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -132,8 +209,14 @@
       "state": "active",
       "tool": "ui_control.dashboard_close",
       "semantic_hint": "关闭 Jarvis dashboard",
-      "human_phrases_en": ["close dashboard", "hide dashboard"],
-      "human_phrases_zh": ["关掉面板", "关 dashboard"],
+      "human_phrases_en": [
+        "close dashboard",
+        "hide dashboard"
+      ],
+      "human_phrases_zh": [
+        "关掉面板",
+        "关 dashboard"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -142,8 +225,14 @@
       "state": "active",
       "tool": "window_hands.focus",
       "semantic_hint": "切到指定窗口 (需 window_title)",
-      "human_phrases_en": ["switch to window", "bring up that app"],
-      "human_phrases_zh": ["切到那个窗口", "切回来"],
+      "human_phrases_en": [
+        "switch to window",
+        "bring up that app"
+      ],
+      "human_phrases_zh": [
+        "切到那个窗口",
+        "切回来"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -152,8 +241,14 @@
       "state": "active",
       "tool": "system_hands.get_info",
       "semantic_hint": "查系统状态 (CPU/内存/磁盘/网络)",
-      "human_phrases_en": ["system status", "how's the machine"],
-      "human_phrases_zh": ["系统状态", "电脑情况怎么样"],
+      "human_phrases_en": [
+        "system status",
+        "how's the machine"
+      ],
+      "human_phrases_zh": [
+        "系统状态",
+        "电脑情况怎么样"
+      ],
       "dangerous_flag": "safe",
       "source": "β.5.36-E seed"
     },
@@ -162,8 +257,14 @@
       "state": "active",
       "tool": "memory_hands.add_reminder",
       "semantic_hint": "设单次提醒 — args 必含 intent (做啥) + trigger_time (ISO datetime / '07:00' / 'tomorrow 7am')",
-      "human_phrases_en": ["set a reminder", "remind me at"],
-      "human_phrases_zh": ["设个提醒", "提醒我"],
+      "human_phrases_en": [
+        "set a reminder",
+        "remind me at"
+      ],
+      "human_phrases_zh": [
+        "设个提醒",
+        "提醒我"
+      ],
       "dangerous_flag": "safe",
       "source": "Sir 2026-05-24 23:01 真测追根 BUG 治本 — 主脑 emit add_reminder TOOL_CALL 但 intent 没注册 → fail"
     },
@@ -172,8 +273,14 @@
       "state": "active",
       "tool": "memory_hands.list_reminders",
       "semantic_hint": "列出未触发的提醒/待办 (args 可选 {})",
-      "human_phrases_en": ["what reminders do I have", "list my reminders"],
-      "human_phrases_zh": ["我有什么提醒", "提醒列表"],
+      "human_phrases_en": [
+        "what reminders do I have",
+        "list my reminders"
+      ],
+      "human_phrases_zh": [
+        "我有什么提醒",
+        "提醒列表"
+      ],
       "dangerous_flag": "safe",
       "source": "Sir 2026-05-24 23:01 配套 set_reminder"
     }

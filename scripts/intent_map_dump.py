@@ -19,6 +19,7 @@ doc: docs/JARVIS_TEASE_AND_TOOL_CHANNEL_DESIGN.md
   python scripts/intent_map_dump.py --add <id> --tool <full_tool_name> \\
          --hint "X" [--phrases-en "a,b"] [--phrases-zh "c,d"] [--danger safe/risky/dangerous]
   python scripts/intent_map_dump.py --activate <id>
+  python scripts/intent_map_dump.py --set-tool <id> --tool <organ.command>   # 改已存在 intent 的 tool
   python scripts/intent_map_dump.py --reject <id>
   python scripts/intent_map_dump.py --deactivate <id>
   python scripts/intent_map_dump.py --delete <id>
@@ -153,6 +154,28 @@ def cmd_add(args) -> int:
     return 0
 
 
+def cmd_set_tool(intent_id: str, new_tool: str) -> int:
+    """[realmachine-fix1 / 2026-06-07] 改已存在 intent 的 tool 字段 (organ.command).
+    准则6: CLI 可改, 禁手编 JSON. 只动 tool 字段, 不动其它键/顺序。"""
+    if not new_tool or '.' not in new_tool:
+        print(f"[ERR] --tool must be 'organ.command' form, got {new_tool!r}")
+        return 1
+    data = _load()
+    kind, _, item = _find(data, intent_id)
+    if item is None:
+        print(f"[ERR] '{intent_id}' not found")
+        return 1
+    old_tool = item.get('tool', '?')
+    if old_tool == new_tool:
+        print(f"[OK] '{intent_id}' tool already = '{new_tool}' (no change)")
+        return 0
+    item['tool'] = new_tool
+    item['tool_updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%S')
+    _save(data)
+    print(f"[OK] '{intent_id}' tool: '{old_tool}' -> '{new_tool}' (in {kind})")
+    return 0
+
+
 def cmd_activate(intent_id: str) -> int:
     data = _load()
     kind, idx, item = _find(data, intent_id)
@@ -239,6 +262,8 @@ def main(argv=None) -> int:
     p.add_argument('--danger', metavar='LEVEL', help='safe|risky|dangerous (default safe)')
     p.add_argument('--source', metavar='STR')
 
+    p.add_argument('--set-tool', metavar='ID', dest='set_tool',
+                   help='change existing intent tool field (pair with --tool)')
     p.add_argument('--activate', metavar='ID')
     p.add_argument('--reject', metavar='ID')
     p.add_argument('--deactivate', metavar='ID')
@@ -246,6 +271,11 @@ def main(argv=None) -> int:
 
     args = p.parse_args(argv)
 
+    if args.set_tool:
+        if not args.tool:
+            print("[ERR] --set-tool <id> requires --tool <organ.command>")
+            return 1
+        return cmd_set_tool(args.set_tool, args.tool)
     if args.add:
         return cmd_add(args)
     if args.activate:
