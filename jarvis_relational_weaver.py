@@ -210,19 +210,32 @@ def observe_thought_concern_link(
 # 红线: 全程正则 + make_node_id + exact resolve, 零相似度/embedding/cosine。
 # ===========================================================================
 
-# 关系标记小模式集 (规则正则, 非 LLM 非相似度)。每条两个捕获组 = 两实体槽。
-# 保守: 只覆盖 Sir 明确把两实体连起的句式 (领属/动作/处所)。非贪婪槽防跨句吞。
-# 锚点用"边界"概念: 槽内不含标点/空白 (实体是连续片段), 防把整句吞进一个槽。
+# 关系标记小模式集 (规则正则, 非 LLM 非相似度)。
+# 🆕 [causal-grounding-tighten / Sir 2026-06-07] 收紧: 删高频虚词 的/在 (会误触造假焊:
+#   现在很累→现~很累 / 重要的事情→重要~事情), 删 陪 (陪审/陪练/陪同 复合词 → 法院陪审团
+#   →法院~审团 假焊)。保留高特异连接词, 新增明确事件动词。漏接优于假接。
+# 槽内不含标点/空白 (实体是连续片段), 防把整句吞进一个槽。
 _REL_SLOT = r"([^\s，。,.！？!?、；;：:]{1,12})"   # 实体槽: 1-12 非标点非空白字符
-_CAUSAL_REL_PATTERNS = [
-    # 领属: A的B (我妈的医院 / 母亲的手术)
-    re.compile(_REL_SLOT + r"的" + _REL_SLOT),
-    # 动作: A要做B / A做B (母亲要做手术 / 母亲做手术)
+
+# 二元关系 (两实体槽 A<连接>B, 两端都是真实体)。连接词高特异 (非高频虚词/非复合词碎片)。
+_REL_BINARY_PATTERNS = [
+    # 动作 A要做B / A做B (母亲要做手术 → 母亲~手术)。"做手术/做检查" 高特异事件。
     re.compile(_REL_SLOT + r"要?做" + _REL_SLOT),
-    # 处所-入: A住进B / A住院 类 (母亲住进医院)
+    # 处所-入 A住进B (母亲住进医院 → 母亲~医院)。"住进" 双字, 不在常见复合词碎片。
     re.compile(_REL_SLOT + r"住进" + _REL_SLOT),
-    # 处所-在: A在B (母亲在医院)
-    re.compile(_REL_SLOT + r"在" + _REL_SLOT),
+    # 探访 A看望B (哥哥看望母亲 → 哥哥~母亲)。"看望" 双字干净动词, 极少入复合词。
+    re.compile(_REL_SLOT + r"看望" + _REL_SLOT),
+]
+
+# 事件-单宾 (固定事件实体名 + 单实体槽)。主语隐式/时间噪音时仍能接地 (下午去看望母亲)。
+# 高特异事件动词把对象实体连到事件节点 (entity:<事件名>)。每条: (事件名, 正则[1组])。
+_REL_EVENT_PATTERNS = [
+    # 去看望<X> (下午去看望母亲 → entity:看望 ~ entity:母亲)。"去看望" 三字高特异,
+    # 避开 Sir 警示的高频单字"去"(去年/去吧 不含 "去看望")。
+    ("看望", re.compile(r"去看望" + _REL_SLOT)),
+    # <X>住院 (母亲住院 → entity:母亲 ~ entity:住院)。"住院" 医疗事件高特异;
+    # (?!部) 排除 "住院部" 复合词。主语槽在前。
+    ("住院", re.compile(_REL_SLOT + r"住院(?!部)")),
 ]
 
 # 离散清洗停用词 (位置剥离 + 噪音过滤; 纯关键词比对, 禁相似度)。
@@ -297,28 +310,32 @@ def observe_sir_relational_link(
     try:
         m = manifold if manifold is not None else get_manifold()
         seen_pairs: set = set()
-        for pat in _CAUSAL_REL_PATTERNS:
+
+        def _link(a_ent: Optional[str], b_ent: Optional[str]) -> None:
+            """两清洗后实体 → entity 节点 + SAID 边 (离散, 绕开 cosine)。"""
+            if not a_ent or not b_ent or a_ent == b_ent:
+                return  # 清洗不出干净实体 / 同实体 → 跳过 (漏接优于假接)
+            a_node = m.resolve(make_node_id(KIND_ENTITY, a_ent))
+            b_node = m.resolve(make_node_id(KIND_ENTITY, b_ent))
+            pair = (min(a_node, b_node), max(a_node, b_node))
+            if pair in seen_pairs:
+                return
+            seen_pairs.add(pair)
+            ek = m.observe_explicit_link(
+                a_node, b_node, turn_id, detail=f"sir_rel:{a_ent}~{b_ent}",
+            )
+            if ek:
+                out.append(ek)
+
+        # 二元关系: 两实体槽 (A<连接>B)
+        for pat in _REL_BINARY_PATTERNS:
             for mt in pat.finditer(turn_text):
-                a_raw, b_raw = mt.group(1), mt.group(2)
-                a_ent = _clean_entity(a_raw)
-                b_ent = _clean_entity(b_raw)
-                if not a_ent or not b_ent or a_ent == b_ent:
-                    continue  # 清洗不出干净实体 / 同实体 → 跳过 (漏接优于假接)
-                a_node = make_node_id(KIND_ENTITY, a_ent)
-                b_node = make_node_id(KIND_ENTITY, b_ent)
-                # resolve: 命中复用、不命中原样 (写边时隐式建); 绝不 cosine 合并
-                a_node = m.resolve(a_node)
-                b_node = m.resolve(b_node)
-                pair = (min(a_node, b_node), max(a_node, b_node))
-                if pair in seen_pairs:
-                    continue
-                seen_pairs.add(pair)
-                ek = m.observe_explicit_link(
-                    a_node, b_node, turn_id,
-                    detail=f"sir_rel:{a_ent}~{b_ent}",
-                )
-                if ek:
-                    out.append(ek)
+                _link(_clean_entity(mt.group(1)), _clean_entity(mt.group(2)))
+        # 事件-单宾: 固定事件名 + 单实体槽
+        for event_name, pat in _REL_EVENT_PATTERNS:
+            for mt in pat.finditer(turn_text):
+                _link(event_name, _clean_entity(mt.group(1)))
+
         if save and out:
             m.save()
         return out

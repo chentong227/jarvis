@@ -49,15 +49,30 @@ class TestMotherReplay(unittest.TestCase):
                                              manifold=m, save=False)
         eks2 = W.observe_sir_relational_link("母亲住进医院", "turn_2",
                                              manifold=m, save=False)
+        eks3 = W.observe_sir_relational_link("下午去看望母亲", "turn_3",
+                                             manifold=m, save=False)
         self.assertTrue(eks1, "母亲要做手术 应写 SAID 边")
         self.assertTrue(eks2, "母亲住进医院 应写 SAID 边")
-        # 节点应含 entity:母亲 / entity:手术 / entity:医院
+        self.assertTrue(eks3, "下午去看望母亲 应写 SAID 边 (新动词)")
+        # 节点应含 entity:母亲 / entity:手术 / entity:医院 / entity:看望
         nodes = set()
         for e in m._edges.values():
             nodes.add(e["a"]); nodes.add(e["b"])
         self.assertIn("entity:母亲", nodes)
         self.assertIn("entity:手术", nodes)
         self.assertIn("entity:医院", nodes)
+        self.assertIn("entity:看望", nodes)
+
+    def test_t1b_zhuyuan_event_links(self):
+        m = _mk_manifold()
+        eks = W.observe_sir_relational_link("母亲住院", "turn_1",
+                                            manifold=m, save=False)
+        self.assertTrue(eks, "母亲住院 应写 SAID 边 (事件-单宾)")
+        nodes = set()
+        for e in m._edges.values():
+            nodes.add(e["a"]); nodes.add(e["b"])
+        self.assertIn("entity:母亲", nodes)
+        self.assertIn("entity:住院", nodes)
 
     def test_t2_before_after_contrast(self):
         m = _mk_manifold()
@@ -78,12 +93,60 @@ class TestConservativeTrigger(unittest.TestCase):
         self.assertEqual(eks, [])
         self.assertEqual(len(m._edges), 0)
 
-    def test_t3b_bare_status_no_two_entity(self):
+    def test_t3b_status_now_links_via_event(self):
         m = _mk_manifold()
-        # "妈妈住院了" 无 "A住进B" 两实体标记 → 不写 (保守)
+        # 收紧后 "妈妈住院了" 走事件-单宾模式 (住院) → entity:妈妈~entity:住院
         eks = W.observe_sir_relational_link("妈妈住院了", "turn_1",
                                             manifold=m, save=False)
-        self.assertEqual(eks, [])
+        self.assertTrue(eks, "妈妈住院了 应经事件模式接 SAID")
+        nodes = set()
+        for e in m._edges.values():
+            nodes.add(e["a"]); nodes.add(e["b"])
+        self.assertIn("entity:妈妈", nodes)
+        self.assertIn("entity:住院", nodes)
+
+
+class TestTightenFalseTriggerEliminated(unittest.TestCase):
+    """🆕 收紧验证: 删 的/在/陪 高频虚词后误触消除。"""
+
+    def _nodes(self, m):
+        s = set()
+        for e in m._edges.values():
+            s.add(e["a"]); s.add(e["b"])
+        return s
+
+    def test_de_zai_false_triggers_gone(self):
+        for sent, ghosts in [
+            ("现在很累", ["entity:现", "entity:很累"]),
+            ("重要的事情", ["entity:重要", "entity:事情"]),
+            ("我在想问题", ["entity:想", "entity:问题"]),
+        ]:
+            m = _mk_manifold()
+            eks = W.observe_sir_relational_link(sent, "turn_1",
+                                                manifold=m, save=False)
+            self.assertEqual(eks, [], f"{sent} 不应写边 (删 的/在)")
+            for g in ghosts:
+                self.assertNotIn(g, self._nodes(m),
+                                 f"{sent} 不应造 {g}")
+
+    def test_new_verbs_no_false_trigger(self):
+        # "去" 高频对抗句: 去看望 三字高特异, 不被 去年/去吧 误触
+        for sent in ["我去年去过北京", "去吧", "过去的事就算了"]:
+            m = _mk_manifold()
+            eks = W.observe_sir_relational_link(sent, "turn_1",
+                                                manifold=m, save=False)
+            self.assertEqual(eks, [], f"{sent} 不应误触 (去看望 三字特异)")
+        # "陪" 已删: 陪审团复合词不误触
+        m = _mk_manifold()
+        eks = W.observe_sir_relational_link("法院陪审团成员", "turn_1",
+                                            manifold=m, save=False)
+        self.assertEqual(eks, [], "陪审团 不应误触 (陪 已删)")
+        # 住院部 复合词排除
+        m = _mk_manifold()
+        eks = W.observe_sir_relational_link("住院部在三楼", "turn_1",
+                                            manifold=m, save=False)
+        # 住院部 因 (?!部) 不触发住院事件; 在 已删 → 不写
+        self.assertEqual(eks, [], "住院部 不应误触 (住院(?!部) 排除)")
 
 
 class TestNoiseCaptureSkip(unittest.TestCase):
