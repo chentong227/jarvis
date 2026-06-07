@@ -91,4 +91,23 @@
 
 ---
 
-*C 设计草案。① IntentResolver node_id 穿用方案凭实物证伪(纠正路径不接 manifold);② 离散安全默认 + ②b 可选 turn_id 关联;③ 挂点 tool:160;④ flag-gated/幂等/多 facet;⑤ 红线自检全守。零代码/零真机/未碰 flag。待顾问审 + 拍 ①/②b。*
+---
+
+## 拍板小节 (Sir 2026-06-07 定)
+
+**C 终态 = ②(纯 profile 纠正不碰 facet,零误撤)。**
+
+- **②b(turn_id 关联)否决**。理由:
+  1. **纠正轮 ≠ facet 接地早轮** —— Sir 纠正发生在 turn T,但 facet 的接地 provenance 来自更早的多个 turn(跨 ≥3 turn 才结晶),turn_id 对不上;
+  2. **同 turn 误撤** —— 同一 turn 可能有无关 facet provenance 共享 turn_id,turn_id 粒度太粗会误撤。
+- **"即撤"功能并入 A 的硬证底座**:facet 的撤销由 A 河床的离散硬证驱动(breach / ClaimTracer / Sir 否认带离散键),而非 C 的 NL 纠正路径。C 路径无离散键 → 不碰 facet。
+- **facet 的现有撤销通道不变**:reverify(接地边消失 → revoke)仍是 facet 的合法离散撤销路径(P0 已实现)。C 终态只是明确"NL 纠正不额外接 facet"。
+
+**落地含义**:
+- `on_sir_correction`(`facets.py:413`)保留实现,但**纠正 turn 路径不调它**(无离散键可传)。
+- 防回归:加测试断言"一次纠正后 facets store 逐字节不变"(见件2 测试),防将来误把纠正路径接上 facet。
+
+---
+
+*§9-C 终态拍定: ②(纯 profile 不碰 facet)。②b turn_id 关联否决。即撤并入 A 硬证底座。*
+
