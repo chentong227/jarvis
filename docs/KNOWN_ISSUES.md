@@ -17,6 +17,38 @@
 - **状态**: OPEN
 ---
 
+## #hippocampus-not-mounted — search_memory intent 路由三重错配 (RESOLVED)
+
+- **发现**: 2026-06-07 (真机首份激活日志 jarvis_20260607_101414.log turn 6cc0 假焊诊断, commit 3aba672)
+- **性质**: 预存真 BUG (持续故障, 重启不修)。
+- **现象**: `search_memory` intent 路由目标 `hippocampus.search_recent` 三重错配(organ 名错 / command 名错 / 挂载语义错) → 主脑主动记忆检索 100% `not mounted`(日志行 1255/1446)。turn 6cc0 假焊的根因①(工具失败但口编"6月3日")。
+- **根因**: `intent_to_tool_map.json` `search_memory.tool` 自 `41cbf68`(2026-05-20)引入即错 — `hippocampus` 从来不是 `l4_hands_pool` organ(`hand_registry.get` 必 None → `jarvis_chat_bypass.py:2597` not mounted);`Hippocampus` 类也无 `search_recent`(只有 `search_memory`)。
+- **修复**: `ad25fcd` — 走准则6 CLI(`intent_map_dump.py --set-tool`)把 `search_memory.tool` 改为 `memory_hands.search_memory`(organ+command 双修)。Tier 真路径 before/after: success=False(not mounted) → success=True(真返回记录 [ID:2477])。
+- **状态**: ✅ RESOLVED (ad25fcd)
+
+---
+
+## #tier-wall-drift — SHORT_CHAT 等 4 轻档口 prompt 无墙+衡 (RESOLVED 结构层)
+
+- **发现**: 2026-06-07 (turn 6cc0 假焊诊断, commit 3aba672)
+- **性质**: 集成漂移(墙+衡只进重档真输出, 轻档裸奔)。
+- **现象**: `anchor_boundary_block`(墙+衡 conflict_guidance)定义在 `jarvis_central_nerve.py:4340`、唯一消费点 legacy mega(`cn:4699`);SHORT_CHAT/WAKE_ONLY/FACTUAL_RECALL/REMINDER_FIRING 4 轻档从独立 helper 早 return、不接收墙变量 → 轻档无墙。假焊正发生在 SHORT_CHAT(turn 6cc0 tier=SHORT_CHAT)。turn 6cc0 假焊的根因②。
+- **修复**: `ad9ae2f` — 4 helper 各加 `anchor_boundary_block` 参数 + PromptBuilder BlockSpec(salience 0.88)+ fallback f-string 同补;复用 `cn:4340` 同一份块不另造。B 验(真分类器命中 tier + 真 `_assemble_prompt`):6cc0 类探针**真判 SHORT_CHAT** 且 has_walls/has_conflict=True;4 轻档全 True;重档无回归。
+- **状态**: ✅ RESOLVED (结构层, ad9ae2f)
+- **注**: 墙 binding 口生成 / 河床闭环 = **设计冻结 35c8bb0** 待施工(`JARVIS_META_ARCH_ALIGNMENT_20260607.md` §4/§6), **不属本条**。本条只解决"墙进入轻档 prompt"的结构漂移。
+
+---
+
+## #verify-standard-all-tiers — B 验须覆盖所有 tier(尤其最高频 SHORT_CHAT)
+
+- **发现**: 2026-06-07 (tier-wall-drift 复盘)
+- **性质**: 验证标准补强(流程教训, 非代码 bug)。
+- **教训**: TASK 8 镜像 B 4 探针(kindness/honesty/promise/mundane)全飘进重档(DEEP_QUERY/full), **漏 SHORT_CHAT** → 4 轻档实际无墙却签了"墙+衡激活收口"。"轻档未实却签了收口"的根源 = B 验探针未覆盖最高频 tier。
+- **标准**: 任何改口主脑 prompt 组装的 B 验, **必须覆盖所有 tier, 且断言探针真命中目标 tier**(打印 classified_tier, 不接受"飘进重档的假绿")。尤其 SHORT_CHAT(Sir 一般对话默认档, 最高频)。
+- **状态**: OPEN (流程标准, 后续 B 验遵守)
+
+---
+
 ## #affordance-menu-missing — 识 prompt actionable 菜单漏列 `propose_affordance` (挂账 a)
 
 - **发现**: 2026-06-07 (锚重构第一阶段 affordance 实做收尾, TASK 5/9)
@@ -33,21 +65,18 @@
 - **发现**: 2026-06-07 (墙+衡激活轨多次 _runall 观测)
 - **性质**: 测试基础设施时序不稳, 非生产码 bug。
 - **现象**: `tests/_runall.ps1` 全套跑时, 个别时序敏感套件(`beta44_dashboard_integrity` / `care_live` 等)偶发 ±1~2 红, 单跑则绿。蚀了"_runall 零增红"门的判定确定性 — 难以一眼区分"本笔引入的红" vs "基线 flaky 红"。
+- **基线更新**: 现为 **89/41**(① ad25fcd 修好 intent channel 后 `beta536_intent_channel` 多过一条, base==withfix 经 Compare-Object 验证零真增红)。早期记录为 88/42 / 89/40。
 - **影响**: 收口判定需逐笔人工核对 flaky 套件名, 增加审查负担。已用"base commit 上跑 _runall 前后对比"法证过 +1 红非本轨 2 行 f-string 引入(TASK 8)。
 - **修复计划**: 需独立"flaky 稳定化 / 隔离轨" — 给时序套件注入确定性时钟或 mock IO, 或移出零增红门单独跑。本轨不做。
 - **状态**: OPEN
 
 ---
 
-## #meta-arch-alignment — 重构完锚后四元架构盲点 + 优化路径对齐会 (挂账 c)
+## #meta-arch-alignment — 四元架构对齐会(设计冻结已落档)
 
 - **发现**: 2026-06-07 (锚重构第一阶段收口, TASK 9)
 - **性质**: 待办事项 (非 bug), 元架构治理。
-- **内容**: 锚重构第一阶段(墙+衡激活)收口后, 需开一次"四元架构盲点 + 优化路径对齐会":对账 `JARVIS_QUAD_ARCHITECTURE_SNAPSHOT.md` 现状(说/识/体/衡四档实做度)+ MIND_HENG #5/#6 待解张力 + 确认后续重构次序执行。
-- **锁死的元架构重构次序**(本轨签定, 不得乱序):
-  1. 先做完现列**锚重构**(墙+衡已激活 ✅ → 内在锚/affordance 后续阶段)
-  2. → **河床闭环**(QUAD §4.1/§7: 记伤已做、回塑未做 → 补"伤→塑后续可塑性"闭环)**排在动态软化之前**
-  3. → **接地骨架长厚**(shared 8 / said 0 → 同步推接地边增长)
-  4. → 才谈**动态软化**(conflict_guidance 动态化等)
-- **修复计划**: 锚重构完成后由 Sir 召集对齐会。
-- **状态**: OPEN (deferred, 待锚重构完成)
+- **进展**: 对齐会已开, 定案落成**设计冻结** `docs/JARVIS_META_ARCH_ALIGNMENT_20260607.md`(commit `35c8bb0`)。涵盖四元平级互通 / 锚可增减 / 墙独立钉死 / 打通回路(口承接识当轮良心+衡当轮张力+体伤)/ 承接耦合非权重。
+- **次序锁死**(设计冻结 §9): 锚重构 → 河床闭环 → 接地骨架长厚 → 动态软化(河床排在动态软化之前)。
+- **三红线**(设计冻结 §10): ①不交易 ②不评分 ③墙钉死 — 任一被实现违背即驳回。
+- **状态**: OPEN (设计冻结已落, 待按 §9 次序施工; 本轮不施工)
