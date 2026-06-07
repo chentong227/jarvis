@@ -333,6 +333,11 @@ class ChatBypass:
         #   - 比 chime 多了"语义匹配"，比 vocal.say 同步调用快 10 倍
         self._first_token_received = False
         self._backchannel_timer = None
+        # 🆕 [localphrase-cancel-fix / Sir 2026-06-07] turn 流式已结束守卫.
+        # 治 bug#1: One moment 罐头音在 turn_complete 后误播 (10s 墙钟 timer 活过了
+        # 16.9s 后台异步窗口, 首token取消有缺口). 本 flag 在每次 stream 收尾 set True,
+        # _maybe_say_local fire 前再查一次 — 即便 timer 漏取消, turn 已结束也不播.
+        self._turn_streaming_done = False
         # 🆕 [B3-TTFT / Sir 2026-06-02] OpenAI client 连接复用池 (治 TTFT 建连慢).
         # 真机 jarvis_20260602_194104: TTFT avg 5.6s, breakdown=连接5.4s+等待0.0s →
         # 慢在 TLS 建连, 非 prompt 增大. 根因: 每 turn new OpenAI() = 新 httpx 连接池 →
@@ -554,6 +559,8 @@ class ChatBypass:
         """
         import threading
         self._first_token_received = False
+        # 🆕 [localphrase-cancel-fix / Sir 2026-06-07] 新 stream 起, 重置"已结束"守卫.
+        self._turn_streaming_done = False
         # 取消旧 timer（如果有）
         try:
             if self._backchannel_timer is not None:
@@ -580,6 +587,11 @@ class ChatBypass:
                 if not getattr(self, '_LOCAL_UTTERANCE_ENABLED', False):
                     return
             if self._first_token_received:
+                return
+            # 🆕 [localphrase-cancel-fix / Sir 2026-06-07] turn 流式已结束守卫:
+            # 即便 timer 漏取消 (本轮 16.9s 后台窗口活过 stream), turn 已结束就不播
+            # —— 答案早说完, 此时 fire = turn_complete 后纯噪音 (bug#1 根因)。
+            if getattr(self, '_turn_streaming_done', False):
                 return
             if getattr(self, 'is_interrupted', False):
                 return
@@ -5897,6 +5909,16 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             try:
                 from jarvis_utils import set_conversation_active
                 set_conversation_active(False)
+            except Exception:
+                pass
+            # 🆕 [localphrase-cancel-fix / Sir 2026-06-07] turn 收尾: 标记流式已结束 +
+            # 强制取消本地短句 timer (兜底所有 return 路径)。治 bug#1: 10s 墙钟 timer
+            # 漏被首token取消时, 此处保证 turn_complete 后绝不再 fire "One moment" 噪音。
+            try:
+                self._turn_streaming_done = True
+                if getattr(self, '_local_utterance_timer', None) is not None:
+                    self._local_utterance_timer.cancel()
+                    self._local_utterance_timer = None
             except Exception:
                 pass
 
