@@ -1440,6 +1440,23 @@ class InnerThought:
 # Helpers
 # ==========================================================================
 
+# 🆕 [innerthought-screen-freshness / 2026-06-07] 屏幕帧鲜度闸阈值.
+# 治失真①: InnerThought 不直接截图, 只从 SWM 'screen_described' event 看
+# ScreenVision 异步 publish 的 snapshot (5min idle backfill / 60s TTL 缓存单帧).
+# 节奏失配 → 引用 5min 前旧帧 (cite="his terminal" 但 Sir 早切去看视频).
+# 修: evidence 收集时纯时间戳 age 比对 (age = event._age_s, ScreenVision
+# capture 后立即 publish 故 _age_s ≈ frame 龄), age > 阈值 → 标 stale, 渲染
+# 改 [屏幕态 ~Nmin 前, 可能已过时] 降可信, 让识别别当当前态断言.
+# 阈值取 150s: Sir 拍的 120~180s 区间中点. 取值理由 —
+#   ScreenVision 同 turn cache TTL=60s (snap.is_fresh 默认), idle backfill=300s.
+#   阈值须 > TTL 60s (60s 内本就是"同 turn 复用"非过时), 且 < backfill 300s
+#   (否则永不触发). 150s = 落在 (60, 300) 居中, 给正常 app 切换/采样抖动留余量,
+#   又能在 idle backfill 间隙 (帧龄 60~300s) 早判 stale. 纯时间戳, 禁相似度.
+SCREEN_STALE_THRESHOLD_S = 150.0
+# 屏幕来源 SWM event type (ScreenVisionEngine._publish_swm etype='screen_described')
+_SCREEN_EVENT_TYPES = ('screen_described',)
+
+
 def _truncate_at_word_boundary(s: str, max_chars: int,
                                  suffix: str = '…') -> str:
     """🆕 [Sir 2026-05-27 21:11 真测 P2_b] 防 log 截到字/词中间.
@@ -3653,13 +3670,21 @@ class InnerThoughtDaemon:
                     age = e.get('_age_s', 9999)
                     if age > within_seconds:
                         continue
-                    events.append({
-                        'type': e.get('type', '?'),
+                    _etype = e.get('type', '?')
+                    _entry = {
+                        'type': _etype,
                         'desc': (e.get('description') or '')[:120],
                         'age_s': int(age),
                         # 🆕 [支柱A 指纹净化] 存 source 供 fingerprint filter 自产 event
                         'source': e.get('source', ''),
-                    })
+                    }
+                    # 🆕 [innerthought-screen-freshness / 2026-06-07] 屏幕帧鲜度闸:
+                    # 纯时间戳 age 比对 (禁相似度). 屏幕来源 event age > 阈值 → 标
+                    # stale, 让识别渲染时降可信, 不把过期帧当当前态断言 (治失真①).
+                    if _etype in _SCREEN_EVENT_TYPES and age > SCREEN_STALE_THRESHOLD_S:
+                        _entry['screen_stale'] = True
+                        _entry['stale_age_min'] = max(1, int(age / 60))
+                    events.append(_entry)
                 ev['swm_events'] = events[:8]
         except Exception:
             pass
@@ -5001,7 +5026,16 @@ class InnerThoughtDaemon:
         sw = evidence.get('swm_events') or []
         if sw:
             for e in sw:
-                lines.append(f"  - {e['age_s']}s ago: [{e['type']}] {e['desc']}")
+                # 🆕 [innerthought-screen-freshness / 2026-06-07] 屏幕过期帧降可信:
+                # stale 屏幕态保留信息但标 [~Nmin 前, 可能已过时], 让识别别当当前态断言.
+                if e.get('screen_stale'):
+                    lines.append(
+                        f"  - {e['age_s']}s ago: [{e['type']}] {e['desc']} "
+                        f"[屏幕态 ~{e.get('stale_age_min', 1)}min 前, 可能已过时 — "
+                        f"勿当当前态断言]"
+                    )
+                else:
+                    lines.append(f"  - {e['age_s']}s ago: [{e['type']}] {e['desc']}")
         else:
             lines.append("  (none recent)")
         lines.append("")
