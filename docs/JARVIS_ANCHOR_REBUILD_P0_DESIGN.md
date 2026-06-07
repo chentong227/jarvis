@@ -4,6 +4,8 @@
 > 设计冻结 `35c8bb0` §9 第一阶段 = 锚重构。目标方向(冻结 §2/§7):锚综合四架构、可增减(随真接地痕迹长 / 随失效证伪减)。
 > 本轮**只产勘察报告 + 设计草案, 零代码、零真机、不动 energy_grounded_only**。凡引用现状带 file:line。
 > **状态: 草案待顾问/Sir 审, 审过才动码。**
+>
+> **⚠️ 边界声明(P0 不治假焊)**: P0 锚重构本身**不治假焊**。它只打通"真接地痕迹 → 身份结晶"的通路(让"我"能随真接地长)。假焊的根治在**河床(衡记伤→facet, 冻结 §6)+ 良心进口当轮**, 二者均排在 P0 **之后**(冻结 §9 次序: 锚重构 → 河床闭环 → 接地长厚 → 动态软化)。重启带 facets 后**不应被误期望"假焊消失"** —— 假焊根治是后续阶段的事。
 
 ---
 
@@ -92,6 +94,23 @@
 
 > 红线守: 资格闸是离散 AND(真出处 ∧ 复现计数 ∧ 正交), **无系数/权重/打分/argmax** → 守 §5/§10。
 
+### B.5a "同一 X"的判定 = 离散键, 禁相似度(贴红线, A 段)
+
+B.5 复现计数 "Sir 在 ≥N 个不同 turn 提了**同一** X" 里的 **"同一"必须是离散判定**, 用 manifold 现成的离散键:
+
+| "同一"对象 | 离散同一性键 | 来源 file:line |
+|---|---|---|
+| 同一关系(边) | 同一条 manifold 边的结构键(`(a,b,prov)` 定址)/ 边的两端 `node_id` | `jarvis_relational_manifold.py:add_edge:381`;边由 `observe_relation`(PROV_SAID, `:500`)/ `observe_shared_entity`(PROV_SHARED, `:512`)造 |
+| 同一指称对象(referent) | 节点命名空间 id `kind:raw_id`(`make_node_id:69`)—— 指回真理源 store 的离散 raw_id, **经 `resolve` 跟 alias 链到代表节点**(`:833`)消除别名重复 | `jarvis_relational_manifold.py:69/833` |
+| 同一承诺 | commitment 记录 ID(CommitmentWatcher / DB#id) | `l4_memory_hands.py` list_commitments 的 `DB#cid` |
+
+**明文禁止条款**: **禁止用 embedding 相似度 ≥ 阈值来判"同一"** —— 那是后门评分(违 §5)。具体:
+- 复现计数的"同一性"判据**只认离散键**(edge 结构键 / `resolve` 后的 `node_id` / commitment ID), **不认 cosine 相似度**。
+- manifold 里 `PROV_EMBED` 边(`:53`, embedding cosine 造的边)**不作为"同一 X"的同一性依据**, 也不作为 B.5 的"真出处"(B.5 真出处只认 `PROV_SAID`/`PROV_SHARED`, 与 §B.5 一致)。
+- 若 manifold 中某痕迹的 identity 实现**本身依赖向量相似度**(如 alias 由 embed 聚类产生), 复现计数**改用离散键**(`resolve` 后的代表 `node_id` / edge 结构键)作同一性判据, **不下钻到向量层比相似度**。
+
+> 红线守: "同一"= 离散键(edge键/node_id/commitment ID), 明文禁 embedding 相似度阈值 → 守 §5(无后门评分)。
+
 ### B.6 锚减的触发(离散事件驱动, 非分数掉阈值)
 
 什么算"失效/证伪" —— **离散事件**:
@@ -125,15 +144,44 @@
   2. 增减是**离散资格事件**, 不是连续漂移 —— 没有"分数缓慢移动"导致身份悄悄变形。
   3. 容量上限若需要 → 用**离散硬规**(如 FIFO 淘汰最老的 revoked, 或按出处类型的硬优先级 PROV_SHARED > PROV_SAID), **不是按分数排序砍** —— 仍守 §5。
 
+### B.8a facets 进口 prompt 的预算(离散硬规, C 段)
+
+现状 SelfAnchor 恒定 `L0=1700c`(`build_block(max_chars=1700)`, `jarvis_self_anchor.py:299`)。facets 列进 build_block 的预算规则:
+
+**(a) 独立子预算(不挤占现有动态状态)**:
+- facets 另开**独立子预算上限 = 400 字符 / 最多 5 条**(离散硬常量, 系统级 — 类 `TICK_INTERVAL`, 不下钻 vocab)。
+- 现有动态状态(uptime/health/心流/commitments)保持原预算;facets 子预算叠加在其后, 总块仍受 `max_chars` 末尾截断兜底(`:448` truncate)。
+- (具体数值 X=400c / M=5 待施工时按真机 prompt 体积微调, 但**必是离散常量, 非按分数动态分配**。)
+
+**(b) 溢出选择也走离散硬规(关键红线)**:
+- facets 数 > M(=5)放不进 prompt 时, **挑哪几条进 = 离散硬规**:
+  1. 出处优先级(离散): `PROV_SHARED` > `PROV_SAID`(沿用 B.8 容量规则);
+  2. 同优先级内: FIFO(保最早结晶的 / 或保最近 reverify 过的 —— 二选一, 施工时定, 但必是**离散时间序**非分数)。
+- **绝不**"按显著度/分数排序取 topN 进 prompt" —— 那是后门评分(违 §5)。store 无 score 字段(B.7), 渲染层也不得引入排序分数。
+
+> 红线守: 子预算=离散常量;溢出选择=出处优先级+FIFO 离散硬规, **无显著度/分数排序** → 守 §5。
+
+### B.8b 身份内核保静态(明写取舍, D 段)
+
+**设计决策(Sir 已认的取舍, 落字)**:
+- SelfAnchor `[WHO I AM]`(`jarvis_self_anchor.py:322-340`)/ `[REFERENT MAP]`(`:404-411`)散文核心 **保留为静态"宪法散文", 不参与增减**。
+- 锚的**可塑只在新 identity facets 层**(围墙生长, B.5)。
+- ⟹ **锚 = 稳定骨架(墙 `_SEED_ANCHORS` + 宪法散文 [WHO I AM]/[REFERENT MAP])+ 可塑 facets 层**。
+- 稳定骨架(墙 + 宪法散文)与可塑 facets 物理分层: 骨架不动(墙源码改 / 宪法散文源码改), facets 离散增减。"我"的连贯性由骨架保证, 成长由 facets 承载。
+
 ### B.9 红线自检表
 
 | 红线 | 草案条款 | 守住? |
 |---|---|---|
 | **§5 不评分**(无系数/权重/argmax) | B.5 资格闸=离散 AND;B.7 合成=离散写入/渲染;store 无 strength/score 字段;B.8 容量=离散硬规非排序 | ✅ 守住 |
+| **§5 不评分·"同一X"判定**(A 段) | B.5a "同一"= 离散键(edge键/`resolve` 后 node_id/commitment ID);明文禁 embedding 相似度阈值;PROV_EMBED 不作同一性/出处依据 | ✅ 守住 |
+| **§5 不评分·进 prompt 选择**(C 段) | B.8a facets 子预算=离散常量(400c/5条);溢出选择=出处优先级 PROV_SHARED>PROV_SAID + FIFO 离散;**无显著度排序取 topN** | ✅ 守住 |
 | **§5 不交易**(不在公共货币权衡两值) | 每条 facet 独立过闸, 无跨候选比较、无公共货币 | ✅ 守住 |
-| **§3/§10 锚改不动墙** | facets 层独立于 `_SEED_ANCHORS.walls`;`_merge_anchor_override` 已守 walls 不可改;新层不碰 walls | ✅ 守住 |
-| **§7 锚增=随真接地, 非旋钮** | 增=真出处(manifold PROV_SAID/SHARED)+ 离散复现计数 + 接地核验;无"拧显著度旋钮" | ✅ 守住 |
+| **§3/§10 锚改不动墙** | facets 层独立于 `_SEED_ANCHORS.walls`;`_merge_anchor_override` 已守 walls 不可改;新层不碰 walls;宪法散文亦源码级(B.8b) | ✅ 守住 |
+| **§7 锚增=随真接地, 非旋钮** | 增=真出处(manifold PROV_SAID/SHARED)+ 离散复现计数(离散键)+ 接地核验;无"拧显著度旋钮" | ✅ 守住 |
 | **§7 锚减=离散事件, 非分数掉阈值** | 减=Sir 纠正 / 接地边消失 / reverify 出处没了;时间只触发 reverify 不直接降级(对照 affordance 补遗-1) | ✅ 守住 |
+| **身份内核静态(D 段)** | [WHO I AM]/[REFERENT MAP] 宪法散文不参与增减, 可塑只在 facets 层(B.8b) | ✅ 明写 |
+| **P0 不治假焊(B 段边界)** | 开头边界声明: P0 只打通"接地→结晶"通路;假焊根治在河床+良心进口当轮, 排 P0 后(§9) | ✅ 明写 |
 | **§6 回塑次序** | 衡记伤→facet 的接驳**本阶段不做**(只标接口位 B.7), 留河床闭环阶段(冻结 §9 次序: 锚重构→河床) | ✅ 守次序 |
 
 ---
