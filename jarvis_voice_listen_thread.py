@@ -615,12 +615,58 @@ class VoiceListenThread(QThread):
     )
     _THIRD_PERSON_INDICATORS_ZH = (
         '他说', '她说', '他们', '她们', '他在', '她在',
-        '你妈', '你爸', '我妈', '我爸', '我儿', '我女',
+    )
+    # 🆕 [bypass-fix-C / 2026-06-07] 亲属称谓 + 言说动词 = 转述他人 (才算 third_person)。
+    # 单纯 "我妈妈医院 / 我离我妈近" (所属/自叙) 不算第三人称 — 见 _kinship_reported_speech。
+    # 称谓变体覆盖子串 (我妈 命中 我妈妈/我妈咪); 言说动词离散关键词, 禁相似度。
+    _KINSHIP_TERMS_ZH = (
+        '我妈', '我爸', '我儿', '我女', '你妈', '你爸', '他妈', '他爸',
+        '我哥', '我姐', '我弟', '我妹', '我老婆', '我老公', '我女儿', '我儿子',
+    )
+    _REPORTED_SPEECH_VERBS_ZH = (
+        '说', '讲', '问', '告诉', '叫', '聊', '讲到', '提到', '抱怨', '嘱咐', '吩咐',
     )
     _THIRD_PERSON_INDICATORS_EN = (
-        ' he ', ' she ', ' they ', 'mum ', 'dad ', 'mom ', 'mother ',
-        'father ', 'boyfriend', 'girlfriend',
+        ' he ', ' she ', ' they ',
     )
+    # 🆕 [bypass-fix-C] EN 亲属 + 言说动词才算转述。
+    _KINSHIP_TERMS_EN = (
+        'mum', 'mom', 'dad', 'mother', 'father', 'boyfriend', 'girlfriend',
+        'wife', 'husband', 'son', 'daughter',
+    )
+    _REPORTED_SPEECH_VERBS_EN = (
+        'said', 'says', 'told', 'asked', 'talked', 'complained', 'mentioned',
+    )
+
+    def _kinship_reported_speech_hits(self, text: str, t_pad: str) -> int:
+        """🆕 [bypass-fix-C / 2026-06-07] 亲属称谓 + 言说动词 = 转述他人 → 计 third_person。
+
+        离散规则 (纯关键词, 禁相似度): 命中任一亲属称谓, 且该称谓**之后**(同句内)
+        出现任一言说动词 → 算一次转述命中。单纯提到家人 (所属/自叙, 如 "我离我妈妈医院近")
+        无言说动词 → 0 (不罚)。
+          - "我妈妈说要来" → 我妈(子串命中我妈妈) + 后跟 说 → 1 (转述, 罚)
+          - "我离我妈妈那个医院很近" → 我妈 命中但后无言说动词 → 0 (自叙, 不罚)
+        """
+        hits = 0
+        # 中文: 亲属称谓位置之后是否有言说动词
+        for kin in self._KINSHIP_TERMS_ZH:
+            idx = text.find(kin)
+            if idx < 0:
+                continue
+            after = text[idx + len(kin):]
+            if any(v in after for v in self._REPORTED_SPEECH_VERBS_ZH):
+                hits += 1
+        # 英文: 同理 (亲属词后跟言说动词)
+        low = t_pad
+        for kin in self._KINSHIP_TERMS_EN:
+            idx = low.find(kin)
+            if idx < 0:
+                continue
+            after = low[idx + len(kin):]
+            if any((' ' + v + ' ') in (' ' + after + ' ') for v in self._REPORTED_SPEECH_VERBS_EN):
+                hits += 1
+        return hits
+
 
     def classify_jarvis_directness(self, text: str) -> tuple:
         """启发式打分: ASR 文本是否像"对 Jarvis 说"。返回 (score, breakdown).
@@ -665,8 +711,16 @@ class VoiceListenThread(QThread):
         # 含多个 '我' 第一人称 → Sir 在跟 Jarvis 叙事, 不是跟外人对话. 不该旁路化.
         # 判定: '我' 出现 >= 2 次 → Sir 自叙 evidence (排除 '我妈/我爸' 家庭指代 → 那
         # 是真转述他人对话).
+        # 🆕 [bypass-fix-C / 2026-06-07] 亲属称谓不再一刀切算第三人称。
+        # 旧双重失误: (1) 我妈/我爸 列入第三人称指代 (2) _has_family_indicator 反手关掉
+        # first-person narrative 豁免 → "我离我妈妈医院近" 自叙被误判旁路 (score 0.20)。
+        # 治本: 亲属只有 + 言说动词 (我妈说/我爸讲) = 真转述他人 → 才算 third_person;
+        # 单纯提到家人 (所属/自叙) 不算。_has_family_indicator 改判"转述类亲属"(对齐),
+        # 不再用"含家人称谓"反手关自叙豁免 (消除自相矛盾)。
+        _kin_reported = self._kinship_reported_speech_hits(text, t_pad)
         _wo_count = text.count('我')
-        _has_family_indicator = any(w in text for w in ('我妈', '我爸', '我儿', '我女'))
+        # _has_family_indicator 现仅指"转述他人的亲属称谓" (我妈说...), 非单纯提到家人。
+        _has_family_indicator = (_kin_reported >= 1)
         _is_first_person_narrative = (_wo_count >= 2 and not _has_family_indicator)
         _is_addressing_jarvis = (
             'wake_word' in breakdown
@@ -676,9 +730,10 @@ class VoiceListenThread(QThread):
             or _is_first_person_narrative  # Sir 自叙给 Jarvis 听
         )
 
-        # -0.3 含明确第三人称指代 (含 padding 避免误判 ' the ')
+        # -0.3 含明确第三人称指代 (他说/她说/他们) 或 亲属转述 (我妈说...)
         third_hits_zh = sum(1 for w in self._THIRD_PERSON_INDICATORS_ZH if w in text)
         third_hits_en = sum(1 for w in self._THIRD_PERSON_INDICATORS_EN if w in t_pad)
+        third_hits_zh += _kin_reported  # 亲属转述计入 (亲属 + 言说动词)
         if third_hits_zh + third_hits_en >= 1:
             penalty = min(0.4, 0.2 + (third_hits_zh + third_hits_en) * 0.1)
             if _is_addressing_jarvis:
