@@ -158,12 +158,31 @@ def _is_orthogonal_to_walls(content: str) -> bool:
     if not content:
         return True
     low = content.lower()
-    # 离散关键词排除 (墙 id + 核心禁令词)。命中 = 复述墙 = 非正交。
-    wall_markers = (
-        "no_betray", "no_abandon", "ground", "keep",
+    # 看守点①bis [Step2+3 / 2026-06-07]: 墙 id 从 _SEED_ANCHORS 读 (只读, 不写墙),
+    # 墙将来改了自动同步, 不再硬写。中文禁令词无对应离散源 → 保留小集兜底。
+    wall_ids = _get_wall_ids()  # ← 只读 jarvis_anchors._SEED_ANCHORS 的墙 id
+    wall_markers = tuple(wall_ids) + (
         "不背叛", "不抛弃", "无据不断言", "承诺不", "言出必行",
     )
     return not any(m in low or m in content for m in wall_markers)
+
+
+def _get_wall_ids() -> List[str]:
+    """看守点①bis: 只读 jarvis_anchors._SEED_ANCHORS 的墙 id (ground/keep/no_betray/
+    no_abandon)。**只读, 绝不修改任何墙数据。** 失败 → 退回硬集 (兜底, 仍只读)。"""
+    try:
+        import jarvis_anchors as _ja
+        ids: List[str] = []
+        for a in _ja._SEED_ANCHORS.get("anchors", []):
+            for w in a.get("walls", []):
+                wid = w.get("id")
+                if wid:
+                    ids.append(str(wid).lower())
+        if ids:
+            return ids
+    except Exception:
+        pass
+    return ["no_betray", "no_abandon", "ground", "keep"]  # 兜底, 只读不写
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +348,79 @@ def revoke_facet(facet_id: str, *, reason: str = "",
     return True
 
 
+# ---------------------------------------------------------------------------
+# Step 2 — 锚减的离散事件触发 (B.6, 三类全离散事件, 无分数掉阈值)
+# ---------------------------------------------------------------------------
+def _find_facets_by_identity_key(identity_key: str, store: Dict[str, Any]
+                                 ) -> List[str]:
+    """按离散 identity_key 找 facet_id 列表 (离散键匹配, 无相似度)。"""
+    out = []
+    for fid, rec in store.get("facets", {}).items():
+        if rec.get("identity_key") == identity_key:
+            out.append(fid)
+    return out
+
+
+def reverify_facet(facet_id: str, *, store_path: Optional[str] = None) -> str:
+    """[B.6 锚减·reverify] 离散重核: 重新 gather identity_key 的接地 provenance。
+
+    接地边**还在** → 留 active;**没了** → revoke_facet(reason='grounding_edge_gone')。
+    **时间只触发本函数, 绝不在此按时长降级** (B.6 第3条: 状态变化只能有证据)。
+    返 'active' / 'revoked' / 'not_found'。零相似度 (gather 只走离散 PROV kind)。
+    """
+    path = store_path or _STORE_PATH
+    with _LOCK:
+        store = _load_store_at(path)
+        rec = store.get("facets", {}).get(facet_id)
+        if rec is None:
+            return "not_found"
+        if rec.get("status") != STATUS_ACTIVE:
+            return rec.get("status", "revoked")
+        identity_key = rec.get("identity_key", "")
+    # gather 在锁外 (调 manifold) — 离散事实重采
+    prov = gather_grounded_provenance(identity_key)
+    has_grounded = any(
+        p.get("src") in (SRC_MANIFOLD_SAID, SRC_MANIFOLD_SHARED) for p in prov
+    )
+    if has_grounded:
+        return STATUS_ACTIVE  # 接地边还在 → 留 active (时间没把它降级)
+    revoke_facet(facet_id, reason="grounding_edge_gone", store_path=path)
+    return STATUS_REVOKED
+
+
+def on_sir_correction(identity_key: str, *, detail: str = "",
+                      store_path: Optional[str] = None) -> int:
+    """[B.6 锚减·Sir 纠正] Sir 显式纠正/否认事件钩子 → 按离散键撤销对应 facet。
+
+    离散事件驱动 (非分数)。给 MemoryCorrection / Sir 显式否认接 (本轮提供钩子,
+    真机当轮接线留 producer 末轮)。返撤销条数。
+    """
+    identity_key = (identity_key or "").strip()
+    if not identity_key:
+        return 0
+    path = store_path or _STORE_PATH
+    with _LOCK:
+        store = _load_store_at(path)
+        fids = _find_facets_by_identity_key(identity_key, store)
+    n = 0
+    for fid in fids:
+        if revoke_facet(fid, reason=f"sir_corrected:{detail}"[:200],
+                        store_path=path):
+            n += 1
+    return n
+
+
+def reverify_all_facets(*, store_path: Optional[str] = None) -> Dict[str, int]:
+    """周期重核全部 active facet (B.6: 降级由证据决定, 非时间)。返 {reverified, revoked}。"""
+    path = store_path or _STORE_PATH
+    actives = [r["facet_id"] for r in get_facets(status=STATUS_ACTIVE, store_path=path)]
+    revoked = 0
+    for fid in actives:
+        if reverify_facet(fid, store_path=path) == STATUS_REVOKED:
+            revoked += 1
+    return {"reverified": len(actives), "revoked": revoked}
+
+
 def record_wound_for_facet(*args, **kwargs) -> None:
     """[河床接口位 — 冻结 §6, 本阶段不实做] 衡记伤 → facet 附着。
 
@@ -349,3 +441,76 @@ def get_facets(*, status: Optional[str] = None,
     if status is not None:
         recs = [r for r in recs if r.get("status") == status]
     return recs
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — render facets (B.8a: 离散子预算 + 溢出离散硬规 + 看守点C 不半截断)
+# ---------------------------------------------------------------------------
+# 离散硬常量 (系统级, 同 TICK_INTERVAL, 不下钻 vocab)
+FACETS_RENDER_MAX_CHARS = 400   # 子预算上限 (叠加在动态状态之后, 不挤占)
+FACETS_RENDER_MAX_COUNT = 5     # 最多列几条
+
+# 出处优先级 (离散硬规, B.8a): PROV_SHARED > PROV_SAID。无分数。
+_SRC_PRIORITY = {SRC_MANIFOLD_SHARED: 0, SRC_MANIFOLD_SAID: 1, SRC_INNER_THOUGHT: 2}
+
+
+def _facet_primary_src(rec: Dict[str, Any]) -> str:
+    """facet 的主出处 (取其 provenance 里优先级最高的 src — 离散查表, 非打分)。"""
+    best = SRC_INNER_THOUGHT
+    best_p = 99
+    for p in rec.get("provenance", []):
+        s = p.get("source")
+        pr = _SRC_PRIORITY.get(s, 99)
+        if pr < best_p:
+            best_p = pr
+            best = s
+    return best
+
+
+def _select_facets_for_render(actives: List[Dict[str, Any]]
+                              ) -> List[Dict[str, Any]]:
+    """B.8a 溢出离散硬规: 出处优先级 (PROV_SHARED>PROV_SAID) + 同级 FIFO
+    (最早 crystallized_ts 先)。**绝不按显著度/分数排序** — 仅离散键 (优先级整数 +
+    时间戳) 做稳定排序, 无 score/weight 参与。取前 FACETS_RENDER_MAX_COUNT 条。
+    """
+    # 离散排序键 = (出处优先级整数, crystallized_ts) — 全离散, 无分数。
+    ordered = sorted(
+        actives,
+        key=lambda r: (_SRC_PRIORITY.get(_facet_primary_src(r), 99),
+                       float(r.get("crystallized_ts", 0.0))),
+    )
+    return ordered[:FACETS_RENDER_MAX_COUNT]
+
+
+def render_facets_block(*, max_chars: int = FACETS_RENDER_MAX_CHARS,
+                        store_path: Optional[str] = None) -> str:
+    """[B.8a] 渲染 active facets 段, 框成"我经真接地长出的具体性格/关系定点"。
+
+    - 仅当 is_facets_enabled() → 否则返 "" (flag off 真机零变化)。
+    - 子预算 max_chars (默 400) + 最多 5 条 (离散硬规)。
+    - 溢出选择 = 出处优先级 + FIFO (离散, 见 _select_facets_for_render)。
+    - 看守点C (不半截断): 某条放不进剩余预算 → **整条丢弃**, 绝不截半条。
+    - 离散列出 (像列 commitments), 无分数标注。
+    """
+    if not is_facets_enabled():
+        return ""
+    actives = get_facets(status=STATUS_ACTIVE, store_path=store_path)
+    if not actives:
+        return ""
+    selected = _select_facets_for_render(actives)
+    header = "[WHO I'VE BECOME — facets grounded in real traces with Sir]"
+    lines = [header]
+    used = len(header) + 1
+    for rec in selected:
+        content = (rec.get("content") or "").strip()
+        if not content:
+            continue
+        line = f"  - {content}"
+        # 看守点C: 放不进剩余子预算 → 整条丢弃, 不半截断。
+        if used + len(line) + 1 > max_chars:
+            continue
+        lines.append(line)
+        used += len(line) + 1
+    if len(lines) == 1:
+        return ""  # header 之外一条没放进 → 不渲染空头
+    return "\n".join(lines)

@@ -442,6 +442,20 @@ class SelfAnchor:
         if len(out) > max_chars:
             _suffix = "\n…[truncated]"
             out = out[:max_chars - len(_suffix)].rstrip() + _suffix
+
+        # 🆕 [anchor-rebuild-P0 Step3 / 2026-06-07] identity facets 段 (B.8a)。
+        # flag-gated: is_facets_enabled() 默认 off → 此段不执行, out 逐字节 = 现状
+        # (无回归)。独立子预算 (render_facets_block 自带 400c/5条 + 看守点C 不半截断),
+        # 叠加在 max_chars 截断**之后** → 不挤占动态状态的 1700c 预算。
+        # [WHO I AM]/[REFERENT MAP] 宪法散文一字不动 (上方 lines 未改)。
+        try:
+            import jarvis_identity_facets as _facets
+            if _facets.is_facets_enabled():
+                _fb = _facets.render_facets_block()
+                if _fb:
+                    out = out + "\n\n" + _fb
+        except Exception:
+            pass
         return out
 
 

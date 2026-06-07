@@ -168,6 +168,142 @@ class TestIdentityFacetsP0Step1(unittest.TestCase):
         os.environ.pop("JARVIS_FACETS", None)
         self.assertFalse(F.is_facets_enabled(), "Step 1 facets flag 必须默认 off")
 
+    # ======================================================================
+    # Step 2 — 锚减离散事件触发 (B.6)
+    # ======================================================================
+    def _crystallize_via_node(self, raw_id, content, n_links=3):
+        """helper: 真 manifold 造 n_links 条 said 边 → 经 node 离散键结晶。"""
+        node = M.make_node_id("topic", raw_id)
+        for i in range(n_links):
+            self.mani.observe_explicit_link(
+                node, M.make_node_id("entity", f"sir_{i}"), turn_id=f"t_{raw_id}_{i}")
+        # 用注入式 crystallize (直接喂离散 prov, 不依赖全局单例)
+        prov = self.mani.node_grounded_provenance(node)
+        prov_facet = [{"src": F.SRC_MANIFOLD_SAID, "ref": p["ref"],
+                       "edge_key": p["edge_key"], "other": p["other"],
+                       "count": p["count"]} for p in prov]
+        ikey = self.mani.resolve(node)
+        return F.crystallize(ikey, content, grounded_provenance=prov_facet,
+                             recurrence_count=len(prov_facet),
+                             store_path=self.path), node, ikey
+
+    def test_s2_reverify_edge_gone_revokes(self):
+        # 用 monkeypatch 让 gather 走本测 manifold 实例
+        import unittest.mock as mock
+        r, node, ikey = self._crystallize_via_node("reverify_x", "Sir 关心 X", 3)
+        self.assertTrue(r["crystallized"])
+        fid = r["facet_id"]
+        # 接地边还在 → reverify 仍 active
+        with mock.patch.object(F, "gather_grounded_provenance",
+                               side_effect=lambda k: [
+                                   {"src": F.SRC_MANIFOLD_SAID, "ref": "x", "count": 1}]):
+            self.assertEqual(F.reverify_facet(fid, store_path=self.path), F.STATUS_ACTIVE)
+        # 接地边没了 → reverify → revoked
+        with mock.patch.object(F, "gather_grounded_provenance",
+                               side_effect=lambda k: []):
+            self.assertEqual(F.reverify_facet(fid, store_path=self.path), F.STATUS_REVOKED)
+        revoked = F.get_facets(status=F.STATUS_REVOKED, store_path=self.path)
+        self.assertEqual(len(revoked), 1)
+        self.assertEqual(revoked[0]["revoke_reason"], "grounding_edge_gone")
+
+    def test_s2_sir_correction_revokes(self):
+        r, node, ikey = self._crystallize_via_node("corr_y", "Sir 偏好 Y", 3)
+        fid = r["facet_id"]
+        n = F.on_sir_correction(ikey, detail="not true", store_path=self.path)
+        self.assertEqual(n, 1)
+        revoked = F.get_facets(status=F.STATUS_REVOKED, store_path=self.path)
+        self.assertEqual(len(revoked), 1)
+        self.assertIn("sir_corrected", revoked[0]["revoke_reason"])
+
+    def test_s2_time_alone_does_not_revoke(self):
+        # 时间过(改老 crystallized_ts), 但接地边还在 → reverify 后仍 active(不自动减)
+        import unittest.mock as mock
+        r, node, ikey = self._crystallize_via_node("time_z", "Sir 习惯 Z", 3)
+        fid = r["facet_id"]
+        # 手动把 ts 改到很久以前
+        store = json.load(open(self.path, encoding="utf-8"))
+        store["facets"][fid]["crystallized_ts"] = time.time() - 999 * 86400
+        json.dump(store, open(self.path, "w", encoding="utf-8"))
+        with mock.patch.object(F, "gather_grounded_provenance",
+                               side_effect=lambda k: [
+                                   {"src": F.SRC_MANIFOLD_SHARED, "ref": "z", "count": 2}]):
+            self.assertEqual(F.reverify_facet(fid, store_path=self.path), F.STATUS_ACTIVE,
+                             "时间过但边还在 → 不该自动降级 (B.6 第3条)")
+
+    # ======================================================================
+    # Step 3 — render facets (B.8a)
+    # ======================================================================
+    def _seed_n_facets(self, n, src_mix=True):
+        store = {"_meta": {}, "facets": {}}
+        for i in range(n):
+            src = (F.SRC_MANIFOLD_SHARED if (src_mix and i % 2 == 0)
+                   else F.SRC_MANIFOLD_SAID)
+            fid = f"facet_f{i}"
+            store["facets"][fid] = {
+                "facet_id": fid, "identity_key": f"node:f{i}",
+                "content": f"facet content number {i}",
+                "provenance": [{"source": src, "ref": f"r{i}", "recurrence_count": 3}],
+                "recurrence_count": 3, "crystallized_ts": 1000.0 + i,
+                "status": F.STATUS_ACTIVE,
+            }
+        json.dump(store, open(self.path, "w", encoding="utf-8"))
+
+    def test_s3_render_caps_5_and_shared_priority(self):
+        os.environ["JARVIS_FACETS"] = "1"
+        try:
+            self._seed_n_facets(6, src_mix=True)  # 3 shared (even i) + 3 said (odd i)
+            block = F.render_facets_block(store_path=self.path)
+            # 最多 5 条
+            body_lines = [l for l in block.splitlines() if l.strip().startswith("- ")]
+            self.assertLessEqual(len(body_lines), 5, "渲染最多 5 条")
+            # PROV_SHARED 优先: 被丢的那条应是 said (优先级低)。shared facets = i 0,2,4
+            # 共 3 条必全在; said = i 1,3,5 共 3 条只能进 2 条。
+            self.assertIn("number 0", block)
+            self.assertIn("number 2", block)
+            self.assertIn("number 4", block)
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+
+    def test_s3_no_half_truncation(self):
+        os.environ["JARVIS_FACETS"] = "1"
+        try:
+            # 一条超长 facet + 一条短的; 子预算放不下超长 → 整条丢, 不半截
+            store = {"_meta": {}, "facets": {
+                "facet_long": {"facet_id": "facet_long", "identity_key": "node:long",
+                               "content": "X" * 500, "provenance": [
+                                   {"source": F.SRC_MANIFOLD_SAID, "ref": "rl",
+                                    "recurrence_count": 3}],
+                               "recurrence_count": 3, "crystallized_ts": 1000.0,
+                               "status": F.STATUS_ACTIVE},
+            }}
+            json.dump(store, open(self.path, "w", encoding="utf-8"))
+            block = F.render_facets_block(store_path=self.path)
+            # 超长条整条丢弃 → block 不含 X*500 的任何片段 (header-only → 返空)
+            self.assertNotIn("XXX", block, "超长 facet 应整条丢弃, 不半截断")
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+
+    def test_s3_flag_off_empty_render(self):
+        os.environ.pop("JARVIS_FACETS", None)
+        self._seed_n_facets(3)
+        self.assertEqual(F.render_facets_block(store_path=self.path), "",
+                         "flag off 时渲染段必须为空")
+
+    def test_s3_build_block_flag_off_no_regression(self):
+        """flag off 时 SelfAnchor.build_block 不含 facets 段 (L0 无回归)。"""
+        os.environ.pop("JARVIS_FACETS", None)
+        import jarvis_self_anchor as SA
+        sa = SA.SelfAnchor(central_nerve=None)
+        block = sa.build_block()
+        self.assertNotIn("WHO I'VE BECOME", block,
+                         "flag off 时 build_block 不该含 facets 段")
+
+    # ---- 看守点①bis: _is_orthogonal_to_walls 读 _SEED_ANCHORS 墙 id ----
+    def test_orthogonal_reads_seed_anchors(self):
+        ids = F._get_wall_ids()
+        for wid in ("ground", "keep", "no_betray", "no_abandon"):
+            self.assertIn(wid, ids, f"墙 id {wid} 应从 _SEED_ANCHORS 读到")
+
 
 if __name__ == "__main__":
     unittest.main()
