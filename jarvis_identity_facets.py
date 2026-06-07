@@ -297,6 +297,22 @@ def _why_rejected(grounded_prov, recurrence, orthogonal, recurrence_min) -> str:
     return ",".join(reasons) or "unknown"
 
 
+def _distinct_event_count(grounded_provenance: List[Dict[str, Any]]) -> int:
+    """[末轮 count 语义核] recurrence = "≥N 个不同 turn/事件" 的**离散事件数**,
+    **不是** sum(count)(后者把同一 turn 内重复也计入, 违 B.5a)。
+
+    实证 (jarvis_relational_manifold.py:455-466 _append_provenance dedup 键=(kind,ref)):
+    PROV_SAID 的 ref=turn_id (observe_explicit_link:500) → 不同 turn = 不同 provenance 记录;
+    PROV_SHARED 的 ref=entity_id (observe_shared_entity:512) → 不同共享源 = 不同记录。
+    ⟹ 离散事件数 = **不同 ref 的个数**(每条 grounded provenance = 一个离散事件)。
+    """
+    refs = set()
+    for p in (grounded_provenance or []):
+        if p.get("src") in (SRC_MANIFOLD_SAID, SRC_MANIFOLD_SHARED):
+            refs.add((p.get("src"), p.get("ref")))
+    return len(refs)
+
+
 def crystallize_from_node(
     node_id: str,
     content: str,
@@ -308,11 +324,12 @@ def crystallize_from_node(
     """便捷入口: 从 manifold 节点离散键采集接地 provenance → 结晶。
 
     identity_key = manifold.resolve 后的离散 node_id。recurrence_count 缺省时
-    用接地 provenance 的离散 count 之和 (离散计数, 非分数)。零相似度。
+    = **不同接地 ref 的离散事件数** (_distinct_event_count, 非 sum(count) — 同一 turn
+    重复不累加, B.5a count 语义核)。零相似度。
     """
     prov = gather_grounded_provenance(node_id)
     if recurrence_count is None:
-        recurrence_count = sum(int(p.get("count", 1)) for p in prov)
+        recurrence_count = _distinct_event_count(prov)
     # identity_key 用 resolve 后的离散 node_id
     try:
         import jarvis_relational_manifold as _m
@@ -514,3 +531,67 @@ def render_facets_block(*, max_chars: int = FACETS_RENDER_MAX_CHARS,
     if len(lines) == 1:
         return ""  # header 之外一条没放进 → 不渲染空头
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 末轮 — producer: scan_and_crystallize (增-producer, 死守离散, 不打分不排序)
+# ---------------------------------------------------------------------------
+def _template_content_for_node(node_id: str,
+                               grounded_provenance: List[Dict[str, Any]]) -> str:
+    """[末轮 content 模板化 / 死守禁 LLM] facet content = 对离散接地事实的**确定性
+    模板渲染**, 不由口/识 free-form 生成 (防身份层假焊回潮)。
+
+    只搬运真痕迹已有的离散字段 (resolve 后 node_id + 关系另一端 other + 关系类型),
+    不新增任何"事实"。无 LLM 调用, 无相似度。
+    """
+    try:
+        import jarvis_relational_manifold as _m
+        kind, raw = _m.split_node_id(node_id)
+    except Exception:
+        kind, raw = ("", node_id)
+    # 离散搬运: 关系另一端 (去重, 最多列 3 个, 插入序非排序)
+    others = []
+    for p in (grounded_provenance or []):
+        o = p.get("other")
+        if o and o not in others:
+            others.append(o)
+    others_str = ", ".join(others[:3]) if others else "(no linked nodes)"
+    # 模板: 纯字段拼接, 确定性
+    return f"a grounded relational trace: [{kind}:{raw}] linked with {others_str}"
+
+
+def scan_and_crystallize(*, recurrence_min: int = RECURRENCE_MIN_N,
+                         store_path: Optional[str] = None) -> Dict[str, Any]:
+    """[末轮 producer] 把真接地痕迹结晶成 facet。**flag-gated, 默认 off**。
+
+    死守离散 (B.5/§5):
+      - 枚举 manifold 所有有接地边的候选节点 (iter_grounded_nodes, 不排序)。
+      - **逐个独立**过 B.5 离散资格闸 (crystallize_from_node), 互不比较。
+      - 够格的**全部**结晶; **绝不**按显著度排序挑几条 (无 score/sort/argmax 选结晶)。
+      - 容量限制只在 render 层 (5 条离散硬规); producer/store 不设上限/不挑选/不排序。
+      - content 模板化 (确定性, 禁 LLM)。recurrence = 不同 ref 离散事件数。
+      - 幂等: 同离散键 → 同 facet_id, 不重复结晶 (_make_facet_id)。
+
+    返 {scanned, crystallized}。flag off → no-op ({enabled: False})。
+    """
+    if not is_facets_enabled():
+        return {"enabled": False, "scanned": 0, "crystallized": 0}
+    try:
+        import jarvis_relational_manifold as _m
+        mani = _m.get_manifold()
+        candidates = mani.iter_grounded_nodes()  # 离散枚举, 不排序
+    except Exception as exc:
+        _log(f"[Facets] scan_and_crystallize: manifold unavailable ({exc!r})")
+        return {"enabled": True, "scanned": 0, "crystallized": 0}
+    scanned = 0
+    crystallized = 0
+    for node_id in candidates:  # 逐个独立, 互不比较 (无跨候选排序/打分)
+        scanned += 1
+        prov = gather_grounded_provenance(node_id)
+        content = _template_content_for_node(node_id, prov)
+        r = crystallize_from_node(node_id, content, recurrence_min=recurrence_min,
+                                  store_path=store_path)
+        if r.get("crystallized"):
+            crystallized += 1
+    _log(f"[Facets] scan_and_crystallize: scanned={scanned} crystallized={crystallized}")
+    return {"enabled": True, "scanned": scanned, "crystallized": crystallized}

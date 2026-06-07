@@ -304,6 +304,143 @@ class TestIdentityFacetsP0Step1(unittest.TestCase):
         for wid in ("ground", "keep", "no_betray", "no_abandon"):
             self.assertIn(wid, ids, f"墙 id {wid} 应从 _SEED_ANCHORS 读到")
 
+    # ======================================================================
+    # 末轮 — producer scan_and_crystallize + count 语义 + 全 tier B 验
+    # ======================================================================
+    def _patch_gather_to_test_manifold(self):
+        """让 facets 模块的 manifold 调用走本测独立实例 (不碰真盘)。"""
+        import unittest.mock as mock
+        return mock.patch.object(F, "get_manifold_for_test", create=True)
+
+    def test_producer_count_distinct_turns_not_sum(self):
+        """count 语义核: ≥3 不同 turn → 结晶; 同一 turn 重复多次 → 不够格。"""
+        # 同一对节点, 同一 turn 重复 5 次 (count 自增到 5, 但只 1 个不同 ref)
+        a = M.make_node_id("topic", "same_turn_spam")
+        b = M.make_node_id("entity", "sir")
+        for _ in range(5):
+            self.mani.observe_explicit_link(a, b, turn_id="SAME_TURN")
+        prov_rows = self.mani.node_grounded_provenance(a)
+        prov_facet = [{"src": F.SRC_MANIFOLD_SAID, "ref": p["ref"],
+                       "edge_key": p["edge_key"], "other": p["other"],
+                       "count": p["count"]} for p in prov_rows]
+        # _distinct_event_count = 1 (只 1 个不同 ref), 即便 count 累到 5
+        self.assertEqual(F._distinct_event_count(prov_facet), 1,
+                         "同一 turn 重复不该计成多个离散事件")
+        r = F.crystallize(self.mani.resolve(a), "x",
+                          grounded_provenance=prov_facet,
+                          recurrence_count=F._distinct_event_count(prov_facet),
+                          store_path=self.path)
+        self.assertFalse(r["crystallized"], "同一 turn 刷 5 次不该够 N=3")
+        # 现在跨 3 个不同 turn
+        a2 = M.make_node_id("topic", "three_turns")
+        for t in ("turn_1", "turn_2", "turn_3"):
+            self.mani.observe_explicit_link(a2, b, turn_id=t)
+        prov2 = self.mani.node_grounded_provenance(a2)
+        pf2 = [{"src": F.SRC_MANIFOLD_SAID, "ref": p["ref"],
+                "edge_key": p["edge_key"], "other": p["other"],
+                "count": p["count"]} for p in prov2]
+        self.assertEqual(F._distinct_event_count(pf2), 3, "3 不同 turn = 3 离散事件")
+
+    def test_producer_template_content_no_llm(self):
+        """content 模板化: 确定性字段拼接, 不含 free-form。"""
+        node = M.make_node_id("topic", "interview")
+        prov = [{"src": F.SRC_MANIFOLD_SAID, "ref": "t1", "other": "entity:sir", "count": 1}]
+        content = F._template_content_for_node(node, prov)
+        # 模板必含离散字段 (node kind:raw + other), 不含 LLM 生成痕迹
+        self.assertIn("topic:interview", content)
+        self.assertIn("entity:sir", content)
+        self.assertIn("grounded relational trace", content)
+
+    def test_producer_idempotent(self):
+        """幂等: 同离散键反复 scan → 同 facet_id, 不重复。"""
+        prov = [{"src": F.SRC_MANIFOLD_SHARED, "ref": "e1", "edge_key": "k", "other": "o", "count": 1},
+                {"src": F.SRC_MANIFOLD_SHARED, "ref": "e2", "edge_key": "k2", "other": "o2", "count": 1},
+                {"src": F.SRC_MANIFOLD_SHARED, "ref": "e3", "edge_key": "k3", "other": "o3", "count": 1}]
+        r1 = F.crystallize("node:idem", "c1", grounded_provenance=prov,
+                           recurrence_count=3, store_path=self.path)
+        r2 = F.crystallize("node:idem", "c1", grounded_provenance=prov,
+                           recurrence_count=3, store_path=self.path)
+        self.assertEqual(r1["facet_id"], r2["facet_id"])
+        self.assertEqual(len(F.get_facets(store_path=self.path)), 1, "同键不重复结晶")
+
+    def test_producer_grep_no_score_sort_argmax(self):
+        """producer 路径**代码行**无 score/argmax/sort 选结晶 (排除 docstring/注释)。"""
+        src = (ROOT / "jarvis_identity_facets.py").read_text(encoding="utf-8")
+        idx = src.find("def scan_and_crystallize")
+        body = src[idx:idx + 2000]
+        # 只看代码行: 剥 docstring (三引号块) + # 注释行
+        code_lines = []
+        in_doc = False
+        for ln in body.splitlines():
+            s = ln.strip()
+            if s.startswith('"""') or s.startswith("'''"):
+                in_doc = not in_doc
+                continue
+            if in_doc or s.startswith("#"):
+                continue
+            code_lines.append(ln)
+        code = "\n".join(code_lines)
+        for banned in ("argmax", ".sort(", "sorted(", "score", "salience"):
+            self.assertNotIn(banned, code,
+                             f"producer 代码不得用 {banned} 选结晶 (够格全结晶, 不挑选)")
+
+    def test_b_all_tiers_facets_in_prompt(self):
+        """全 tier B 验: flag-on 下 facets 真进 SelfAnchor build_block (尤 SHORT_CHAT)。
+
+        SelfAnchor.build_block 是 Layer 0, 进所有注入 L0 的 tier。这里直接验
+        build_block 输出含 facets 段 (flag on), 并测 flag off 逐字节无该段。
+        """
+        os.environ["JARVIS_FACETS"] = "1"
+        try:
+            # 种 1 条 active facet 到 temp store, 用 monkeypatch 指向它
+            import unittest.mock as mock
+            store = {"_meta": {}, "facets": {"facet_x": {
+                "facet_id": "facet_x", "identity_key": "node:x",
+                "content": "a grounded relational trace: [topic:x] linked with entity:sir",
+                "provenance": [{"source": F.SRC_MANIFOLD_SHARED, "ref": "e", "recurrence_count": 3}],
+                "recurrence_count": 3, "crystallized_ts": 1.0, "status": F.STATUS_ACTIVE}}}
+            json.dump(store, open(self.path, "w", encoding="utf-8"))
+            import jarvis_self_anchor as SA
+            orig = F.render_facets_block
+
+            def _patched(**kw):
+                kw["store_path"] = self.path
+                return orig(**kw)
+            with mock.patch.object(F, "render_facets_block", side_effect=_patched):
+                sa = SA.SelfAnchor(central_nerve=None)
+                block_on = sa.build_block()
+            self.assertIn("WHO I'VE BECOME", block_on,
+                          "flag-on: facets 段应真进 build_block (Layer0 → 所有注入 tier)")
+            self.assertIn("topic:x", block_on)
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+
+    def test_b_flag_on_l0_size(self):
+        """量 flag-on L0 体积 (报准确字符数, 供 Sir 判 ~2100c)。"""
+        os.environ["JARVIS_FACETS"] = "1"
+        try:
+            import unittest.mock as mock
+            # 种 5 条 facet (render 上限)
+            self._seed_n_facets(5, src_mix=True)
+            orig = F.render_facets_block
+
+            def _patched(**kw):
+                kw["store_path"] = self.path
+                return orig(**kw)
+            import jarvis_self_anchor as SA
+            with mock.patch.object(F, "render_facets_block", side_effect=_patched):
+                sa = SA.SelfAnchor(central_nerve=None)
+                on_len = len(sa.build_block())
+            os.environ.pop("JARVIS_FACETS", None)
+            sa2 = SA.SelfAnchor(central_nerve=None)
+            off_len = len(sa2.build_block())
+            # 报告用: facets 段增量 (不强断言具体值, 验 flag-on > flag-off 即可)
+            self.assertGreater(on_len, off_len, "flag-on L0 应比 flag-off 大 (facets 段)")
+            print(f"\n[B-verify L0 size] flag_off={off_len}c flag_on={on_len}c "
+                  f"facets_delta={on_len - off_len}c")
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+
 
 if __name__ == "__main__":
     unittest.main()

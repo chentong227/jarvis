@@ -609,6 +609,29 @@ class RelationalManifold:
                         })
         return out
 
+    def iter_grounded_nodes(
+        self, *, grounded_kinds: Iterable[str] = (PROV_SAID, PROV_SHARED),
+    ) -> List[str]:
+        """🆕 [anchor-rebuild-P0 末轮 / 2026-06-07] 只读: 枚举所有**有接地边**
+        (PROV_SAID/PROV_SHARED)的节点(经 resolve 去别名, 去重)。
+
+        给 facets producer (scan_and_crystallize) 用: 离散枚举候选节点, 各自独立过闸。
+        **不排序、不打分** — 返回去重后的离散节点集 (list, 插入序稳定)。纯读不 mutate。
+        """
+        gk = set(grounded_kinds)
+        seen: set = set()
+        out: List[str] = []
+        with self._lock:
+            for key, e in self._edges.items():
+                if not any(p.get("kind") in gk for p in e.get("provenance", ())):
+                    continue
+                for endpoint in (e.get("a"), e.get("b")):
+                    rep = self.resolve(endpoint)
+                    if rep and rep not in seen:
+                        seen.add(rep)
+                        out.append(rep)
+        return out
+
     def neighbors(
         self, node_id: str, *, min_weight: float = 0.0,
         limit: Optional[int] = None, now: Optional[float] = None,
