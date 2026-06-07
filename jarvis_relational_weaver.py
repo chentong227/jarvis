@@ -34,7 +34,7 @@ import numpy as np
 from jarvis_relational_manifold import (
     RelationalManifold, get_manifold, get_manifold_config,
     make_node_id, split_node_id, KIND_THREAD, KIND_CONCERN, KIND_JOKE,
-    KIND_PROTOCOL, KIND_STANCE, PROV_SHARED, PROV_SAID, is_grounded,
+    KIND_PROTOCOL, KIND_STANCE, KIND_ENTITY, PROV_SHARED, PROV_SAID, is_grounded,
 )
 
 EmbedFn = Callable[[List[str]], List[Optional[List[float]]]]
@@ -193,7 +193,141 @@ def observe_thought_concern_link(
         return None
 
 
-# 🆕 [body-diff-P2 耦合护栏 / Sir 2026-06-06; 真机激活扩展 Sir 2026-06-07] 对称 lens。
+# ===========================================================================
+# 🆕 [causal-grounding-P1 / Sir 2026-06-07] 对话关系事实接地: Sir 显式关系标记
+# → entity 节点 + PROV_SAID 边 (§9 A 前置 / 修-因果接地首刀)
+# ---------------------------------------------------------------------------
+# 设计 (顾问/Sir 阶段0对齐拍板):
+#   - 实体来源 = **关系模式正则的捕获组** (非 _distinctive_terms 全量, 后者半噪音)。
+#   - 保守触发: 只在 Sir 用明确关系标记 (领属/动作/处所) 显式连两实体时才写 SAID。
+#     无模式命中 → 不写 (漏接优于假接: 太松会把弱共现伪装成强 SAID = 造假焊)。
+#   - 离散清洗护栏: 捕获串剥人称/领属前缀 + 去时间/副词噪音 (小离散停用词表), 清洗后
+#     空/过长/仍多词噪音 → 跳过 (绝不建 entity:我妈妈明天 / entity:妈明 垃圾节点)。
+#   - canonical: strip + 空白归一 + 英文 lower → make_node_id('entity', raw_id)。
+#   - resolve 查/建: 命中复用、不命中隐式建 (写边即建)。**绕开 auto_merge cosine** —
+#     变体 (妈妈/母亲) 映不同 raw_id、不归并 (禁相似度红线)。
+#   - 写边: observe_explicit_link (内部 add_edge(PROV_SAID, ref=turn_id))。
+# 红线: 全程正则 + make_node_id + exact resolve, 零相似度/embedding/cosine。
+# ===========================================================================
+
+# 关系标记小模式集 (规则正则, 非 LLM 非相似度)。每条两个捕获组 = 两实体槽。
+# 保守: 只覆盖 Sir 明确把两实体连起的句式 (领属/动作/处所)。非贪婪槽防跨句吞。
+# 锚点用"边界"概念: 槽内不含标点/空白 (实体是连续片段), 防把整句吞进一个槽。
+_REL_SLOT = r"([^\s，。,.！？!?、；;：:]{1,12})"   # 实体槽: 1-12 非标点非空白字符
+_CAUSAL_REL_PATTERNS = [
+    # 领属: A的B (我妈的医院 / 母亲的手术)
+    re.compile(_REL_SLOT + r"的" + _REL_SLOT),
+    # 动作: A要做B / A做B (母亲要做手术 / 母亲做手术)
+    re.compile(_REL_SLOT + r"要?做" + _REL_SLOT),
+    # 处所-入: A住进B / A住院 类 (母亲住进医院)
+    re.compile(_REL_SLOT + r"住进" + _REL_SLOT),
+    # 处所-在: A在B (母亲在医院)
+    re.compile(_REL_SLOT + r"在" + _REL_SLOT),
+]
+
+# 离散清洗停用词 (位置剥离 + 噪音过滤; 纯关键词比对, 禁相似度)。
+# 人称/领属前缀: 实体头部若以这些开头, 逐个剥 (我妈妈→妈妈)。
+_CLEAN_PERSON_PREFIX = ("我", "你", "他", "她", "咱", "您")
+# 时间/副词噪音词: 实体含这些 token → 视为噪音捕获, 剥除; 剥完空则跳过。
+_CLEAN_NOISE_TOKENS = (
+    "明天", "今天", "昨天", "后天", "刚才", "刚刚", "已经", "正在", "马上",
+    "现在", "待会", "稍后", "今早", "今晚", "早上", "晚上", "下午", "上午",
+    "要", "会", "想", "在", "了", "的", "去", "来", "过",
+)
+_CLEAN_MAX_ENTITY_LEN = 8   # 清洗后实体过长 (>8 字) = 多词噪音, 跳过
+
+
+def _clean_entity(raw: str) -> Optional[str]:
+    """离散清洗捕获串 → 核心实体 (护栏: 漏接优于假接)。
+
+    纯位置剥离 + 离散停用词, **零相似度**。剥不出干净实体 → 返 None (跳过不写)。
+    步骤: ① strip + 空白归一 + 英文 lower
+          ② 逐个剥人称/领属前缀 (我妈妈→妈妈, 只剥头部)
+          ③ 去时间/副词噪音 token (子串移除)
+          ④ 空 / 过长 / 含残余空白 (仍多词) → None
+    """
+    if not raw:
+        return None
+    s = " ".join(raw.split()).strip()       # 空白归一
+    if not s:
+        return None
+    # 英文 lower (中文不受影响)
+    s = s.lower()
+    # ② 剥人称/领属前缀 (只剥头部, 逐个; 防把单字实体剥空)
+    changed = True
+    while changed and len(s) > 1:
+        changed = False
+        for p in _CLEAN_PERSON_PREFIX:
+            if s.startswith(p) and len(s) > len(p):
+                s = s[len(p):]
+                changed = True
+                break
+    # ③ 去时间/副词噪音 token (子串移除)
+    for tok in _CLEAN_NOISE_TOKENS:
+        if tok in s:
+            s = s.replace(tok, "")
+    s = s.strip()
+    # ④ 护栏: 空 / 过长 / 仍含空白 (多词残余) → 跳过
+    if not s:
+        return None
+    if len(s) > _CLEAN_MAX_ENTITY_LEN:
+        return None
+    if any(ch.isspace() for ch in s):
+        return None
+    return s
+
+
+def observe_sir_relational_link(
+    turn_text: str, turn_id: str, *, manifold=None, save: bool = True,
+) -> List[str]:
+    """[causal-grounding-P1] Sir 显式关系标记 → entity 节点 + PROV_SAID 边。
+
+    管线 (全离散): 关系模式正则捕获两实体槽 → _clean_entity 离散清洗 → make_node_id
+    ('entity', raw_id) canonical → resolve 查/建 (绕开 cosine) → observe_explicit_link
+    (PROV_SAID, ref=turn_id) 写边。无模式命中 / 清洗不出干净实体 → 跳过 (不写)。
+
+    返回新增/强化的 edge_key 列表 (空 = 没写任何边)。失败非致命。
+    红线: 禁相似度 (全程正则 + make_node_id + exact resolve, 不碰 auto_merge)。
+    """
+    out: List[str] = []
+    if not turn_text:
+        return out
+    if not turn_id:
+        turn_id = f"turn@{int(time.time())}"
+    try:
+        m = manifold if manifold is not None else get_manifold()
+        seen_pairs: set = set()
+        for pat in _CAUSAL_REL_PATTERNS:
+            for mt in pat.finditer(turn_text):
+                a_raw, b_raw = mt.group(1), mt.group(2)
+                a_ent = _clean_entity(a_raw)
+                b_ent = _clean_entity(b_raw)
+                if not a_ent or not b_ent or a_ent == b_ent:
+                    continue  # 清洗不出干净实体 / 同实体 → 跳过 (漏接优于假接)
+                a_node = make_node_id(KIND_ENTITY, a_ent)
+                b_node = make_node_id(KIND_ENTITY, b_ent)
+                # resolve: 命中复用、不命中原样 (写边时隐式建); 绝不 cosine 合并
+                a_node = m.resolve(a_node)
+                b_node = m.resolve(b_node)
+                pair = (min(a_node, b_node), max(a_node, b_node))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                ek = m.observe_explicit_link(
+                    a_node, b_node, turn_id,
+                    detail=f"sir_rel:{a_ent}~{b_ent}",
+                )
+                if ek:
+                    out.append(ek)
+        if save and out:
+            m.save()
+        return out
+    except Exception as exc:
+        _log(f"[Weaver] observe_sir_relational_link failed ({exc!r})")
+        return out
+
+
+
 # energy 与 lens 不对称 (设计 §5 收紧2): lens 安全态是 OFF, energy 安全态是 ON
 # (compute_energy 永远在跑, 无总开关)。最危险复发 = energy_grounded_only 翻回 0 =
 # 势能又全量吃假焊 = 洗白态复活 (盲点① "翻回 6 天前" 在势能层的对应)。
