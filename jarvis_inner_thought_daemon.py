@@ -1645,6 +1645,92 @@ class InnerThoughtDaemon:
                 'wellness_candidate', 'commitment_check_candidate',
             )
 
+    def _collect_active_promises(self, max_n: int = 6) -> list:
+        """🆕 [innerthought-read-promise / 2026-06-07] 读结构化 promise (体).
+
+        治失真②: InnerThought 老只啃 STM 截断摘要猜承诺. 让识读 promise store
+        的"已接地事实". 离散选取, 头号红线 禁相似度 — 纯字段过滤 + 数值排序:
+          ① state 未 fulfilled/cancelled (pending/overdue/untracked) → 收
+          ② state==fulfilled 且 fulfilled_at 近 fulfilled_window_s(24h) → 收
+             (覆盖"刚做完"语境)
+          ③ 排序键 (纯数值, 无 embedding/语义):
+             primary = 有 deadline 的优先, 按 |deadline_ts - now| 升序;
+             无 deadline 的排后, 按 registered_at 降序 (recency).
+          ④ cap max_n.
+          ⑤ 字段精简: description/deadline_str/state/who_promised/fulfilled_at.
+             绝不带 evidence[] (那 20+ 条 cw_nudge_fired 是噪音).
+        scope: 只读 promise store, 不读 manifold. 失败 fail-safe 返 []。
+        """
+        try:
+            from jarvis_promise_log import (
+                get_default_log, STATE_FULFILLED, STATE_CANCELLED,
+            )
+        except Exception:
+            return []
+        now = time.time()
+        fulfilled_window_s = 86400.0  # 24h: 刚 fulfilled 仍喂 (覆盖"刚做完")
+        try:
+            log = get_default_log()
+            all_promises = list(log.promises.values())
+        except Exception:
+            return []
+
+        picked = []
+        for p in all_promises:
+            state = getattr(p, 'state', '')
+            if state == STATE_CANCELLED:
+                continue  # 已撤销 — 不喂
+            if state == STATE_FULFILLED:
+                # 只收近 24h 刚 fulfilled 的 (覆盖"刚做完"语境)
+                fat = float(getattr(p, 'fulfilled_at', 0.0) or 0.0)
+                if fat <= 0.0 or (now - fat) > fulfilled_window_s:
+                    continue
+            # 其余 (pending/overdue/untracked) 全收
+            picked.append(p)
+
+        # 离散排序键 (纯数值, 禁相似度):
+        #   has_deadline 优先 (0 在前), 其内按 |deadline - now| 升序;
+        #   无 deadline 的 (1) 排后, 按 -registered_at (recency 新在前).
+        def _sort_key(p):
+            dl_ts = self._parse_deadline_ts(getattr(p, 'deadline_str', ''))
+            if dl_ts is not None:
+                return (0, abs(dl_ts - now), 0.0)
+            return (1, 0.0, -float(getattr(p, 'registered_at', 0.0) or 0.0))
+
+        picked.sort(key=_sort_key)
+
+        out = []
+        for p in picked[:max_n]:
+            entry = {
+                'description': (getattr(p, 'description', '') or '')[:200],
+                'deadline_str': (getattr(p, 'deadline_str', '') or '')[:40],
+                'state': getattr(p, 'state', ''),
+                'who_promised': (
+                    getattr(p, 'who_promised', '')
+                    or getattr(p, 'author', '') or ''
+                ),
+            }
+            fat = float(getattr(p, 'fulfilled_at', 0.0) or 0.0)
+            if fat > 0.0:
+                entry['fulfilled_at_iso'] = time.strftime(
+                    '%Y-%m-%d %H:%M', time.localtime(fat)
+                )
+            out.append(entry)
+        return out
+
+    @staticmethod
+    def _parse_deadline_ts(deadline_str: str):
+        """解析 deadline_str → epoch ts (float) 或 None. 纯字段解析, 无相似度."""
+        s = (deadline_str or '').strip()
+        if not s:
+            return None
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
+            try:
+                return time.mktime(time.strptime(s, fmt))
+            except Exception:
+                continue
+        return None
+
     def _collect_runtime_log_tail(self, max_lines: int = None) -> list:
         """🆕 [Sir 2026-05-26 18:54 FIX C] 拉 runtime_log tail 让反思看真日志.
 
@@ -3615,6 +3701,26 @@ class InnerThoughtDaemon:
         except Exception:
             pass
 
+        # 🆕 [innerthought-read-promise / 2026-06-07] active_promises — 结构化承诺(体)
+        # =====================================================================
+        # 治失真②: 老 InnerThought 只啃 STM 5-turn 截断摘要去猜 (如把"下午去医院看望
+        # 母亲"渲成空泛反向的"到访"). 根因: _build_prompt 从不读 promise store.
+        # 修法: 加结构化 promise 源, 让识读到"已接地事实"而非靠 STM 片段猜.
+        # 离散选取 (头号红线: 禁相似度) — 纯字段过滤 + 排序, 无 embedding/语义匹配:
+        #   ① state 未 fulfilled 未 cancelled (pending/overdue/untracked) → 收
+        #   ② state==fulfilled 且 fulfilled_at 近 24h → 收 (覆盖"刚做完"语境)
+        #   ③ 排序: 有 deadline 优先 (按与 now 邻近距离升序), 再按 recency
+        #      (registered_at 降序) — 纯数值键, 无相似度
+        #   ④ cap N=6 (够覆盖当前活跃承诺, 不撑爆 prompt)
+        #   ⑤ 字段精简: description/deadline_str/state/who_promised/fulfilled_at
+        #      绝不喂 20+ 条 cw_nudge_fired evidence 噪音.
+        # scope: 只读 promise store, 不读 manifold (留给后续修-因果接地).
+        # 不碰 promise 写入/fulfill/let_go/墙/宪法散文/facets/energy_grounded_only.
+        try:
+            ev['active_promises'] = self._collect_active_promises(max_n=6)
+        except Exception:
+            ev['active_promises'] = []
+
         # 🆕 [Sir 2026-05-26 18:54 真意 anchor FIX B] recent_jarvis_actions —
         # =====================================================================
         # Sir 真意: "反思只看 thought 文本太抽象, 看不见 Jarvis 真做了什么 (NUDGE
@@ -5117,6 +5223,31 @@ class InnerThoughtDaemon:
                 lines.append("")
         except Exception:
             pass
+
+        # 🆕 [innerthought-read-promise / 2026-06-07] active_promises block —
+        # =====================================================================
+        # 结构化承诺(体). block 头明确标注"已接地事实", 和下方 STM 对话片段区分:
+        # 让识知道这是可信事实 (不是要它猜的截断片段). 治失真② (母亲渲成"到访/方向反").
+        # =====================================================================
+        _promises = evidence.get('active_promises') or []
+        if _promises:
+            lines.append(
+                "[ACTIVE PROMISES — structured, GROUNDED FACTS (not fragments "
+                "to guess from; these are real commitments on record)]"
+            )
+            for _pr in _promises:
+                _who = _pr.get('who_promised', '') or '?'
+                _dl = _pr.get('deadline_str', '')
+                _st = _pr.get('state', '')
+                _seg = f"  - \"{_pr.get('description', '')}\" (by {_who}"
+                if _dl:
+                    _seg += f", deadline {_dl}"
+                _seg += f", state={_st}"
+                if _pr.get('fulfilled_at_iso'):
+                    _seg += f", fulfilled {_pr['fulfilled_at_iso']}"
+                _seg += ")"
+                lines.append(_seg)
+            lines.append("")
 
         # 🆕 [Sir 2026-05-26 18:54 FIX A] STM 2→5 turn, 字数翻倍 (反思看完整对话)
         lines.append("[STM LAST 5 TURNS]")
