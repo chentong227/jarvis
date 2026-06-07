@@ -637,35 +637,58 @@ class VoiceListenThread(QThread):
     _REPORTED_SPEECH_VERBS_EN = (
         'said', 'says', 'told', 'asked', 'talked', 'complained', 'mentioned',
     )
+    # 🆕 [bypass-fix-C-tighten / 2026-06-07] 单字言说动词子串误友消歧:
+    # 非言说复合词里若含 说/讲/问/叫 单字, 不算转述 (纯关键词比对)。
+    _REPORTED_SPEECH_STOPWORDS_ZH = (
+        '说不定', '说法', '讲究', '问题', '学问', '疑问', '名叫', '小说',
+        '叫做', '喊叫', '说道理', '问候',
+    )
+    # 紧邻窗口 K: 言说动词须在称谓后 K 字符内才算转述 (真转述紧跟称谓;
+    # "我妈那家医院有问题" 的 '问' 在 ~5 字外 → 排除)。K=5 覆盖表:
+    #   我妈说(0)/我妈还说(1)/我妈今天说(2)/我妈跟我说(2)/我妈昨天跟我说(4) 全在窗内;
+    #   我妈那家医院有问题(问@5) 在窗外。取小漏超长间隔真转述 = 安全 (漏判→当正常对话交主脑)。
+    _KINSHIP_VERB_WINDOW_ZH = 5
+    _KINSHIP_VERB_WINDOW_EN = 16
 
     def _kinship_reported_speech_hits(self, text: str, t_pad: str) -> int:
-        """🆕 [bypass-fix-C / 2026-06-07] 亲属称谓 + 言说动词 = 转述他人 → 计 third_person。
+        """🆕 [bypass-fix-C / 2026-06-07 + tighten 2026-06-07] 亲属称谓 + 言说动词
+        = 转述他人 → 计 third_person。**纯关键词位置/子串比对, 禁相似度。**
 
-        离散规则 (纯关键词, 禁相似度): 命中任一亲属称谓, 且该称谓**之后**(同句内)
-        出现任一言说动词 → 算一次转述命中。单纯提到家人 (所属/自叙, 如 "我离我妈妈医院近")
-        无言说动词 → 0 (不罚)。
-          - "我妈妈说要来" → 我妈(子串命中我妈妈) + 后跟 说 → 1 (转述, 罚)
-          - "我离我妈妈那个医院很近" → 我妈 命中但后无言说动词 → 0 (自叙, 不罚)
+        两道收紧 (互补):
+          1. 紧邻窗口 K: 言说动词须出现在称谓之后 K 字符内 (中文 K=5 / 英文 K=16)。
+          2. 停用词组消歧: 即便在窗内, 若命中的是非言说复合词 (说不定/问题/讲究…)
+             的一部分 → 不计 (先 mask 停用词组再找动词)。
+          - "我妈说要来" → 说@0 窗内, 非停用 → 1 (转述, 罚)
+          - "我妈那家医院有问题" → 问@5 窗外 (且 问题 是停用) → 0 (自叙, 不罚)
+          - "我妈说不定会来" → 说@0 但 说不定 停用 → 0 (推测, 不罚)
         """
         hits = 0
-        # 中文: 亲属称谓位置之后是否有言说动词
+        # 中文: 称谓后 K 字符窗内, mask 停用词组后找言说动词
         for kin in self._KINSHIP_TERMS_ZH:
             idx = text.find(kin)
             if idx < 0:
                 continue
             after = text[idx + len(kin):]
-            if any(v in after for v in self._REPORTED_SPEECH_VERBS_ZH):
+            win = after[:self._KINSHIP_VERB_WINDOW_ZH]
+            # 先 mask 停用词组 (用全角空格替换, 不改长度/位置), 再找单字言说动词
+            masked = after
+            for sw in self._REPORTED_SPEECH_STOPWORDS_ZH:
+                if sw in masked:
+                    masked = masked.replace(sw, '　' * len(sw))
+            masked_win = masked[:self._KINSHIP_VERB_WINDOW_ZH]
+            if any(v in masked_win for v in self._REPORTED_SPEECH_VERBS_ZH):
                 hits += 1
-        # 英文: 同理 (亲属词后跟言说动词)
+        # 英文: 称谓后 K 字符窗内找言说动词 (EN 言说词歧义低, 不设停用)
         low = t_pad
         for kin in self._KINSHIP_TERMS_EN:
             idx = low.find(kin)
             if idx < 0:
                 continue
-            after = low[idx + len(kin):]
+            after = low[idx + len(kin):][:self._KINSHIP_VERB_WINDOW_EN]
             if any((' ' + v + ' ') in (' ' + after + ' ') for v in self._REPORTED_SPEECH_VERBS_EN):
                 hits += 1
         return hits
+
 
 
     def classify_jarvis_directness(self, text: str) -> tuple:
