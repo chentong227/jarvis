@@ -964,6 +964,7 @@ class CentralNerve:
         how_to_respond: str, time_persona: str, context_str: str,
         pc_block_value: str, correction_context: str,
         style_adjustment: str, ledger_str: str,
+        anchor_boundary_block: str = "",
     ) -> str:
         """[Reshape M6.2 second wave / 2026-05-24] SHORT_CHAT tier 抽 helper.
 
@@ -1085,6 +1086,13 @@ class CentralNerve:
                 sb.register(BlockSpec(
                     id='promise_mini', content=_short_promise_mini,
                     tiers=['SHORT_CHAT'], salience=0.85))
+            # 🆕 [realmachine-fix2 / 2026-06-07] 轻档透传墙+衡 (drift#2 修):
+            # SHORT_CHAT 从独立 helper 早 return, 之前不接收 anchor_boundary_block →
+            # 轻档裸奔 (假焊正发生在此档). 复用 cn:4340 同一份块, 不另造.
+            if anchor_boundary_block:
+                sb.register(BlockSpec(
+                    id='anchor_boundary', content=anchor_boundary_block,
+                    tiers=['SHORT_CHAT'], salience=0.88))
             if _short_active_plan:
                 sb.register(BlockSpec(
                     id='active_plan', content=_short_active_plan,
@@ -1175,6 +1183,8 @@ class CentralNerve:
 
 {_short_promise_mini}
 
+{anchor_boundary_block}
+
 {_short_active_plan}
 
 {_short_bus}
@@ -1212,6 +1222,7 @@ User: {user_input}
         sensor_state_block: str, system_alert_text: str,
         yesterday_block: str, open_threads_block: str,
         project_block: str, available_skills_block: str,
+        anchor_boundary_block: str = "",
     ) -> str:
         """[Reshape M6.2 second wave / 2026-05-24] FACTUAL_RECALL tier 抽 helper.
 
@@ -1293,6 +1304,11 @@ User: {user_input}
             fb.register(BlockSpec(
                 id='how_to_respond', content=_how_to_respond_fr,
                 tiers=['FACTUAL_RECALL'], salience=0.95))
+            # 🆕 [realmachine-fix2 / 2026-06-07] 轻档透传墙+衡 (drift#2 修).
+            if anchor_boundary_block:
+                fb.register(BlockSpec(
+                    id='anchor_boundary', content=anchor_boundary_block,
+                    tiers=['FACTUAL_RECALL'], salience=0.88))
             if yesterday_block:
                 fb.register(BlockSpec(
                     id='yesterday', content=yesterday_block,
@@ -1369,6 +1385,8 @@ If none of the above sources have the answer, say so honestly:
 Do NOT fabricate. Do NOT call tools — even if a tool *might* know the answer, the user
 expects an instant reply from your recent memory, not a tool round-trip.
 
+{anchor_boundary_block}
+
 {yesterday_block}
 
 === WHAT JUST HAPPENED ===
@@ -1397,7 +1415,8 @@ User: {user_input}
     def _assemble_wake_only_prompt(self, core_persona: str, user_input: str,
                                       stm_context: str, current_time: str,
                                       sensor_state_block: str,
-                                      system_alert_text: str) -> str:
+                                      system_alert_text: str,
+                                      anchor_boundary_block: str = "") -> str:
         """[Reshape M6.2 / 2026-05-24] 抽自 _assemble_prompt — WAKE_ONLY tier.
 
         [R6/Tier] WAKE_ONLY 短路返回: 只塞核心人设 + 最近 3 条 STM + 一句指令.
@@ -1423,6 +1442,11 @@ User: {user_input}
             wb.register(BlockSpec(
                 id='how_to_respond', content=_how_to_respond,
                 tiers=['WAKE_ONLY'], salience=0.95))
+            # 🆕 [realmachine-fix2 / 2026-06-07] 轻档透传墙+衡 (drift#2 修).
+            if anchor_boundary_block:
+                wb.register(BlockSpec(
+                    id='anchor_boundary', content=anchor_boundary_block,
+                    tiers=['WAKE_ONLY'], salience=0.88))
             if short_stm:
                 wb.register(BlockSpec(
                     id='stm', content=f"=== RECENT TURNS ===\n{short_stm}",
@@ -1459,6 +1483,8 @@ Sir just called your name. Reply in UNDER 6 WORDS.
 - If no recent context: just "Sir?" / "At your service."
 - NEVER fabricate. NEVER ask questions.
 - Append `---ZH---` and a 1-3 character Chinese acknowledgment at the very end.
+
+{anchor_boundary_block}
 
 === RECENT TURNS ===
 {short_stm}
@@ -4418,6 +4444,11 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
                 rb.register(BlockSpec(
                     id='reminder_directive', content=reminder_firing_directive,
                     tiers=['REMINDER_FIRING'], salience=0.99))
+                # 🆕 [realmachine-fix2 / 2026-06-07] 轻档透传墙+衡 (drift#2 修).
+                if anchor_boundary_block:
+                    rb.register(BlockSpec(
+                        id='anchor_boundary', content=anchor_boundary_block,
+                        tiers=['REMINDER_FIRING'], salience=0.88))
                 if context_str:
                     rb.register(BlockSpec(
                         id='context', content=context_str,
@@ -4441,6 +4472,7 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
                 return f"""{core_persona}
 
 {reminder_firing_directive}
+{anchor_boundary_block}
 {context_str}
 [SYSTEM CLOCK]: {current_time}
 {sensor_state_block}
@@ -4463,13 +4495,15 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
                 open_threads_block=open_threads_block,
                 project_block=project_block,
                 available_skills_block=available_skills_block,
+                anchor_boundary_block=anchor_boundary_block,
             )
 
         # [Reshape M6.2 / 2026-05-24] WAKE_ONLY tier 抽 helper. 行为不变.
         if prompt_tier == self.PROMPT_TIER_WAKE_ONLY:
             return self._assemble_wake_only_prompt(
                 core_persona, user_input, stm_context, current_time,
-                sensor_state_block, system_alert_text)
+                sensor_state_block, system_alert_text,
+                anchor_boundary_block=anchor_boundary_block)
 
         # [R6/Tier] SHORT_CHAT 中档：核心人设 + STM + ledger + event_bus；不带 LTM/skill_tree/anticipator
         # [P0+18-a.3 / 2026-05-15] 注入 PROMISE_PROTOCOL_DIRECTIVE_MINI — 修 BUG #2:
@@ -4497,6 +4531,7 @@ whose countdown has ALREADY elapsed. Sir is waiting for the alert RIGHT NOW.
                 correction_context=correction_context,
                 style_adjustment=style_adjustment,
                 ledger_str=ledger_str,
+                anchor_boundary_block=anchor_boundary_block,
             )
 
 
