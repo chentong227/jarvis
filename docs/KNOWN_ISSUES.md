@@ -80,3 +80,18 @@
 - **次序锁死**(设计冻结 §9): 锚重构 → 河床闭环 → 接地骨架长厚 → 动态软化(河床排在动态软化之前)。
 - **三红线**(设计冻结 §10): ①不交易 ②不评分 ③墙钉死 — 任一被实现违背即驳回。
 - **状态**: OPEN (设计冻结已落, 待按 §9 次序施工; 本轮不施工)
+
+---
+
+## #dev-note-push-proxy — 本机 push 走代理(github:443 直连被挡)
+
+- **发现**: 2026-06-07 (push 已签 commit 时 github.com:443 TCP 建连超时 ~21s)
+- **性质**: 本机网络环境注记(非 bug)。
+- **现象**: `git push origin main` 直连 `github.com:443` `Could not connect to server`(TCP 建连层失败, 非协议层 — HTTP/1.1/postBuffer 调优无效)。
+- **稳定方案**: 走代理单次推, **不持久化 git config**(只用 `-c`):
+  ```
+  git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin HEAD:main
+  ```
+  探连通性同理: `git -c http.proxy=... -c https.proxy=... ls-remote origin`。
+- **注**: 别在传输层(HTTP 版本/buffer)上耗 — 失败在建连层。`git config --get http.proxy` 应保持空(确认没写死)。
+- **状态**: OPEN (环境注记, 长期有效)
