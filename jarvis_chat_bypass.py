@@ -6090,10 +6090,23 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
             if _wb_txt:  # turn_id 可空 (observe_turn 退回时间戳 ref, 仍接地)
                 import threading as _th_wb
 
-                def _run_body_writeback(_t=_wb_txt, _tid=_turn_id_now):
+                def _run_body_writeback(_t=_wb_txt, _tid=_turn_id_now,
+                                        _su=(clean_user_input or '')):
                     try:
                         from jarvis_relational_weaver import observe_turn_cooccurrence
                         observe_turn_cooccurrence(_t, _tid)
+                    except Exception:
+                        pass
+                    # 🆕 [causal-grounding-wire / Sir 2026-06-07] 因果接地接线:
+                    # 只喂 Sir 原话 (_su=clean_user_input, 默认参绑定防闭包延迟绑定),
+                    # 绝不喂 _wb_txt/final_reply (那会把 Jarvis 自产话当 Sir 接地=假焊).
+                    # 空 user 原话 → 跳过 (无 Sir 原话 = 无接地源)。与 COOCCUR 并存不抢路。
+                    # 独立 try/except fail-safe — 因果函数异常不拖垮 turn 处理。
+                    try:
+                        if _su.strip():
+                            from jarvis_relational_weaver import (
+                                observe_sir_relational_link)
+                            observe_sir_relational_link(_su, _tid)
                     except Exception:
                         pass
                 _th_wb.Thread(target=_run_body_writeback, daemon=True,
