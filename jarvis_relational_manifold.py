@@ -577,6 +577,38 @@ class RelationalManifold:
     def get_edge(self, a: str, b: str) -> Optional[Dict[str, Any]]:
         return self._edges.get(self._edge_key(a, b))
 
+    def node_grounded_provenance(
+        self, node_id: str, *,
+        grounded_kinds: Iterable[str] = (PROV_SAID, PROV_SHARED),
+    ) -> List[Dict[str, Any]]:
+        """🆕 [anchor-rebuild-P0 Step1 / 2026-06-07] 只读: 返回某节点(经 resolve 去别名)
+        所有**接地边**(PROV_SAID/PROV_SHARED)的离散 provenance 记录。
+
+        给锚 identity facets 资格闸用 (B.5a): 离散判定"是否有真接地出处"+ 离散同一性键。
+        **不碰相似度** — 只按 provenance kind 离散过滤 (PROV_EMBED/COOCCUR/INFERRED 一律排除)。
+        返 [{"edge_key", "other", "kind", "ref", "count", "ts"}], 无则 []。纯读, 不 mutate。
+        """
+        gk = set(grounded_kinds)
+        rep = self.resolve(node_id)
+        out: List[Dict[str, Any]] = []
+        with self._lock:
+            for key in self._adj.get(rep, ()):  # type: ignore[arg-type]
+                e = self._edges.get(key)
+                if not e:
+                    continue
+                other = e["b"] if e["a"] == rep else e["a"]
+                for p in e.get("provenance", ()):  # type: ignore[union-attr]
+                    if p.get("kind") in gk:
+                        out.append({
+                            "edge_key": key,
+                            "other": self.resolve(other),
+                            "kind": p.get("kind"),
+                            "ref": p.get("ref"),
+                            "count": int(p.get("count", 1)),
+                            "ts": p.get("ts"),
+                        })
+        return out
+
     def neighbors(
         self, node_id: str, *, min_weight: float = 0.0,
         limit: Optional[int] = None, now: Optional[float] = None,
