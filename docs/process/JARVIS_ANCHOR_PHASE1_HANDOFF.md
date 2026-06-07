@@ -18,9 +18,9 @@
 - 漂移:`anchor_boundary_block`(walls+conflict_guidance+affordance)只挂 PromptBuilder audit-only `skills_section`(`cn:4867`, `audit_only=True` 不渲染), **从未进口主脑真输出 legacy mega f-string**(`cn:4699`)。
 - 起点:`b10796f`(anchor-P1)接错点起, `c66de29`/`327ebb4` 继承同漏。识侧(`daemon:4436`)本就真进(无 audit-only 机制)。
 - 修复:`925f9e2` 仅 central_nerve 2 行 — legacy mega f-string `{promise_protocol_directive}` 后插入 `{anchor_boundary_block}`。
-- 厘清详档:`docs/JARVIS_ANCHOR_BOUNDARY_PROMPT_DRIFT.md`。
+- 厘清详档:`docs/process/JARVIS_ANCHOR_BOUNDARY_PROMPT_DRIFT.md`。
 
-### 1.2 真盘激活复核 GREEN(详 `docs/JARVIS_ANCHOR_REALDISK_ACTIVATION.md`)
+### 1.2 真盘激活复核 GREEN(详 `docs/process/JARVIS_ANCHOR_REALDISK_ACTIVATION.md`)
 真盘文件 copytree 镜像 headless offscreen 起真 nerve, 4 探针各抓组装好的口 prompt:
 
 | 探针 | has_walls | has_conflict | has_affordance |

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """jarvis_identity_facets.py — 锚重构 P0 Step 1: identity facets store + 离散资格闸.
 
-设计源: docs/JARVIS_ANCHOR_REBUILD_P0_DESIGN.md (commit 3af74c1, 顾问/Sir 审过).
+设计源: docs/process/JARVIS_ANCHOR_REBUILD_P0_DESIGN.md (commit 3af74c1, 顾问/Sir 审过).
 理念: 锚 = 稳定骨架(墙 + 宪法散文) + 可塑 facets 层(围墙生长)。本模块只做
 可塑 facets 层的 **store + 离散资格闸**(B.5/B.5a)。
 
@@ -11,7 +11,7 @@ scope (Step 1 铁律):
   - 不碰墙(_SEED_ANCHORS.walls)、不碰 WHO-I-AM/REFERENT-MAP 宪法散文。
   - 衡记伤→facet 本阶段**只留接口位不实做**(守冻结 §9 次序: 锚重构→河床)。
 
-冻结红线 (docs/JARVIS_META_ARCH_ALIGNMENT_20260607.md):
+冻结红线 (docs/process/JARVIS_META_ARCH_ALIGNMENT_20260607.md):
   §5 不评分/不交易: 无 strength/weight/score 标量字段; 资格闸=离散 AND;
                      无排序/argmax/公共货币比较。
   §3/§10 墙钉死: 不读写 _SEED_ANCHORS.walls; facet 须正交于墙。

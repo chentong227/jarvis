@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """[anchor-rebuild-P0 Step1 / 2026-06-07] identity facets store + 离散资格闸单测.
 
-设计源: docs/JARVIS_ANCHOR_REBUILD_P0_DESIGN.md (3af74c1) B.5/B.5a/B.7。
+设计源: docs/process/JARVIS_ANCHOR_REBUILD_P0_DESIGN.md (3af74c1) B.5/B.5a/B.7。
 隔离验闸, 不碰真机 (store 走 tmp path, manifold 用真单例只读或独立实例)。
 
 覆盖 (顾问指定 5 条 + 看守点①):
