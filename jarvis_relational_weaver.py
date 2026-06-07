@@ -977,6 +977,29 @@ class RelationalWeaver:
             curr_energy = self.compute_energy(new_keys, pre_snapshot, post_snapshot, now=now)
             deltas = self._diff_and_emit_deltas(curr_energy, now)
             self._save_energy(curr_energy, deltas)
+        # 🆕 [anchor-P0-activation-wiring 方案A / 2026-06-07] facets producer + reverify。
+        # flag-gated (默认 off → 整段不执行, weave 行为逐字节不变)。在 manifold save 之后
+        # (数据最新)、锁外 (facets store 自带锁)。整段裹 try/except — facets 任何异常都
+        # **绝不**拖垮 weave 这个体维护主循环 (准则1)。节奏离散 (每 weave 一次 producer /
+        # 每 R 次 weave 一次 reverify), 零 score/sort/argmax — 扫描序由 iter_grounded_nodes
+        # 插入序决定, 跑的时机由周期/计数决定, 不看任何显著度。
+        try:
+            import jarvis_identity_facets as _facets
+            if _facets.is_facets_enabled():
+                try:
+                    _facets.scan_and_crystallize()
+                except Exception as _fe:
+                    _log(f"[Weaver/facets] scan_and_crystallize 异常 (swallow, 不拖垮 weave): {_fe!r}")
+                # reverify: 离散计数节拍 (% R, 复用 decay 同款离散节奏)。时间只触发
+                # 重核, 降级只由证据 (接地边没了), 不按时长直接降级 (B.6 第3条)。
+                _facets_R = int(self._wcfg().get("decay_every_n_weaves", 6)) or 6
+                if self._weave_count % _facets_R == 0:
+                    try:
+                        _facets.reverify_all_facets()
+                    except Exception as _re:
+                        _log(f"[Weaver/facets] reverify_all_facets 异常 (swallow): {_re!r}")
+        except Exception:
+            pass  # import / flag 读取失败也绝不影响 weave
         stats = self.manifold.stats(now=now)
         # 复杂度度量 (closure D1): 测结构质量, 不只数体积
         cx = self.manifold.complexity_report(now=now)

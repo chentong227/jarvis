@@ -305,6 +305,103 @@ class TestIdentityFacetsP0Step1(unittest.TestCase):
             self.assertIn(wid, ids, f"墙 id {wid} 应从 _SEED_ANCHORS 读到")
 
     # ======================================================================
+    # 激活接线 B 验 (方案 A: Weaver weave_once 尾 producer + reverify)
+    # ======================================================================
+    def _make_weaver(self, tmpdir):
+        """构造跑得动的 Weaver: 本测 manifold + no-op embed_fn (不烧 LLM) + temp paths。"""
+        import jarvis_relational_weaver as W
+        return W.RelationalWeaver(
+            manifold=self.mani,
+            embed_fn=lambda texts: [None] * len(texts),  # no-op, 不调 Gemini
+            root=tmpdir,
+            delta_publisher=lambda d: None,
+            event_bus=None,
+        )
+
+    def test_wire_producer_crystallizes_on_weave(self):
+        """方案A: flag-on 跑 weave_once → 接地痕迹(≥3 turn)结晶进 store。"""
+        import tempfile, unittest.mock as mock
+        os.environ["JARVIS_FACETS"] = "1"
+        tmpd = tempfile.mkdtemp()
+        try:
+            # manifold 塞 3 不同 turn 的 said 边 (同一节点对)
+            node = M.make_node_id("topic", "wired_topic")
+            for t in ("w1", "w2", "w3"):
+                self.mani.observe_explicit_link(node, M.make_node_id("entity", "sir"), turn_id=t)
+            wv = self._make_weaver(tmpd)
+            # producer 在 weave 内用全局 get_manifold; patch 指向本测 manifold + 本测 store
+            with mock.patch("jarvis_relational_manifold.get_manifold", return_value=self.mani), \
+                 mock.patch.object(F, "_STORE_PATH", self.path):
+                wv.weave_once()
+            actives = F.get_facets(status=F.STATUS_ACTIVE, store_path=self.path)
+            self.assertGreaterEqual(len(actives), 1, "flag-on weave 后应结晶 active facet")
+            # 无 score 字段
+            blob = json.dumps(json.load(open(self.path, encoding="utf-8")))
+            for k in ('"score"', '"weight"', '"strength"', '"salience"'):
+                self.assertNotIn(k, blob)
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+            import shutil; shutil.rmtree(tmpd, ignore_errors=True)
+
+    def test_wire_flag_off_no_producer_call(self):
+        """flag off: weave_once 不调 producer/reverify (真机零变化)。"""
+        import tempfile, unittest.mock as mock
+        os.environ.pop("JARVIS_FACETS", None)
+        tmpd = tempfile.mkdtemp()
+        try:
+            wv = self._make_weaver(tmpd)
+            with mock.patch.object(F, "scan_and_crystallize") as m_scan, \
+                 mock.patch.object(F, "reverify_all_facets") as m_rev:
+                wv.weave_once()
+                m_scan.assert_not_called()
+                m_rev.assert_not_called()
+        finally:
+            import shutil; shutil.rmtree(tmpd, ignore_errors=True)
+
+    def test_wire_try_except_facets_exception_does_not_break_weave(self):
+        """try/except 兜底: facets 抛异常 → weave_once 照常返回 stats。"""
+        import tempfile, unittest.mock as mock
+        os.environ["JARVIS_FACETS"] = "1"
+        tmpd = tempfile.mkdtemp()
+        try:
+            wv = self._make_weaver(tmpd)
+            with mock.patch.object(F, "scan_and_crystallize",
+                                   side_effect=RuntimeError("boom")):
+                stats = wv.weave_once()  # 不该抛
+            self.assertIsInstance(stats, dict)
+            self.assertIn("edge_count", stats, "weave 主循环应照常完成")
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+            import shutil; shutil.rmtree(tmpd, ignore_errors=True)
+
+    def test_wire_reverify_periodic_counter(self):
+        """reverify 走离散计数节拍 (% R), 边删 → 到节拍 revoke。"""
+        import tempfile, unittest.mock as mock
+        os.environ["JARVIS_FACETS"] = "1"
+        tmpd = tempfile.mkdtemp()
+        try:
+            # 先种 1 条 active facet 到本测 store
+            store = {"_meta": {}, "facets": {"facet_rv": {
+                "facet_id": "facet_rv", "identity_key": "node:rv",
+                "content": "c", "provenance": [{"source": F.SRC_MANIFOLD_SAID,
+                "ref": "r", "recurrence_count": 3}], "recurrence_count": 3,
+                "crystallized_ts": 1.0, "status": F.STATUS_ACTIVE}}}
+            json.dump(store, open(self.path, "w", encoding="utf-8"))
+            wv = self._make_weaver(tmpd)
+            wv._weave_count = 5  # 下一趟 weave → _weave_count=6, %6==0 触发 reverify
+            # 接地边没了 → reverify 应 revoke
+            with mock.patch("jarvis_relational_manifold.get_manifold", return_value=self.mani), \
+                 mock.patch.object(F, "_STORE_PATH", self.path), \
+                 mock.patch.object(F, "gather_grounded_provenance", side_effect=lambda k: []):
+                wv.weave_once()
+            revoked = F.get_facets(status=F.STATUS_REVOKED, store_path=self.path)
+            self.assertEqual(len(revoked), 1, "到 %R 节拍 + 边没了 → revoke")
+            self.assertEqual(revoked[0]["revoke_reason"], "grounding_edge_gone")
+        finally:
+            os.environ.pop("JARVIS_FACETS", None)
+            import shutil; shutil.rmtree(tmpd, ignore_errors=True)
+
+    # ======================================================================
     # 末轮 — producer scan_and_crystallize + count 语义 + 全 tier B 验
     # ======================================================================
     def _patch_gather_to_test_manifold(self):

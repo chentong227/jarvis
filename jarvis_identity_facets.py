@@ -159,12 +159,17 @@ def _is_orthogonal_to_walls(content: str) -> bool:
         return True
     low = content.lower()
     # 看守点①bis [Step2+3 / 2026-06-07]: 墙 id 从 _SEED_ANCHORS 读 (只读, 不写墙),
-    # 墙将来改了自动同步, 不再硬写。中文禁令词无对应离散源 → 保留小集兜底。
+    # 墙将来改了自动同步, 不再硬写。
+    # 英文墙 id 用**词边界**匹配 (避免 'ground' ⊂ 'grounded' 类子串误判);
+    # 中文禁令词无词边界概念 → 直接子串 (无对应离散源, 保留小集兜底)。
     wall_ids = _get_wall_ids()  # ← 只读 jarvis_anchors._SEED_ANCHORS 的墙 id
-    wall_markers = tuple(wall_ids) + (
-        "不背叛", "不抛弃", "无据不断言", "承诺不", "言出必行",
-    )
-    return not any(m in low or m in content for m in wall_markers)
+    for wid in wall_ids:
+        if re.search(r"\b" + re.escape(wid.lower()) + r"\b", low):
+            return False
+    for cn in ("不背叛", "不抛弃", "无据不断言", "承诺不", "言出必行"):
+        if cn in content:
+            return False
+    return True
 
 
 def _get_wall_ids() -> List[str]:
