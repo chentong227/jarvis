@@ -4719,6 +4719,8 @@ User: {user_input}
 
 {promise_protocol_directive}
 
+{anchor_boundary_block}
+
 {swm_block}
 
 {event_bus_block}
