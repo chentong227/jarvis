@@ -2953,10 +2953,14 @@ class InnerThoughtDaemon:
         heng_str = (f" | 衡={thought.heng_state}"
                     if getattr(thought, 'heng_state', '') else '')
         # 🆕 [Sir 23:24 BUG-5] mediocre log compact (前 50 ch + [skip:mediocre] 标)
+        # 🆕 [innerthought-mediocre-log-fix / 2026-06-07] 硬 [:60]… 改 word-boundary
+        # helper (与正常路径 :2964 一致, N=300), 让 empty/mediocre 思考日志看全;
+        # … 只在真超长时由 helper 加. 纯显示渲染, 不碰 thought 本体/persist/salience.
         if is_mediocre:
+            _mt = _truncate_at_word_boundary(thought.thought, 300)
             self._bg_log(
                 f"💭 [InnerThought/skip:mediocre] [{thought.category}/sal={thought.salience:.2f}"
-                f"] {thought.thought[:60]}…{meta_str}{kind_str}"
+                f"] {_mt}{meta_str}{kind_str}"
             )
         else:
             # 🆕 [Sir 2026-05-27 00:43 真痛] log truncate 100→300 让 Sir 看完整 thought
