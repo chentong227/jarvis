@@ -73,19 +73,25 @@ class TestSmartParseDeadlineExplicitFormats(unittest.TestCase):
         self.assertGreater(ts, 0)
         self.assertEqual(self._hour_min_of(ts)[0], 8)
 
-    # [quarantine / Sir 2026-06-07 复核更新] 预存真 BUG + 时间依赖双重 (非 affordance 引入):
-    # _smart_parse_deadline('11:30pm') 解析逻辑含真 bug (pm 未稳定 +12), 且**结果随当前
-    # 真实时钟浮动** — 某些时段恰好对(xpass)、某些时段错(fail)。
-    # 用 skip 而非 expectedFailure: xfail 在"恰好对"时变 xpass → unittest 退出码非0 →
-    # _runall 误判整 suite 红 (上轮 4a17999 用 xfail 即因此在 _runall 抖动)。skip 无条件
-    # 隔离, 不受时钟漂移影响。挂账 docs/KNOWN_ISSUES.md #pm-parse-12h。待独立修 pm+12。
-    @unittest.skip(
-        "预存真bug+时间依赖双重 (pm未稳定+12 且结果随时钟浮动); xfail会xpass致_runall假红; "
-        "skip无条件隔离; 挂账 KNOWN_ISSUES #pm-parse-12h; 非 inner-anchor 引入")
+    # [xfail 挂账 / Sir 2026-06-07 顾问收尾] 预存真 BUG (非本笔引入):
+    # _smart_parse_deadline 步骤1 hh:mm 正则 (jarvis_commitment_watcher.py:817) 匹配
+    # '11:30' 后立即 return _to_24h(11,30,None) — **pm 后缀被吞, am_pm=None** → pm 没 +12。
+    # 用 expectedFailure (非 skip): 真 bug 可见挂着, 修好(pm 传入)后 xpass 提醒摘标。
+    # 确定性: mock 模块级 time.time/localtime 到固定时刻 (下午14:00), 消除"防过期推时段"
+    # 随真实时钟漂移 → 稳定红不偶发 xpass (上轮 skip 即因漂移; 现用固定时钟做成确定性)。
+    # 挂账 docs/KNOWN_ISSUES.md #pm-parse-12h。待独立一笔修 pm 后缀传入。
+    @unittest.expectedFailure
     def test_explicit_pm_with_minutes(self):
-        ts = self.cw._smart_parse_deadline('11:30pm', '', '')
-        self.assertGreater(ts, 0)
-        self.assertEqual(self._hour_min_of(ts), (23, 30))
+        import jarvis_commitment_watcher as _cw_mod
+        _fixed_ts = time.mktime(time.struct_time((2026, 6, 7, 14, 0, 0, 6, 158, -1)))
+        _orig_time = _cw_mod.time.time
+        try:
+            _cw_mod.time.time = lambda: _fixed_ts  # 固定 now → 解析确定性
+            ts = self.cw._smart_parse_deadline('11:30pm', '', '')
+            self.assertGreater(ts, 0)
+            self.assertEqual(self._hour_min_of(ts), (23, 30))
+        finally:
+            _cw_mod.time.time = _orig_time
 
     def test_in_30_min(self):
         before = time.time()
