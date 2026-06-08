@@ -304,9 +304,30 @@ class IntentRouter:
         if entry is None:
             result['reason'] = 'unknown_intent'
             self._publish_event(call, result)
+            # 🆕 [wakeup-line3 线1 / 2026-06-08] unknown_intent = 主脑想调的工具没注册/没执行
+            # → 高 salience SWM 上报, 让下轮主脑承认"刚才那个动作没成"(治言行不一: 主脑常在
+            # 工具结果回来前就宣称"已完成")。复用现有 event_bus, 不新通路、不建 wake 工具。
+            # 独立 try/except — 上报失败不破原 unknown_intent 路径。
+            try:
+                if self.event_bus is not None:
+                    self.event_bus.publish(
+                        etype='tool_intent_unresolved',
+                        description=(
+                            f"主脑 emit 的 intent '{call.intent_id}' 未注册/未执行 "
+                            f"(unknown_intent) — 若刚才已向 Sir 宣称完成, 下轮需更正/补救"
+                        ),
+                        source='IntentRouter',
+                        salience=0.9,  # 高 — 主脑下轮必看
+                        metadata={
+                            'intent_id': call.intent_id,
+                            'reason': 'unknown_intent',
+                            'raw_json': getattr(call, 'raw_json', '')[:240],
+                        },
+                        ttl=600.0,
+                    )
+            except Exception:
+                pass
             return result
-
-        tool_full = entry.get('tool', '')
         result['tool'] = tool_full
         if not tool_full or '.' not in tool_full:
             result['reason'] = 'invalid_tool_format'

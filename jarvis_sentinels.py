@@ -995,7 +995,8 @@ class NudgeGate:
         # 同 key 60s 内只 publish 1 次 gate_advice 到 SWM.
         self._publish_dedupe = {}
 
-    def can_speak(self, center_name: str, is_urgent: bool = False, nudge_type: str = '') -> bool:
+    def can_speak(self, center_name: str, is_urgent: bool = False, nudge_type: str = '',
+                  is_alarm: bool = False) -> bool:
         """[轴3-L1 / 2026-05-15] OfferGuard 中央闸接入：
         - 节奏闸（按 nudge_type 各自的 min_interval_s 限频，修 Cs1 path_b 绕过 wellness cooldown）
         - capability 闸（offer_help 必须有 healthy safe skill 可 reference，修 Cs2 宽泛承诺）
@@ -1011,7 +1012,7 @@ class NudgeGate:
         """
         gate_mode = self._read_gate_mode('NudgeGate')
         result, block_reason, state_meta = self._can_speak_internal_v2(
-            center_name, is_urgent, nudge_type)
+            center_name, is_urgent, nudge_type, is_alarm=is_alarm)
 
         # [β.5.0-A / β.5.1 / β.5.3] publish gate_advice 到 SWM
         # hard mode: 仅在 block 时 publish
@@ -1082,9 +1083,14 @@ class NudgeGate:
             if state_meta.get('freeze_active'):
                 return False  # hard_freeze 永远拦, 守 Sir 显式拒绝
             # sleep_mode 拦截非白名单类型 (return_greeting 等仍允许)
+            # 🆕 [wakeup-line31-sleep-alarm-gate1 / 2026-06-08] alarm-style (闹钟/硬定时
+            # 叫醒) 穿 sleep_mode: 闹钟天职=Sir 睡着时叫醒, 与 AFK/yield/publish_only bypass
+            # 同源理由。**仅穿 sleep, 不穿 freeze** (上面 freeze_active 已 return, 安全红线守住)。
+            # is_alarm 由 commitment_watcher 复用 _is_alarm_style_commitment 判定后传入。
             if (state_meta.get('sleep_mode')
+                    and not is_alarm
                     and nudge_type not in self.SLEEP_ALLOWED_TYPES):
-                return False  # sleep_mode 拦非白名单, 守 Sir 显式睡眠
+                return False  # sleep_mode 拦非白名单非闹钟, 守 Sir 显式睡眠
             return True
         return result
 
@@ -1101,12 +1107,15 @@ class NudgeGate:
         except Exception:
             return 'hard'
 
-    def _can_speak_internal(self, center_name: str, is_urgent: bool, nudge_type: str) -> bool:
+    def _can_speak_internal(self, center_name: str, is_urgent: bool, nudge_type: str,
+                            is_alarm: bool = False) -> bool:
         """[向后兼容] 老版本只返 bool. v2 拆出 (result, reason, state_meta) 给 SWM publish."""
-        result, _r, _m = self._can_speak_internal_v2(center_name, is_urgent, nudge_type)
+        result, _r, _m = self._can_speak_internal_v2(
+            center_name, is_urgent, nudge_type, is_alarm=is_alarm)
         return result
 
-    def _can_speak_internal_v2(self, center_name: str, is_urgent: bool, nudge_type: str):
+    def _can_speak_internal_v2(self, center_name: str, is_urgent: bool, nudge_type: str,
+                               is_alarm: bool = False):
         """[β.5.3 / 2026-05-19] 拆出 reason + state metadata 给 SWM publish.
 
         Returns:
@@ -1137,7 +1146,9 @@ class NudgeGate:
             if freeze_remaining > 0:
                 return False, f'hard_freeze_{int(freeze_remaining)}s', state_meta
             if self._sleep_mode:
-                if nudge_type not in self.SLEEP_ALLOWED_TYPES:
+                # 🆕 [wakeup-line31-sleep-alarm-gate1 / 2026-06-08] alarm 穿 sleep (非 freeze).
+                # freeze 检查在上面 (:1138) 已 return, 此处只放行 sleep — 安全红线守住。
+                if not is_alarm and nudge_type not in self.SLEEP_ALLOWED_TYPES:
                     return False, 'sleep_mode_allowed_type_only', state_meta
             if is_urgent:
                 # [轴3-L1] is_urgent 也过 OfferGuard 闸（path_b is_urgent=True 也得遵守节奏）
