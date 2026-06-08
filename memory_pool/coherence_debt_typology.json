@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "schema": "coherence_debt_typology",
+    "schema_version": 1,
+    "purpose": "[C3.1 / 2026-06-08] 冻结类型学 (归墙不归环): 哪个 watcher 信号 → 哪类 coherence-debt. 自纠环对本文件**零写权** (结构性抗 wirehead — 环不能靠重定义判据刷低债). 改它只 Sir 手改 (类 gate_mode_vocab 模式), 任何 daemon/环路径不进写路径.",
+    "carve_out": "诚实底板(不杜撰) / corrigibility(Sir 撤销神圣) / 软不压硬 = tension 变量永不可覆写的硬底板. 本环只算债+记账, 绝不覆写 Sir/编造/压硬源.",
+    "edit_via": "Sir 手改 (无 CLI 写路径; 环只读)"
+  },
+  "typology": {
+    "E_rel": {"source_kind": "correction_loop", "signal_types": ["correction", "confusion"]},
+    "E_commit": {"source_kind": "inconsistency_watcher"},
+    "E_ground": {"source_kind": "semantic_claim"}
+  }
+}

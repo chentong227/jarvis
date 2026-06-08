@@ -991,6 +991,28 @@ class CorrectionLoop:
         elif signal.signal_type == "follow_up":
             result = {'type': 'style', 'direction': 'more_detail'}
 
+        # 🆕 [C3.1 tap / 2026-06-08] behavior-preserving: signal_type ∈
+        # {correction, confusion} → 记一条 E_rel 债 (关系预测误差)。只新增记账,
+        # 不改上面 result/signal 原逻辑/返回。ref = 当前 STM 末轮原文 hash (grounded:
+        # 指回真实交互轮)。独立 try/except — 记账失败不影响 detect_and_learn。
+        try:
+            if signal.signal_type in ("correction", "confusion"):
+                import hashlib as _hl
+                _stm = getattr(self.nerve, 'short_term_memory', []) or []
+                _last = _stm[-1] if _stm else {}
+                _basis = (str(_last.get('user', '')) + '|' +
+                          str(_last.get('jarvis', '')) + '|' +
+                          str(_last.get('time', '')))
+                _ref = _last.get('turn_id') or (
+                    'stm_' + _hl.sha1(_basis.encode('utf-8')).hexdigest()[:12]
+                    if _basis.strip('|') else '')
+                if _ref:
+                    from jarvis_coherence_debt import tap_correction
+                    tap_correction(signal.signal_type, str(_ref),
+                                   detail=user_input[:80])
+        except Exception:
+            pass
+
         return result
 
     def on_jarvis_response(self, response: str):

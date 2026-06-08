@@ -9680,6 +9680,20 @@ class InnerThoughtDaemon:
                         )
                 except Exception:
                     pass
+                # 🆕 [C3.1 tap / 2026-06-08] behavior-preserving: 记一条 E_ground 债
+                # (自我失真)。只新增记账, 不改上面 publish/flagged 原逻辑。
+                # ref=audited_turn_id (+ claim hash, grounded)。空 turn_id 则 tap 内
+                # open_debt 因 ref 空被拒 (无接地不生债)。独立 try/except。
+                try:
+                    if _audited_turn_id:
+                        import hashlib as _hl_cd
+                        _claim_txt = str(flagged[0].get('claim', ''))
+                        _chash = _hl_cd.sha1(_claim_txt.encode('utf-8')).hexdigest()[:8]
+                        from jarvis_coherence_debt import tap_semantic_claim
+                        tap_semantic_claim(_audited_turn_id, claim_hash=_chash,
+                                           detail=_claim_txt[:80])
+                except Exception:
+                    pass
         except Exception:
             pass
 
