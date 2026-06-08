@@ -6175,6 +6175,21 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                 _reg.add_canonical_alias_link(
                                     _surface, _cid, source="exact",
                                     ref=(_tid or "kinship_exact"))
+                                # 🆕 [canonical-soft-proposer-slice2 / 2026-06-08]
+                                # 自动升级钩子: 硬源同指命中 → 升 proposed→active。
+                                # 硬条件②严格内容匹配 (expect_cid=_cid, 同 surface 同 cid);
+                                # 硬条件③不复活 revoked (by='auto_hard_grounding' 非 sir →
+                                # activate_alias_link 内拒 revoked 复活)。
+                                try:
+                                    _lk = _reg.get_alias_link(_surface)
+                                    if _lk and _lk.get('status') == 'proposed' \
+                                            and _lk.get('cid') == _cid:
+                                        _reg.activate_alias_link(
+                                            _surface, by='auto_hard_grounding',
+                                            reason='hard exact 同指命中升级',
+                                            expect_cid=_cid)
+                                except Exception:
+                                    pass
                                 if _reg.touch(_cid, _tid):
                                     try:
                                         from jarvis_utils import bg_log as _bgl
@@ -6183,6 +6198,38 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                                     except Exception:
                                         pass
                             _reg.save()
+                    except Exception:
+                        pass
+                    # 🆕 [canonical-soft-proposer-slice2 / 2026-06-08] 软源提议层
+                    # (路线A: 离散词法, 不烧 LLM)。软词表整词命中 → 产 **proposed**
+                    # AliasLink (source=llm, 绝不自动 active)。挂入口闸之后、只喂 _su。
+                    # add_soft_alias_link 内守三硬条件: ①幂等去重 (已 active/proposed
+                    # 同 cid → no-op) ②冲突拒 ③revoked 不复活。proposed 不接地/不触达/
+                    # 不进中心度 (resolve 只认 active)。独立 try/except fail-safe。
+                    try:
+                        if _su.strip():
+                            from jarvis_canonical_entities import (
+                                get_canonical_registry as _gcr_soft,
+                                lookup_soft_surfaces as _lss)
+                            _reg_s = _gcr_soft()
+                            _soft_hits = _lss(_su)
+                            _soft_changed = False
+                            for _ss, (_scid, _slabel, _srel) in _soft_hits:
+                                import time as _t_soft
+                                _sgref = {"source_kind": "llm",
+                                          "ref": (_tid or "soft_propose"),
+                                          "ts": _t_soft.time(),
+                                          "detail": f"soft:{_ss}->{_scid}"}
+                                # 实体须先存在 (接地: turn_id) 才挂 proposed alias
+                                _reg_s.create_canonical_entity(
+                                    _scid, {"canonical_label": _slabel,
+                                            "relation_to_sir": _srel}, [_sgref])
+                                if _reg_s.add_soft_alias_link(
+                                        _ss, _scid, source="llm",
+                                        ref=(_tid or "soft_propose")):
+                                    _soft_changed = True
+                            if _soft_changed:
+                                _reg_s.save()
                     except Exception:
                         pass
                 _th_wb.Thread(target=_run_body_writeback, daemon=True,
