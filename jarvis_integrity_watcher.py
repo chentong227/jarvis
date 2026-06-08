@@ -1056,6 +1056,113 @@ DEFAULT_RETRIERS: Dict[str, RetryFn] = {
 
 
 # ============================================================
+# 🆕 [integrity-signal-coverage / 2026-06-08] 本轮已做证据聚合器 (单一真理源)
+# ============================================================
+# 三个诚信闸 (Integrity worker:3826 / I2 daemon:9645 / 线4 claim_tracer) 共用此聚合器
+# 查 commitment/reminder/promise register + DB, 修"闸看不见 register 致假阳" (设计
+# JARVIS_INTEGRITY_SIGNAL_SOURCE_COVERAGE_DESIGN.md)。
+#
+# 顾问硬条件:
+#  ① 匹配精度: 必须把 claim 内容匹配到**具体** register 项, 不是"窗口内有任意 register
+#     就放行" (否则声称提醒 A 但 DB 只有无关 B 会被蒙混 → 漏报重开)。
+#  ② 窗口/时序: reminder 走 active 状态查 (hippocampus.list_active_reminders, 不限
+#     创建新近度), 修 ID2506 6h 时序 (创建 23:25 / 审计 06:xx) 被 10min recency 漏掉。
+#
+# 红线: backing 查空仍返 (False, '') → 闸照常 flag (不改成"永不 flag")。复用 verifier
+# 的 DB 读路径, 不新写 tracking。
+# ============================================================
+
+def _norm_for_match(s: str) -> str:
+    """离散归一: 小写 + 去空白, 供 claim↔register 项内容匹配 (禁相似度, 纯子串)。"""
+    import re as _re
+    return _re.sub(r'\s+', '', (s or '').lower())
+
+
+def _claim_matches_text(claim_text: str, item_text: str, *, min_overlap: int = 4) -> bool:
+    """claim 内容是否匹配到**具体** item (条件①防漏报蒙混)。
+
+    纯离散: 取 claim 归一串与 item 归一串, 任一为另一的子串 (≥ min_overlap 字符) 即命中。
+    不靠"窗口存在性", 必须内容对得上。空串 → 不匹配。
+    """
+    c = _norm_for_match(claim_text)
+    it = _norm_for_match(item_text)
+    if not c or not it or len(c) < min_overlap:
+        return False
+    # 双向子串: claim 提及 item 关键内容, 或 item 含 claim 核心
+    if it in c or c in it:
+        return True
+    # 退一步: claim 的前 N 字 (动作核) 出现在 item 里
+    head = c[:max(min_overlap, min(20, len(c)))]
+    return head in it
+
+
+def has_recent_action_backing(claim_text: str, nerve, *,
+                              within_s: float = 600.0) -> Tuple[bool, str]:
+    """查 claim 是否有**本轮/近期已做**的具体 backing (reminder/commitment/promise)。
+
+    单一真理源: 三闸都调它。命中 → (True, 'source:detail'); 查空 → (False, '')。
+    条件①: 内容匹配到具体 register 项 (非窗口存在性)。
+    条件②: reminder 按 active 状态查 (不限创建新近度), 修 6h 时序。
+    纯只读, fail-safe (异常 → (False, '') 即闸照常 flag, 不误放行)。
+    """
+    if not claim_text or nerve is None:
+        return (False, '')
+    needle = claim_text.strip()
+    if len(needle) < 4:
+        return (False, '')
+
+    # ---- 1. reminder (active 状态查, 条件②: 不限创建新近度) ----
+    try:
+        hippo = getattr(nerve, 'hippocampus', None)
+        if hippo is not None and hasattr(hippo, 'list_active_reminders'):
+            for r in hippo.list_active_reminders():
+                intent = (r.get('intent') if isinstance(r, dict) else None) or ''
+                if intent and _claim_matches_text(needle, intent):
+                    return (True, f"reminder:id={r.get('id')}:{intent[:40]}")
+    except Exception:
+        pass
+
+    # ---- 2. commitment (commitment_watcher.commitments, 条件①内容匹配) ----
+    try:
+        cw = getattr(nerve, 'commitment_watcher', None)
+        if cw is not None:
+            commits = getattr(cw, 'commitments', []) or []
+            cutoff = time.time() - within_s
+            for c in commits[-80:]:
+                if c.get('created_at', 0) < cutoff:
+                    continue
+                desc = (c.get('description') or '')
+                src = (c.get('source_text') or '')
+                if (desc and _claim_matches_text(needle, desc)) or \
+                   (src and _claim_matches_text(needle, src)):
+                    return (True, f"commitment:db_id={c.get('db_id')}:{desc[:40]}")
+    except Exception:
+        pass
+
+    # ---- 3. promise (PromiseLog, 条件①内容匹配) ----
+    try:
+        plog = getattr(nerve, 'promise_log', None)
+        if plog is None:
+            try:
+                from jarvis_promise_log import get_default_log
+                plog = get_default_log()
+            except Exception:
+                plog = None
+        if plog is not None and hasattr(plog, 'list_recent'):
+            cutoff = time.time() - within_s
+            for p in plog.list_recent(limit=40):
+                if getattr(p, 'registered_at', 0) < cutoff:
+                    continue
+                desc = getattr(p, 'description', '') or ''
+                if desc and _claim_matches_text(needle, desc):
+                    return (True, f"promise:id={getattr(p, 'id', '?')}:{desc[:40]}")
+    except Exception:
+        pass
+
+    return (False, '')
+
+
+# ============================================================
 # IntegrityWatcher — L4.5 Active Verify+Retry 子层
 # Sir 14:11: "递归调用直到成功 OR Jarvis 真做不到, handoff Sir 手动"
 # ============================================================

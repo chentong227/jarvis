@@ -704,7 +704,8 @@ def trace_reply(jarvis_reply: str,
                   include_swm_tool_called: bool = True,
                   swm_lookback_s: float = 180.0,
                   recall_provider=None,
-                  body_evidence_provider=None) -> dict:
+                  body_evidence_provider=None,
+                  nerve=None) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -769,6 +770,31 @@ def trace_reply(jarvis_reply: str,
         if ok:
             n_verified += 1
         else:
+            # 🆕 [integrity-signal-coverage / 2026-06-08] register/DB backing 兜底:
+            # tool_results/STM 没命中, 但 commitment/reminder/promise register 真做了
+            # (线4 register 类假阳: "已记录承诺" 但 backing 在 DB 不在 tool_results)。
+            # 查具体 backing → verified; 查空 → 仍 unverified (漏报不重开)。
+            # 复用 has_recent_action_backing (单一真理源)。
+            _backed = False
+            if nerve is not None:
+                try:
+                    from jarvis_integrity_watcher import (
+                        has_recent_action_backing as _harab3)
+                    _ok_b, _src_b = _harab3(c.text, nerve)
+                    if _ok_b:
+                        _backed = True
+                        try:
+                            bg_log(
+                                f"✅ [ClaimTracer] '{c.text[:40]}' 有 register "
+                                f"backing → verified ({_src_b})"
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            if _backed:
+                n_verified += 1
+                continue
             n_unverified += 1
             unverified_examples.append(f"[{c.kind}] '{c.text}'")
             # 🩹 [β.3.5 INTEGRITY_STACK L4 enforce / 2026-05-18]

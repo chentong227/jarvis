@@ -9636,11 +9636,35 @@ class InnerThoughtDaemon:
                 return
             self._last_semantic_audit_ts = now
             self._last_audited_reply = reply
+            # 🆕 [integrity-signal-coverage / 2026-06-08] 祈使排除: reminder firing
+            # 祈使内容 ([REMINDER FIRING NOW...] / [SYSTEM BACKGROUND EVENT]...) 不是
+            # "Jarvis 做了 X" 型 factual claim, 不该进 claim 审计 (ID2506 假阳之一)。
+            # 复用 thread1 的 is_system_event_text 判前缀 (单一真理源)。
+            try:
+                from jarvis_utils import is_system_event_text as _isev
+                if _isev(reply) or reply.lstrip().startswith('[REMINDER FIRING NOW'):
+                    return
+            except Exception:
+                pass
             stm_blob = ' | '.join(
                 (str(e.get('user', '')) + ' ' + str(e.get('jarvis', '')))
                 for e in stm[-4:] if isinstance(e, dict)
             )
-            flagged = self.semantic_claim_audit(reply, '', stm_blob[:600])
+            # 🆕 [integrity-signal-coverage / 2026-06-08] 信号源覆盖面: tool_results_str
+            # 老恒空 (:9645) → 看不见 reminder/commitment register (ID2506 假阳)。查
+            # register/DB backing 摘要喂 evidence 串, LLM 看到具体 backing → 不 flag。
+            # 复用 has_recent_action_backing (active 状态查, 修 6h 时序)。查空则不喂 →
+            # 闸照常 flag (漏报不重开)。
+            _backing_evidence = ''
+            try:
+                from jarvis_integrity_watcher import (
+                    has_recent_action_backing as _harab2)
+                _ok_bk, _src_bk = _harab2(reply, self.nerve)
+                if _ok_bk:
+                    _backing_evidence = f"register/DB backing: {_src_bk}"
+            except Exception:
+                pass
+            flagged = self.semantic_claim_audit(reply, _backing_evidence, stm_blob[:600])
             if flagged:
                 self._bg_log(
                     f"🔎 [SemanticClaim/I2] {len(flagged)} ungrounded claim(s); "
