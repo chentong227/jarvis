@@ -508,6 +508,33 @@ class CentralNerve:
             except Exception:
                 pass
 
+        # 🆕 [bugB(c) Part 1 / Sir 2026-06-08] ProfileReflector daemon 挂载.
+        # 接通 corrections.jsonl → propose → review queue 前半环 (治真机"我教的 profile
+        # 修正读不回" — apply_correction 写 corrections.jsonl 而 retrieve 读 sir_profile.json
+        # 异文件 leak)。照 TranslatorReflector 范式: env-gated default-off (start_daemon
+        # :365 检 JARVIS_PROFILE_REFLECTOR=1, 默认零行为变更), try/except 非致命。
+        # ⚠️ Part 1 只挂载 — daemon 纯 propose 进 review queue, 绝不自动写 sir_profile.json
+        # (Sir-verifier 闸); activate→真写回是 Part 2。daemon 不 push_command/不碰 tick/
+        # 不进 reply 路径 (独立 5min 后台线程, 零增频)。
+        try:
+            from jarvis_profile_reflector import get_default_reflector as _get_pr
+            self.profile_reflector = _get_pr()
+            self.profile_reflector.nerve = self
+            self.profile_reflector.start_daemon()
+            try:
+                from jarvis_utils import bg_log as _pr_bg
+                _pr_bg("🪞 [ProfileReflector] daemon 挂载 (env-gated, "
+                       "JARVIS_PROFILE_REFLECTOR=1 才启; 默认 off 零行为变更)")
+            except Exception:
+                pass
+        except Exception as _pr_e:
+            self.profile_reflector = None
+            try:
+                from jarvis_utils import bg_log as _pr_err
+                _pr_err(f"[ProfileReflector] 初始化失败 (非致命): {_pr_e}")
+            except Exception:
+                pass
+
         # [Reshape M6.3 fourth wave / 2026-05-24] STMSummarizer init helper. 行为不变.
         self._init_stm_summarizer()
 
