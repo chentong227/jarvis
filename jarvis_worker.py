@@ -2180,12 +2180,10 @@ class JarvisWorkerThread(QThread):
                 # 否则 LLM 会把"提醒我去拿快递"这种来自系统通告的句子再 schedule 成新的
                 # is_future_task=true → 同一条 reminder 在数据库里被复制成 ID:705/707/710
                 # 多次触发。短路掉这条路径既省 LLM 调用，也根治重复提醒。
-                _is_system_event = (
-                    cmd.startswith('[SYSTEM BACKGROUND EVENT]')
-                    or cmd.startswith('[系统主动提醒]')
-                    or cmd.startswith('[SYSTEM ALERT]')
-                    or cmd.startswith('[后台系统异步唤醒]')
-                )
+                # 🆕 [writeback-sir-only-gate / 2026-06-08] 改调 jarvis_utils.is_system_event_text
+                # (单一真理源, 同 4 前缀, 行为逐字等价)。writeback 闸 (chat_bypass:6116) 复用同款。
+                from jarvis_utils import is_system_event_text as _is_sysevt_w
+                _is_system_event = _is_sysevt_w(cmd)
                 if _is_system_event:
                     try:
                         from jarvis_utils import bg_log
