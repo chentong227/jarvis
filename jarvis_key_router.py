@@ -172,6 +172,9 @@ class KeyRouter:
         self._active_calls = {}
         self._max_concurrent = {}
         self._key_status = {}
+        # 🆕 [keyleak-reaper / Sir 2026-06-08] per-key acquire 时间戳 (FIFO), 给
+        # _reap_stale_slots 回收漏 release 的并发槽用。
+        self._acquire_times = {}
         
         self._init_key(main_brain_key, 'main_brain', self.PROVIDER_OPENROUTER, max_concurrent=5)
         for entry in self._google_pool:
@@ -427,6 +430,12 @@ class KeyRouter:
         with self._lock:
             if self._active_calls[key] < self._max_concurrent[key]:
                 self._active_calls[key] += 1
+                # 🆕 [keyleak-reaper / Sir 2026-06-08] 记 acquire 时间戳, 给 stale-slot
+                # reaper 用 (catch 漏 release 的 caller, 防副池 active_calls 顶满永占)。
+                try:
+                    self._acquire_times.setdefault(key, []).append(time.time())
+                except Exception:
+                    pass
                 return True
             return False
     
@@ -436,6 +445,45 @@ class KeyRouter:
             with self._lock:
                 if self._active_calls[key] > 0:
                     self._active_calls[key] -= 1
+                    # 弹出最早的 acquire 时间戳 (FIFO 近似; reaper 配套)
+                    try:
+                        ts_list = self._acquire_times.get(key)
+                        if ts_list:
+                            ts_list.pop(0)
+                    except Exception:
+                        pass
+
+    def _reap_stale_slots(self, stale_after_s: float = 120.0) -> int:
+        """🆕 [keyleak-reaper / Sir 2026-06-08] 回收漏 release 的并发槽 (防泄漏致死).
+
+        真机 BUG: caller get_openrouter_key (active_calls+1) 但 return 路径漏 release →
+        副池 active_calls 顶到 max_concurrent → "无可用Key" (key 全 healthy)。多数 caller
+        已修 finally:release, 本 reaper 是系统级 backstop: 任何 acquire 持有 > stale_after_s
+        (任何 LLM 调用都不该超 120s) → 判定漏 release, 强制回收该槽 + 清时间戳。
+        返回回收的槽数。
+        """
+        reaped = 0
+        now = time.time()
+        with self._lock:
+            for key, ts_list in list(self._acquire_times.items()):
+                if not ts_list:
+                    continue
+                # 清掉所有过期时间戳, 对应槽位回收
+                fresh = [t for t in ts_list if (now - t) < stale_after_s]
+                n_stale = len(ts_list) - len(fresh)
+                if n_stale > 0:
+                    self._acquire_times[key] = fresh
+                    cur = self._active_calls.get(key, 0)
+                    self._active_calls[key] = max(0, cur - n_stale)
+                    reaped += n_stale
+        if reaped > 0:
+            try:
+                from jarvis_utils import bg_log as _kr_bg
+                _kr_bg(f"♻️ [KeyRouter/Reaper] 回收 {reaped} 个 stale 并发槽 "
+                       f"(漏 release 的 caller, 持有 > {int(stale_after_s)}s)")
+            except Exception:
+                pass
+        return reaped
     
     def _resolve_key(self, key_name: str):
         if key_name == 'main_brain':
@@ -975,6 +1023,11 @@ class KeyRouter:
             # poll reset request (高频)
             try:
                 self._poll_reset_request()
+            except Exception:
+                pass
+            # 🆕 [keyleak-reaper / Sir 2026-06-08] 回收漏 release 的 stale 并发槽 (防副池顶满)
+            try:
+                self._reap_stale_slots()
             except Exception:
                 pass
             # snapshot (低频)

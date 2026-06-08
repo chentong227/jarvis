@@ -315,6 +315,17 @@ class ReplyPreFlight:
         except Exception as e:
             return {'_fallback': True, '_error': f'key err: {str(e)[:60]}'}
 
+        # 🆕 [keyleak-fix / Sir 2026-06-08] try/finally release 防泄漏 (同 intent_resolver
+        # 根因: get_openrouter_key active_calls+1 但 return 路径漏 release → 副池满)。
+        try:
+            return self._llm_call_inner(okey, prompt, safe_openrouter_call)
+        finally:
+            try:
+                self.key_router.release(_label)
+            except Exception:
+                pass
+
+    def _llm_call_inner(self, okey, prompt, safe_openrouter_call) -> dict:
         try:
             # flash_lite for cheap + fast
             _model_map = {
