@@ -325,18 +325,167 @@ If skip all: {{"proposals": []}}
         with self._lock:
             return [p for p in self._proposals if p.state == 'review']
 
+    # 🆕 [bugB(c) Part 2 / Sir 2026-06-08] activate 写回安全契约 helpers.
+    # 保守白名单: 只放软纠正字段 (Sir 反复教正的事实/偏好/习惯 — 正是"读不回"痛点),
+    # **显式排除核心身份/关系锚** (core_philosophy/idiosyncrasies/conversational_boundaries/
+    # life_anchors/relationship_status/professional_role/work_rhythms — 误写代价高,
+    # 首版 activate 不碰, 需更高门槛)。复用 overwrite_field 原子写, 不另造写路径。
+    # ⚠️ 交叉验证不变式: 本 14 字段必须 ⊆ ProfileCard._OVERWRITE_ALLOWED_FIELDS (22),
+    # 否则会"过本白名单 → overwrite_field 拒 → 谎称 applied"。已核 NOT_SUBSET=[] (全 ⊆),
+    # 测 test_subset_of_overwrite_whitelist 守这条不变式; 未来给本表加字段必须同时
+    # 在 overwrite 白名单, 否则该测红。
+    _ACTIVATE_WRITEBACK_WHITELIST = frozenset({
+        'preferred_tools', 'frequently_used_software', 'work_category',
+        'current_priority', 'unit_preferences', 'health_goals',
+        'health_concerns', 'sleep_target_hour', 'wake_target_hour',
+        'nudge_frequency_default', 'communication_preferences',
+        'location_general', 'languages', 'active_projects',
+    })
+
+    def _is_writeback_allowed(self, field_path: str) -> bool:
+        """field_path 顶层段命中保守白名单才允许 activate 写回。
+        嵌套 (unit_preferences.cup_ml) 取顶层 (unit_preferences) 判。"""
+        if not field_path:
+            return False
+        top = field_path.split('.', 1)[0].strip()
+        # preferences.X alias → unit_preferences (同 overwrite_field 范式)
+        if top == 'preferences':
+            top = 'unit_preferences'
+        return top in self._ACTIVATE_WRITEBACK_WHITELIST
+
+    def _backup_profile(self) -> str:
+        """写前时间戳备份 sir_profile.json → .bak.<ts>。返备份路径 (失败返 '')。"""
+        try:
+            if not os.path.exists(self.profile_path):
+                return ''
+            import shutil
+            ts = time.strftime('%Y%m%d_%H%M%S')
+            backup_path = f"{self.profile_path}.bak.{ts}"
+            shutil.copy2(self.profile_path, backup_path)
+            return backup_path
+        except Exception:
+            return ''
+
+    def _writeback_via_profile_card(self, field_path: str, new_value,
+                                    proposal_id: str):
+        """复用 ProfileCard.overwrite_field 原子写 (tmp+rename+白名单+缓存失效)。
+        返 (ok, msg, old_value)。无 profile_card → 拒 (不另造写路径)。"""
+        pc = getattr(self.nerve, 'profile_card', None) if self.nerve else None
+        if pc is None or not hasattr(pc, 'overwrite_field'):
+            return False, 'no profile_card.overwrite_field', None
+        # 剥 'profile.'/'preferences.' 前缀交 overwrite_field (它自己识 alias+嵌套)
+        _path = field_path
+        for _pfx in ('profile.', 'biographic.', 'sir.'):
+            if _path.startswith(_pfx):
+                _path = _path[len(_pfx):]
+                break
+        return pc.overwrite_field(
+            field=_path, new_value=new_value,
+            source='profile_reflector_activate',
+            reason=f'Sir activated proposal {proposal_id}')
+
+    def _audit(self, msg: str) -> None:
+        """审计 trail → bg_log (进 runtime log + trace)。"""
+        try:
+            from jarvis_utils import bg_log
+            bg_log(f"🪞 [ProfileReflector/activate] {msg}")
+        except Exception:
+            pass
+
+    def _cleanup_orphan_backup(self, backup_path: str, old_value=None) -> None:
+        """写失败时清理刚建的孤儿 .bak (写没成功, 备份无意义留存)。
+        失败静默 (清理失败不影响主流, 仅审计)。"""
+        if not backup_path:
+            return
+        try:
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+        except Exception as _e:
+            self._audit(f"orphan .bak cleanup fail: {backup_path} ({_e})")
+
     def activate(self, proposal_id: str, decided_by: str = 'sir_cli') -> bool:
+        """🆕 [bugB(c) Part 2 / Sir 2026-06-08] activate → 真写回 sir_profile.json.
+
+        从"只翻 state"升级为经安全契约真写回 (闭合 bugB 后半环: corrections 读不回 →
+        Sir activate 后真生效)。安全契约逐条:
+          b. 白名单 — field_path 命中 _ACTIVATE_WRITEBACK_WHITELIST (软纠正字段子集,
+             显式排除核心身份/关系锚) 才写; 非白名单 → state=rejected_non_whitelist。
+          c. .bak — 写前时间戳备份 sir_profile.json.bak.<ts>。
+          d. 原子写 — 复用 ProfileCard.overwrite_field (tmp+rename + 白名单 + 缓存失效),
+             不另造平行白名单/写路径。首版只 set/overwrite 标量 (action modify/add);
+             archive/remove 先拒 + state=rejected_unsupported_action。
+          e. 缓存失效 — overwrite_field 末尾已 self._cache_time=0 (写后 retrieve 立读新值)。
+          f. 幂等 — 已 applied 再 activate → no-op (不二次写/不新增 .bak)。
+          g. 审计 — bg_log (proposal_id, field, old→new, backup_path)。
+        红线: daemon 绝不自动调 activate; 只 CLI --activate (Sir 显式) 触发。
+        """
         with self._lock:
+            target = None
             for p in self._proposals:
-                if p.proposal_id == proposal_id and p.state == 'review':
-                    p.state = 'active'
-                    p.decided_at = time.time()
-                    p.decided_by = decided_by
-                    self._persist_review_queue()
-                    # NOTE: real sir_profile.json mutation NOT done in MINIMAL.
-                    # Caller (Sir CLI) writes profile manually after seeing approved.
-                    return True
-        return False
+                if p.proposal_id == proposal_id:
+                    target = p
+                    break
+            if target is None:
+                return False
+            # f. 幂等: 已终态 → no-op
+            if target.state in ('applied', 'rejected', 'rejected_non_whitelist',
+                                 'rejected_unsupported_action'):
+                return target.state == 'applied'
+            if target.state not in ('review', 'active'):
+                return False
+
+            # d-pre. action 限制: 首版只支持 modify/add 标量 set
+            if target.action not in ('modify', 'add'):
+                target.state = 'rejected_unsupported_action'
+                target.decided_at = time.time()
+                target.decided_by = decided_by
+                self._persist_review_queue()
+                self._audit(f"activate REJECT {proposal_id}: unsupported action "
+                            f"'{target.action}' (仅 modify/add)")
+                return False
+
+            # b. 白名单校验
+            if not self._is_writeback_allowed(target.field_path):
+                target.state = 'rejected_non_whitelist'
+                target.decided_at = time.time()
+                target.decided_by = decided_by
+                self._persist_review_queue()
+                self._audit(f"activate REJECT {proposal_id}: field "
+                            f"'{target.field_path}' 非 activate 写回白名单 (核心身份/关系锚不开)")
+                return False
+
+            # c. .bak 备份 (写前; 若写失败 → 清理孤儿 .bak)
+            backup_path = self._backup_profile()
+
+            # d. 原子写 (复用 ProfileCard.overwrite_field — 含原子写+白名单+缓存失效)
+            ok, msg, old_value = self._writeback_via_profile_card(
+                target.field_path, target.new_value, proposal_id)
+            if not ok:
+                # 🔴 红线: 写没成功**绝不**标 applied (那就是本链在治的"声称做了没做")。
+                # overwrite_field 白名单拒 / 写盘失败 / 任何原因 ok=False →
+                # state='writeback_failed' + 审计失败原因 + 清理刚建的孤儿 .bak。
+                self._cleanup_orphan_backup(backup_path, old_value=None)
+                target.state = 'writeback_failed'
+                target.decided_at = time.time()
+                target.decided_by = decided_by
+                self._persist_review_queue()
+                self._audit(f"activate WRITE-FAIL {proposal_id}: {msg} "
+                            f"→ state=writeback_failed (孤儿 .bak 已清)")
+                return False
+
+            # f/g. 成功 → applied + 审计
+            target.old_value = old_value
+            target.state = 'applied'
+            target.decided_at = time.time()
+            target.decided_by = decided_by
+            self._persist_review_queue()
+            self._audit(
+                f"activate APPLIED {proposal_id}: {target.field_path} "
+                f"'{str(old_value)[:40]}' → '{str(target.new_value)[:40]}' "
+                f"(backup={backup_path})")
+            return True
+
+
 
     def reject(self, proposal_id: str, decided_by: str = 'sir_cli') -> bool:
         with self._lock:
