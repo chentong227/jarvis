@@ -459,6 +459,16 @@ def create_mirror_voice_worker(poll_interval: float = 1.0):
                                     self.in_active_conversation = True
                                     self.last_interaction_time = time.time()
                                     self.last_user_speech_time = self.last_interaction_time
+                                    # 🪞 [mirror-turn-fix / 2026-06-08] 对齐真实语音路径
+                                    # (jarvis_voice_listen_thread.py:922): emit text_ready 前
+                                    # 开新对话轮, 让本轮 bg_log + writeback touch 拿到真实
+                                    # turn_id (修上次 turn_id 空致 canonical touch_refs=0)。
+                                    # 仅镜像验收工具改动, 不碰产品代码。
+                                    try:
+                                        from jarvis_utils import TraceContext
+                                        TraceContext.new_turn()
+                                    except Exception:
+                                        pass
                                     append_mirror_output({
                                         'event': 'sir_input_received',
                                         'text': text,
