@@ -522,7 +522,13 @@ class ProfileCard:
         
         activity = f"{cat}"
         if proc and proc != "Unknown":
-            activity += f" ({proc})"
+            # 🆕 [修复C / Sir 2026-06-08] 传感器越权仲裁 — Sir 口述 > 进程传感器。
+            # 根因: 旧版 activity += f" ({proc})" 把前台进程当**裸事实**写进 [Now] →
+            # 主脑采信 → Sir 说"我在用 Kiro"时传感器(Cursor/Windsurf)赢, 认错。
+            # 本次只降传感器的认识论权威 (措辞层, 不改数据流/路由/状态): 标 sensor-inferred
+            # + 显式声明 Sir 口述优先。捕获 Sir 口述并 override 是更大的层 (b), 后置。
+            # 短版 (省 token + 防 to_prompt_block [:250] 吞 Mood/Focus/Session): 两语义不丢。
+            activity += f" (sensor-inferred: {proc}; Sir overrides)"
         
         emotional_tone = "Neutral"
         cognitive_load = "Unknown"
