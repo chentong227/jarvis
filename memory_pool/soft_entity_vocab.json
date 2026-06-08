@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "schema": "soft_entity_vocab",
+    "schema_version": 1,
+    "purpose": "软源指称表面 (口语别称等), 离散整词命中 → 产 proposed AliasLink (绝不自动 active). 与 kinship 硬种子表物理分离.",
+    "note": "命中只产 proposed; 待硬接地同指或 Sir --activate 才升 active. Sir 撤过 (revoked) 的链软源不复活.",
+    "edit_via": "scripts/kinship_alias_dump.py"
+  },
+  "soft_entity": {
+    "person:mother": {"label": "母亲", "relation": "mother", "surfaces": ["妈咪", "娘"]},
+    "person:father": {"label": "父亲", "relation": "father", "surfaces": ["爹", "老爷子"]}
+  }
+}

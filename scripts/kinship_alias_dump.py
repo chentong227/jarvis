@@ -122,6 +122,30 @@ def cmd_rename(cid: str, new_label: str) -> None:
         print(f"[skip] cid 不存在于 registry: {cid}")
 
 
+def cmd_activate(surface: str) -> None:
+    """[canonical-soft-proposer-slice2] Sir 显式升级 proposed→active (含 revoked 复活)。"""
+    reg = CE.get_canonical_registry()
+    ok = reg.activate_alias_link(surface, by="sir", reason="CLI --activate")
+    if ok:
+        reg.save()
+        print(f"[ok] activated AliasLink surface={surface} (proposed/revoked → active)")
+    else:
+        print(f"[skip] surface 无可升级链 (不存在/冲突): {surface}")
+
+
+def cmd_list_proposed() -> None:
+    """[canonical-soft-proposer-slice2] 列 Sir 待确认的 proposed 软提议队列。"""
+    reg = CE.get_canonical_registry()
+    proposed = reg.list_proposed()
+    if not proposed:
+        print("[empty] 无 proposed AliasLink (软提议队列空)")
+        return
+    print(f"=== proposed AliasLinks ({len(proposed)} 条待确认) ===")
+    for l in proposed:
+        print(f"  {l.get('surface')} -> {l.get('cid')} "
+              f"source={l.get('source')} conf={l.get('confidence')}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="kinship 别名表 + canonical registry CLI (准则6)",
@@ -138,6 +162,10 @@ def main() -> None:
                         help="撤一条 AliasLink (registry, 终态)")
     parser.add_argument("--rename", nargs=2, metavar=("CID", "LABEL"),
                         help="改 canonical_label (registry)")
+    parser.add_argument("--activate", metavar="SURFACE",
+                        help="升级 proposed→active (Sir 确认软提议; 含 revoked 显式复活)")
+    parser.add_argument("--list-proposed", action="store_true",
+                        help="列 Sir 待确认的 proposed 软提议队列")
     args = parser.parse_args()
 
     did = False
@@ -153,6 +181,10 @@ def main() -> None:
         cmd_revoke(args.revoke); did = True
     if args.rename:
         cmd_rename(args.rename[0], args.rename[1]); did = True
+    if args.activate:
+        cmd_activate(args.activate); did = True
+    if args.list_proposed:
+        cmd_list_proposed(); did = True
     if not did:
         cmd_list()
 

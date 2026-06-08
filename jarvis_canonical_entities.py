@@ -164,6 +164,77 @@ def lookup_kinship_surfaces(text: str) -> List[Tuple[str, Tuple[str, str, str]]]
 
 
 # ---------------------------------------------------------------------------
+# [canonical-soft-proposer-slice2] 软源词表 (路线A: 离散整词命中, 不烧 LLM)
+# ---------------------------------------------------------------------------
+# 软词表 = 扩展指称表面 (口语别称等), 命中 → 产 proposed (绝不 active)。与 kinship
+# 硬种子表物理分离 (不同 json), 防"软词混进硬源自动 active"。准则6 三件套同款。
+# py seed 兜底; json override; mtime cache。
+_SEED_SOFT_ENTITY: Dict[str, Dict[str, Any]] = {
+    # 软指称 (口语/昵称) — 命中只产 proposed, 待硬接地或 Sir 确认才升 active。
+    "person:mother": {"label": "母亲", "relation": "mother",
+                      "surfaces": ["妈咪", "娘"]},
+    "person:father": {"label": "父亲", "relation": "father",
+                      "surfaces": ["爹", "老爷子"]},
+}
+
+_SOFT_ENTITY_PATH = os.path.join("memory_pool", "soft_entity_vocab.json")
+_SOFT_ENTITY_REVERSE: Optional[Dict[str, Tuple[str, str, str]]] = None
+_SOFT_ENTITY_MTIME: float = -1.0
+_SOFT_ENTITY_LOCK = threading.Lock()
+
+
+def _load_soft_entity() -> Dict[str, Tuple[str, str, str]]:
+    """读软词表 (json override seed, mtime cache)。返回反向索引 surface→(cid,label,relation)。"""
+    global _SOFT_ENTITY_REVERSE, _SOFT_ENTITY_MTIME
+    try:
+        mtime = os.path.getmtime(_SOFT_ENTITY_PATH) if os.path.exists(_SOFT_ENTITY_PATH) else 0.0
+    except OSError:
+        mtime = 0.0
+    with _SOFT_ENTITY_LOCK:
+        if _SOFT_ENTITY_REVERSE is None or mtime != _SOFT_ENTITY_MTIME:
+            data = dict(_SEED_SOFT_ENTITY)
+            try:
+                if os.path.exists(_SOFT_ENTITY_PATH):
+                    with open(_SOFT_ENTITY_PATH, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                    k = raw.get("soft_entity", raw) if isinstance(raw, dict) else {}
+                    if isinstance(k, dict) and k:
+                        data = k
+            except Exception as exc:
+                _log(f"[canonical-soft-proposer-slice2] soft vocab load failed ({exc!r}) — seed")
+                data = dict(_SEED_SOFT_ENTITY)
+            rev: Dict[str, Tuple[str, str, str]] = {}
+            for cid, meta in data.items():
+                if not isinstance(meta, dict):
+                    continue
+                label = str(meta.get("label", ""))
+                relation = str(meta.get("relation", ""))
+                for s in meta.get("surfaces", []) or []:
+                    s = str(s).strip()
+                    if s:
+                        rev[s] = (cid, label, relation)
+            _SOFT_ENTITY_REVERSE = rev
+            _SOFT_ENTITY_MTIME = mtime
+        return _SOFT_ENTITY_REVERSE
+
+
+def lookup_soft_surfaces(text: str) -> List[Tuple[str, Tuple[str, str, str]]]:
+    """[canonical-soft-proposer-slice2] 软词表整词子串命中 (离散, 禁相似度, 不烧 LLM)。
+
+    命中 → (surface, (cid, label, relation))。供软提议产 proposed。无命中 → []。
+    """
+    if not text:
+        return []
+    try:
+        rev = _load_soft_entity() or {}
+        return [(surface, meta) for surface, meta in rev.items()
+                if surface and surface in text]
+    except Exception as exc:
+        _log(f"[canonical-soft-proposer-slice2] lookup_soft_surfaces failed ({exc!r})")
+        return []
+
+
+# ---------------------------------------------------------------------------
 # CanonicalEntityRegistry — 外挂 registry (与 manifold 物理分离)
 # ---------------------------------------------------------------------------
 
@@ -395,6 +466,121 @@ class CanonicalEntityRegistry:
             refs.append(turn_id)
             e["last_seen"] = time.time()
         return True
+
+    # ---- Slice2 软源提议 ops ----
+    def get_alias_link(self, surface: str) -> Optional[Dict[str, Any]]:
+        """[canonical-soft-proposer-slice2] 只读返回 surface 的 AliasLink 原始记录 (含 status)。
+        不存在返 None。供软提议幂等去重 / 升级钩子查 status 用。"""
+        if not surface:
+            return None
+        with self._lock:
+            link = self._alias_links.get(surface)
+            return dict(link) if link is not None else None
+
+    def add_soft_alias_link(
+        self, surface: str, cid: str, *, source: str = SOURCE_LLM, ref: str,
+    ) -> bool:
+        """[canonical-soft-proposer-slice2] 软源 (llm/cosine) → 产 **proposed** AliasLink。
+
+        硬条件①(幂等去重, 防双建): 产 proposed 前查 surface→cid 当前状态:
+          - 已 active 同 cid  → no-op (硬源已建真, 软源不重复产 proposed, 返 False)
+          - 已 proposed 同 cid → no-op (已提议过, 不重复, 返 False)
+          - revoked          → no-op (Sir 撤过, 软源不复活, 返 False)
+          - active/proposed 指别 cid → 冲突, 不静默改写 (返 False)
+          - 不存在            → 建 proposed (返 True)
+        软源**绝不** active (source 不在 _HARD_SOURCES → add_canonical_alias_link
+        本会自动 proposed, 但这里先做去重/边界守, 再委派)。
+        """
+        if not surface or not cid:
+            return False
+        if source in _HARD_SOURCES:
+            # 软提议入口拒硬源 (硬源走 add_canonical_alias_link), 防绕过 status 分流。
+            _log(f"[canonical-soft-proposer-slice2] REJECT soft alias {surface}->{cid} "
+                 f"(source={source} 是硬源, 软入口不接)")
+            return False
+        if not str(ref).strip():
+            return False
+        with self._lock:
+            link = self._alias_links.get(surface)
+            if link is not None:
+                st = link.get("status")
+                lcid = link.get("cid")
+                # 硬条件③同款: revoked 软源不复活
+                if st == STATUS_REVOKED:
+                    return False
+                # 硬条件①: 已 active/proposed 同 cid → no-op (不重复产)
+                if lcid == cid and st in (STATUS_ACTIVE, STATUS_PROPOSED):
+                    return False
+                # 冲突: 指别的 cid → 不静默改写
+                if lcid != cid:
+                    _log(f"[canonical-soft-proposer-slice2] CONFLICT soft alias {surface}: "
+                         f"{lcid} != {cid} (拒, 留 Sir re-relate)")
+                    return False
+        # 委派 add_canonical_alias_link (source=llm → 自动 status=proposed)
+        ok = self.add_canonical_alias_link(
+            surface, cid, source=source, ref=ref, decided_by="soft_proposer")
+        if ok:
+            _log(f"[canonical-soft-proposer-slice2] propose alias surface={surface} "
+                 f"-> {cid} source={source} (status=proposed)")
+        return ok
+
+    def activate_alias_link(self, surface: str, *, by: str = "sir",
+                            reason: str = "", expect_cid: Optional[str] = None) -> bool:
+        """[canonical-soft-proposer-slice2] 升级 proposed → active (+ audit 留痕)。
+
+        与 re_relate_surface (改 relation) **不同**: 本 op 只升级 status, 不改 cid/relation。
+        硬条件②(严格内容匹配): expect_cid 非空时, 必须 surface 当前指向 == expect_cid 才升,
+          否则拒 (防"硬源来了把任意 proposed 都升")。
+        硬条件③(不复活 revoked): 自动升级路径 (by='auto_hard_grounding') 遇 revoked → 拒;
+          只有 Sir 显式 (by='sir') 才能把 revoked 翻回 active (corrigibility: Sir 元否决)。
+        非 proposed 状态:
+          - active  → no-op 返 True (已是目标态, 幂等)
+          - revoked → 见硬条件③ (auto 拒 / sir 复活)
+          - 不存在  → False
+        """
+        with self._lock:
+            link = self._alias_links.get(surface)
+            if link is None:
+                return False
+            st = link.get("status")
+            lcid = link.get("cid")
+            # 硬条件②: 严格内容匹配 (同 surface 同 cid)
+            if expect_cid is not None and lcid != expect_cid:
+                _log(f"[canonical-soft-proposer-slice2] activate SKIP {surface}: "
+                     f"cid {lcid} != expect {expect_cid} (内容不匹配, 不误升)")
+                return False
+            if st == STATUS_ACTIVE:
+                return True  # 幂等
+            # 硬条件③: revoked 不被自动升级复活
+            if st == STATUS_REVOKED:
+                if by == "sir":
+                    link["status"] = STATUS_ACTIVE
+                    link.setdefault("audit", []).append({
+                        "op": "activate_from_revoked", "by": by,
+                        "reason": reason, "ts": time.time(),
+                    })
+                    _log(f"[canonical-soft-proposer-slice2] Sir 显式 activate "
+                         f"(revoked→active) surface={surface}")
+                    return True
+                _log(f"[canonical-soft-proposer-slice2] activate REFUSE {surface}: "
+                     f"revoked, 非 Sir 不复活 (by={by}, 守撤销意志)")
+                return False
+            if st == STATUS_PROPOSED:
+                link["status"] = STATUS_ACTIVE
+                link["confidence"] = 1.0
+                link.setdefault("audit", []).append({
+                    "op": "activate", "by": by, "reason": reason, "ts": time.time(),
+                })
+                _log(f"[canonical-soft-proposer-slice2] activate proposed→active "
+                     f"surface={surface} cid={lcid} by={by}")
+                return True
+            return False
+
+    def list_proposed(self) -> List[Dict[str, Any]]:
+        """[canonical-soft-proposer-slice2] 列所有 proposed AliasLink (Sir 待确认队列)。"""
+        with self._lock:
+            return [dict(l) for l in self._alias_links.values()
+                    if l.get("status") == STATUS_PROPOSED]
 
     # ---- corrigible ops: revoke + rename (本片实现) ----
     def revoke_alias_link(self, surface: str, *, by: str = "sir", reason: str = "") -> bool:
