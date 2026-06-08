@@ -2180,12 +2180,10 @@ class JarvisWorkerThread(QThread):
                 # 否则 LLM 会把"提醒我去拿快递"这种来自系统通告的句子再 schedule 成新的
                 # is_future_task=true → 同一条 reminder 在数据库里被复制成 ID:705/707/710
                 # 多次触发。短路掉这条路径既省 LLM 调用，也根治重复提醒。
-                _is_system_event = (
-                    cmd.startswith('[SYSTEM BACKGROUND EVENT]')
-                    or cmd.startswith('[系统主动提醒]')
-                    or cmd.startswith('[SYSTEM ALERT]')
-                    or cmd.startswith('[后台系统异步唤醒]')
-                )
+                # 🆕 [writeback-sir-only-gate / 2026-06-08] 改调 jarvis_utils.is_system_event_text
+                # (单一真理源, 同 4 前缀, 行为逐字等价)。writeback 闸 (chat_bypass:6116) 复用同款。
+                from jarvis_utils import is_system_event_text as _is_sysevt_w
+                _is_system_event = _is_sysevt_w(cmd)
                 if _is_system_event:
                     try:
                         from jarvis_utils import bg_log
@@ -3884,6 +3882,29 @@ Output strict JSON ARRAY ONLY. NO EXPLANATIONS. NO THOUGHTS.[
                             _t_intg_start = time.time()
                             _is_claim = _qc.detect_action_claim(filtered_reply)
                             _intg_ms = int((time.time() - _t_intg_start) * 1000)
+                            # 🆕 [integrity-signal-coverage / 2026-06-08] 信号源覆盖面治本:
+                            # _last_tool_results 看不见 commitment/reminder register 路径
+                            # (c904 假阳: 承诺真注册 DB#42 却喊言行不一)。查 register/DB backing,
+                            # 命中具体项 → 不告警 (假阳消除); 查空仍告警 (漏报不重开)。
+                            # 复用 has_recent_action_backing (单一真理源, 读 verifier DB 路径)。
+                            if _is_claim:
+                                try:
+                                    from jarvis_integrity_watcher import (
+                                        has_recent_action_backing as _harab)
+                                    _has_backing, _backing_src = _harab(
+                                        filtered_reply, self.jarvis)
+                                    if _has_backing:
+                                        _is_claim = False  # 有具体 register backing, 非言行不一
+                                        try:
+                                            from jarvis_utils import bg_log as _bk_bg
+                                            _bk_bg(
+                                                f"✅ [Integrity Check] claim 有 register "
+                                                f"backing, 不告警 ({_backing_src})"
+                                            )
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                             if _is_claim:
                                 _label = (
                                     "no_tool_called" if not _has_tool_results

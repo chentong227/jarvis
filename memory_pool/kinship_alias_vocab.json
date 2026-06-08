@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "schema": "kinship_alias_vocab",
+    "schema_version": 1,
+    "purpose": "exact 亲属别名种子 (硬源 provider), surface->cid 精确映射. 禁相似度.",
+    "note": "单字 surface (妈/爸) 已删 — 子串命中下假阳性高. 漏接走 scripts/kinship_alias_dump.py --add-surface 补, 不改码.",
+    "edit_via": "scripts/kinship_alias_dump.py"
+  },
+  "kinship": {
+    "person:mother": {"label": "母亲", "relation": "mother", "surfaces": ["母亲", "妈妈", "我妈", "老妈"]},
+    "person:father": {"label": "父亲", "relation": "father", "surfaces": ["父亲", "爸爸", "我爸", "老爸"]},
+    "person:elder_brother": {"label": "哥哥", "relation": "elder_brother", "surfaces": ["哥哥", "大哥", "我哥"]},
+    "person:elder_sister": {"label": "姐姐", "relation": "elder_sister", "surfaces": ["姐姐", "我姐"]},
+    "person:younger_brother": {"label": "弟弟", "relation": "younger_brother", "surfaces": ["弟弟", "我弟"]},
+    "person:younger_sister": {"label": "妹妹", "relation": "younger_sister", "surfaces": ["妹妹", "我妹"]},
+    "person:paternal_grandfather": {"label": "爷爷", "relation": "paternal_grandfather", "surfaces": ["爷爷"]},
+    "person:paternal_grandmother": {"label": "奶奶", "relation": "paternal_grandmother", "surfaces": ["奶奶"]},
+    "person:maternal_grandfather": {"label": "外公", "relation": "maternal_grandfather", "surfaces": ["外公", "姥爷"]},
+    "person:maternal_grandmother": {"label": "外婆", "relation": "maternal_grandmother", "surfaces": ["外婆", "姥姥"]}
+  }
+}

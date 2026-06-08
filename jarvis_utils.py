@@ -1296,6 +1296,34 @@ def clear_jarvis_tts_ring():
 _GLOBAL_EVENT_BUS = None
 
 
+# ==========================================================================
+# [writeback-sir-only-gate / 2026-06-08] system-event / pseudo-input 前缀单一真理源
+# ==========================================================================
+# worker._is_system_event (jarvis_worker.py:2184) 与 chat_bypass writeback 闸
+# (jarvis_chat_bypass.py:6116) 共用此 helper, 防"两处各维护前缀表"漂移 (准则 6 DRY)。
+# 合成 reminder/system 事件文本 (非 Sir 原话) 经 stream_chat 流入 clean_user_input,
+# 写侧接地 (canonical + observe_sir_relational_link) 若喂这类文本 = 假焊。
+# ==========================================================================
+_SYSTEM_EVENT_PREFIXES = (
+    '[SYSTEM BACKGROUND EVENT]',
+    '[系统主动提醒]',
+    '[SYSTEM ALERT]',
+    '[后台系统异步唤醒]',
+)
+
+
+def is_system_event_text(text: str) -> bool:
+    """文本是否系统自产 pseudo-input (非 Sir 原话)。startswith 任一前缀即真。
+
+    单一真理源: 4 前缀与 worker._is_system_event 同款。空/None → False。
+    lstrip 容前导空白 (合成文本偶有前缀空格)。
+    """
+    if not text:
+        return False
+    s = str(text).lstrip()
+    return any(s.startswith(p) for p in _SYSTEM_EVENT_PREFIXES)
+
+
 def get_event_bus():
     """[β.5.0-A] 返回全局注册的 event_bus instance, 没注册返 None.
     远端模块 publish 通用范式:

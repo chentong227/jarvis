@@ -6113,7 +6113,22 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 import threading as _th_wb
 
                 def _run_body_writeback(_t=_wb_txt, _tid=_turn_id_now,
-                                        _su=(clean_user_input or '')):
+                                        _su=(clean_user_input or ''),
+                                        _ci=(clean_intent or '')):
+                    # 🆕 [writeback-sir-only-gate / 2026-06-08] 仅 Sir 原话闸 (方案 C):
+                    # 合成 reminder/system pseudo-input (非 Sir 原话) 经 stream_chat 流入
+                    # clean_user_input → 写侧接地 (cooccur + observe_sir_relational_link +
+                    # canonical) 若喂这类文本 = 假焊 (红线坐实 TASK 4)。整条 writeback skip。
+                    # 单一真理源 jarvis_utils.is_system_event_text, 与 worker:2184 同 4 前缀。
+                    # 判 _su (clean_user_input) 和 _ci (clean_intent) 双保险: 路径乙合成文本
+                    # 在 _su, 路径甲合成标记在 _ci。真 Sir 原话两者均不命中 → 逐字不变。
+                    # fail-safe: helper 异常退回老行为 (不拖垮 turn 处理)。
+                    try:
+                        from jarvis_utils import is_system_event_text as _is_sysevt
+                        if _is_sysevt(_su) or _is_sysevt(_ci):
+                            return  # 合成事件非 Sir 原话, 整条不接地
+                    except Exception:
+                        pass
                     try:
                         from jarvis_relational_weaver import observe_turn_cooccurrence
                         observe_turn_cooccurrence(_t, _tid)
@@ -6129,6 +6144,45 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                             from jarvis_relational_weaver import (
                                 observe_sir_relational_link)
                             observe_sir_relational_link(_su, _tid)
+                    except Exception:
+                        pass
+                    # 🆕 [canonical-entity-slice1 / 2026-06-08] 硬源 exact 种子 →
+                    # canonical 实体 + 触达 (外挂 registry, manifold 核心零改动)。
+                    # 只喂 Sir 原话 (_su); kinship 表整词子串命中 → resolve 门控
+                    # (revoked 链不命中=不复活, 必修) → create+touch (同 turn 去重)。
+                    # 独立 try/except fail-safe — 热路径不崩。
+                    try:
+                        if _su.strip():
+                            import time as _t_ce
+                            from jarvis_canonical_entities import (
+                                get_canonical_registry, lookup_kinship_surfaces)
+                            _reg = get_canonical_registry()
+                            _hits = lookup_kinship_surfaces(_su)
+                            for _surface, (_cid, _label, _rel) in _hits:
+                                # 必修门控: 若该 surface AliasLink 已 revoked →
+                                # resolve 返 None → 跳过 touch (撤了不白撤)。
+                                _resolved = _reg.resolve_surface_to_cid(_surface)
+                                if _resolved is None and _reg._alias_links.get(
+                                        _surface, {}).get('status') == 'revoked':
+                                    continue  # 终态 revoked, 不复活不触达
+                                _gref = {"source_kind": "exact",
+                                         "ref": "kinship_exact",
+                                         "ts": _t_ce.time(),
+                                         "detail": f"kinship:{_surface}->{_cid}"}
+                                _reg.create_canonical_entity(
+                                    _cid, {"canonical_label": _label,
+                                           "relation_to_sir": _rel}, [_gref])
+                                _reg.add_canonical_alias_link(
+                                    _surface, _cid, source="exact",
+                                    ref=(_tid or "kinship_exact"))
+                                if _reg.touch(_cid, _tid):
+                                    try:
+                                        from jarvis_utils import bg_log as _bgl
+                                        _bgl(f"[canonical-entity-slice1] touch "
+                                             f"{_cid} surface={_surface} turn={_tid}")
+                                    except Exception:
+                                        pass
+                            _reg.save()
                     except Exception:
                         pass
                 _th_wb.Thread(target=_run_body_writeback, daemon=True,

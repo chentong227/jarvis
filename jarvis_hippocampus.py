@@ -1167,17 +1167,33 @@ class Hippocampus:
         finally:
             conn.close()
 
-    def consume_reminder(self, memory_id: int):
-        """确认消费：用户已响应或重试耗尽，将单条提醒的 is_future_task 置为 0"""
+    def list_active_reminders(self) -> list:
+        """[integrity-signal-coverage / 2026-06-08] 列所有 active (未消费) 提醒,
+        **不限创建新近度** —— 按 is_future_task=1 状态查, 非 recency。
+
+        诚信闸信号源用: ID2506 真实时序 = 创建 23:25 / 审计 06:xx (6h 后)。
+        verify_reminder 老路径走 list_recent_reminders(10min) 会漏掉 6h 前建的提醒
+        (假阳没真修)。本方法按 active 状态查 → 6h 前建的 active 提醒仍命中。
+        只读, 不改 DB 状态。
+        """
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            cursor.execute("UPDATE TaskMemories SET is_future_task = 0 WHERE id = ?", (memory_id,))
-            conn.commit()
+            cursor.execute('''
+                SELECT id, user_intent, trigger_time
+                FROM TaskMemories
+                WHERE is_future_task = 1 AND is_deleted = 0
+            ''')
+            rows = cursor.fetchall()
+            return [{"id": r[0], "intent": r[1], "trigger_time": r[2]} for r in rows]
         except Exception as e:
-            print(f"⚠️ [海马体消费异常]: {e}")
+            print(f"⚠️ [海马体 active reminders 检索异常]: {e}")
+            return []
         finally:
-            conn.close()    
+            conn.close()
+
+    def consume_reminder(self, memory_id: int):
+        """确认消费：用户已响应或重试耗尽，将单条提醒的 is_future_task 置为 0"""
 
     def compress_chat_history(self, api_key: str = None, days: int = 7):
         """记忆压缩机（梦境整理）：静默扫描超过 N 天的零碎闲聊，释放空间并提纯核心概念"""

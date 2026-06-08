@@ -2234,7 +2234,19 @@ class CommitmentWatcher(threading.Thread):
             "sleep_duration_min": sleep_duration_min,
             "recent_sleep_min": recent_sleep_min,
         }
-        if self.gate and not self.gate.can_speak('guardian', is_urgent=True, nudge_type='commitment_check'):
+        # 🆕 [wakeup-line3-alarm-bypass / 2026-06-08] alarm-style (闹钟/硬定时叫醒) bypass 旗标.
+        # 真因: β.6 把 CommitmentWatcher 退 publish_only (闸3) + yield 闸 (闸2) 都会 return,
+        # 闹钟到点交思考脑自决 → Sir afk_deep 没人发声 → 漏叫 (jarvis_20260607_231401.log).
+        # 与 AFK bypass (:2124 _is_alarm_dispatch) 同源理由: 闹钟天职=Sir 不在场时硬响。
+        # 复用现有 _is_alarm_style_commitment (:754) 判定, 不收紧、不新写、不提升为实例属性。
+        # 仅 alarm-style 命中时 bypass 闸2/闸3; 非 alarm 普通承诺逐字不变 (仍 yield/publish_only)。
+        # 🆕 [wakeup-line31-sleep-alarm-gate1 / 2026-06-08] 前移到 can_speak (闸1) 之前:
+        # 闸1 sleep_mode 也要让 alarm 穿 (传 is_alarm)。非 alarm 行为逐字不变。
+        _is_alarm_for_gate = self._is_alarm_style_commitment(commitment)
+
+        if self.gate and not self.gate.can_speak(
+                'guardian', is_urgent=True, nudge_type='commitment_check',
+                is_alarm=_is_alarm_for_gate):
             return
 
         # 🩹 [P5-fixC / 2026-05-21 09:55] β.5.0 行为弱耦合 — 看 SWM 让位最近 proactive nudge.
@@ -2251,7 +2263,8 @@ class CommitmentWatcher(threading.Thread):
                 current_kind='commitment_check',
                 current_sentinel='SmartNudge',
             )
-            if _should_yield:
+            # 🆕 [wakeup-line3-alarm-bypass] alarm-style bypass 闸2 (yield): 闹钟不让位.
+            if _should_yield and not _is_alarm_for_gate:
                 _pub_skip(
                     kind='commitment_check',
                     sentinel='SmartNudge',
@@ -2284,7 +2297,9 @@ class CommitmentWatcher(threading.Thread):
         # =====================================================================
         try:
             from jarvis_utils import read_gate_mode as _rgm_cw
-            if _rgm_cw('CommitmentWatcher') == 'publish_only':
+            # 🆕 [wakeup-line3-alarm-bypass] alarm-style bypass 闸3 (publish_only): 闹钟硬响,
+            # 不退化成"交思考脑自决" (Sir afk_deep 时思考脑不发声 → 漏叫)。非 alarm 仍 publish_only。
+            if _rgm_cw('CommitmentWatcher') == 'publish_only' and not _is_alarm_for_gate:
                 try:
                     from jarvis_utils import get_event_bus as _geb_cw
                     _bus_cw = _geb_cw()
