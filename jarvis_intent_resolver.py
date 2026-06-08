@@ -294,6 +294,20 @@ class IntentResolver:
         except Exception as e:
             return {'tool_calls': [], '_error': f'key error: {str(e)[:80]}'}
 
+        # 🆕 [keyleak-fix / Sir 2026-06-08] try/finally release 防泄漏.
+        # 真机 BUG: openrouter_1/2 active_calls 顶到 10/10 (key 全 healthy) → 副池满
+        # → Gatekeeper/IntentResolver/视觉 全 "无可用Key"。根因: 本函数 get_openrouter_key
+        # (active_calls += 1) 但所有 return 路径都没 release → 每轮 IntentResolver 漏 1 槽,
+        # 累积 10 次该 key 永占满。修: 包 try/finally, 任何 return/raise 都 release once。
+        try:
+          return self._call_llm_inner(okey, prompt, safe_openrouter_call)
+        finally:
+            try:
+                self.key_router.release(_label)
+            except Exception:
+                pass
+
+    def _call_llm_inner(self, okey, prompt, safe_openrouter_call):
         response_text = ''
         # 🆕 [β.5.46-fix14] A/B telemetry — 记录 primary/fallback 真实成功率 + latency
         _t0 = time.time()
