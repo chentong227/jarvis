@@ -34,6 +34,8 @@
     "ambient_floor_s": 600,
     "wake_on_body_delta": true,
     "body_stir_min_magnitude": 0.3,
-    "body_stir_poll_s": 30
+    "body_stir_poll_s": 30,
+    "body_stir_dedup": true,
+    "body_stir_dedup_exempt_kinds": ["novelty", "drift"]
   }
 }

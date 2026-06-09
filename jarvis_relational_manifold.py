@@ -225,7 +225,12 @@ _SEED_MANIFOLD_CONFIG: Dict[str, Any] = {
         "habituation_outcome_etype": "body_attention_outcome",  # 识 publish 的归因 event
         "habituation_window_s": 1800.0,      # 消费多久内的 attention outcome (覆盖多 weave)
         "habituation_free_attends": 2,       # 前 N 次 attend 不衰 (允许正常想清的窗口)
-        "habituation_decay_base": 0.6,       # 每超 1 次非放电 attend → tension ×= 此 (0<x<1)
+        # 🆕 [fixH-a habituation 调参 / Sir 2026-06-09] decay_base 0.6→0.5: 反复空 attend
+        # 同区 → tension 衰更快显著 (×0.5^excess 比 ×0.6^excess 更快到 floor), 让已 wired
+        # 闭环 (attend→outcome→衰 tension) 更快消化驻留 delta, 缩短 body_stir 反复唤醒窗口.
+        # 保守幅度 (0.6→0.5, 非更激进): floor=0.15 不变 (真新事仍可唤醒), spontaneous
+        # recovery (>recovery_s 自愈) 不变, 真放电重置 1.0 不变. 详 fixH recon。
+        "habituation_decay_base": 0.5,       # 每超 1 次非放电 attend → tension ×= 此 (0<x<1)
         "habituation_floor": 0.15,           # tension 习惯化下限 (不归 0, 仍可被真新事唤醒)
         "habituation_recovery_s": 3600.0,    # 久不 attend 此 node → 习惯化恢复 (count 清)
     },

@@ -340,6 +340,12 @@ _SATURATION_DEFAULT_CONFIG: dict = {
         'wake_on_body_delta': True,        # 体一有 fresh delta → 提前结束休息
         'body_stir_min_magnitude': 0.3,    # 多大 delta 算"动静"(噪声门, 同 P2)
         'body_stir_poll_s': 30,            # 休息中多久查一次体动静 (轻量, 非每 0.5s)
+        # 🆕 [fixH-a body_stir 去重 / Sir 2026-06-09] 桥接 30s poll 与 habituation
+        # 衰减时序差: 同驻留 delta (同 node 同幅度桶) 在被闭环消化前不重复唤醒 rest.
+        # 真新 delta (node 变/桶跳变) 或 novelty/drift kind 仍立即醒. 真放电/should_speak
+        # /真 tick 跑起 → 指纹清空 (同 node re-rise 仍能醒, 非永久压). false = 退原行为。
+        'body_stir_dedup': True,
+        'body_stir_dedup_exempt_kinds': ['novelty', 'drift'],
     },
 }
 
@@ -1861,6 +1867,17 @@ class InnerThoughtDaemon:
         # 🆕 [习惯化 / Sir 2026-06-02] 本 tick 识被哪个体焦点区 summon (top focus node).
         # _build_prompt 渲染 BODY SIGNALS 时记, tick 末按 heng_state publish 归因。
         self._last_attended_focus_node = ''
+        # 🆕 [fixH-a body_stir 去重 / Sir 2026-06-09] 上次 body_stir 唤醒的 delta 指纹集.
+        # =====================================================================
+        # 根因: attend→body_attention_outcome→habituation 衰 tension 闭环已 wired,
+        # 但衰减慢于 30s body_stir_poll → 驻留 delta (同 node 同幅度桶) 每 30s 反复
+        # 硬抢醒, 硬覆盖 600s value-backoff. 本指纹桥接时序差: 同一驻留 delta 在被消化
+        # 前不重复唤醒 rest; 真新 delta (node 变 / 幅度桶跳变) 或 novelty/drift kind
+        # (不受 habituation 压, 真新进展) 仍立即醒. 真放电 / should_speak / 正常 tick
+        # 跑起 → 清空指纹 (同 node 日后 re-rise 仍能唤醒, 非永久压制).
+        # 详 docs (fixH recon) + 准则 8 治本 (桥接闭环时序, 非 hard cooldown 糖衣).
+        # =====================================================================
+        self._last_woke_delta_fp: set = set()
         # 🆕 [Sir 2026-05-28 00:00 β.6 Phase 1b] attention focus 元决策 (R3)
         # =====================================================================
         # Sir 真意: "这轮为下轮挑". 上轮 LLM 输出 <NEXT_ATTENTION_FOCUS>
@@ -2113,15 +2130,59 @@ class InnerThoughtDaemon:
                 return False
             from jarvis_body_focus import get_body_focus
             mag = float(cfg.get('body_stir_min_magnitude', 0.3))
-            if get_body_focus().has_fresh_delta(min_magnitude=mag):
-                self._resting = False
-                self._bg_log(
-                    "⚡ [InnerThought] 体有动静 (fresh delta) → 结束休息, 醒来 attend "
-                    "(势能扰动唤醒, 非定时)")
-                return True
+            if not get_body_focus().has_fresh_delta(min_magnitude=mag):
+                return False
         except Exception:
-            pass
-        return False
+            return False
+        # 有 fresh delta — 默认醒 (原行为). 去重只在能算出指纹时才可能抑制重醒;
+        # 任何异常 → fail-open 醒 (BP 红线: 不确定时不压住该醒的真扰动)。
+        def _wake(reason: str) -> bool:
+            self._resting = False
+            self._bg_log(
+                f"⚡ [InnerThought] 体有动静 ({reason}) → 结束休息, 醒来 attend "
+                "(势能扰动唤醒, 非定时)")
+            return True
+        try:
+            # 🆕 [fixH-a body_stir 去重 / Sir 2026-06-09] 桥接 30s body_stir_poll 与
+            # habituation 衰减的时序差: 同一驻留 delta (同 node 同幅度桶) 在被闭环消化前
+            # 不重复唤醒. 算本次触发唤醒的 delta 指纹集 + novelty/drift 豁免:
+            #   - 命中至少一个 novelty/drift kind delta (weaver: 真新进展, 不受 habituation
+            #     压) → 直接放行唤醒, 不参与去重 (真新永远醒);
+            #   - 否则全是驻留 tension delta → 若指纹全 ∈ 上次 woke 指纹 (同驻留) → 不醒;
+            #   - 出现新指纹 (node 变 / 幅度桶跳变 = 真新/drift 幅度) → 醒 + 更新指纹.
+            # dedup 开关 + 桶大小复用 evidence-gate vocab (准则 6 持久化, CLI 可改).
+            if not cfg.get('body_stir_dedup', True):
+                return _wake("fresh delta")  # 去重关 → 原行为
+            _gate_cfg = _load_cost_config().get('evidence_gate', {}) or {}
+            _bucket = float(_gate_cfg.get('body_magnitude_bucket', 0.5)) or 0.5
+            _exempt_kinds = set(cfg.get('body_stir_dedup_exempt_kinds',
+                                        ['novelty', 'drift']))
+            cur_fp: set = set()
+            has_exempt = False
+            for _it in get_body_focus().current_focus(limit=6):
+                if not _it.get('fresh'):
+                    continue  # 只看刚升起的 delta (standing 高势能不参与唤醒去重)
+                _m = float(_it.get('score', 0.0)) - 1.0  # focus 给 delta +1.0 偏置
+                if _m < mag:
+                    continue
+                if (_it.get('kind') or '') in _exempt_kinds:
+                    has_exempt = True  # 真新进展 → 豁免去重, 必醒
+                    continue
+                cur_fp.add(f"{_it.get('node', '')}:{int(_m / _bucket)}")
+            # 真新/novelty/drift delta → 必醒 (不参与去重, 不污染指纹比较)
+            if has_exempt:
+                self._last_woke_delta_fp = self._last_woke_delta_fp | cur_fp
+                return _wake("novelty/drift fresh delta, 豁免去重")
+            # 全是驻留 tension delta: 指纹全 ∈ 上次 woke → 同驻留, 不重复醒
+            if cur_fp and cur_fp <= self._last_woke_delta_fp:
+                return False  # 同驻留 delta, 未被消化, 不重醒 (桥接时序, 等闭环衰减)
+            # 出现新指纹 (node 变 / 幅度桶跳变) 或首次 → 醒 + 更新指纹
+            # cur_fp 为空 (current_focus 拿不到 fresh delta 明细) → fail-open 醒
+            self._last_woke_delta_fp = cur_fp if cur_fp else self._last_woke_delta_fp
+            return _wake("fresh delta, 新指纹")
+        except Exception:
+            # 去重计算异常 → fail-open 醒 (不因去重 bug 压住真扰动)
+            return _wake("fresh delta, 去重异常 fail-open")
 
     def _wait_with_emergency_check(self, timeout: float) -> str:
         """🆕 [governor Phase 4 E1] Wait up to `timeout` s, poll emergency every
@@ -2959,6 +3020,15 @@ class InnerThoughtDaemon:
                 self._heng_stats.get(thought.heng_state, 0) + 1
         except Exception:
             thought.heng_state = ''
+        # 🆕 [fixH-a body_stir 去重 / Sir 2026-06-09] 真放电 / should_speak → 清空
+        # body_stir 唤醒指纹. 该区已被消化 (discharge) 或已对外发声 → 同 node 日后再
+        # 起势 (re-rise) 应能重新唤醒, 非永久压制 (BP: 指纹只桥接当前驻留 delta 时序)。
+        try:
+            if (getattr(thought, 'heng_state', '') == 'discharge'
+                    or getattr(thought, 'should_speak', False)):
+                self._last_woke_delta_fp = set()
+        except Exception:
+            pass
 
         # 🆕 [习惯化 / Sir 2026-06-02 反刍治本] publish body_attention_outcome —
         # =====================================================================
