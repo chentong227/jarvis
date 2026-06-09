@@ -606,9 +606,16 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
         # 🆕 [P5-fix77-R] 加 mutation events 类型, 覆盖 MemoryGateway 等跨模块路径
         events = bus.recent_events(
             within_seconds=within_seconds,
+            # 🆕 [fixA-claim-evidence-coverage / Sir 2026-06-09] 加认两个"实际在发但
+            # 没被认"的 mutation 名: profile 写真发 'sir_profile_overwritten'
+            # (jarvis_routing.py:928), concern 改真发 'concern_field_updated'
+            # (jarvis_concerns.py:711). 旧 set 列的 'profile_field_updated' /
+            # 'concern_modified' 无任何生产者 → 真"I've updated your profile"声称被
+            # 冤判 unverified (false-positive). record-only, 零 TTFT, 纯加名.
             types={'tool_called', 'memory_corrected', 'sir_field_updated',
                    'memory_update', 'profile_field_updated',
-                   'concern_modified', 'promise_fulfilled'},
+                   'concern_modified', 'promise_fulfilled',
+                   'sir_profile_overwritten', 'concern_field_updated'},
         ) or []
         results = []
         for ev in events:
