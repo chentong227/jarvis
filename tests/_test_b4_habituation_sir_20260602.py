@@ -98,7 +98,8 @@ class TestHabituation(unittest.TestCase):
     def test_t1_repeated_non_discharge_decays_tension(self):
         with tempfile.TemporaryDirectory() as d:
             nid = make_node_id(KIND_CONCERN, "sir_water")
-            # 5 次非放电 attend, free=2 → excess=3 → factor=0.6^3=0.216
+            # 5 次非放电 attend, free=2 → excess=3 → 0.5^3=0.125 < floor 0.15 → clamp floor
+            # 🆕 [fixH-a / Sir 2026-06-09] decay_base 0.6→0.5 (闭环更快消化驻留 delta)
             evs = [_outcome(nid, False, ts=T0 + i) for i in range(5)]
             w = _mk(d, concerns=_hydration_concern(), bus=_FakeBus(evs))
             energy = w.compute_energy(set(), {}, {}, now=T0 + 10)
@@ -106,7 +107,8 @@ class TestHabituation(unittest.TestCase):
             # baseline 无习惯化应是 0.9; 习惯化后应明显 < 0.9
             self.assertLess(tens, 0.9 * 0.5,
                             f"反复非放电 attend 应衰 tension, got {tens}")
-            self.assertAlmostEqual(tens, 0.9 * (0.6 ** 3), places=3)
+            # 0.5^3=0.125 触底 floor 0.15 → tension = 0.9 * 0.15
+            self.assertAlmostEqual(tens, 0.9 * 0.15, places=3)
 
     def test_t2_discharge_resets(self):
         with tempfile.TemporaryDirectory() as d:
