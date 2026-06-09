@@ -1132,8 +1132,14 @@ class CareSpeechSynth:
                 _now = time.time()
                 _cutoff = _now - 600  # 10min
                 _ev_lines = []
+                # 🆕 [fixG3b-prune-proactive-care-dead-topic / Sir 2026-06-09]
+                # 清死名 'memory_corrected' (零 producer, 全仓 grep 实证; 与 fixG3
+                # 同源 P5-fix77-R 历史遗留误配). _topics 是纯过滤 (etype in _topics),
+                # 死名永不命中 → 移除逐字节 behavior-preserving. 余 3 名均有 producer:
+                # promise_fulfilled (promise_log:425) / promise_cancelled (promise_log:497)
+                # / concern_dismissed (concerns:540).
                 _topics = ('promise_fulfilled', 'promise_cancelled',
-                            'concern_dismissed', 'memory_corrected')
+                            'concern_dismissed')
                 try:
                     # 不同 EventBus 接口可能不同. 用 get_recent_events 或 events 属性
                     if hasattr(_bus, 'get_recent_events'):
