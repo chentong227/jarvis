@@ -924,13 +924,40 @@ class ChatBypass:
             # 🆕 [P5-fix77-I / 2026-05-23 19:11] max_tokens 显式设 8192 防 SDK default
             # 太短 (某些 OpenRouter model default 仅 1024-2048 → 长 reply 中途 stop).
             # 主脑 reply 通常 ≤ 2000 tokens, 8192 留 4x 余量盖最长 case.
-            response = client.chat.completions.create(
-                model=or_model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=8192,
-                stream=True
-            )
+            # 🆕 [fixB-403-region-backstop / Sir 2026-06-09] 主脑首句 403 区域兜底:
+            # .create(stream=True) 在**首 token 流出前**建立 HTTP 请求, 403 在此处抛
+            # (不在下面 _stream_wrapper 迭代中). 故在此处包有限重试 (同节点短退避) 安全 —
+            # 绝不 mid-stream 重试 (generator 尚未被消费, 零 token yield). 固定坏节点救不了,
+            # 重试耗尽抛原异常 (走外层 except release+raise → 罐头 fallback). 正常路径零开销.
+            _MAX_403_RETRY = 2
+            _DELAY_403 = 0.5
+            _403_n = 0
+            while True:
+                try:
+                    response = client.chat.completions.create(
+                        model=or_model,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=8192,
+                        stream=True
+                    )
+                    break
+                except Exception as _ce:
+                    _ce_s = str(_ce).lower()
+                    _is_403 = any(k in _ce_s for k in ['403', 'forbidden', 'not available in your region', 'access denied'])
+                    if _is_403 and _403_n < _MAX_403_RETRY:
+                        _403_n += 1
+                        try:
+                            from jarvis_utils import bg_log as _bg403
+                            _bg403(
+                                f"⚠️ [403Backstop/MainBrain] model={or_model} region 403, "
+                                f"retry {_403_n}/{_MAX_403_RETRY} (首token前·同节点短退避 {_DELAY_403}s)"
+                            )
+                        except Exception:
+                            pass
+                        time.sleep(_DELAY_403)
+                        continue
+                    raise
 
             class _ChunkWrapper:
                 __slots__ = ('text',)
