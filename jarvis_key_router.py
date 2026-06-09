@@ -149,20 +149,18 @@ class KeyRouter:
     def __init__(self, main_brain_key: str, google_keys: list, openrouter_keys: list):
         self._main_brain_key = main_brain_key
         
-        # 🆕 [Sir 2026-05-26 22:50 真痛 BUG 治本] google_1 paid / google_2/3 free
+        # 🆕 [fixA3b1-keyrouter-tier / Sir 2026-06-08] 弃付费 key — 只留两个免费 key 轮流。
         # =====================================================================
-        # Sir 截图 Gemini 3 Flash 19/20 RPD — google 免费 tier daily quota 仅 20.
-        # 老 50/50 random pool → 副链消耗 free key → 一天爆.
-        # Sir 真意 (22:50): "googlekey1 是付费, 后面两个是免费. 付费的要保留随机,
-        # 免费的只要保留 Hippocampus summary".
-        # 治本: pool entry 加 tier 标. 默认高频 caller 只用 paid (google_1).
-        # Hippocampus summary 显式 tier_filter='free' 优先 free, fallback paid.
+        # 旧设计: google_1 标 paid (RPD 无限), google_2/3 free (RPD 20). 高频 caller
+        # 默认只用 paid google_1. 但 Sir 弃了共享付费 key (额度被共享号耗尽), 现只留
+        # 两个**免费** key (GEMINI_KEY + GOOGLE_KEY_2), 都标 free, 高频 caller
+        # (flash-lite + embedding) 在两者间轮流。3-flash 档转 OpenRouter (A3b-2, 见
+        # google_model_routing.json)。tier_filter='paid' 现 fallback 全池 (无 paid key 时不空)。
         # =====================================================================
         self._google_pool = []
         for i, k in enumerate(google_keys):
-            tier = 'paid' if i == 0 else 'free'
             self._google_pool.append(
-                {'key': k, 'label': f'google_{i+1}', 'tier': tier}
+                {'key': k, 'label': f'google_{i+1}', 'tier': 'free'}
             )
         
         self._openrouter_pool = []
@@ -294,6 +292,10 @@ class KeyRouter:
         self._reset_daily_counters()
         if tier_filter == 'paid':
             pool = [e for e in self._google_pool if e.get('tier') == 'paid']
+            # 🆕 [fixA3b1-keyrouter-tier / Sir 2026-06-08] 弃付费 key 后无 paid key →
+            # fallback 全池 (两个免费 key 轮流)。不让 'paid' caller 因无 paid key 而 raise。
+            if not pool:
+                pool = self._google_pool
         elif tier_filter == 'free':
             # 优先 free, fallback paid (free 全爆时仍能用 paid)
             free_pool = [e for e in self._google_pool if e.get('tier') == 'free']
