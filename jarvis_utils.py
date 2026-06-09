@@ -4565,7 +4565,9 @@ def get_quick_classifier() -> QuickClassifier:
 def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                          max_tokens: int = 100, temperature: float = 0.2,
                          max_retries: int = 3, base_delay: float = 1.5,
-                         caller: str = '') -> str:
+                         caller: str = '',
+                         max_403_retries: int = 2,
+                         delay_403: float = 0.5) -> str:
     """
     🆕 [P5-fix73 / 2026-05-23 18:10] BUG-N: KeyRouter resource leak fix
     Sir 18:09 真测痛点: '所有 OpenRouter Key 均不可用' — 但 key_router_health.json
@@ -4623,8 +4625,10 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
 
     last_error = None
     last_error_type = "unknown"
+    _403_count = 0  # 🆕 [fixB-403-region-backstop] 403 重试计数 (独立于 max_retries 预算)
     try:
-        for attempt in range(max_retries):
+        attempt = 0
+        while attempt < max_retries:
             try:
                 response = client.chat.completions.create(
                     model=model,
@@ -4655,9 +4659,28 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
 
                 if any(kw in error_str for kw in ['403', 'forbidden', 'access denied', 'blocked']):
                     last_error_type = "access"
+                    # 🆕 [fixB-403-region-backstop / Sir 2026-06-09] 403 区域封
+                    # (出口 IP 落在 model 提供商黑名单) 偶发打死调用. 同节点有限重试
+                    # backstop: 救"间歇 403"(clash 节点轮换撞到好节点). 固定坏节点救不了,
+                    # 重试耗尽仍 raise (保留现有"最终失败 raise"语义, 不吞错).
+                    # 短退避 (区域问题不随等待消解, 不用 429 的指数大退避). 上限防风暴.
+                    # max_403_retries=0 即关闭 (回滚).
+                    _403_count += 1
+                    if _403_count <= max_403_retries:
+                        try:
+                            bg_log(
+                                f"⚠️ [403Backstop] {caller or '?'} model={model} "
+                                f"region 403, retry {_403_count}/{max_403_retries} "
+                                f"(同节点短退避 {delay_403}s)"
+                            )
+                        except Exception:
+                            pass
+                        _time.sleep(delay_403)
+                        continue
                     raise RuntimeError(
                         f"[OpenRouter] 模型访问被拒绝 (403)。"
-                        f"模型 {model} 可能未启用或已被禁用。"
+                        f"模型 {model} 可能未启用或已被禁用 (或出口 IP 区域受限)。"
+                        f"已重试 {max_403_retries} 次同节点仍 403。"
                         f"原始错误: {str(e)[:200]}"
                     ) from e
 
@@ -4680,6 +4703,7 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                     if attempt < max_retries - 1:
                         delay = base_delay * (2 ** min(attempt, 4))
                         _time.sleep(delay)
+                        attempt += 1  # 🆕 [fixB] while-loop: 非 403 重试推进预算
                         continue
 
                 if any(kw in error_str for kw in ['timeout', 'timed out', 'connection', 'network', 'dns', 'resolve', 'refused']):
@@ -4687,6 +4711,7 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                     if attempt < max_retries - 1:
                         delay = base_delay * (2 ** min(attempt, 4))
                         _time.sleep(delay)
+                        attempt += 1  # 🆕 [fixB] while-loop: 非 403 重试推进预算
                         continue
                     raise RuntimeError(
                         f"[OpenRouter] 网络连接失败。"
