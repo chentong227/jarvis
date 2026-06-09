@@ -6036,6 +6036,50 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 _body_provider = lambda _q: _bce_ct(_q)
             except Exception:
                 _body_provider = None
+            # 🆕 [fixE-llm-semantic-backstop / 2026-06-09] (d) 域配对 fail 的残留候选
+            # (同域跨 field) → LLM 语义复核. 仅 unverified past_action 罕触发, post-stream
+            # 不碰 TTFT. vocab 驱动 model/prompt (claim_semantic_vocab.json). 影子期默认
+            # (enforce=false → 只 record). 余额死/超时/异常 → None/False 故障开放不阻断.
+            _semantic_provider = None
+            try:
+                import jarvis_claim_tracer as _ct_sem
+                from jarvis_utils import safe_openrouter_call as _sor_sem
+
+                def _semantic_judge(_claim_text, _events):
+                    """(claim_text, events:list[str]) → bool. 调 LLM 判 event 是否支持声称."""
+                    try:
+                        _vocab = _ct_sem._get_semantic_vocab()
+                        _m = _vocab.get('_meta', {})
+                        _model = _m.get('model')
+                        _tmpl = _m.get('prompt_template', '')
+                        if not _model or not _tmpl:
+                            return False
+                        _okey, _lbl = self.key_router.get_openrouter_key(
+                            caller='claim_semantic')
+                        try:
+                            _prompt = _tmpl.replace('{claim_text}', str(_claim_text)).replace(
+                                '{events}', '\n'.join(f'- {e}' for e in (_events or [])))
+                            _resp = _sor_sem(
+                                openrouter_key=_okey,
+                                model=_model,
+                                prompt=_prompt,
+                                max_tokens=int(_m.get('max_tokens', 10)),
+                                temperature=float(_m.get('temperature', 0.0)),
+                                max_retries=1,
+                                caller='claim_semantic',
+                            )
+                        finally:
+                            try:
+                                self.key_router.release(_lbl)
+                            except Exception:
+                                pass
+                        return bool(_resp) and 'yes' in str(_resp).strip().lower()[:6]
+                    except Exception:
+                        return False
+
+                _semantic_provider = _semantic_judge
+            except Exception:
+                _semantic_provider = None
             _claim_result = trace_reply(
                 jarvis_reply=final_reply,
                 tool_results=list(_tool_results) if '_tool_results' in dir() else [],
@@ -6045,6 +6089,7 @@ DO NOT call any tool (like 'finish') to end the conversation!"""
                 ltm_context=_ltm_ctx_str,
                 recall_provider=_recall_provider,
                 body_evidence_provider=_body_provider,
+                semantic_provider=_semantic_provider,
             )
             update_stats(_claim_result)
         except Exception:
