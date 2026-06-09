@@ -1,0 +1,101 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-06-09T10:00:00",
+    "marker": "fixD-claim-domain-scoped-verify",
+    "purpose": "INTEGRITY_STACK L2.5 - Claim action-domain coarse pairing vocab (准则 6.5)",
+    "edit_via": "scripts/claim_domain_dump.py --add/--activate/--reject/--delete/--enforce",
+    "consumer": "jarvis_claim_tracer (domain-scoped past_action verify)",
+    "design_note": "claim 分到一个动作域, 要求 180s 窗口里有该域的 ✅ event 才放行. claim 域分不出 (unknown) → 回落现有粗粒度 (任一 ✅). 关键词从严: 只收高确定性词, 模糊词不入表 → 宁可 unknown 回落, 不强收紧误伤真声称.",
+    "enforce_note": "enforce=false (默认影子期): live verdict 仍走粗粒度, 域配对结果只 record 进 audit (observability). 复核影子假阳率后 flip enforce=true (改本字段, 零代码改) 才收紧. 旧 tool_results_success kind 保留定义供一键回滚.",
+    "domains_canonical": [
+      "profile",
+      "concern",
+      "memory",
+      "device_action",
+      "promise"
+    ],
+    "enforce": false,
+    "etype_domain_map": {
+      "sir_profile_overwritten": "profile",
+      "profile_field_updated": "profile",
+      "concern_field_updated": "concern",
+      "concern_modified": "concern",
+      "sir_field_updated": "memory",
+      "memory_corrected": "memory",
+      "memory_update": "memory",
+      "tool_called": "device_action",
+      "promise_fulfilled": "promise"
+    }
+  },
+  "patterns": [
+    {
+      "id": "profile_default",
+      "domain": "profile",
+      "state": "active",
+      "keywords": [
+        "your profile",
+        "profile",
+        "档案",
+        "资料",
+        "preference",
+        "偏好",
+        "your settings",
+        "设定"
+      ]
+    },
+    {
+      "id": "device_action_default",
+      "domain": "device_action",
+      "state": "active",
+      "keywords": [
+        "muted",
+        "静音",
+        "opened",
+        "打开",
+        "launched",
+        "启动",
+        "closed",
+        "关闭",
+        "关掉",
+        "sent",
+        "发送",
+        "发了"
+      ]
+    },
+    {
+      "id": "concern_default",
+      "domain": "concern",
+      "state": "active",
+      "keywords": [
+        "concern",
+        "挂念",
+        "关心",
+        "在意"
+      ]
+    },
+    {
+      "id": "memory_default",
+      "domain": "memory",
+      "state": "active",
+      "keywords": [
+        "noted",
+        "记下",
+        "记住",
+        "remembered",
+        "logged",
+        "recorded that"
+      ]
+    },
+    {
+      "id": "promise_default",
+      "domain": "promise",
+      "state": "active",
+      "keywords": [
+        "promise",
+        "承诺",
+        "答应"
+      ]
+    }
+  ]
+}

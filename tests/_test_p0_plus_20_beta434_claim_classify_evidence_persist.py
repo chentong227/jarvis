@@ -128,7 +128,9 @@ class TestL2EvidenceRequirements(unittest.TestCase):
 
     def test_get_past_requirements(self):
         from jarvis_evidence_requirements import get_requirements
-        self.assertIn('tool_results_success', get_requirements('Past'))
+        # 🆕 [fixD / 2026-06-09] Past 的 tool_results_success 切成域 scoped 变体
+        # (影子期默认行为等价: 域分不出→回落粗粒度任一✅). 旧 kind 定义保留供回滚.
+        self.assertIn('tool_results_success_domain_scoped', get_requirements('Past'))
         self.assertIn('uncertainty_marker_nearby', get_requirements('Past'))
 
     def test_get_state_includes_system_clock(self):
@@ -159,7 +161,8 @@ class TestL2EvidenceRequirements(unittest.TestCase):
         try:
             # 损坏 json → seed fallback. seed 含 Past pattern.
             kinds = get_requirements('Past', vocab_path=tmpname)
-            self.assertIn('tool_results_success', kinds)
+            # 🆕 [fixD / 2026-06-09] seed Past 也切成域 scoped 变体
+            self.assertIn('tool_results_success_domain_scoped', kinds)
         finally:
             os.remove(tmpname)
 

@@ -58,6 +58,7 @@ _VOCAB_CACHE: Dict[str, object] = {
 
 EVIDENCE_KINDS_CANONICAL = (
     'tool_results_success',
+    'tool_results_success_domain_scoped',
     'tool_results_any',
     'stm_match',
     'ltm_match',
@@ -79,7 +80,7 @@ _SEED_VOCAB: Dict[str, object] = {
             'id': 'past_default',
             'claim_type': 'Past',
             'accepted_evidence_kinds': [
-                'tool_results_success', 'uncertainty_marker_nearby',
+                'tool_results_success_domain_scoped', 'uncertainty_marker_nearby',
             ],
             'state': 'active',
         },
