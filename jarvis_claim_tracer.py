@@ -160,6 +160,103 @@ def _classify_claim_domains(text: str) -> set:
 
 
 # ============================================================
+# 🆕 [fixE-llm-semantic-backstop / 2026-06-09] L2.6 LLM 语义兜底 (准则 6.5)
+# ------------------------------------------------------------
+# (d) 域配对治跨大类蒙混, 残留"同域跨 field"(声称改身高/实改偏好, 同属 profile 域).
+# (c) 在 (d) 判 fail 的残留候选上, 用 LLM 语义判"这批 event 是否支持这条声称".
+# 影子期 (_meta.enforce=false 默认): live 仍走 (d), LLM verdict 只 record.
+# 仅 (d)-fail 候选触发 (低频兜底). 故障开放: 余额死/超时 → False 不阻断.
+# vocab 驱动: memory_pool/claim_semantic_vocab.json (prompt/model/阈值/enforce).
+# ============================================================
+
+_SEMANTIC_VOCAB_PATH = os.path.join('memory_pool', 'claim_semantic_vocab.json')
+_SEMANTIC_CACHE_LOCK = threading.Lock()
+_SEMANTIC_VOCAB_CACHE: Dict[str, object] = {'path': '', 'mtime': 0.0, 'data': None}
+
+_SEMANTIC_SEED_VOCAB: Dict[str, object] = {
+    '_meta': {
+        'schema_version': 1,
+        'source': 'seed_py_fallback',
+        'enforce': False,
+        'model': 'google/gemini-2.5-flash-lite-preview-09-2025',
+        'max_tokens': 10,
+        'temperature': 0.0,
+        'prompt_template': (
+            'You are a strict integrity auditor. A claim was made by an AI '
+            'assistant about an action it performed. Decide whether the recorded '
+            'system events SEMANTICALLY SUPPORT that specific claim (same action '
+            'AND same target/subject).\n\nClaim: "{claim_text}"\n\nRecorded events:\n'
+            '{events}\n\nDoes at least one event support the SPECIFIC claim '
+            '(same action on the same target)? Answer with exactly one word: YES or NO.'
+        ),
+    },
+}
+
+
+def _get_semantic_vocab() -> dict:
+    """读 claim_semantic_vocab.json (mtime cache). 缺/损返 seed 不 raise."""
+    p = _SEMANTIC_VOCAB_PATH
+    if not os.path.exists(p):
+        return _SEMANTIC_SEED_VOCAB
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return _SEMANTIC_SEED_VOCAB
+    with _SEMANTIC_CACHE_LOCK:
+        if (_SEMANTIC_VOCAB_CACHE['path'] == p
+                and float(_SEMANTIC_VOCAB_CACHE['mtime']) == mt
+                and _SEMANTIC_VOCAB_CACHE['data'] is not None):
+            return _SEMANTIC_VOCAB_CACHE['data']  # type: ignore[return-value]
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or '_meta' not in data:
+                raise ValueError('semantic vocab missing _meta')
+            _SEMANTIC_VOCAB_CACHE['path'] = p
+            _SEMANTIC_VOCAB_CACHE['mtime'] = mt
+            _SEMANTIC_VOCAB_CACHE['data'] = data
+            return data
+        except (OSError, ValueError, TypeError):
+            return _SEMANTIC_SEED_VOCAB
+
+
+def _semantic_enforce() -> bool:
+    """读 semantic _meta.enforce. 默认 False (影子期). 异常 → False (保守不翻案)."""
+    try:
+        return bool(_get_semantic_vocab().get('_meta', {}).get('enforce', False))
+    except Exception:
+        return False
+
+
+def _try_semantic_match(claim: 'Claim', semantic_provider,
+                          tool_results: List,
+                          tool_result_domains: Optional[List[str]] = None) -> bool:
+    """🆕 [fixE / 2026-06-09] LLM 语义兜底: (d) fail 的候选交 LLM 判 event 是否支持声称.
+
+    semantic_provider(claim_text, events) → bool (YES/NO). provider 内部调 LLM
+    (vocab model/prompt). 异常/None → False (故障开放, 余额死不阻断).
+    仅 past_action 类 claim + 有 ✅ event 时才值得问 (省成本: 空窗口直接 False).
+    """
+    if semantic_provider is None:
+        return False
+    text = (getattr(claim, 'text', '') or '').strip()
+    if not text:
+        return False
+    # 省成本: 窗口无任何 ✅ event → 无可支持的 evidence, 不问 LLM
+    ok_events = [str(tr) for tr in (tool_results or []) if '✅' in str(tr)]
+    if not ok_events:
+        return False
+    try:
+        verdict = bool(semantic_provider(text, ok_events))
+    except Exception:
+        return False
+    if verdict:
+        claim.trace_to = 'llm_semantic'
+        claim.trace_what = f'semantic_provider YES ({len(ok_events)} events)'
+    return verdict
+
+
+# ============================================================
 # Claim 类型 + 提取 regex
 # ============================================================
 
@@ -691,7 +788,8 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
                        evidence_vocab_path: Optional[str] = None,
                        recall_provider=None,
                        body_evidence_provider=None,
-                       tool_result_domains: Optional[List[str]] = None) -> bool:
+                       tool_result_domains: Optional[List[str]] = None,
+                       semantic_provider=None) -> bool:
     """看 claim 是否能 trace 到 evidence. 返 True = 找到 trace.
 
     [β.4.3.3 / 2026-05-18] L1 + L2 表驱 默认 (use_vocab=True). Legacy 保留.
@@ -731,6 +829,29 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
     # body_evidence_provider=None (老 caller) → no-op, 零行为改变. 准则 5 接地.
     if body_evidence_provider is not None and _try_body_match(claim, body_evidence_provider):
         return True
+    # 🆕 [fixE-llm-semantic-backstop / 2026-06-09] (d) 域配对 fail 的残留候选 → LLM 语义兜底.
+    # 影子期: _semantic_enforce()=false (默认) → 只 record LLM verdict, 不改 live (返 ok).
+    # enforce=true → LLM 翻案 (YES → verified). semantic_provider=None (老 caller) → no-op.
+    # 仅 past_action 类值得问 (省成本): 其他类已被上面 evidence 路径覆盖.
+    if (semantic_provider is not None and not ok
+            and getattr(claim, 'kind', '') == 'past_action'):
+        try:
+            c_verdict = _try_semantic_match(
+                claim, semantic_provider, tool_results, tool_result_domains)
+        except Exception:
+            c_verdict = False
+        try:
+            if c_verdict:
+                bg_log(
+                    f"🔬 [ClaimTracer/SemanticShadow] LLM 翻案 verdict=YES "
+                    f"enforce={_semantic_enforce()} text='{(getattr(claim,'text','') or '')[:50]}'"
+                )
+        except Exception:
+            pass
+        if _semantic_enforce():
+            return c_verdict or ok    # enforce=true: LLM YES 翻案
+        # 影子期: live 仍走 (d)/vocab 结果 (ok), 不改 — 但 trace_to 已被 _try_semantic_match
+        # 标记 (诊断用), 不影响 return
     return ok
 
 
@@ -883,7 +1004,8 @@ def trace_reply(jarvis_reply: str,
                   include_swm_tool_called: bool = True,
                   swm_lookback_s: float = 180.0,
                   recall_provider=None,
-                  body_evidence_provider=None) -> dict:
+                  body_evidence_provider=None,
+                  semantic_provider=None) -> dict:
     """对 Jarvis reply 跑 claim trace. fire-and-forget, 返 stats.
 
     Args:
@@ -950,6 +1072,7 @@ def trace_reply(jarvis_reply: str,
             recall_provider=recall_provider,
             body_evidence_provider=body_evidence_provider,
             tool_result_domains=tool_result_domains,
+            semantic_provider=semantic_provider,
         )
         if ok:
             n_verified += 1

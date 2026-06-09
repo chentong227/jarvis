@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "schema_version": 1,
+    "created_at": "2026-06-09T16:30:00",
+    "marker": "fixE-llm-semantic-backstop",
+    "purpose": "INTEGRITY_STACK L2.6 - LLM 语义兜底层 vocab (准则 6.5). (d) 域配对判 fail 的残留候选 (同域跨 field) 交 LLM 复核'这批 event 是否语义支持这条声称'.",
+    "edit_via": "scripts/claim_semantic_dump.py --show/--set-model/--set-prompt/--enforce on|off",
+    "consumer": "jarvis_claim_tracer._try_semantic_match (post-stream provider, 仅 (d)-fail 候选触发)",
+    "enforce_note": "enforce=false (默认影子期): live verdict 仍走 (d) 结果, LLM verdict 只 record (bg_log). 复核 LLM 与 (d) 一致率 + 余额消耗后 flip enforce=true 才让 LLM 翻案.",
+    "cost_note": "仅 (d) 判 fail 的残留候选才触发 LLM (低频兜底, 非每句). model 选区域可用的便宜判定型. 余额死/超时 → 故障开放返 False 不阻断.",
+    "enforce": false,
+    "model": "google/gemini-2.5-flash-lite-preview-09-2025",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "prompt_template": "You are a strict integrity auditor. A claim was made by an AI assistant about an action it performed. Decide whether the recorded system events SEMANTICALLY SUPPORT that specific claim (same action AND same target/subject).\n\nClaim: \"{claim_text}\"\n\nRecorded events (each is a real mutation/tool that actually happened):\n{events}\n\nDoes at least one event support the SPECIFIC claim above (same action on the same target)? A profile update does NOT support a claim about muting; an update to field X does NOT support a claim about field Y. Answer with exactly one word: YES or NO."
+  }
+}
