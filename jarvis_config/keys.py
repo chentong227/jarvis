@@ -42,12 +42,14 @@ _REQUIRED_ENV_VARS = [
     "OPENROUTER_3",
     "GEMINI_KEY",
     "GOOGLE_KEY_2",
-    "GOOGLE_KEY_3",
 ]
 # 可选 env vars — 缺失不 raise, OPENROUTER_LIST 自动 filter
+# 🆕 [Sir 2026-06-08] GOOGLE_KEY_3 改可选 — 弃付费 key 后只留两个免费 key
+# (GEMINI_KEY + GOOGLE_KEY_2). GOOGLE_LIST 自动 filter 空值/占位符.
 _OPTIONAL_ENV_VARS = [
     "OPENROUTER_4",
     "OPENROUTER_5",
+    "GOOGLE_KEY_3",
 ]
 
 
@@ -162,14 +164,18 @@ def load_keys() -> JarvisKeys:
     if "REPLACE_ME" in _ds_raw or "DEPRECATED" in _ds_raw:
         _ds_raw = ""
 
+    # 🆕 [Sir 2026-06-08] Google key 池动态收 — 弃付费 key 后只留两个免费 key
+    # (GEMINI_KEY + GOOGLE_KEY_2). GOOGLE_KEY_3 可选, 缺失/占位符自动 filter.
+    _google_pool = []
+    for name in ("GEMINI_KEY", "GOOGLE_KEY_2", "GOOGLE_KEY_3"):
+        v = (os.environ.get(name, "") or "").strip()
+        if v and "DEPRECATED" not in v and "REPLACE_ME" not in v:
+            _google_pool.append(v)
+
     return JarvisKeys(
         OPENROUTER_MAIN=os.environ["OPENROUTER_MAIN"],
         OPENROUTER_LIST=_or_pool,
         GEMINI=os.environ["GEMINI_KEY"],
-        GOOGLE_LIST=[
-            os.environ["GEMINI_KEY"],
-            os.environ["GOOGLE_KEY_2"],
-            os.environ["GOOGLE_KEY_3"],
-        ],
+        GOOGLE_LIST=_google_pool,
         OPENROUTER_DS_ONLY=_ds_raw,
     )
