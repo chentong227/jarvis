@@ -18,12 +18,8 @@
     "enforce": false,
     "etype_domain_map": {
       "sir_profile_overwritten": "profile",
-      "profile_field_updated": "profile",
       "concern_field_updated": "concern",
-      "concern_modified": "concern",
       "sir_field_updated": "memory",
-      "memory_corrected": "memory",
-      "memory_update": "memory",
       "tool_called": "device_action",
       "promise_fulfilled": "promise"
     }

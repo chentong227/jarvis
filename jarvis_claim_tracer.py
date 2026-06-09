@@ -62,12 +62,8 @@ _DOMAIN_SEED_VOCAB: Dict[str, object] = {
         'enforce': False,
         'etype_domain_map': {
             'sir_profile_overwritten': 'profile',
-            'profile_field_updated': 'profile',
             'concern_field_updated': 'concern',
-            'concern_modified': 'concern',
             'sir_field_updated': 'memory',
-            'memory_corrected': 'memory',
-            'memory_update': 'memory',
             'tool_called': 'device_action',
             'promise_fulfilled': 'promise',
         },
@@ -866,9 +862,18 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
     🆕 [P5-fix77-R / 2026-05-23 19:11] BUG-R: 跨 module mutation evidence gap.
     Sir 19:09 真测痛点: 主脑说 "I've updated your profile" → ClaimTracer 报 unverified.
     但实际 Memory Correction 真做了 mutation (走 MemoryGateway, 不进 tool_results).
-    修法: 扩展 _fetch_swm_tool_results 也拿 mutation events (memory_corrected /
-    sir_field_updated / memory_update / profile_field_updated) 作 ✅ evidence,
+    修法: 扩展 _fetch_swm_tool_results 也拿 mutation events 作 ✅ evidence,
     让 ClaimTracer 不再 false-positive "I've updated profile" 类幻觉警告.
+
+    🆕 [fixG3-prune-dead-event-types / Sir 2026-06-09] 死名已清: 原 P5-fix77-R 列的
+    memory_corrected / memory_update / profile_field_updated / concern_modified 是
+    历史遗留误配 (设计时猜名, 真 producer 用别名). 实际活名:
+      - memory correction → 'sir_field_updated' (jarvis_memory_hub.py:180)
+      - profile 写        → 'sir_profile_overwritten' (jarvis_routing.py:928)
+      - concern 改        → 'concern_field_updated' (jarvis_concerns.py:711)
+      - tool 调用         → 'tool_called'
+      - promise 完成      → 'promise_fulfilled'
+    4 死名零 producer (全仓 grep 实证), 永不命中 → 已从消费 set 移除 (逐字节 BP).
 
     覆盖 IntentResolver 异步调 tool 的 trace gap — 主脑下轮看 [INTENT RESOLVED] 知道
     tool 真生效, ClaimTracer 也应该看到 SWM tool_called events 作 evidence, 不再
@@ -905,11 +910,17 @@ def _fetch_swm_tool_results_with_domains(
         # 🆕 [P5-fix77-R] 加 mutation events 类型, 覆盖 MemoryGateway 等跨模块路径
         # 🆕 [fixA-claim-evidence-coverage / Sir 2026-06-09] 加认 sir_profile_overwritten
         # + concern_field_updated (实际在发但旧 set 没认的真名).
+        # 🆕 [fixG3-prune-dead-event-types / Sir 2026-06-09] 清掉 4 个死名
+        # (memory_corrected/memory_update/profile_field_updated/concern_modified):
+        # P5-fix77-R 历史遗留误配 — 设计时猜这些名, 但真 producer 用别名发:
+        # memory correction 真路径 → 'sir_field_updated' (jarvis_memory_hub.py:180),
+        # profile 写 → 'sir_profile_overwritten' (jarvis_routing.py:928),
+        # concern 改 → 'concern_field_updated' (jarvis_concerns.py:711).
+        # 4 死名零 producer (全仓 grep 实证), 永不命中 recent_events 过滤 → 移除逐字节
+        # behavior-preserving. 功能已被活 5 名完全覆盖. 留活 5 名:
         events = bus.recent_events(
             within_seconds=within_seconds,
-            types={'tool_called', 'memory_corrected', 'sir_field_updated',
-                   'memory_update', 'profile_field_updated',
-                   'concern_modified', 'promise_fulfilled',
+            types={'tool_called', 'sir_field_updated', 'promise_fulfilled',
                    'sir_profile_overwritten', 'concern_field_updated'},
         ) or []
         results: List[Tuple[str, str]] = []
