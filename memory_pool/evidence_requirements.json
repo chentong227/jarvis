@@ -11,6 +11,7 @@
     "schema_note": "每条 pattern = 1 个 (claim_type, accepted_evidence_kinds[]) 二元组. 多 pattern 同 claim_type 会 union 合并. accepted_evidence_kinds 任一命中即 verified. 空 list → 不 verify 也不 audit (fail-safe).",
     "evidence_kinds_canonical": [
       "tool_results_success",
+      "tool_results_success_domain_scoped",
       "tool_results_any",
       "stm_match",
       "ltm_match",
@@ -21,6 +22,7 @@
     ],
     "evidence_kinds_doc": {
       "tool_results_success": "tool_results 列表中任一 str 含 '✅' marker (β.3.0 BUG#4: Past-action 必须真 ✅)",
+      "tool_results_success_domain_scoped": "[fixD 2026-06-09] 同 tool_results_success 但加域配对: claim 分动作域 → 要求同域 ✅ event. 域分不出→回落粗粒度. 影子期 (claim_domain_vocab.json _meta.enforce=false) live 仍走粗粒度, 域 verdict 只 record",
       "tool_results_any": "tool_results 列表中任一 str 含 claim text 子串 (不限 ✅)",
       "stm_match": "STM recent entries 任一 user/jarvis 字段含 claim text 子串",
       "ltm_match": "ltm_context 字串含 claim text 子串",
@@ -35,7 +37,7 @@
       "id": "past_default",
       "claim_type": "Past",
       "accepted_evidence_kinds": [
-        "tool_results_success",
+        "tool_results_success_domain_scoped",
         "uncertainty_marker_nearby"
       ],
       "state": "active",

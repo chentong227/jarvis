@@ -41,6 +41,125 @@ except Exception:
 
 
 # ============================================================
+# 🆕 [fixD-claim-domain-scoped-verify / 2026-06-09] L2.5 域配对 (准则 6.5)
+# ------------------------------------------------------------
+# 粗粒度 verify (180s 窗口任一 ✅ 放行任意 past_action) → 假声称被无关真 mutation 蒙混.
+# 修法: claim 分动作域 (profile/concern/memory/device_action/promise), 要求同域 ✅ event.
+# claim 域分不出 (unknown) → 回落粗粒度 (逐字节同现, behavior-preserving).
+# 影子期 (_meta.enforce=false 默认): live 仍走粗粒度, 域 verdict 只 record. flip 才收紧.
+# vocab 驱动: memory_pool/claim_domain_vocab.json + scripts/claim_domain_dump.py + mtime cache.
+# ============================================================
+
+_DOMAIN_VOCAB_PATH = os.path.join('memory_pool', 'claim_domain_vocab.json')
+_DOMAIN_CACHE_LOCK = threading.Lock()
+_DOMAIN_VOCAB_CACHE: Dict[str, object] = {'path': '', 'mtime': 0.0, 'data': None}
+
+# py-side seed fallback (vocab 缺/损时仍 work, 不 raise)
+_DOMAIN_SEED_VOCAB: Dict[str, object] = {
+    '_meta': {
+        'schema_version': 1,
+        'source': 'seed_py_fallback',
+        'enforce': False,
+        'etype_domain_map': {
+            'sir_profile_overwritten': 'profile',
+            'profile_field_updated': 'profile',
+            'concern_field_updated': 'concern',
+            'concern_modified': 'concern',
+            'sir_field_updated': 'memory',
+            'memory_corrected': 'memory',
+            'memory_update': 'memory',
+            'tool_called': 'device_action',
+            'promise_fulfilled': 'promise',
+        },
+    },
+    'patterns': [
+        {'id': 'profile_default', 'domain': 'profile', 'state': 'active',
+         'keywords': ['your profile', 'profile', '档案', '资料',
+                      'preference', '偏好', 'your settings', '设定']},
+        {'id': 'device_action_default', 'domain': 'device_action', 'state': 'active',
+         'keywords': ['muted', '静音', 'opened', '打开', 'launched', '启动',
+                      'closed', '关闭', '关掉', 'sent', '发送', '发了']},
+        {'id': 'concern_default', 'domain': 'concern', 'state': 'active',
+         'keywords': ['concern', '挂念', '关心', '在意']},
+        {'id': 'memory_default', 'domain': 'memory', 'state': 'active',
+         'keywords': ['noted', '记下', '记住', 'remembered', 'logged',
+                      'recorded that']},
+        {'id': 'promise_default', 'domain': 'promise', 'state': 'active',
+         'keywords': ['promise', '承诺', '答应']},
+    ],
+}
+
+
+def _get_domain_vocab() -> dict:
+    """读 claim_domain_vocab.json (mtime cache). 缺/损返 seed 不 raise."""
+    p = _DOMAIN_VOCAB_PATH
+    if not os.path.exists(p):
+        return _DOMAIN_SEED_VOCAB
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return _DOMAIN_SEED_VOCAB
+    with _DOMAIN_CACHE_LOCK:
+        if (_DOMAIN_VOCAB_CACHE['path'] == p
+                and float(_DOMAIN_VOCAB_CACHE['mtime']) == mt
+                and _DOMAIN_VOCAB_CACHE['data'] is not None):
+            return _DOMAIN_VOCAB_CACHE['data']  # type: ignore[return-value]
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or 'patterns' not in data:
+                raise ValueError('domain vocab missing patterns key')
+            _DOMAIN_VOCAB_CACHE['path'] = p
+            _DOMAIN_VOCAB_CACHE['mtime'] = mt
+            _DOMAIN_VOCAB_CACHE['data'] = data
+            return data
+        except (OSError, ValueError, TypeError):
+            return _DOMAIN_SEED_VOCAB
+
+
+def _domain_enforce() -> bool:
+    """读 _meta.enforce. 默认 False (影子期). 异常 → False (保守不收紧)."""
+    try:
+        return bool(_get_domain_vocab().get('_meta', {}).get('enforce', False))
+    except Exception:
+        return False
+
+
+def _etype_to_domain(etype: str) -> str:
+    """etype → 域 (右手). 未归域 → 'unknown'."""
+    try:
+        emap = _get_domain_vocab().get('_meta', {}).get('etype_domain_map', {})
+        return emap.get(etype, 'unknown')
+    except Exception:
+        return 'unknown'
+
+
+def _classify_claim_domains(text: str) -> set:
+    """claim 文本 → 域集合 (左手, vocab keyword). 零命中→空集 (unknown→回落).
+
+    多命中→多域 (verify 放宽: 任一同域 ✅ 即放行). 关键词从严, 模糊词不入表.
+    """
+    if not text:
+        return set()
+    try:
+        vocab = _get_domain_vocab()
+        patterns = vocab.get('patterns', []) if isinstance(vocab, dict) else []
+    except Exception:
+        return set()
+    text_l = text.lower()
+    hit: set = set()
+    for p in patterns:
+        if not isinstance(p, dict) or p.get('state', 'active') != 'active':
+            continue
+        dom = p.get('domain')
+        for kw in (p.get('keywords', []) or []):
+            if kw and isinstance(kw, str) and kw.lower() in text_l:
+                hit.add(dom)
+                break
+    return hit
+
+
+# ============================================================
 # Claim 类型 + 提取 regex
 # ============================================================
 
@@ -315,6 +434,8 @@ def _check_time_within_2min(claim: 'Claim',
 # 通过 alias 让 trace_to 继续返回老短名, evidence_kind 全名记到 trace_what 后缀.
 _LEGACY_TRACE_LABEL = {
     'tool_results_success': 'tool_success',
+    # 🆕 [fixD / 2026-06-09] 域 scoped 共用 'tool_success' 老 label (保 β.2.8.7 断言不破)
+    'tool_results_success_domain_scoped': 'tool_success',
     'tool_results_any': 'tool',
     'stm_match': 'stm',
     'ltm_match': 'ltm',
@@ -329,8 +450,13 @@ def _check_evidence_kind(kind: str, claim: 'Claim',
                            tool_results: List, stm_recent: List,
                            system_clock: Optional[float],
                            ltm_context: str,
-                           promise_log_tags: Optional[List[str]]) -> bool:
-    """单个 evidence_kind 查表 dispatcher. 未识别的 kind 返 False (fail-safe)."""
+                           promise_log_tags: Optional[List[str]],
+                           tool_result_domains: Optional[List[str]] = None) -> bool:
+    """单个 evidence_kind 查表 dispatcher. 未识别的 kind 返 False (fail-safe).
+
+    🆕 [fixD / 2026-06-09] tool_result_domains: 与 tool_results 平行的域 list
+    (供 'tool_results_success_domain_scoped' kind 用). None → 老行为零变化.
+    """
     if kind == 'none':
         return True
     if kind == 'uncertainty_marker_nearby':
@@ -342,6 +468,38 @@ def _check_evidence_kind(kind: str, claim: 'Claim',
             if '✅' in str(tr):
                 return True
         return False
+    if kind == 'tool_results_success_domain_scoped':
+        # 🆕 [fixD-claim-domain-scoped-verify / 2026-06-09] 粗类域配对.
+        # claim 分动作域 → 要求同域 ✅ event. 域分不出 (unknown) → 回落粗粒度.
+        # 影子期 (_meta.enforce=false 默认): live 仍走粗粒度, 域 verdict 只 record.
+        coarse = any('✅' in str(tr) for tr in (tool_results or []))
+        claim_domains = _classify_claim_domains(getattr(claim, 'text', '') or '')
+        if not claim_domains:
+            # 域分不出 → 回落粗粒度 (逐字节同 'tool_results_success', behavior-preserving)
+            return coarse
+        # 域配对 verdict: 任一 ✅ evidence 的域 ∈ claim_domains 或 域==unknown (放宽防误伤)
+        domains = tool_result_domains or []
+        domain_ok = False
+        for idx, tr in enumerate(tool_results or []):
+            if '✅' not in str(tr):
+                continue
+            ev_dom = domains[idx] if idx < len(domains) else 'unknown'
+            if ev_dom == 'unknown' or ev_dom in claim_domains:
+                domain_ok = True
+                break
+        # 影子期 observability: record 域 verdict (不改 live verdict)
+        try:
+            if coarse != domain_ok:
+                bg_log(
+                    f"🔬 [ClaimTracer/DomainShadow] claim_domains={sorted(claim_domains)} "
+                    f"coarse={coarse} domain_scoped={domain_ok} "
+                    f"enforce={_domain_enforce()} text='{(getattr(claim,'text','') or '')[:50]}'"
+                )
+        except Exception:
+            pass
+        if not _domain_enforce():
+            return coarse          # 影子期: live 走粗粒度 (逐字节同现)
+        return domain_ok           # enforce=true 才收紧
     if kind == 'tool_results_any':
         if not needle:
             return False
@@ -418,7 +576,8 @@ def _trace_via_vocab(claim: 'Claim', tool_results: List, stm_recent: List,
                        system_clock: Optional[float], ltm_context: str,
                        promise_log_tags: Optional[List[str]],
                        classify_vocab_path: Optional[str] = None,
-                       evidence_vocab_path: Optional[str] = None) -> bool:
+                       evidence_vocab_path: Optional[str] = None,
+                       tool_result_domains: Optional[List[str]] = None) -> bool:
     """新 L1+L2 表驱 evidence 路径 (β.4.3.3 默认).
 
     1. L1 classify 出 claim_type
@@ -451,7 +610,8 @@ def _trace_via_vocab(claim: 'Claim', tool_results: List, stm_recent: List,
         try:
             ok = _check_evidence_kind(ek, claim, tool_results, stm_recent,
                                          system_clock, ltm_context,
-                                         promise_log_tags)
+                                         promise_log_tags,
+                                         tool_result_domains=tool_result_domains)
         except Exception:
             ok = False
         if ok:
@@ -530,7 +690,8 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
                        classify_vocab_path: Optional[str] = None,
                        evidence_vocab_path: Optional[str] = None,
                        recall_provider=None,
-                       body_evidence_provider=None) -> bool:
+                       body_evidence_provider=None,
+                       tool_result_domains: Optional[List[str]] = None) -> bool:
     """看 claim 是否能 trace 到 evidence. 返 True = 找到 trace.
 
     [β.4.3.3 / 2026-05-18] L1 + L2 表驱 默认 (use_vocab=True). Legacy 保留.
@@ -556,6 +717,7 @@ def trace_to_evidence(claim: 'Claim', tool_results: List,
             promise_log_tags=promise_log_tags,
             classify_vocab_path=classify_vocab_path,
             evidence_vocab_path=evidence_vocab_path,
+            tool_result_domains=tool_result_domains,
         )
     else:
         ok = _trace_via_legacy(claim, tool_results, stm_recent)
@@ -598,31 +760,43 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
     Returns:
       List[str] — 可空 (没 event_bus / 没 events 都返 [])
     """
+    return [s for (s, _dom) in _fetch_swm_tool_results_with_domains(within_seconds)]
+
+
+def _fetch_swm_tool_results_with_domains(
+        within_seconds: float = 60.0) -> List[Tuple[str, str]]:
+    """🆕 [fixD-claim-domain-scoped-verify / 2026-06-09] 同 _fetch_swm_tool_results,
+    但每条 evidence 并行带"动作域" tag (供域配对 verify dispatcher 用).
+
+    🔴 红线: evidence 字符串本身格式逐字节不变 (与老 _fetch_swm_tool_results 一致,
+    那些串会流向主脑 prompt / 展示 / audit). 域信息走**并行结构** (str, domain) 元组,
+    绝不内嵌进串污染主脑输入. 老 _fetch_swm_tool_results 拆出 str 即逐字节复用.
+
+    Returns:
+      List[(evidence_str, domain)] — domain ∈ {profile/concern/memory/device_action/
+      promise/unknown}. FAST_CALL tool_called 归 device_action; 未归域 etype → unknown.
+    """
     try:
         from jarvis_utils import get_event_bus
         bus = get_event_bus()
         if bus is None:
             return []
         # 🆕 [P5-fix77-R] 加 mutation events 类型, 覆盖 MemoryGateway 等跨模块路径
+        # 🆕 [fixA-claim-evidence-coverage / Sir 2026-06-09] 加认 sir_profile_overwritten
+        # + concern_field_updated (实际在发但旧 set 没认的真名).
         events = bus.recent_events(
             within_seconds=within_seconds,
-            # 🆕 [fixA-claim-evidence-coverage / Sir 2026-06-09] 加认两个"实际在发但
-            # 没被认"的 mutation 名: profile 写真发 'sir_profile_overwritten'
-            # (jarvis_routing.py:928), concern 改真发 'concern_field_updated'
-            # (jarvis_concerns.py:711). 旧 set 列的 'profile_field_updated' /
-            # 'concern_modified' 无任何生产者 → 真"I've updated your profile"声称被
-            # 冤判 unverified (false-positive). record-only, 零 TTFT, 纯加名.
             types={'tool_called', 'memory_corrected', 'sir_field_updated',
                    'memory_update', 'profile_field_updated',
                    'concern_modified', 'promise_fulfilled',
                    'sir_profile_overwritten', 'concern_field_updated'},
         ) or []
-        results = []
+        results: List[Tuple[str, str]] = []
         for ev in events:
             meta = ev.get('metadata') or {}
             # 🆕 [Sir 2026-05-26 22:35 fix] publish 内部 store 用 'type' key (line 1600).
-            # 老 BUG: 用 'etype' 永远空 → 全走 else fallback → '✅ (...)' 不分 ok/fail.
             etype = ev.get('type', '') or ev.get('etype', '')  # bw-compat 兜底
+            domain = _etype_to_domain(etype)
             # tool_called 类: 老格式 (name + args + ok)
             if etype == 'tool_called':
                 name = meta.get('name', '?')
@@ -636,15 +810,13 @@ def _fetch_swm_tool_results(within_seconds: float = 60.0) -> List[str]:
                 except Exception:
                     args_snip = str(args)[:80]
                 if ok:
-                    results.append(f"✅ {name}({args_snip}) — {result_summary}")
+                    results.append((f"✅ {name}({args_snip}) — {result_summary}", domain))
                 else:
-                    results.append(f"❌ {name}({args_snip}) — {err}")
+                    results.append((f"❌ {name}({args_snip}) — {err}", domain))
             else:
                 # 🆕 [P5-fix77-R] mutation 类 events: SWM 已 publish = mutation 成功
-                # 用 etype + description 作 ✅ evidence (主脑能 trace "updated profile"
-                # 类 claim 到 'sir_field_updated' event).
                 desc = str(ev.get('description', '') or '')[:120]
-                results.append(f"✅ {etype}({desc})")
+                results.append((f"✅ {etype}({desc})", domain))
         return results
     except Exception:
         return []
@@ -745,10 +917,15 @@ def trace_reply(jarvis_reply: str,
     # 🩹 [P1-Gap9 / 2026-05-20 23:25] 拼接 SWM tool_called events 进 tool_results.
     # 治 false-positive: IntentResolver async 调 tool 成功后, 主脑下轮 reply 说
     # "已为您 X", ClaimTracer 现在能看到 SWM 有 ✅ tool_called → verify.
+    # 🆕 [fixD / 2026-06-09] 并行域 list: FAST_CALL tool_results 无 etype → 'unknown';
+    # SWM events 带域. 与 tool_results 索引对齐, 供域配对 verify (影子期默认只 record).
+    tool_result_domains: List[str] = ['unknown'] * len(tool_results)
     if include_swm_tool_called:
-        swm_results = _fetch_swm_tool_results(within_seconds=swm_lookback_s)
-        if swm_results:
-            tool_results.extend(swm_results)
+        swm_pairs = _fetch_swm_tool_results_with_domains(within_seconds=swm_lookback_s)
+        if swm_pairs:
+            for _s, _dom in swm_pairs:
+                tool_results.append(_s)
+                tool_result_domains.append(_dom)
     # β.4.3.3: 抽 PromiseLog tags 一次 (per-reply, 不该每 claim 抽 1 次)
     promise_log_tags = _extract_promise_tags(jarvis_reply) if use_vocab else None
 
@@ -772,6 +949,7 @@ def trace_reply(jarvis_reply: str,
             evidence_vocab_path=evidence_vocab_path,
             recall_provider=recall_provider,
             body_evidence_provider=body_evidence_provider,
+            tool_result_domains=tool_result_domains,
         )
         if ok:
             n_verified += 1
