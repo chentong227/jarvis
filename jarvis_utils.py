@@ -3594,6 +3594,36 @@ def _is_non_retryable_error(err: Exception) -> bool:
     return any(kw in s for kw in _NON_RETRYABLE_KEYWORDS)
 
 
+# 🆕 [A3b-2 / Sir 2026-06-09] 共享 403 区域封 helper (纯函数, 无副作用).
+# 两处复用: safe_openrouter_call (fixB) + _try_openrouter (3-flash 路由毒 key 修复).
+# 区域 403 = 出口 IP 落在 model 提供商地区黑名单 (非 key 失效). 当 AUTH 毒 key 是 bug:
+# key 本身好的, 换节点就通. 故区域 403 → 同节点短退避重试, 绝不毒 key / 不换 key。
+_REGION_403_KEYWORDS = ('403', 'forbidden', 'access denied', 'blocked')
+# 真 AUTH 401 (key 失效) 关键词 — 命中即非区域 403, 走原毒 key 逻辑。
+_AUTH_401_KEYWORDS = ('401', 'unauthorized', 'invalid api key', 'invalid_key',
+                      'api key not valid', 'api_key_invalid')
+
+
+def _is_region_403(error_str: str) -> bool:
+    """判该错误是否区域 403 (出口 IP 受限, 非 key 失效).
+
+    命中 403/forbidden/access denied/blocked 且 **不** 含真 AUTH 401 关键词 → True。
+    纯函数, 无副作用, 可被 safe_openrouter_call + _try_openrouter 复用。
+    """
+    s = (error_str or '').lower()
+    if any(kw in s for kw in _AUTH_401_KEYWORDS):
+        return False  # 真 401 AUTH 失效, 不算区域 403
+    return any(kw in s for kw in _REGION_403_KEYWORDS)
+
+
+def _should_retry_403(count: int, max_403_retries: int) -> bool:
+    """判区域 403 是否还能同节点重试 (count 为本次将要发生的第 N 次重试).
+
+    count <= max → 还能重试. max_403_retries=0 即关闭 (回滚). 纯函数。
+    """
+    return count <= max_403_retries
+
+
 def network_retry(max_retries=3, base_delay=2):
     """
     🌐 原子级网络重试装甲 (指数退避算法)
@@ -3636,10 +3666,49 @@ def network_retry(max_retries=3, base_delay=2):
     return decorator
 
 
+# 🆕 [A3b-2 / Sir 2026-06-09] Google 模型桥路由 (准则6 三件套: JSON + CLI + seed).
+_GOOGLE_ROUTING_SEED = {
+    "force_openrouter": ["gemini-3-flash-preview"],
+    "google_only_no_fallback": ["gemini-3.1-flash-lite"],
+}
+_google_routing_cache = {"mtime": 0.0, "data": None}
+
+
+def _load_google_model_routing():
+    """🆕 [A3b-2 / Sir 2026-06-09] 载入 Google 模型桥路由表 (准则6 三件套: JSON + CLI + seed).
+
+    memory_pool/google_model_routing.json (in git) 缺失/损坏 → seed fallback。
+    mtime cache 避免每次调用读盘。CLI: scripts/google_routing_dump.py。
+    """
+    import os as _os
+    import json as _json
+    path = _os.path.join(
+        _os.path.dirname(_os.path.abspath(__file__)),
+        "memory_pool", "google_model_routing.json",
+    )
+    try:
+        mtime = _os.path.getmtime(path)
+        if _google_routing_cache["data"] is not None and \
+                mtime == _google_routing_cache["mtime"]:
+            return _google_routing_cache["data"]
+        with open(path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        out = {
+            "force_openrouter": list(data.get("force_openrouter", [])),
+            "google_only_no_fallback": list(data.get("google_only_no_fallback", [])),
+        }
+        _google_routing_cache["mtime"] = mtime
+        _google_routing_cache["data"] = out
+        return out
+    except Exception:
+        return dict(_GOOGLE_ROUTING_SEED)
+
+
 def safe_gemini_call(key_router, caller: str, model_tier: str,
                      call_func, max_retries: int = 3, base_delay: float = 1.5,
                      model_name: str = None, contents_text: str = None,
-                     google_tier_filter: str = 'paid'):
+                     google_tier_filter: str = 'paid',
+                     max_403_retries: int = 2, delay_403: float = 0.5):
     """
     🛡️ 金刚级 API 调用装甲：Google / OpenRouter 双通道随机 + 失败秒切
     
@@ -3665,9 +3734,11 @@ def safe_gemini_call(key_router, caller: str, model_tier: str,
     import random as _random
     limiter = get_rate_limiter()
     
+    # 🆕 [A3b-2 / Sir 2026-06-09] OpenRouter 已上架 Gemini 3 系列 — 3-flash 转 OpenRouter 时
+    # 映射到真 google/gemini-3-flash-preview (保 Gatekeeper 推理质量), 不降级到 2.5。
     _OR_MODEL_MAP = {
-        'gemini-3.1-flash-lite': 'google/gemini-2.5-flash-lite',
-        'gemini-3-flash-preview': 'google/gemini-2.5-flash',
+        'gemini-3.1-flash-lite': 'google/gemini-3.1-flash-lite',
+        'gemini-3-flash-preview': 'google/gemini-3-flash-preview',
     }
     
     def _try_google():
@@ -3763,20 +3834,50 @@ def safe_gemini_call(key_router, caller: str, model_tier: str,
                     default_headers={"HTTP-Referer": "https://jarvis-local.com", "X-Title": "Jarvis"},
                     timeout=60.0
                 )
-                response = _client.chat.completions.create(
-                    model=or_model,
-                    messages=[{"role": "user", "content": contents_text}],
-                    temperature=0.7,
-                )
-                result = type('Result', (), {'text': response.choices[0].message.content})()
-                limiter.release()
-                return result, _key_name, _client
+                # 🆕 [A3b-2 / Sir 2026-06-09] 区域 403 同节点短退避重试 (内层, 不换 key).
+                # 老 bug: 区域 403 落到下面 [AUTH] 分支 → report_error 毒好 key. 治本:
+                # 同一已 acquire 的 _key/_client 原地重试 (不 release/不重新 acquire),
+                # 区域问题与 key 无关 → 绝不毒 key. 耗尽则 raise 给外层 (走非毒 release).
+                _or403_count = 0
+                while True:
+                    try:
+                        response = _client.chat.completions.create(
+                            model=or_model,
+                            messages=[{"role": "user", "content": contents_text}],
+                            temperature=0.7,
+                        )
+                        result = type('Result', (), {'text': response.choices[0].message.content})()
+                        limiter.release()
+                        return result, _key_name, _client
+                    except Exception as _ce:
+                        if _is_region_403(str(_ce)):
+                            _or403_count += 1
+                            if _should_retry_403(_or403_count, max_403_retries):
+                                try:
+                                    bg_log(
+                                        f"⚠️ [403Backstop/_try_openrouter] {caller or '?'} "
+                                        f"model={or_model} region 403, retry "
+                                        f"{_or403_count}/{max_403_retries} "
+                                        f"(同 key 同节点短退避 {delay_403}s, 不毒 key)"
+                                    )
+                                except Exception:
+                                    pass
+                                time.sleep(delay_403)
+                                continue  # 同 key/client 原地重试, 不换 key
+                        raise  # 非区域 403 / 区域 403 耗尽 → 抛给外层 except
             except Exception as e:
                 limiter.release()
                 error_str = str(e)
                 error_lower = error_str.lower()
-                
-                if any(kw in error_lower for kw in ['401', '403', 'unauthorized', 'forbidden',
+
+                # 🆕 [A3b-2] 区域 403 (耗尽内层重试或 max=0) → 绝不毒 key (区域问题与 key 无关).
+                # release 该 key 落正常轮转 (换下个 key / 抛), 但**不** report_error 毒键。
+                if _is_region_403(error_str):
+                    key_router.release(_key_name)
+                    last_err = e
+                    continue
+
+                if any(kw in error_lower for kw in ['401', 'unauthorized',
                                                        'invalid api key', 'invalid_key']):
                     key_router.report_error(_key_name, f"[AUTH] {error_str[:200]}")
                     key_router.release(_key_name)
@@ -3808,6 +3909,20 @@ def safe_gemini_call(key_router, caller: str, model_tier: str,
             raise RuntimeError(f"[OpenRouter通道] 所有Key已尝试失败: {str(last_err)[:200]}")
         raise RuntimeError("[OpenRouter通道] 无可用Key")
     
+    # 🆕 [A3b-2 / Sir 2026-06-09] model_name 路由表 (准则6 持久化, seed fallback).
+    _routing = _load_google_model_routing()
+    _force_or = model_name in _routing.get('force_openrouter', [])
+    _google_only = model_name in _routing.get('google_only_no_fallback', [])
+
+    # force_openrouter: 强制只走 OpenRouter (不试 Google)。
+    if _force_or:
+        return _try_openrouter()
+
+    # google_only_no_fallback: 只走 Google 两免费 key 轮流, 失败不 fallback OpenRouter。
+    if _google_only:
+        return _try_google()
+
+    # 未列出 model_name → 老 50/50 双通道行为 (向后兼容)。
     google_first = _random.random() < 0.5
     
     if google_first:
@@ -4657,7 +4772,9 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                         f"原始错误: {str(e)[:200]}"
                     ) from e
 
-                if any(kw in error_str for kw in ['403', 'forbidden', 'access denied', 'blocked']):
+                # 🆕 [A3b-2] 判定改走共享 helper _is_region_403 (行为不变: 401/auth
+                # 关键词已在上面分支熔断, 到这里 helper 等价原内联 403 关键词判定).
+                if _is_region_403(error_str):
                     last_error_type = "access"
                     # 🆕 [fixB-403-region-backstop / Sir 2026-06-09] 403 区域封
                     # (出口 IP 落在 model 提供商黑名单) 偶发打死调用. 同节点有限重试
@@ -4665,8 +4782,9 @@ def safe_openrouter_call(openrouter_key: str, model: str, prompt: str,
                     # 重试耗尽仍 raise (保留现有"最终失败 raise"语义, 不吞错).
                     # 短退避 (区域问题不随等待消解, 不用 429 的指数大退避). 上限防风暴.
                     # max_403_retries=0 即关闭 (回滚).
+                    # 🆕 [A3b-2] 改走共享 helper _should_retry_403 (行为不变, 401 已在上分支熔断).
                     _403_count += 1
-                    if _403_count <= max_403_retries:
+                    if _should_retry_403(_403_count, max_403_retries):
                         try:
                             bg_log(
                                 f"⚠️ [403Backstop] {caller or '?'} model={model} "

@@ -1,0 +1,18 @@
+{
+  "_meta": {
+    "schema": "google_model_routing",
+    "schema_version": 1,
+    "purpose": "[Sir 2026-06-08] Google 模型档路由表 (准则6 持久化+CLI可改). 弃付费 key 后: 只留两个免费 Google key 轮流 (flash-lite + embedding), 3-flash 转 OpenRouter. safe_gemini_call 读本表决定每个 model_name 走哪条通道.",
+    "edit_via": "scripts/google_routing_dump.py (list/force-openrouter/google-only/reset)",
+    "semantics": {
+      "force_openrouter": "该 model_name 强制走 OpenRouter (不试 Google). 用 _OR_MODEL_MAP 映射到 OpenRouter 模型.",
+      "google_only_no_fallback": "该 model_name 只走 Google 两免费 key 轮流, 失败**不** fallback OpenRouter (Sir 明确不烧 OpenRouter 余额)."
+    }
+  },
+  "force_openrouter": [
+    "gemini-3-flash-preview"
+  ],
+  "google_only_no_fallback": [
+    "gemini-3.1-flash-lite"
+  ]
+}
