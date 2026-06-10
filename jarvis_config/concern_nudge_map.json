@@ -1,0 +1,9 @@
+{
+  "_doc": "[fixH-b / Sir 2026-06-10] concern raw_id → nudge_type; 用于 body_stir 可行动性门控 (jarvis_inner_thought_daemon._check_body_stir): 老张力 concern 的对应 nudge 在 OfferGuard 节奏冷却中 → 压住 body_stir 唤醒 (睡到 cooldown 解). 匹配序: exact → 最长 prefix → 不中 = 不可映射 → fail-open 照醒. 首版宁缺毋滥, 只收录真机已知压顶项; 其余 concern 照醒, 观察后再补.",
+  "exact": {
+    "sir_sleep_streak": "bedtime"
+  },
+  "prefix": {
+    "sir_sleep": "bedtime"
+  }
+}
