@@ -47,7 +47,10 @@ class TestP0Plus20Beta50SWMCoreAPI(unittest.TestCase):
 
     def setUp(self):
         from jarvis_utils import ConversationEventBus
-        self.bus = ConversationEventBus()
+        # 🆕 [fixT-C / Sir 2026-06-11 裁决G-C] restore=False 夹具隔离 — M1.2 起 ctor
+        # 默认 restore swm_history.jsonl (真机高 salience event), 渗入致空渲染/排序
+        # 断言机器态红. ctor 本就为 test 提供此参 (jarvis_utils:1506 docstring).
+        self.bus = ConversationEventBus(restore=False)
 
     def test_publish_accepts_salience_param(self):
         ok = self.bus.publish('sensor_change', 'window changed', salience=0.7)
