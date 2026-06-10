@@ -129,13 +129,14 @@
 **章程膨胀 cap (β.3.5 立)**: 必读 5 文件 + 按需 Grep 区文件 总和 **< 1500 行**, 单文件 **< 400 行** (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md` 各自上限). 超过 → 拆 sister doc 或精简表达, 不允许无限增长. 章程膨胀 → agent 30 秒读不完 → 工程效率反降.
 
 **按需 Grep (不全文 Read)**:
-| 被 Sir 邀请做概念层审计对话 (非代码审计) | `docs/AUDIT_PROTOCOL.md` (入场前提 / 先红后绿 / 刺账 / 沉淀格式) |
+
 | 触发 | 看什么 |
 |---|---|
 | 查规范 (commit / push / 测试 / trace_id) | `docs/JARVIS_WORKFLOW_PROTOCOL.md` |
 | 改 `jarvis_*.py` | `docs/JARVIS_PYTHON_STYLE.md` (imports / marker / forbidden / 准则 6 vocab 范式) |
 | 完工要交接给下一 agent | `docs/AGENT_HANDOFF_PROTOCOL.md` + `docs/AGENT_KICKOFF_TEMPLATE.md` |
 | Sir 提"上次/上轮某 marker" | 先 `Grep TODO.md`, 再 `Grep docs/TODO_ARCHIVE.md` |
+| 被 Sir 邀请做概念层审计对话 (非代码审计) | `docs/AUDIT_PROTOCOL.md` (入场前提 / 先红后绿 / 刺账 / 沉淀格式) |
 
 **反例**（禁止）：
 - ❌ 一进窗口就 `Read jarvis_chat_bypass.py`（3003 行 / 浪费 token）
