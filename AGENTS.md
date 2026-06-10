@@ -129,7 +129,7 @@
 **章程膨胀 cap (β.3.5 立)**: 必读 5 文件 + 按需 Grep 区文件 总和 **< 1500 行**, 单文件 **< 400 行** (`AGENTS.md` / `JARVIS_PYTHON_STYLE.md` / `AGENT_HANDOFF_PROTOCOL.md` / `AGENT_KICKOFF_TEMPLATE.md` 各自上限). 超过 → 拆 sister doc 或精简表达, 不允许无限增长. 章程膨胀 → agent 30 秒读不完 → 工程效率反降.
 
 **按需 Grep (不全文 Read)**:
-
+| 被 Sir 邀请做概念层审计对话 (非代码审计) | `docs/AUDIT_PROTOCOL.md` (入场前提 / 先红后绿 / 刺账 / 沉淀格式) |
 | 触发 | 看什么 |
 |---|---|
 | 查规范 (commit / push / 测试 / trace_id) | `docs/JARVIS_WORKFLOW_PROTOCOL.md` |
