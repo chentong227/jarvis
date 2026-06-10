@@ -21,7 +21,10 @@ from jarvis_utils import ConversationEventBus, get_default_event_bus
 # ============================================================
 class TestConversationEventBus(unittest.TestCase):
     def setUp(self):
-        self.bus = ConversationEventBus(max_events=20)
+        # 🆕 [fixT-C / Sir 2026-06-11 裁决G-C] restore=False 夹具隔离 — M1.2 起 ctor
+        # 默认 restore 真机 swm_history.jsonl (30min 窗口内高 salience event), 渗入致
+        # 计数/空渲染/TTL 断言机器态红 (近 30min 有真 event 时红, 否则绿 = flaky).
+        self.bus = ConversationEventBus(max_events=20, restore=False)
 
     def test_publish_and_read(self):
         self.assertTrue(self.bus.publish('conversation_event', 'Sir made a breakthrough on the bug'))
