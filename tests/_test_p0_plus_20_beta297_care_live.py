@@ -67,27 +67,45 @@ class TestProactiveCareLevelPresets(unittest.TestCase):
                     'JARVIS_PROACTIVE_CARE_LEVEL'):
             os.environ.pop(key, None)
 
-    def test_silent_level_threshold_2(self):
-        os.environ['JARVIS_PROACTIVE_CARE_LEVEL'] = 'silent'
-        # _LEVEL_CONF 在 import time 求值, 需要 reload
+    # 🆕 [fixT-C / Sir 2026-06-11 裁决G-C] β.5.23-A 后 vocab 是阈值真相源
+    # (DEFAULT_URGENCY_THRESHOLD = _get_cd(key, _LEVEL_CONF['threshold'])), env
+    # preset 降级为 fallback seed. 老断言钉死 env 优先 → vocab 化后过期红.
+    # 现代化为守今日双重契约: ① env 仍选中 preset dict (fallback 意图保留);
+    # ② 模块常量 = vocab 优先、preset fallback 的精确叠加 (机器 vocab 无关).
+
+    def _reload_and_get(self, level):
         import importlib
         import jarvis_proactive_care
+        if level is None:
+            os.environ.pop('JARVIS_PROACTIVE_CARE_LEVEL', None)
+        else:
+            os.environ['JARVIS_PROACTIVE_CARE_LEVEL'] = level
         importlib.reload(jarvis_proactive_care)
-        self.assertEqual(jarvis_proactive_care.DEFAULT_URGENCY_THRESHOLD, 2.0)
+        return jarvis_proactive_care
+
+    def test_silent_level_threshold_2(self):
+        pc = self._reload_and_get('silent')
+        # ① env 选中 silent preset (threshold=2.0 实质禁用)
+        self.assertEqual(pc._LEVEL_CONF['threshold'], 2.0)
+        # ② 常量 = vocab 优先 + silent preset fallback
+        self.assertEqual(pc.DEFAULT_URGENCY_THRESHOLD,
+                         pc._get_cd('DEFAULT_URGENCY_THRESHOLD', 2.0))
 
     def test_high_level_threshold_below_normal(self):
-        os.environ['JARVIS_PROACTIVE_CARE_LEVEL'] = 'high'
-        import importlib
-        import jarvis_proactive_care
-        importlib.reload(jarvis_proactive_care)
-        self.assertLess(jarvis_proactive_care.DEFAULT_URGENCY_THRESHOLD, 0.55)
+        pc = self._reload_and_get('high')
+        # ① env 选中 high preset, preset 自身 high < normal
+        self.assertLess(pc._LEVEL_CONF['threshold'],
+                        pc._LEVEL_PRESETS['normal']['threshold'])
+        # ② 常量 = vocab 优先 + high preset fallback
+        self.assertEqual(pc.DEFAULT_URGENCY_THRESHOLD,
+                         pc._get_cd('DEFAULT_URGENCY_THRESHOLD',
+                                    pc._LEVEL_PRESETS['high']['threshold']))
 
     def test_default_level_normal(self):
-        os.environ.pop('JARVIS_PROACTIVE_CARE_LEVEL', None)
-        import importlib
-        import jarvis_proactive_care
-        importlib.reload(jarvis_proactive_care)
-        self.assertEqual(jarvis_proactive_care.DEFAULT_URGENCY_THRESHOLD, 0.55)
+        pc = self._reload_and_get(None)
+        self.assertEqual(pc._LEVEL_CONF['threshold'], 0.55)
+        self.assertEqual(pc.DEFAULT_URGENCY_THRESHOLD,
+                         pc._get_cd('DEFAULT_URGENCY_THRESHOLD', 0.55))
 
 
 class TestSmartNudgeDisableSwitchExists(unittest.TestCase):
