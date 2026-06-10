@@ -26,6 +26,7 @@ ClaimTracer 抽 Jarvis reply 里的 specific factual claim:
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
@@ -84,6 +85,51 @@ _DOMAIN_SEED_VOCAB: Dict[str, object] = {
          'keywords': ['promise', '承诺', '答应']},
     ],
 }
+
+
+# 🆕 [fixD-counter / Sir 2026-06-11 裁决E] 影子期分母 — 域配对评估总数 + 不一致数.
+# 缘起: 影子期仪表只记不一致 (DomainShadow 行), 不记总评估数 → 一致率缺分母, 切
+# enforce 证据无法计算. 本计数器只记数不碰判定路径 (任何异常吞掉).
+# 读数: 一致率 = 1 - mismatch/evaluated. 定期 (间隔节流) + 进程退出各 dump 一行.
+_DOMAIN_STATS_LOCK = threading.Lock()
+_DOMAIN_SHADOW_STATS: Dict[str, float] = {
+    'evaluated': 0, 'mismatch': 0, 'last_log_ts': 0.0}
+_DOMAIN_STATS_LOG_INTERVAL_S = 600.0
+
+
+def _bump_domain_shadow_stats(mismatch: bool) -> None:
+    """[fixD-counter] 每次域配对评估 +1 (不一致再 +1), 节流 dump 读数行."""
+    try:
+        with _DOMAIN_STATS_LOCK:
+            _DOMAIN_SHADOW_STATS['evaluated'] += 1
+            if mismatch:
+                _DOMAIN_SHADOW_STATS['mismatch'] += 1
+            now = time.time()
+            due = (now - float(_DOMAIN_SHADOW_STATS['last_log_ts'])
+                   >= _DOMAIN_STATS_LOG_INTERVAL_S)
+            if due:
+                _DOMAIN_SHADOW_STATS['last_log_ts'] = now
+            ev = int(_DOMAIN_SHADOW_STATS['evaluated'])
+            mm = int(_DOMAIN_SHADOW_STATS['mismatch'])
+        if due:
+            bg_log(f"🔬 [ClaimTracer/DomainShadowStats] evaluated={ev} mismatch={mm}")
+    except Exception:
+        pass  # 计数/日志任何异常零判定影响
+
+
+def _dump_domain_shadow_stats_final() -> None:
+    """[fixD-counter] 进程退出 dump 终值 (evaluated>0 才打, 不刷空行)."""
+    try:
+        ev = int(_DOMAIN_SHADOW_STATS['evaluated'])
+        mm = int(_DOMAIN_SHADOW_STATS['mismatch'])
+        if ev > 0:
+            bg_log(f"🔬 [ClaimTracer/DomainShadowStats/final] "
+                   f"evaluated={ev} mismatch={mm}")
+    except Exception:
+        pass
+
+
+atexit.register(_dump_domain_shadow_stats_final)
 
 
 def _get_domain_vocab() -> dict:
@@ -580,6 +626,8 @@ def _check_evidence_kind(kind: str, claim: 'Claim',
             if ev_dom == 'unknown' or ev_dom in claim_domains:
                 domain_ok = True
                 break
+        # 🆕 [fixD-counter / 裁决E] 域配对评估分母 +1 (只记数, 零判定影响)
+        _bump_domain_shadow_stats(mismatch=(coarse != domain_ok))
         # 影子期 observability: record 域 verdict (不改 live verdict)
         try:
             if coarse != domain_ok:
