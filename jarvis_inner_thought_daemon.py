@@ -346,6 +346,11 @@ _SATURATION_DEFAULT_CONFIG: dict = {
         # /真 tick 跑起 → 指纹清空 (同 node re-rise 仍能醒, 非永久压). false = 退原行为。
         'body_stir_dedup': True,
         'body_stir_dedup_exempt_kinds': ['novelty', 'drift'],
+        # 🆕 [fixH-b 可行动性门控 / Sir 2026-06-10] 老张力 concern + 对应 nudge 在
+        # OfferGuard 节奏冷却中 → 压住 body_stir 唤醒 (睡到 cooldown 解). 映射表
+        # jarvis_config/concern_nudge_map.json; 任何不确定 (映射不中/非 concern/
+        # skill 类 reason/异常) → fail-open 照醒. false = 完全旁路 (回原行为)。
+        'body_stir_actionability_gate': True,
     },
 }
 
@@ -378,6 +383,54 @@ def _load_saturation_config() -> dict:
         return merged
     except Exception:
         return _SATURATION_DEFAULT_CONFIG
+
+
+# ==========================================================================
+# 🆕 [fixH-b 可行动性门控 / Sir 2026-06-10] concern → nudge_type 映射表
+# body_stir 唤醒前判"醒来能干什么": 全部过阈 fresh delta 都是老张力 concern 且
+# 对应 nudge 被 OfferGuard 节奏闸 (rhythm_cooldown) 挡死 → 不唤醒 (睡到 cooldown 解).
+# 映射缺失/损坏 → {} → 全部"映射不中" → fail-open 照醒. 随 PR 入 git, Sir 直接改文件.
+# ==========================================================================
+_CONCERN_NUDGE_MAP_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    'jarvis_config', 'concern_nudge_map.json',
+)
+_CONCERN_NUDGE_MAP_CACHE: dict = {'data': None, 'mtime': 0.0}
+
+
+def _load_concern_nudge_map() -> dict:
+    """[fixH-b] 载 concern raw_id → nudge_type 映射 (mtime cache, 失败 → 空表)."""
+    try:
+        mtime = os.path.getmtime(_CONCERN_NUDGE_MAP_PATH)
+        if (_CONCERN_NUDGE_MAP_CACHE['data'] is not None
+                and mtime == _CONCERN_NUDGE_MAP_CACHE['mtime']):
+            return _CONCERN_NUDGE_MAP_CACHE['data']
+        with open(_CONCERN_NUDGE_MAP_PATH, 'r', encoding='utf-8') as f:
+            raw = json.load(f) or {}
+        data = {
+            'exact': dict(raw.get('exact') or {}),
+            'prefix': dict(raw.get('prefix') or {}),
+        }
+        _CONCERN_NUDGE_MAP_CACHE['data'] = data
+        _CONCERN_NUDGE_MAP_CACHE['mtime'] = mtime
+        return data
+    except Exception:
+        return {'exact': {}, 'prefix': {}}
+
+
+def _resolve_concern_nudge_type(concern_raw_id: str) -> str:
+    """[fixH-b] 匹配序: exact → 最长 prefix → '' (不可映射 = 门控不敢判, 照醒)."""
+    if not concern_raw_id:
+        return ''
+    m = _load_concern_nudge_map()
+    hit = (m.get('exact') or {}).get(concern_raw_id)
+    if hit:
+        return str(hit)
+    best, best_len = '', -1
+    for pre, ntype in (m.get('prefix') or {}).items():
+        if pre and concern_raw_id.startswith(str(pre)) and len(str(pre)) > best_len:
+            best, best_len = str(ntype), len(str(pre))
+    return best
 
 
 # ==========================================================================
@@ -2159,6 +2212,9 @@ class InnerThoughtDaemon:
                                         ['novelty', 'drift']))
             cur_fp: set = set()
             has_exempt = False
+            # 🆕 [fixH-b] 同一快照顺手收集非豁免过阈 delta 明细 (node/kind), 供下方
+            # 可行动性门控用 — 不二次读 focus, 保证门控与指纹看的是同一组 delta。
+            _gate_items: list = []
             for _it in get_body_focus().current_focus(limit=6):
                 if not _it.get('fresh'):
                     continue  # 只看刚升起的 delta (standing 高势能不参与唤醒去重)
@@ -2169,6 +2225,8 @@ class InnerThoughtDaemon:
                     has_exempt = True  # 真新进展 → 豁免去重, 必醒
                     continue
                 cur_fp.add(f"{_it.get('node', '')}:{int(_m / _bucket)}")
+                _gate_items.append((str(_it.get('node') or ''),
+                                    str(_it.get('kind') or '')))
             # 真新/novelty/drift delta → 必醒 (不参与去重, 不污染指纹比较)
             if has_exempt:
                 self._last_woke_delta_fp = self._last_woke_delta_fp | cur_fp
@@ -2176,6 +2234,54 @@ class InnerThoughtDaemon:
             # 全是驻留 tension delta: 指纹全 ∈ 上次 woke → 同驻留, 不重复醒
             if cur_fp and cur_fp <= self._last_woke_delta_fp:
                 return False  # 同驻留 delta, 未被消化, 不重醒 (桥接时序, 等闭环衰减)
+            # 🆕 [fixH-b 可行动性门控 / Sir 2026-06-10] 醒来能干什么? 仅当本轮**所有**
+            # 过阈非豁免 fresh delta 都满足 [kind==tension × node 是 concern: × 映射命中
+            # × OfferGuard 节奏评估拒且 reason 是 rhythm_cooldown] 才压住唤醒 (老张力 +
+            # 动作在冷却中, 醒了也只能干瞪眼 → 睡到 cooldown 解). 任一 delta 非 concern /
+            # 映射不中 / offer 可发 / skill 类 reason (missing/degraded — skill 坏不该让
+            # 体哑掉) → 照醒. 关键: 被压 delta 指纹**不写** _last_woke_delta_fp →
+            # cooldown 解除后下轮 poll 仍是"新指纹"必醒.
+            # 探针走 _evaluate_internal (纯评估: 节奏+skill 真相) 而非 check_offer —
+            # 真机 gate_mode_vocab 现全 sentinel publish_only, check_offer 在该档永远
+            # 返回 True (永不报 cooldown) → 门控会永久失效; _evaluate_internal 不掺
+            # gate_mode 政策 / 不 publish / 不写 _last_offer_ts, 零副作用 (设计稿出入
+            # 已回传). 整段异常 → fail-open 照醒. 开关
+            # rest.body_stir_actionability_gate=false 完全旁路.
+            try:
+                if (cfg.get('body_stir_actionability_gate', True) and _gate_items):
+                    _all_gated = True
+                    _gate_log: list = []
+                    for _gnode, _gkind in _gate_items:
+                        if _gkind != 'tension' or not _gnode.startswith('concern:'):
+                            _all_gated = False  # 非老张力 concern → 不敢判 → 照醒
+                            break
+                        _ntype = _resolve_concern_nudge_type(
+                            _gnode[len('concern:'):])
+                        if not _ntype:
+                            _all_gated = False  # 映射不中 → 不敢判 → 照醒
+                            break
+                        from jarvis_skill_registry import (OFFER_REQUIREMENTS,
+                                                           OfferGuard)
+                        _spec = OFFER_REQUIREMENTS.get(_ntype)
+                        if _spec is None:
+                            _all_gated = False  # 未注册 nudge_type → 不敢判 → 照醒
+                            break
+                        _ok, _reason = OfferGuard._evaluate_internal(
+                            _ntype, _spec, None)
+                        if _ok or not str(_reason).startswith('rhythm_cooldown'):
+                            # offer 可发 / skill 类 reason → 醒了有事干 / 该让主脑知道
+                            _all_gated = False
+                            break
+                        _gate_log.append(f"{_gnode}→{_ntype}({_reason})")
+                    if _all_gated:
+                        self._bg_log(
+                            "🚪 [InnerThought/fixH-b] body_stir 压住 — 老张力 concern "
+                            "对应 nudge 节奏冷却中, 醒了无可行动作: "
+                            + "; ".join(_gate_log)
+                            + " (指纹不记, cooldown 解除后可醒)")
+                        return False  # 不醒; 指纹不写 → cooldown 解后下轮必醒
+            except Exception:
+                pass  # 门控任何异常 → fail-open 照醒 (沿 fixH-a 红线)
             # 出现新指纹 (node 变 / 幅度桶跳变) 或首次 → 醒 + 更新指纹
             # cur_fp 为空 (current_focus 拿不到 fresh delta 明细) → fail-open 醒
             self._last_woke_delta_fp = cur_fp if cur_fp else self._last_woke_delta_fp
