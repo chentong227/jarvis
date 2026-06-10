@@ -383,6 +383,15 @@ class InconsistencyWatcher(threading.Thread):
             # 全局 last_any_fire_ts 触发 GLOBAL_COOLDOWN_S 节流.
             self._fired_promises[self._cooldown_key(p)] = time.time()
             self._last_any_fire_ts = time.time()
+            # 🆕 [C3.1 tap / 2026-06-08] behavior-preserving: 记一条 E_commit 债
+            # (承诺完整性误差)。只新增记账调用, 不改上面 fire/cooldown 原逻辑。
+            # ref=promise_id (grounded)。独立 try/except — 记账失败不影响 fire。
+            try:
+                from jarvis_coherence_debt import tap_inconsistency
+                tap_inconsistency(str(getattr(p, 'id', '') or ''),
+                                  detail=inconsistency_desc[:80])
+            except Exception:
+                pass
         except Exception as e:
             bg_log(f"⚠️ [InconsistencyWatcher] dispatch err: {e}")
 

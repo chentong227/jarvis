@@ -9704,6 +9704,18 @@ class InnerThoughtDaemon:
             reply = str(stm[-1].get('jarvis', '') or '')
             if not reply or reply == getattr(self, '_last_audited_reply', ''):
                 return
+            # 🆕 [C3.1-I2-turnbind-fix / 2026-06-08] 在读取 stm[-1] 被审内容的**同一刻**
+            # 捕获该轮 turn_id, 与被审 reply 绑成一体 — 防"审计期间 LLM 调用耗时, 主线程
+            # new_turn() 推进全局 turn_id, 事后 get_global_turn_id() 抓到新轮"的漂移窗口。
+            # 优先 stm[-1] 自带 turn_id (最真接地, 全局态前进也不带漂); 缺则退到此刻全局态
+            # (仍在 LLM 调用**之前**捕获)。一路带到 publish metadata + E_ground tap。
+            _audited_turn_id = str(stm[-1].get('turn_id', '') or '')
+            if not _audited_turn_id:
+                try:
+                    from jarvis_utils import TraceContext as _TC
+                    _audited_turn_id = _TC.get_global_turn_id() or ''
+                except Exception:
+                    _audited_turn_id = ''
             self._last_semantic_audit_ts = now
             self._last_audited_reply = reply
             stm_blob = ' | '.join(
@@ -9716,6 +9728,11 @@ class InnerThoughtDaemon:
                     f"🔎 [SemanticClaim/I2] {len(flagged)} ungrounded claim(s); "
                     f"first: \"{flagged[0].get('claim', '')[:60]}\""
                 )
+                # 🆕 [C3.1-I2-grounding-fix / 2026-06-08] 接地修正: 给 flagged event
+                # 补被审计那轮的 turn 标识。turn_id 已在**读取 stm[-1] 同一刻**捕获
+                # (见上 _audited_turn_id, LLM 调用前绑定, 抗全局前进漂移)。flagged 字段
+                # 原样不动 (老消费者读 metadata['flagged'] 不受影响), 仅**新增**
+                # audited_turn_id 字段 → 满足 provenance 红线 (每条信号可指回具体 turn)。
                 try:
                     from jarvis_utils import get_event_bus
                     bus = get_event_bus()
@@ -9727,9 +9744,24 @@ class InnerThoughtDaemon:
                                 f"{flagged[0].get('claim', '')[:80]}"),
                             source='InnerThoughtDaemon.SemanticClaimAudit',
                             salience=0.6,
-                            metadata={'flagged': flagged},
+                            metadata={'flagged': flagged,
+                                      'audited_turn_id': _audited_turn_id},
                             ttl=3600.0,
                         )
+                except Exception:
+                    pass
+                # 🆕 [C3.1 tap / 2026-06-08] behavior-preserving: 记一条 E_ground 债
+                # (自我失真)。只新增记账, 不改上面 publish/flagged 原逻辑。
+                # ref=audited_turn_id (+ claim hash, grounded)。空 turn_id 则 tap 内
+                # open_debt 因 ref 空被拒 (无接地不生债)。独立 try/except。
+                try:
+                    if _audited_turn_id:
+                        import hashlib as _hl_cd
+                        _claim_txt = str(flagged[0].get('claim', ''))
+                        _chash = _hl_cd.sha1(_claim_txt.encode('utf-8')).hexdigest()[:8]
+                        from jarvis_coherence_debt import tap_semantic_claim
+                        tap_semantic_claim(_audited_turn_id, claim_hash=_chash,
+                                           detail=_claim_txt[:80])
                 except Exception:
                     pass
         except Exception:
