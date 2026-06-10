@@ -227,3 +227,19 @@ _legacy/data_migration_backup/
 # 0 字节误生成 sentinel
 memory_pool/invalid
 memory_pool/vitals_snapshots.jsonl
+
+# === [hygiene-gitignore-tooling / 2026-06-08] 运行时写产物 + 自动生成文件停跟踪 ===
+# 这些文件由代码自动重生 (json.dump / scanner 写路径), 本不应 tracked, 一直随测试/
+# 运行漂移污染 diff。--cached 停跟踪 (文件留盘) + 此处 ignore。
+# 精确文件名逐条列, 绝不用 *_vocab.json 宽 glob —— 那会误伤产品种子
+# (kinship_alias_vocab.json / soft_entity_vocab.json 是 tracked 产品文件, 保持跟踪)。
+# 运行时写产物:
+memory_pool/auto_arbiter_calibration.json
+memory_pool/inner_thought_propose_quality_vocab.json
+memory_pool/llm_routing_vocab.json
+memory_pool/sir_behavior_temporal_vocab.json
+memory_pool/thinking_brain_ds_trigger_vocab.json
+memory_pool/let_go_topics.json
+# module_scanner 自动生成 (写者 jarvis_module_scanner.py: save_module_map + render):
+memory_pool/module_map.json
+docs/JARVIS_ARCHITECTURE_MAP_AUTO.md
