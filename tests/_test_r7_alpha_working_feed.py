@@ -271,8 +271,16 @@ class TestSourceContract(unittest.TestCase):
                       "full 档 prompt 必须包含 {working_feed_block} 占位")
 
     def test_prompt_short_chat_tier_has_short_feed(self):
+        # 🆕 [fixT-r7 / Sir 2026-06-11 裁决I 修轨] M6.2 tier 体抽 helper, 双锚现代化
+        # (dispatch 接线 + helper 体内注入), 契约不变.
+        m_dispatch = re.search(
+            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT:.+?"
+            r"_assemble_short_chat_prompt",
+            self.src, re.DOTALL
+        )
+        self.assertIsNotNone(m_dispatch, "SHORT_CHAT dispatch 必须接 helper")
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT.+?_short_feed",
+            r"def _assemble_short_chat_prompt.+?_short_feed",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m, "SHORT_CHAT 档必须注入 _short_feed")
