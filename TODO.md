@@ -1,5 +1,10 @@
 ﻿# Jarvis TODO
 
+> 🔭 **观察/排期清单 (2026-06-11 裁决H 记账)**:
+> 1. **beta28② 边缘风险 (观察项, 不开刀)**: `jarvis_proactive_care.py:1392-1396` — publish_only 模式下 SWM bus 挂/publish 失败 → "fallback to hard push" 会越过 explicit_reject 窗口直推 Sir。真机 bus 常驻概率低; 若真机出现 reject 期被推案例, 优先查此路径。
+> 2. **beta44 时区窗口 bug (产品小刀排期)**: `scripts/jarvis_dashboard.py read_integrity_stats` 'today' 窗口公式 `now-(now%86400)-time.timezone` 在本地 08:00-16:00 失效带恒 0 (UTC+8 推导错), 同公式也在测试 :131。修法: `now-((now-time.timezone)%86400)`。测试 beta44 在该时段必红 (2026-06-11 08:12 首暴露, A/B 证明与测试现代化刀无关)。
+> 3. **beta46 产品 BUG (单独小刀排期, 裁决H ⭐)**: `Directive concern_dampen_self_decide: trigger must be callable` — vocab bootstrap 注册路径, 非测试问题。
+
 > 🧭 **当前最高优先长程 track(2026-06-01 立):放权 / 自我作者化(Letting-Go)。**
 > **接手前必读 `docs/JARVIS_LETTING_GO_ROLLOUT.md`**(零记忆安全立项:§0 硬线 + STOP 触发 +
 > 当前在**第 0 格**)。**§0 第一条:唯一能信的兜底 = 自我作者回路之外、系统碰不到的机械墙;
