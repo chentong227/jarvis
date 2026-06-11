@@ -104,6 +104,13 @@ NERVE_SOURCES: List[str] = [
 
     # [P0+20-β.0.1 / 2026-05-16] L2 directive registry 承载 LLM 行为约束文本：
     'jarvis_directives.py',
+
+    # 🆕 [fixT-r7 / Sir 2026-06-11 裁决I 修轨] worker 后续再拆批 — 按本文件
+    # "每拆出一批就 append 一行" 协议补行 (r7 家族源契约测的符号
+    # _publish_listening_done / in_active_conversation / _emit_with_attention
+    # 等已迁入下列文件, corpus 没跟队 → 6 套件机器态红):
+    'jarvis_voice_listen_thread.py',
+    'jarvis_receptivity_gate.py',
 ]
 
 

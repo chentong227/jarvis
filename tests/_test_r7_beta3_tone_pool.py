@@ -157,15 +157,29 @@ class TestSourceContract(unittest.TestCase):
 
     def test_short_chat_has_tone(self):
         # SHORT_CHAT 分支应当也注入 tone
+        # 🆕 [fixT-r7 / Sir 2026-06-11 裁决I 修轨] M6.2 tier 体抽 helper, 双锚现代化.
+        m_dispatch = re.search(
+            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT:.+?"
+            r"_assemble_short_chat_prompt",
+            self.src, re.DOTALL
+        )
+        self.assertIsNotNone(m_dispatch, "SHORT_CHAT dispatch 必须接 helper")
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT:.+?_short_tone",
+            r"def _assemble_short_chat_prompt.+?_short_tone",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m, "SHORT_CHAT 必须注入 _short_tone")
 
     def test_factual_recall_has_tone(self):
+        # 🆕 [fixT-r7] 同款双锚现代化 (M6.2 FACTUAL_RECALL 抽 helper).
+        m_dispatch = re.search(
+            r"if prompt_tier == self\.PROMPT_TIER_FACTUAL_RECALL:.+?"
+            r"_assemble_factual_recall_prompt",
+            self.src, re.DOTALL
+        )
+        self.assertIsNotNone(m_dispatch, "FACTUAL_RECALL dispatch 必须接 helper")
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_FACTUAL_RECALL:.+?_fr_tone",
+            r"def _assemble_factual_recall_prompt.+?_fr_tone",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m, "FACTUAL_RECALL 必须注入 _fr_tone")

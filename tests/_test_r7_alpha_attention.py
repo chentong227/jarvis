@@ -205,8 +205,17 @@ class TestSourceContract(unittest.TestCase):
 
     def test_short_chat_tier_has_attention_too(self):
         # SHORT_CHAT 分支也要塞 attention（短聊也常用"这个/这里"）
+        # 🆕 [fixT-r7 / Sir 2026-06-11 裁决I 修轨] M6.2 把 SHORT_CHAT tier 体抽进
+        # _assemble_short_chat_prompt helper, 老 regex (dispatch 向后扫符号) 失锚.
+        # 契约不变, 双锚现代化: dispatch 接线 + helper 体内含注入.
+        m_dispatch = re.search(
+            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT:.+?"
+            r"_assemble_short_chat_prompt",
+            self.src, re.DOTALL
+        )
+        self.assertIsNotNone(m_dispatch, "SHORT_CHAT dispatch 必须接 helper")
         m = re.search(
-            r"if prompt_tier == self\.PROMPT_TIER_SHORT_CHAT.+?_short_attn",
+            r"def _assemble_short_chat_prompt.+?_short_attn",
             self.src, re.DOTALL
         )
         self.assertIsNotNone(m, "SHORT_CHAT 档必须也注入 _short_attn")
